@@ -456,29 +456,48 @@ if ([string]::IsNullOrWhiteSpace($GradlePath)) {
         $GradlePath = $envVars["GRADLE_PATH"]
         Write-Host "Using GRADLE_PATH from .env: $GradlePath" -ForegroundColor Cyan
     } else {
-        # Try to find gradle in common locations
-        $commonGradlePaths = @(
-            "C:\Gradle\gradle-8.10.2\bin\gradle.bat",
-            "C:\Program Files\Gradle\gradle-8.10.2\bin\gradle.bat",
-            "$env:USERPROFILE\.gradle\wrapper\dists\gradle-*\*\gradle-*\bin\gradle.bat"
-        )
-
-        $foundGradle = $null
-        foreach ($path in $commonGradlePaths) {
-            if ($path -like "*\*") {
-                # Handle wildcard paths
-                $matchingItems = Get-ChildItem -Path (Split-Path $path -Parent) -Filter (Split-Path $path -Leaf) -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($matchingItems) {
-                    $foundGradle = $matchingItems.FullName
-                    break
+        # First, try to resolve 'gradle' on the current PATH (Get-Command)
+        try {
+            $cmd = Get-Command gradle -ErrorAction SilentlyContinue
+            if ($cmd) {
+                if ($cmd.Source -and (Test-Path -Path $cmd.Source -PathType Leaf)) {
+                    $GradlePath = $cmd.Source
+                    Write-Host "Found gradle on PATH: $GradlePath" -ForegroundColor Cyan
+                } elseif ($cmd.Definition) {
+                    # Some environments return a definition rather than a direct file path.
+                    $GradlePath = $cmd.Definition
+                    Write-Host "Found gradle on PATH (definition): $GradlePath" -ForegroundColor Cyan
                 }
-            } elseif (Test-Path -Path $path -PathType Leaf) {
-                $foundGradle = $path
-                break
             }
+        } catch {
+            # ignore
         }
 
-        $GradlePath = Get-PathInput -Prompt "Enter Gradle executable path" -DefaultValue $foundGradle -Description "Enter the full path to gradle.bat (e.g., C:\Gradle\gradle-8.10.2\bin\gradle.bat)"
+        if ([string]::IsNullOrWhiteSpace($GradlePath)) {
+            # Try to find gradle in common locations
+            $commonGradlePaths = @(
+                "C:\Gradle\gradle-8.10.2\bin\gradle.bat",
+                "C:\Program Files\Gradle\gradle-8.10.2\bin\gradle.bat",
+                "$env:USERPROFILE\.gradle\wrapper\dists\gradle-*\*\gradle-*\bin\gradle.bat"
+            )
+
+            $foundGradle = $null
+            foreach ($path in $commonGradlePaths) {
+                if ($path -like "*\\*") {
+                    # Handle wildcard paths
+                    $matchingItems = Get-ChildItem -Path (Split-Path $path -Parent) -Filter (Split-Path $path -Leaf) -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($matchingItems) {
+                        $foundGradle = $matchingItems.FullName
+                        break
+                    }
+                } elseif (Test-Path -Path $path -PathType Leaf) {
+                    $foundGradle = $path
+                    break
+                }
+            }
+
+            $GradlePath = Get-PathInput -Prompt "Enter Gradle executable path" -DefaultValue $foundGradle -Description "Enter the full path to gradle.bat (e.g., C:\Gradle\gradle-8.10.2\bin\gradle.bat)"
+        }
     }
 }
 
