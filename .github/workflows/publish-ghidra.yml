@@ -1,0 +1,77 @@
+name: Publish Ghidra 🐉 distribution
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to update (e.g., v4.1.0). If not provided, uses the current ref.'
+        required: false
+        type: string
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # Build only on Linux since the extension is Java-only and platform-independent
+        # This simplifies the build process and reduces CI time
+        ghidra-version: [
+            "12.0",
+        ]
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Set up Java 🍵
+      uses: actions/setup-java@v5
+      with:
+        java-version: "21"
+        distribution: "microsoft"
+    - name: Install Ghidra 🐉
+      uses: antoniovazquezblanco/setup-ghidra@v2.0.16
+      with:
+        version: ${{ matrix.ghidra-version }}
+        auth_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Compile AgentDecompile 👩‍💻✨
+      run: gradle buildExtension
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v6
+      with:
+        name: ghidra-distributions-${{ matrix.ghidra-version }}
+        path: dist/
+        if-no-files-found: error
+  github-release:
+    name: >-
+      Sign the Ghidra 🐉 distribution 📦 with Sigstore
+      and upload them to GitHub Release
+    needs:
+    - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag || github.ref_name }}
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v7
+      with:
+        pattern: ghidra-distributions-*
+        path: dist/
+        merge-multiple: true
+
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v3.1.0
+      with:
+        inputs: >-
+          ./dist/*.zip
+        upload-signing-artifacts: true
+
+    - name: Upload build artifacts and signatures to GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release upload
+        "$RELEASE_TAG" ./dist/* --clobber
+        --repo '${{ github.repository }}'

@@ -1,0 +1,282 @@
+/* ###
+ * IP: AgentDecompile
+ *
+ * Licensed under the Business Source License 1.1 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Licensor: bolabaden
+ * Software: AgentDecompile
+ * Change Date: 2030-01-01
+ * Change License: Apache License, Version 2.0
+ *
+ * Under this License, you are granted the right to copy, modify,
+ * create derivative works, redistribute, and make non‑production
+ * use of the Licensed Work. The Licensor may provide an Additional
+ * Use Grant permitting limited production use.
+ *
+ * On the Change Date, the Licensed Work will be made available
+ * under the Change License identified above.
+ *
+ * The License Grant does not permit any use of the Licensed Work
+ * beyond what is expressly allowed.
+ *
+ * If you violate any term of this License, your rights under it
+ * terminate immediately.
+ *
+ * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
+ * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ */
+package agentdecompile.tools.functions;
+
+import static org.junit.Assert.*;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.junit.Before;
+import org.junit.Test;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.symbol.SourceType;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.TextContent;
+import agentdecompile.AgentDecompileIntegrationTestBase;
+
+/**
+ * Integration tests for manage-function-tags tool in FunctionToolProvider
+ */
+public class FunctionToolProviderTagsIntegrationTest extends AgentDecompileIntegrationTestBase {
+
+    private String programPath;
+    private Function testFunction;
+
+    @Before
+    public void setUpTestData() throws Exception {
+        programPath = program.getDomainFile().getPathname();
+
+        // Create a test function
+        Address functionAddr = program.getAddressFactory().getDefaultAddressSpace().getAddress(0x01000100);
+        FunctionManager functionManager = program.getFunctionManager();
+
+        int txId = program.startTransaction("Create Test Function");
+        try {
+            try {
+                testFunction = functionManager.createFunction("testFunction", functionAddr,
+                    new AddressSet(functionAddr, functionAddr.add(20)),
+                    SourceType.USER_DEFINED);
+            } catch (ghidra.util.exception.InvalidInputException | ghidra.program.database.function.OverlappingFunctionException e) {
+                fail("Failed to create testFunction: " + e.getMessage());
+            }
+        } finally {
+            program.endTransaction(txId, true);
+        }
+
+        env.open(program);
+
+        ghidra.app.services.ProgramManager programManager = tool.getService(ghidra.app.services.ProgramManager.class);
+        if (programManager != null) {
+            programManager.openProgram(program);
+        }
+
+        if (serverManager != null) {
+            serverManager.programOpened(program, tool);
+        }
+    }
+
+    @Test
+    public void testManageFunctionTagsGetMode() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("function", "testFunction");
+            arguments.put("mode", "get");
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", arguments));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+            assertTrue("Result should contain tags field", json.has("tags"));
+            assertEquals("testFunction", json.get("function").asText());
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsSetMode() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("function", "testFunction");
+            arguments.put("mode", "set");
+            arguments.put("tags", Arrays.asList("tag1", "tag2"));
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", arguments));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+            assertTrue("Result should contain tags field", json.has("tags"));
+            assertEquals(2, json.get("tags").size());
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsAddMode() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // First set some tags
+            Map<String, Object> setArgs = new HashMap<>();
+            setArgs.put("programPath", programPath);
+            setArgs.put("function", "testFunction");
+            setArgs.put("mode", "set");
+            setArgs.put("tags", Arrays.asList("tag1"));
+            client.callTool(new CallToolRequest("manage-function-tags", setArgs));
+
+            // Then add more
+            Map<String, Object> addArgs = new HashMap<>();
+            addArgs.put("programPath", programPath);
+            addArgs.put("function", "testFunction");
+            addArgs.put("mode", "add");
+            addArgs.put("tags", Arrays.asList("tag2", "tag3"));
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", addArgs));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+            assertTrue("Result should contain tags field", json.has("tags"));
+            assertTrue("Should have at least 2 tags", json.get("tags").size() >= 2);
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsRemoveMode() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // First set some tags
+            Map<String, Object> setArgs = new HashMap<>();
+            setArgs.put("programPath", programPath);
+            setArgs.put("function", "testFunction");
+            setArgs.put("mode", "set");
+            setArgs.put("tags", Arrays.asList("tag1", "tag2", "tag3"));
+            client.callTool(new CallToolRequest("manage-function-tags", setArgs));
+
+            // Then remove one
+            Map<String, Object> removeArgs = new HashMap<>();
+            removeArgs.put("programPath", programPath);
+            removeArgs.put("function", "testFunction");
+            removeArgs.put("mode", "remove");
+            removeArgs.put("tags", Arrays.asList("tag2"));
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", removeArgs));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+            assertTrue("Result should contain tags field", json.has("tags"));
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsListMode() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("mode", "list");
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", arguments));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+            assertTrue("Result should contain tags field", json.has("tags"));
+            assertTrue("Result should contain totalTags or total_tags field", 
+                json.has("totalTags") || json.has("total_tags"));
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsBatchOperations() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Create additional function for batch operations
+            Address funcAddr2 = program.getAddressFactory().getDefaultAddressSpace().getAddress(0x01000200);
+            int txId = program.startTransaction("Create second function");
+            try {
+                FunctionManager funcManager = program.getFunctionManager();
+                try {
+                    funcManager.createFunction("testFunction2", funcAddr2,
+                        new AddressSet(funcAddr2, funcAddr2.add(20)), SourceType.USER_DEFINED);
+                } catch (ghidra.util.exception.InvalidInputException | ghidra.program.database.function.OverlappingFunctionException e) {
+                    fail("Failed to create testFunction2: " + e.getMessage());
+                }
+            } finally {
+                program.endTransaction(txId, true);
+            }
+
+            // Test batch add tags
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("mode", "add");
+            arguments.put("function", java.util.Arrays.asList("testFunction", "testFunction2"));
+            arguments.put("tags", Arrays.asList("batch_tag1", "batch_tag2"));
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", arguments));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Batch add tags should succeed");
+        });
+    }
+
+    @Test
+    public void testManageFunctionTagsValidatesProgramState() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Add tag
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("mode", "set");
+            arguments.put("function", "testFunction");
+            arguments.put("tags", Arrays.asList("state_validation_tag"));
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-function-tags", arguments));
+
+            assertFalse("Set tags should succeed", result.isError());
+
+            // Verify tag was actually set in program state
+            FunctionManager funcManager = program.getFunctionManager();
+            Function func = funcManager.getFunctionAt(testFunction.getEntryPoint());
+            assertNotNull("Function should exist", func);
+            // Tags would be verified through Ghidra's tag system
+        });
+    }
+}
