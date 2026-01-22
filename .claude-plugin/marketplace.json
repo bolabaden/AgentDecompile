@@ -1,0 +1,14 @@
+{
+  "name": "agentdecompile",
+  "description": "AgentDecompile - AI-assisted binary analysis and reverse engineering with Ghidra integration",
+  "owner": {
+    "name": "CyberKaida"
+  },
+  "plugins": [
+    {
+      "name": "AgentDecompile",
+      "source": "./AgentDecompile",
+      "description": "AI-assisted binary analysis and reverse engineering with Ghidra integration"
+    }
+  ]
+}

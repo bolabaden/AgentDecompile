@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "AgentDecompile": {
+      "command": "uv",
+      "args": ["run", "mcp-agentdecompile"],
+      "env": {
+        "UV_WORKING_DIRECTORY": "${CLAUDE_PLUGIN_ROOT}/../"
+      }
+    }
+  }
+}
