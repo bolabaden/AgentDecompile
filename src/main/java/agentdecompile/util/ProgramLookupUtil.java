@@ -115,16 +115,30 @@ public class ProgramLookupUtil {
             return program;
         }
 
-        // Get list of available programs for fallback logic
-        List<String> availablePrograms = getAvailableProgramPaths();
+        // Get list of available programs directly as Program objects for reliable fallback logic
+        // This avoids the issue where path-based lookup fails even though the program is available
+        List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
+        List<String> availableProgramPaths = getAvailableProgramPaths();
 
         // FIX 1: If only one program exists in the project or is loaded, use it regardless of input
         // This handles the common case where there's only one program and any input should work
-        if (availablePrograms.size() == 1) {
-            String singleProgramPath = availablePrograms.get(0);
+        if (openPrograms.size() == 1) {
+            Program singleProgram = openPrograms.get(0);
+            if (singleProgram != null && !singleProgram.isClosed()) {
+                String singleProgramPath = singleProgram.getDomainFile().getPathname();
+                Msg.info(ProgramLookupUtil.class, "Only one program available, using '" + singleProgramPath + 
+                         "' instead of requested '" + normalizedPath + "'");
+                return singleProgram;
+            }
+        }
+        
+        // Also check if there's only one program path available in the project
+        // (handles cases where open programs list is empty but project has one program)
+        if (openPrograms.isEmpty() && availableProgramPaths.size() == 1) {
+            String singleProgramPath = availableProgramPaths.get(0);
             Program singleProgram = AgentDecompileProgramManager.getProgramByPath(singleProgramPath);
             if (singleProgram != null && !singleProgram.isClosed()) {
-                Msg.info(ProgramLookupUtil.class, "Only one program available, using '" + singleProgramPath + 
+                Msg.info(ProgramLookupUtil.class, "Only one program available in project, using '" + singleProgramPath + 
                          "' instead of requested '" + normalizedPath + "'");
                 return singleProgram;
             }
@@ -133,34 +147,56 @@ public class ProgramLookupUtil {
         // FIX 2: Check if the requested path matches any available program when normalized
         // This handles cases where the path lookup fails but the path appears in suggestions
         // (e.g., due to subtle differences in how paths are stored vs requested)
-        Program matchedProgram = findExactMatchWithNormalization(normalizedPath, availablePrograms);
+        // Search directly through Program objects to avoid re-lookup failures
+        Program matchedProgram = findExactMatchWithNormalization(normalizedPath, openPrograms);
         if (matchedProgram != null && !matchedProgram.isClosed()) {
             return matchedProgram;
         }
 
         // If not found, build a helpful error message with suggestions
-        String errorMessage = buildErrorMessageWithSuggestions(normalizedPath, availablePrograms);
+        String errorMessage = buildErrorMessageWithSuggestions(normalizedPath, availableProgramPaths);
         throw new ProgramValidationException(errorMessage);
     }
 
     /**
      * Attempt to find an exact match using normalized path comparison.
      * This handles cases where the standard lookup fails but the path should match.
+     * Searches directly through Program objects instead of re-looking up by path.
      *
      * @param requestedPath The normalized requested path
-     * @param availablePrograms List of available program paths
+     * @param openPrograms List of currently open Program objects
      * @return The matched program, or null if no exact match found
      */
-    private static Program findExactMatchWithNormalization(String requestedPath, List<String> availablePrograms) {
+    private static Program findExactMatchWithNormalization(String requestedPath, List<Program> openPrograms) {
         // Try various normalization strategies to find an exact match
-        for (String availablePath : availablePrograms) {
-            if (pathsMatch(requestedPath, availablePath)) {
-                Program program = AgentDecompileProgramManager.getProgramByPath(availablePath);
-                if (program != null && !program.isClosed()) {
-                    Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization: '" + 
-                             requestedPath + "' matched '" + availablePath + "'");
-                    return program;
-                }
+        for (Program program : openPrograms) {
+            if (program == null || program.isClosed()) {
+                continue;
+            }
+            
+            String domainPath = program.getDomainFile().getPathname();
+            String executablePath = program.getExecutablePath();
+            String programName = program.getName();
+            
+            // Check domain path match (always non-null)
+            if (pathsMatch(requestedPath, domainPath)) {
+                Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (domain path): '" + 
+                         requestedPath + "' matched '" + domainPath + "'");
+                return program;
+            }
+            
+            // Check executable path match (may be null)
+            if (executablePath != null && pathsMatch(requestedPath, executablePath)) {
+                Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (executable path): '" + 
+                         requestedPath + "' matched '" + executablePath + "'");
+                return program;
+            }
+            
+            // Check program name match (may be null)
+            if (programName != null && pathsMatch(requestedPath, programName)) {
+                Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (program name): '" + 
+                         requestedPath + "' matched '" + programName + "'");
+                return program;
             }
         }
         return null;
