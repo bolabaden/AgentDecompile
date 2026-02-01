@@ -178,22 +178,22 @@ public class ProgramLookupUtil {
             String executablePath = program.getExecutablePath();
             String programName = program.getName();
             
-            // Check domain path match
+            // Check domain path match (always non-null)
             if (pathsMatch(requestedPath, domainPath)) {
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (domain path): '" + 
                          requestedPath + "' matched '" + domainPath + "'");
                 return program;
             }
             
-            // Check executable path match
-            if (pathsMatch(requestedPath, executablePath)) {
+            // Check executable path match (may be null)
+            if (executablePath != null && pathsMatch(requestedPath, executablePath)) {
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (executable path): '" + 
                          requestedPath + "' matched '" + executablePath + "'");
                 return program;
             }
             
-            // Check program name match
-            if (pathsMatch(requestedPath, programName)) {
+            // Check program name match (may be null)
+            if (programName != null && pathsMatch(requestedPath, programName)) {
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (program name): '" + 
                          requestedPath + "' matched '" + programName + "'");
                 return program;
