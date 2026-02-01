@@ -240,10 +240,10 @@ public class ProgramLookupUtilTest {
      * Helper method to invoke the private buildErrorMessageWithSuggestions method via reflection
      */
     @SuppressWarnings("unchecked")
-    private String invokeBuildErrorMessageWithSuggestions(String requestedPath, java.util.List<String> availablePrograms) throws Exception {
+    private String invokeBuildErrorMessageWithSuggestions(String requestedPath, java.util.List<String> availableProgramPaths) throws Exception {
         Method method = ProgramLookupUtil.class.getDeclaredMethod("buildErrorMessageWithSuggestions", 
             String.class, java.util.List.class);
         method.setAccessible(true);
-        return (String) method.invoke(null, requestedPath, availablePrograms);
+        return (String) method.invoke(null, requestedPath, availableProgramPaths);
     }
 }
