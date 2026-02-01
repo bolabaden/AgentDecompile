@@ -106,33 +106,141 @@ public class ProgramLookupUtil {
             throw new ProgramValidationException("Program path is required when no program is currently active in the Code Browser");
         }
 
-        // First try the standard lookup
-        Program program = AgentDecompileProgramManager.getProgramByPath(programPath);
+        // Normalize the program path (trim whitespace)
+        String normalizedPath = programPath.trim();
+
+        // First try the standard lookup with normalized path
+        Program program = AgentDecompileProgramManager.getProgramByPath(normalizedPath);
         if (program != null && !program.isClosed()) {
             return program;
         }
 
+        // Get list of available programs for fallback logic
+        List<String> availablePrograms = getAvailableProgramPaths();
+
+        // FIX 1: If only one program exists in the project or is loaded, use it regardless of input
+        // This handles the common case where there's only one program and any input should work
+        if (availablePrograms.size() == 1) {
+            String singleProgramPath = availablePrograms.get(0);
+            Program singleProgram = AgentDecompileProgramManager.getProgramByPath(singleProgramPath);
+            if (singleProgram != null && !singleProgram.isClosed()) {
+                Msg.info(ProgramLookupUtil.class, "Only one program available, using '" + singleProgramPath + 
+                         "' instead of requested '" + normalizedPath + "'");
+                return singleProgram;
+            }
+        }
+
+        // FIX 2: Check if the requested path matches any available program when normalized
+        // This handles cases where the path lookup fails but the path appears in suggestions
+        // (e.g., due to subtle differences in how paths are stored vs requested)
+        Program matchedProgram = findExactMatchWithNormalization(normalizedPath, availablePrograms);
+        if (matchedProgram != null && !matchedProgram.isClosed()) {
+            return matchedProgram;
+        }
+
         // If not found, build a helpful error message with suggestions
-        String errorMessage = buildErrorMessageWithSuggestions(programPath);
+        String errorMessage = buildErrorMessageWithSuggestions(normalizedPath, availablePrograms);
         throw new ProgramValidationException(errorMessage);
+    }
+
+    /**
+     * Attempt to find an exact match using normalized path comparison.
+     * This handles cases where the standard lookup fails but the path should match.
+     *
+     * @param requestedPath The normalized requested path
+     * @param availablePrograms List of available program paths
+     * @return The matched program, or null if no exact match found
+     */
+    private static Program findExactMatchWithNormalization(String requestedPath, List<String> availablePrograms) {
+        // Try various normalization strategies to find an exact match
+        for (String availablePath : availablePrograms) {
+            if (pathsMatch(requestedPath, availablePath)) {
+                Program program = AgentDecompileProgramManager.getProgramByPath(availablePath);
+                if (program != null && !program.isClosed()) {
+                    Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization: '" + 
+                             requestedPath + "' matched '" + availablePath + "'");
+                    return program;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Check if two paths match after normalization.
+     * Handles leading/trailing slashes, case sensitivity, and whitespace.
+     *
+     * @param path1 First path
+     * @param path2 Second path
+     * @return true if paths match after normalization
+     */
+    private static boolean pathsMatch(String path1, String path2) {
+        if (path1 == null || path2 == null) {
+            return false;
+        }
+        
+        // Normalize both paths
+        String normalized1 = normalizePath(path1);
+        String normalized2 = normalizePath(path2);
+        
+        // Check exact match after normalization
+        if (normalized1.equals(normalized2)) {
+            return true;
+        }
+        
+        // Also check case-insensitive match (some systems may have case differences)
+        if (normalized1.equalsIgnoreCase(normalized2)) {
+            return true;
+        }
+        
+        // Check if one is the filename of the other
+        String fileName1 = getFileName(normalized1);
+        String fileName2 = getFileName(normalized2);
+        if (fileName1.equals(fileName2) || fileName1.equalsIgnoreCase(fileName2)) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Normalize a path for comparison.
+     *
+     * @param path The path to normalize
+     * @return Normalized path
+     */
+    private static String normalizePath(String path) {
+        if (path == null) {
+            return "";
+        }
+        String normalized = path.trim();
+        // Remove trailing slashes
+        while (normalized.endsWith("/") && normalized.length() > 1) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     /**
      * Build an error message with suggestions for available programs.
      *
      * @param requestedPath The path that was requested but not found
+     * @param availablePrograms List of available program paths (already fetched)
      * @return A helpful error message with suggestions
      */
-    private static String buildErrorMessageWithSuggestions(String requestedPath) {
+    private static String buildErrorMessageWithSuggestions(String requestedPath, List<String> availablePrograms) {
         StringBuilder message = new StringBuilder();
         message.append("Program not found: ").append(requestedPath);
 
-        // Get list of available programs
-        List<String> availablePrograms = getAvailableProgramPaths();
-
         if (!availablePrograms.isEmpty()) {
-            // Try to find similar programs
+            // Try to find similar programs (but filter out exact matches that we already tried)
             List<String> suggestions = findSimilarPrograms(requestedPath, availablePrograms);
+            
+            // FIX 2 continued: Filter out suggestions that are exact matches to avoid
+            // the confusing "not found X, did you mean X?" message
+            suggestions = suggestions.stream()
+                .filter(suggestion -> !pathsMatch(requestedPath, suggestion))
+                .collect(Collectors.toList());
 
             if (!suggestions.isEmpty()) {
                 message.append("\n\nDid you mean one of these?");
