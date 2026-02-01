@@ -109,6 +109,16 @@ public class ProgramLookupUtilTest {
     }
 
     /**
+     * Test pathsMatch with Windows backslash paths
+     */
+    @Test
+    public void testPathsMatch_WindowsBackslash() throws Exception {
+        // Trailing backslash should be handled
+        assertTrue(invokePathsMatch("C:\\program.exe\\", "C:\\program.exe"));
+        assertTrue(invokePathsMatch("C:\\program.exe", "C:\\program.exe\\"));
+    }
+
+    /**
      * Test normalizePath with various inputs
      */
     @Test
@@ -117,6 +127,15 @@ public class ProgramLookupUtilTest {
         assertEquals("/program.exe", invokeNormalizePath("/program.exe/"));
         assertEquals("/program.exe", invokeNormalizePath("/program.exe"));
         assertEquals("", invokeNormalizePath(null));
+    }
+
+    /**
+     * Test normalizePath with Windows backslash paths
+     */
+    @Test
+    public void testNormalizePath_WindowsBackslash() throws Exception {
+        assertEquals("C:\\program.exe", invokeNormalizePath("C:\\program.exe\\"));
+        assertEquals("C:\\folder\\program.exe", invokeNormalizePath("  C:\\folder\\program.exe\\  "));
     }
 
     /**

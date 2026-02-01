@@ -193,10 +193,10 @@ public class ProgramLookupUtil {
             return true;
         }
         
-        // Check if one is the filename of the other
+        // Check if one is the filename of the other (case-insensitive)
         String fileName1 = getFileName(normalized1);
         String fileName2 = getFileName(normalized2);
-        if (fileName1.equals(fileName2) || fileName1.equalsIgnoreCase(fileName2)) {
+        if (fileName1.equalsIgnoreCase(fileName2)) {
             return true;
         }
         
@@ -205,6 +205,7 @@ public class ProgramLookupUtil {
 
     /**
      * Normalize a path for comparison.
+     * Handles both forward slashes (Unix) and backslashes (Windows).
      *
      * @param path The path to normalize
      * @return Normalized path
@@ -214,8 +215,8 @@ public class ProgramLookupUtil {
             return "";
         }
         String normalized = path.trim();
-        // Remove trailing slashes
-        while (normalized.endsWith("/") && normalized.length() > 1) {
+        // Remove trailing slashes (both forward and backslash for cross-platform support)
+        while ((normalized.endsWith("/") || normalized.endsWith("\\")) && normalized.length() > 1) {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
         return normalized;
@@ -233,18 +234,16 @@ public class ProgramLookupUtil {
         message.append("Program not found: ").append(requestedPath);
 
         if (!availablePrograms.isEmpty()) {
-            // Try to find similar programs (but filter out exact matches that we already tried)
-            List<String> suggestions = findSimilarPrograms(requestedPath, availablePrograms);
-            
             // FIX 2 continued: Filter out suggestions that are exact matches to avoid
             // the confusing "not found X, did you mean X?" message
-            suggestions = suggestions.stream()
+            List<String> filteredSuggestions = findSimilarPrograms(requestedPath, availablePrograms)
+                .stream()
                 .filter(suggestion -> !pathsMatch(requestedPath, suggestion))
                 .collect(Collectors.toList());
 
-            if (!suggestions.isEmpty()) {
+            if (!filteredSuggestions.isEmpty()) {
                 message.append("\n\nDid you mean one of these?");
-                for (String suggestion : suggestions) {
+                for (String suggestion : filteredSuggestions) {
                     message.append("\n  - ").append(suggestion);
                 }
             } else {
