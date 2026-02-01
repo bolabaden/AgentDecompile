@@ -14,6 +14,11 @@ __pycache__
 # Java heap dump files
 *.hprof
 
+# Gradle wrapper files (project uses system gradle)
+gradlew
+gradlew.bat
+gradle/wrapper/
+
 # AgentDecompile local project directories
 .agentdecompile/
 .history/
