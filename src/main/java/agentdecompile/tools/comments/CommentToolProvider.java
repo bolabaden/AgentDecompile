@@ -831,7 +831,9 @@ public class CommentToolProvider extends AbstractToolProvider {
             AddressIterator commentAddrs = listing.getCommentAddressIterator(
                 type, program.getMemory(), true);
 
-            while (commentAddrs.hasNext() && results.size() < maxResults) {
+            while (commentAddrs.hasNext()) {
+                if (results.size() >= maxResults) break;
+                
                 Address addr = commentAddrs.next();
                 String comment = listing.getComment(type, addr);
 
@@ -900,7 +902,10 @@ public class CommentToolProvider extends AbstractToolProvider {
             List<Map<String, Object>> searchResults = new ArrayList<>();
             try {
                 FunctionIterator functions = functionManager.getFunctions(true);
-                while (functions.hasNext() && searchResults.size() < maxResults) {
+                while (functions.hasNext()) {
+                    if (searchResults.size() >= maxResults) {
+                        break;
+                    }
                     Function function = functions.next();
 
                     if (function.isExternal()) {
@@ -922,7 +927,10 @@ public class CommentToolProvider extends AbstractToolProvider {
                             String decompCode = decompiledFunction.getC();
                             String[] lines = decompCode.split("\n");
 
-                            for (int i = 0; i < lines.length && searchResults.size() < maxResults; i++) {
+                            for (int i = 0; i < lines.length; i++) {
+                                if (searchResults.size() >= maxResults) {
+                                    break;
+                                }
                                 String line = lines[i];
                                 Matcher matcher = regex.matcher(line);
 
