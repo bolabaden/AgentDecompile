@@ -411,6 +411,10 @@ public class ProgramLookupUtil {
         if (lastSlash >= 0 && lastSlash < path.length() - 1) {
             return path.substring(lastSlash + 1);
         }
+        // If path is "/" or ends with "/", return empty string
+        if ("/".equals(path) || path.endsWith("/")) {
+            return "";
+        }
         return path;
     }
 }

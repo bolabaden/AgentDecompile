@@ -159,6 +159,8 @@ public class StructureToolProvider extends AbstractToolProvider {
         properties.put("force", SchemaUtil.booleanPropertyWithDefault("Force deletion even if structure is referenced when action='delete'", false));
         properties.put("nameFilter", SchemaUtil.stringProperty("Filter by name (substring match) when action='list'"));
         properties.put("includeBuiltIn", SchemaUtil.booleanPropertyWithDefault("Include built-in types when action='list'", false));
+        properties.put("maxCount", SchemaUtil.integerPropertyWithDefault("Maximum number of data types to return when action='list'", 50));
+        properties.put("startIndex", SchemaUtil.integerPropertyWithDefault("Starting index for pagination when action='list'", 0));
         properties.put("preserveSize", SchemaUtil.booleanPropertyWithDefault("When true, fails if batch add_field would grow structure beyond original size. Use with structures created with explicit size parameter.", false));
         properties.put("useReplace", SchemaUtil.booleanPropertyWithDefault("When true with add_field, use replaceAtOffset instead of insertAtOffset to avoid shifting/growing. Recommended for non-packed structures with explicit offsets.", true));
 
@@ -782,9 +784,13 @@ public class StructureToolProvider extends AbstractToolProvider {
         Program program = getProgramFromArgs(request);
         String nameFilter = getOptionalString(request, "nameFilter", null);
         boolean includeBuiltIn = getOptionalBoolean(request, "includeBuiltIn", false);
+        int maxCount = getOptionalInt(request, "maxCount", 50);
+        int startIndex = getOptionalInt(request, "startIndex", 0);
 
         DataTypeManager dtm = program.getDataTypeManager();
         List<Map<String, Object>> structures = new ArrayList<>();
+        int totalCount = 0;
+        int currentIndex = 0;
 
         Iterator<DataType> iter = dtm.getAllDataTypes();
         while (iter.hasNext()) {
@@ -796,12 +802,24 @@ public class StructureToolProvider extends AbstractToolProvider {
             if (nameFilter != null && !dt.getName().toLowerCase().contains(nameFilter.toLowerCase())) {
                 continue;
             }
-            structures.add(createStructureInfo(dt));
+            
+            totalCount++;
+            if (currentIndex >= startIndex && structures.size() < maxCount) {
+                structures.add(createStructureInfo(dt));
+            }
+            currentIndex++;
         }
 
         Map<String, Object> result = new HashMap<>();
         result.put("structures", structures);
         result.put("count", structures.size());
+        result.put("totalCount", totalCount);
+        result.put("startIndex", startIndex);
+        result.put("maxCount", maxCount);
+        if (startIndex + maxCount < totalCount) {
+            result.put("hasMore", true);
+            result.put("nextStartIndex", startIndex + maxCount);
+        }
         return createJsonResult(result);
     }
 

@@ -172,7 +172,7 @@ public class BookmarkToolProviderTest {
         Map<String, Object> args = new HashMap<>();
         args.put("programPath", "/test/program");
         args.put("action", "set");
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.put("type", "Note");
         args.put("category", "test");
         args.put("comment", "Test bookmark");
@@ -185,7 +185,7 @@ public class BookmarkToolProviderTest {
         }
 
         // Missing address should throw
-        args.remove("address");
+        args.remove("addressOrSymbol");
         try {
             validateSetActionArgs(args);
             fail("Should throw exception for missing address in set action");
@@ -196,7 +196,7 @@ public class BookmarkToolProviderTest {
         }
 
         // Missing type should throw
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.remove("type");
         try {
             validateSetActionArgs(args);
@@ -238,7 +238,7 @@ public class BookmarkToolProviderTest {
         Map<String, Object> args = new HashMap<>();
         args.put("programPath", "/test/program");
         args.put("action", "remove");
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.put("type", "Note");
         args.put("category", "test");
 
@@ -250,7 +250,7 @@ public class BookmarkToolProviderTest {
         }
 
         // Missing address should throw
-        args.remove("address");
+        args.remove("addressOrSymbol");
         try {
             validateRemoveActionArgs(args);
             fail("Should throw exception for missing address in remove action");
@@ -261,7 +261,7 @@ public class BookmarkToolProviderTest {
         }
 
         // Missing type should throw
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.remove("type");
         try {
             validateRemoveActionArgs(args);
@@ -347,7 +347,7 @@ public class BookmarkToolProviderTest {
         }
 
         // address is optional for get action
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         try {
             validateGetActionArgs(args);
             // Should not throw - address is optional
@@ -421,8 +421,8 @@ public class BookmarkToolProviderTest {
     private void validateSetActionArgs(Map<String, Object> args) {
         String action = (String) args.get("action");
         if ("set".equals(action)) {
-            if (args.get("address") == null && args.get("addressOrSymbol") == null) {
-                throw new IllegalArgumentException("address is required for action='set'");
+            if (args.get("addressOrSymbol") == null) {
+                throw new IllegalArgumentException("addressOrSymbol is required for action='set'");
             }
             if (args.get("type") == null) {
                 throw new IllegalArgumentException("type is required for action='set'");
@@ -439,8 +439,8 @@ public class BookmarkToolProviderTest {
     private void validateRemoveActionArgs(Map<String, Object> args) {
         String action = (String) args.get("action");
         if ("remove".equals(action)) {
-            if (args.get("address") == null && args.get("addressOrSymbol") == null) {
-                throw new IllegalArgumentException("address is required for action='remove'");
+            if (args.get("addressOrSymbol") == null) {
+                throw new IllegalArgumentException("addressOrSymbol is required for action='remove'");
             }
             if (args.get("type") == null) {
                 throw new IllegalArgumentException("type is required for action='remove'");

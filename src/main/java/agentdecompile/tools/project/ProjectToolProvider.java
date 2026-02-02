@@ -2270,7 +2270,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
                 if (!projectWasAlreadyOpen) {
                     try {
                         // Save project - upgrades are automatically handled
-                        String saveMsg = "Project opened (upgrades handled automatically)";
+                        String saveMsg = "Project opened";
                         Msg.info(this, saveMsg);
                         logCollector.addLog("INFO", saveMsg);
                     } catch (Exception saveException) {

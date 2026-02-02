@@ -102,15 +102,10 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         ));
         properties.put("programPath", programPathProperty);
         Map<String, Object> identifierProperty = new HashMap<>();
-        identifierProperty.put("type", "string");
-        identifierProperty.put("description", "Function name or address (e.g., 'main' or '0x401000'). Can be a single string or an array of strings for batch operations. When omitted, returns all functions.");
-        Map<String, Object> identifierArraySchema = new HashMap<>();
-        identifierArraySchema.put("type", "array");
-        identifierArraySchema.put("items", Map.of("type", "string"));
-        identifierArraySchema.put("description", "Array of function names or addresses for batch operations");
+        identifierProperty.put("description", "Function name or address (e.g., 'main' or '0x401000'). Can be a single string, an array of strings, or a JSON-encoded array string for batch operations. When omitted, returns all functions.");
         identifierProperty.put("oneOf", List.of(
-            Map.of("type", "string"),
-            identifierArraySchema
+            Map.of("type", "string", "description", "Single function identifier (name or address) or JSON-encoded array of identifiers"),
+            Map.of("type", "array", "items", Map.of("type", "string"), "description", "Array of function names or addresses for batch operations")
         ));
         properties.put("identifier", identifierProperty);
         properties.put("view", Map.of(
@@ -193,15 +188,33 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 }
 
                 // Check if identifier is an array
-                // Also check if the first element is itself a list (nested case)
+                // Handle case where identifier might be a JSON-encoded array string
                 Object identifierValue = identifierList.get(0);
                 if (identifierList.size() > 1 || (identifierValue instanceof List)) {
                     // Batch mode: use the list directly, or unwrap if nested
                     List<?> batchList = identifierList.size() > 1 ? identifierList : (List<?>) identifierValue;
                     return handleBatchGetFunction(program, request, batchList);
+                } else if (identifierValue instanceof String identifierStr) {
+                    // Check if it's a JSON-encoded array string
+                    if (identifierStr.trim().startsWith("[") && identifierStr.trim().endsWith("]")) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<String> parsedList = JSON.readValue(identifierStr, List.class);
+                            if (parsedList.size() > 1) {
+                                return handleBatchGetFunction(program, request, parsedList);
+                            } else if (parsedList.size() == 1) {
+                                identifierValue = parsedList.get(0);
+                            }
+                        } catch (JsonProcessingException e) {
+                            // Not a valid JSON array, treat as regular string identifier
+                        }
+                    }
                 }
 
-                // Single function mode
+                // Single function mode - ensure we have a valid identifier
+                if (identifierValue == null) {
+                    return createErrorResult("Invalid identifier value");
+                }
                 String identifier = identifierValue.toString();
                 String view = getOptionalString(request, "view", "decompile");
 
@@ -649,11 +662,8 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                     continue;
                 }
 
+                // For batch operations, get the full result for each function
                 Map<String, Object> functionResult = new HashMap<>();
-                functionResult.put("index", i);
-                functionResult.put("identifier", identifier);
-                functionResult.put("name", function.getName());
-                functionResult.put("address", AddressUtil.formatAddress(function.getEntryPoint()));
 
                 switch (view) {
                     case "decompile" -> {
@@ -703,24 +713,16 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                     }
                 }
 
-                results.add(functionResult);
+                if (!functionResult.isEmpty()) {
+                    results.add(functionResult);
+                }
             } catch (Exception e) {
                 errors.add(Map.of("index", i, "identifier", identifierList.get(i).toString(), "error", e.getMessage()));
             }
         }
 
-        Map<String, Object> resultData = new HashMap<>();
-        resultData.put("success", true);
-        resultData.put("view", view);
-        resultData.put("total", identifierList.size());
-        resultData.put("succeeded", results.size());
-        resultData.put("failed", errors.size());
-        resultData.put("results", results);
-        if (!errors.isEmpty()) {
-            resultData.put("errors", errors);
-        }
-
-        return createJsonResult(resultData);
+        // Return direct array of results when batch mode is used
+        return createJsonResult(results);
     }
 
     /**

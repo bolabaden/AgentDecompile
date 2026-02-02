@@ -224,9 +224,13 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             addArgs.put("programPath", program_path);
             addArgs.put("action", "add_field");
             addArgs.put("structureName", "TestFieldStruct");
-            addArgs.put("fieldName", "myField");
-            addArgs.put("dataType", "int");
-            addArgs.put("comment", "Test field");
+            List<Map<String, Object>> fields = new ArrayList<>();
+            Map<String, Object> field = new HashMap<>();
+            field.put("fieldName", "myField");
+            field.put("dataType", "int");
+            field.put("comment", "Test field");
+            fields.add(field);
+            addArgs.put("fields", fields);
 
             CallToolResult result = client.callTool(new CallToolRequest("manage-structures", addArgs));
 
@@ -236,7 +240,7 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             TextContent content = (TextContent) result.content().get(0);
             JsonNode json = parseJsonContent(content.text());
 
-            assertEquals("Successfully added field: myField", json.get("message").asText());
+            assertEquals("Successfully added 1 field(s) to structure: TestFieldStruct", json.get("message").asText());
 
             // Verify field was added
             DataType dt = findDataTypeByName(program.getDataTypeManager(), "TestFieldStruct");
@@ -398,7 +402,7 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             // List structures
             Map<String, Object> listArgs = new HashMap<>();
             listArgs.put("programPath", program_path);
-            listArgs.put("action", "list");
+            listArgs.put("action", "info");
 
             CallToolResult result = client.callTool(new CallToolRequest("manage-structures", listArgs));
 
@@ -570,9 +574,13 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             addArgs1.put("programPath", program_path);
             addArgs1.put("action", "add_field");
             addArgs1.put("structureName", "LargeStruct");
-            addArgs1.put("fieldName", "firstField");
-            addArgs1.put("dataType", "int");
-            addArgs1.put("offset", 0);
+            List<Map<String, Object>> fields1 = new ArrayList<>();
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "firstField");
+            field1.put("dataType", "int");
+            field1.put("offset", 0);
+            fields1.add(field1);
+            addArgs1.put("fields", fields1);
 
             client.callTool(new CallToolRequest("manage-structures", addArgs1));
 
@@ -580,9 +588,13 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             addArgs2.put("programPath", program_path);
             addArgs2.put("action", "add_field");
             addArgs2.put("structureName", "LargeStruct");
-            addArgs2.put("fieldName", "lastField");
-            addArgs2.put("dataType", "int");
-            addArgs2.put("offset", 96); // Near the end
+            List<Map<String, Object>> fields2 = new ArrayList<>();
+            Map<String, Object> field2 = new HashMap<>();
+            field2.put("fieldName", "lastField");
+            field2.put("dataType", "int");
+            field2.put("offset", 96); // Near the end
+            fields2.add(field2);
+            addArgs2.put("fields", fields2);
 
             client.callTool(new CallToolRequest("manage-structures", addArgs2));
 
@@ -679,8 +691,12 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             modifyArgs.put("programPath", program_path);
             modifyArgs.put("action", "modify_field");
             modifyArgs.put("structureName", "ModifyTest1");
-            modifyArgs.put("fieldName", "field1");
-            modifyArgs.put("newDataType", "int *");
+            List<Map<String, Object>> fields = new ArrayList<>();
+            Map<String, Object> field = new HashMap<>();
+            field.put("fieldName", "field1");
+            field.put("dataType", "int *");
+            fields.add(field);
+            modifyArgs.put("fields", fields);
 
             CallToolResult modifyResult = client.callTool(new CallToolRequest("manage-structures", modifyArgs));
             assertMcpResultNotError(modifyResult, "Field modification should succeed");
@@ -688,7 +704,7 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             TextContent content = (TextContent) modifyResult.content().get(0);
             JsonNode json = parseJsonContent(content.text());
             String message = json.get("message").asText();
-            assertTrue("Should indicate successful field modification", message.contains("Successfully modified field"));
+            assertTrue("Should indicate successful field modification", message.contains("Successfully modified 1 field(s)"));
 
             // Verify the field was actually modified in the program
             dt = findDataTypeByName(dtm, "ModifyTest1");
@@ -722,8 +738,12 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             modifyArgs.put("programPath", program_path);
             modifyArgs.put("action", "modify_field");
             modifyArgs.put("structureName", "ModifyTest2");
-            modifyArgs.put("fieldName", "oldName");
-            modifyArgs.put("newFieldName", "newName");
+            List<Map<String, Object>> fields = new ArrayList<>();
+            Map<String, Object> field = new HashMap<>();
+            field.put("fieldName", "oldName");
+            field.put("newFieldName", "newName");
+            fields.add(field);
+            modifyArgs.put("fields", fields);
 
             CallToolResult modifyResult = client.callTool(new CallToolRequest("manage-structures", modifyArgs));
             assertMcpResultNotError(modifyResult, "Field rename should succeed");
@@ -762,9 +782,12 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             modifyArgs.put("programPath", program_path);
             modifyArgs.put("action", "modify_field");
             modifyArgs.put("structureName", "ModifyTest3");
-            modifyArgs.put("fieldName", "field2");
-            modifyArgs.put("offset", field2Offset);
-            modifyArgs.put("newDataType", "short");
+            List<Map<String, Object>> fields = new ArrayList<>();
+            Map<String, Object> field = new HashMap<>();
+            field.put("offset", field2Offset);
+            field.put("dataType", "short");
+            fields.add(field);
+            modifyArgs.put("fields", fields);
 
             CallToolResult modifyResult = client.callTool(new CallToolRequest("manage-structures", modifyArgs));
             assertMcpResultNotError(modifyResult, "Field modification by offset should succeed");
@@ -944,7 +967,7 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
             // List with name filter
             Map<String, Object> listArgs = new HashMap<>();
             listArgs.put("programPath", program_path);
-            listArgs.put("action", "list");
+            listArgs.put("action", "info");
             listArgs.put("nameFilter", "FilterTest");
             listArgs.put("includeBuiltIn", false);
 

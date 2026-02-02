@@ -158,55 +158,75 @@ Map<String, Object> bitfield = new HashMap<>();
 bitfield.put("bitSize", 3);      // 3 bits for this field
 bitfield.put("bitOffset", 0);    // Optional bit offset within byte
 
+Map<String, Object> field = new HashMap<>();
+field.put("fieldName", "priority");
+field.put("dataType", "uchar");   // Base type for bitfield
+field.put("bitfield", bitfield);
+field.put("comment", "Priority level (0-7)");
+
 Map<String, Object> args = new HashMap<>();
 args.put("programPath", programPath);
 args.put("structureName", "Flags");
-args.put("fieldName", "priority");
-args.put("dataType", "uchar");   // Base type for bitfield
-args.put("bitfield", bitfield);
-args.put("comment", "Priority level (0-7)");
+args.put("fields", List.of(field));
 ```
 
 #### Modifying Existing Fields
-The `modify-structure-field` tool provides flexible field modification capabilities:
+The `modify_field` action modifies one or more fields in a structure using the `fields` array parameter:
 
 ```java
-// Modify field data type
+// Batch modify multiple fields
+List<Map<String, Object>> modifications = new ArrayList<>();
+
+// Modification 1: Change data type by name
+Map<String, Object> mod1 = new HashMap<>();
+mod1.put("fieldName", "magic");
+mod1.put("dataType", "uint64");  // Change from uint32
+modifications.add(mod1);
+
+// Modification 2: Rename field
+Map<String, Object> mod2 = new HashMap<>();
+mod2.put("fieldName", "oldName");
+mod2.put("newFieldName", "newName");
+modifications.add(mod2);
+
+// Modification 3: Modify by offset with comment
+Map<String, Object> mod3 = new HashMap<>();
+mod3.put("offset", 16);
+mod3.put("dataType", "MouseDevice *");
+mod3.put("comment", "Pointer to mouse input device");
+modifications.add(mod3);
+
+// Modification 4: Resize field
+Map<String, Object> mod4 = new HashMap<>();
+mod4.put("fieldName", "buffer");
+mod4.put("newLength", 512);  // Resize to 512 bytes
+modifications.add(mod4);
+
 Map<String, Object> args = new HashMap<>();
 args.put("programPath", programPath);
 args.put("structureName", "NetworkPacket");
-args.put("fieldName", "magic");          // Identify by field name
-args.put("newDataType", "uint64");       // Change from uint32 to uint64
-
-// OR identify by offset
-args.put("offset", 0);                   // Identify by byte offset instead
-args.put("newDataType", "uint64");
-
-// Rename a field
-args.put("fieldName", "oldFieldName");
-args.put("newFieldName", "newFieldName");
-
-// Update field comment
-args.put("fieldName", "timestamp");
-args.put("newComment", "Unix timestamp in milliseconds");
-
-// Change field length (advanced)
-args.put("fieldName", "buffer");
-args.put("newLength", 512);              // Resize from 256 to 512 bytes
-
-// Multiple modifications at once
-args.put("fieldName", "devicePtr");
-args.put("newDataType", "MouseDevice *"); // Change type
-args.put("newFieldName", "mouseDevice");  // And rename
-args.put("newComment", "Pointer to mouse input device");
+args.put("fields", modifications);  // Use fields array
 ```
 
+**Batch Mode Features:**
+- All modifications processed in a single transaction
+- Identify fields by `fieldName` OR `offset`
+- Supports modifying: data type, name, comment, and length
+- Returns per-field status including success/failure details
+- Failures are reported without aborting other modifications
+
+**Field Modification Properties:**
+- `fieldName` (optional) - Field name to identify target field
+- `offset` (optional) - Byte offset to identify target field (use if name unknown)
+- `dataType` (optional) - New data type for the field
+- `newFieldName` (optional) - Rename the field
+- `comment` (optional) - Update field comment
+- `newLength` (optional) - Resize field (advanced)
+
 **Key features:**
-- Identify fields by name OR offset
-- Supports modifying data type, name, comment, and length
-- At least one modification parameter is required
 - Non-destructive: preserves structure references in functions
 - Transaction-based with automatic rollback on errors
+- At least one modification property required per field object
 
 #### Modifying Structures from C Definitions
 The `modify-structure-from-c` tool enables complex structural changes using C syntax:

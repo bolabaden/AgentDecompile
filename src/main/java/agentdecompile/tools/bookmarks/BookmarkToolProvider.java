@@ -77,8 +77,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                 "description", "Action to perform: 'set', 'get', 'search', 'remove', 'remove_all', or 'categories'",
                 "enum", List.of("set", "get", "search", "remove", "remove_all", "categories")
         ));
-        properties.put("address", SchemaUtil.stringProperty("Address where to set/get/remove the bookmark (required for set/remove, optional for get)"));
-        properties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name (alternative parameter name)"));
+        properties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name where to set/get/remove the bookmark (required for set/remove, optional for get)"));
         properties.put("type", SchemaUtil.stringProperty("Bookmark type enum ('Note', 'Warning', 'TODO', 'Bug', 'Analysis'; required for set/remove, optional for get/categories)"));
         properties.put("category", SchemaUtil.stringProperty("Bookmark category for organization (required for set, optional for remove; can be empty string)"));
         properties.put("comment", SchemaUtil.stringProperty("Bookmark comment text (required for set when not using batch mode)"));
@@ -86,16 +85,16 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         Map<String, Object> bookmarkItemSchema = new HashMap<>();
         bookmarkItemSchema.put("type", "object");
         Map<String, Object> bookmarkItemProperties = new HashMap<>();
-        bookmarkItemProperties.put("address", SchemaUtil.stringProperty("Address or symbol name where to set the bookmark"));
+        bookmarkItemProperties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name where to set the bookmark"));
         bookmarkItemProperties.put("type", SchemaUtil.stringProperty("Bookmark type enum ('Note', 'Warning', 'TODO', 'Bug', 'Analysis')"));
         bookmarkItemProperties.put("category", SchemaUtil.stringProperty("Bookmark category for organization (can be empty string)"));
         bookmarkItemProperties.put("comment", SchemaUtil.stringProperty("Bookmark comment text"));
         bookmarkItemSchema.put("properties", bookmarkItemProperties);
-        bookmarkItemSchema.put("required", List.of("address", "type", "comment"));
+        bookmarkItemSchema.put("required", List.of("addressOrSymbol", "type", "comment"));
 
         Map<String, Object> bookmarksArraySchema = new HashMap<>();
         bookmarksArraySchema.put("type", "array");
-        bookmarksArraySchema.put("description", "Array of bookmark objects for batch setting. Each object should have 'address' (required), 'type' (required), 'comment' (required), and optional 'category'. When provided, sets multiple bookmarks in a single transaction.");
+        bookmarksArraySchema.put("description", "Array of bookmark objects for batch setting. Each object should have 'addressOrSymbol' (required), 'type' (required), 'comment' (required), and optional 'category'. When provided, sets multiple bookmarks in a single transaction.");
         bookmarksArraySchema.put("items", bookmarkItemSchema);
         properties.put("bookmarks", bookmarksArraySchema);
         properties.put("searchText", SchemaUtil.stringProperty("Text to search for in bookmark comments when action='search' (optional - if not provided or empty, returns all bookmarks up to maxResults)"));
@@ -181,12 +180,9 @@ public class BookmarkToolProvider extends AbstractToolProvider {
             return handleBatchSetBookmarks(program, bookmarksArray);
         }
 
-        String addressStr = getOptionalString(request, "address", null);
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
         if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
-        if (addressStr == null) {
-            return createErrorResult("address is required for action='set' (or use 'bookmarks' array for batch mode)");
+            return createErrorResult("addressOrSymbol is required for action='set' (or use 'bookmarks' array for batch mode)");
         }
         Address address = AddressUtil.resolveAddressOrSymbol(program, addressStr);
         if (address == null) {
@@ -265,9 +261,9 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     Map<String, Object> bookmarkObj = bookmarksArray.get(i);
 
                     // Extract address
-                    Object addressObj = bookmarkObj.get("address");
+                    Object addressObj = bookmarkObj.get("addressOrSymbol");
                     if (addressObj == null) {
-                        errors.add(createErrorInfo(i, "Missing 'address' field in bookmark object"));
+                        errors.add(createErrorInfo(i, "Missing 'addressOrSymbol' field in bookmark object"));
                         continue;
                     }
                     String addressStr = addressObj.toString();
@@ -367,10 +363,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
      * @return The result
      */
     private McpSchema.CallToolResult handleGetBookmarks(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
-        String addressStr = getOptionalString(request, "address", null);
-        if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
         String typeFilter = getOptionalString(request, "type", null);
         String categoryFilter = getOptionalString(request, "category", null);
 
@@ -470,12 +463,9 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         }
 
         // Single bookmark removal
-        String addressStr = getOptionalString(request, "address", null);
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
         if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
-        if (addressStr == null) {
-            return createErrorResult("address is required for action='remove' (or use 'bookmarks' array for batch mode, or 'remove_all=true' to remove all)");
+            return createErrorResult("addressOrSymbol is required for action='remove' (or use 'bookmarks' array for batch mode, or 'remove_all=true' to remove all)");
         }
         Address address = AddressUtil.resolveAddressOrSymbol(program, addressStr);
         if (address == null) {
@@ -532,9 +522,9 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     Map<String, Object> bookmarkObj = bookmarksArray.get(i);
 
                     // Extract address
-                    Object addressObj = bookmarkObj.get("address");
+                    Object addressObj = bookmarkObj.get("addressOrSymbol");
                     if (addressObj == null) {
-                        errors.add(createErrorInfo(i, "Missing 'address' field in bookmark object"));
+                        errors.add(createErrorInfo(i, "Missing 'addressOrSymbol' field in bookmark object"));
                         continue;
                     }
                     String addressStr = addressObj.toString();
