@@ -611,10 +611,18 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 "type", "string",
                 "description", "Path in the Ghidra Project to the source program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser."
         ));
-        properties.put("functionIdentifier", Map.of(
-                "type", "string",
-                "description", "Function name or address to match. If provided, only matches and transfers metadata for this specific function. If omitted, matches and transfers all functions from the source program."
+        Map<String, Object> functionIdentifierProperty = new HashMap<>();
+        functionIdentifierProperty.put("type", "string");
+        functionIdentifierProperty.put("description", "Function name or address to match. Can be a single string or an array of strings for batch operations. If omitted, matches and transfers all functions from the source program.");
+        Map<String, Object> functionIdentifierArraySchema = new HashMap<>();
+        functionIdentifierArraySchema.put("type", "array");
+        functionIdentifierArraySchema.put("items", Map.of("type", "string"));
+        functionIdentifierArraySchema.put("description", "Array of function names or addresses for batch matching");
+        functionIdentifierProperty.put("oneOf", List.of(
+                Map.of("type", "string"),
+                functionIdentifierArraySchema
         ));
+        properties.put("functionIdentifier", functionIdentifierProperty);
         properties.put("targetProgramPaths", Map.of(
                 "type", "array",
                 "description", "List of programPath values to search/transfer to. If omitted, searches/transfers to all open programs except source.",
@@ -1003,6 +1011,260 @@ public class FunctionToolProvider extends AbstractToolProvider {
         return createJsonResult(result);
     }
 
+    /**
+     * Handle batch matching of multiple functions
+     */
+    private McpSchema.CallToolResult handleBatchMatchFunction(Program sourceProgram, CallToolRequest request, List<?> functionIdentifiers) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        
+        for (int i = 0; i < functionIdentifiers.size(); i++) {
+            try {
+                String identifier = functionIdentifiers.get(i).toString();
+                
+                // Resolve function
+                Function sourceFunction = null;
+                Address address = AddressUtil.resolveAddressOrSymbol(sourceProgram, identifier);
+                if (address != null) {
+                    sourceFunction = sourceProgram.getFunctionManager().getFunctionAt(address);
+                }
+                if (sourceFunction == null) {
+                    // Try by name
+                    FunctionManager fm = sourceProgram.getFunctionManager();
+                    FunctionIterator iter = fm.getFunctions(true);
+                    while (iter.hasNext()) {
+                        Function f = iter.next();
+                        if (f.getName().equals(identifier)) {
+                            sourceFunction = f;
+                            break;
+                        }
+                    }
+                }
+                
+                if (sourceFunction == null) {
+                    errors.add(Map.of("index", i, "identifier", identifier, "error", "Function not found"));
+                    continue;
+                }
+                
+                // Create a sub-request for this function
+                Map<String, Object> subArgs = new HashMap<>(request.arguments());
+                subArgs.put("functionIdentifier", identifier);
+                CallToolRequest subRequest = new CallToolRequest("match-function", subArgs);
+                
+                // Execute single function match (reuse existing logic)
+                McpSchema.CallToolResult subResult = executeSingleFunctionMatch(sourceProgram, subRequest, sourceFunction);
+                
+                if (subResult.isError()) {
+                    errors.add(Map.of("index", i, "identifier", identifier, "error", "Match failed"));
+                } else {
+                    results.add(Map.of("index", i, "identifier", identifier, "result", "Processed"));
+                }
+            } catch (Exception e) {
+                errors.add(Map.of("index", i, "identifier", functionIdentifiers.get(i).toString(), "error", e.getMessage()));
+            }
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("batchOperation", true);
+        result.put("results", results);
+        result.put("totalProcessed", results.size());
+        if (!errors.isEmpty()) {
+            result.put("errors", errors);
+        }
+        return createJsonResult(result);
+    }
+    
+    /**
+     * Execute single function match (extracted for reuse in batch)
+     */
+    private McpSchema.CallToolResult executeSingleFunctionMatch(Program sourceProgram, CallToolRequest request, Function sourceFunction) {
+        // Extract match parameters
+        int maxInstructions = getOptionalInt(request, "maxInstructions", FunctionFingerprintUtil.DEFAULT_MAX_INSTRUCTIONS);
+        double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.85);
+        boolean propagateNames = getOptionalBoolean(request, "propagateNames", true);
+        boolean propagateTags = getOptionalBoolean(request, "propagateTags", true);
+        boolean propagateComments = getOptionalBoolean(request, "propagateComments", false);
+        boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
+        boolean dryRun = getOptionalBoolean(request, "dryRun", false);
+        int maxFunctions = getOptionalInt(request, "maxFunctions", 0);
+        int batchSize = getOptionalInt(request, "batchSize", 100);
+        
+        @SuppressWarnings("unchecked")
+        List<String> targetProgramPaths = (List<String>) getParameterValue(request.arguments(), "targetProgramPaths");
+        if (targetProgramPaths != null && targetProgramPaths instanceof List == false) {
+            targetProgramPaths = null;
+        }
+        
+        List<Program> targetPrograms = resolveTargetProgramsForMatching(targetProgramPaths);
+        targetPrograms = targetPrograms.stream()
+                .filter(p -> !p.equals(sourceProgram))
+                .toList();
+        
+        if (targetPrograms.isEmpty()) {
+            return createErrorResult("No target programs available for matching");
+        }
+        
+        // Perform matching with existing logic (simplified extraction)
+        return performFunctionMatching(sourceProgram, sourceFunction, targetPrograms, maxInstructions, 
+                minSimilarity, propagateNames, propagateTags, propagateComments, filterDefaultNames, dryRun);
+    }
+    
+    /**
+     * Perform actual function matching operation
+     */
+    @SuppressWarnings("unused")
+    private McpSchema.CallToolResult performFunctionMatching(Program sourceProgram, Function sourceFunction,
+            List<Program> targetPrograms, int maxInstructions, double minSimilarity, boolean propagateNames,
+            boolean propagateTags, boolean propagateComments, boolean filterDefaultNames, boolean dryRun) {
+        
+        // Compute fingerprint for source function
+        String fingerprint = FunctionFingerprintUtil.computeFingerprint(sourceProgram, sourceFunction, maxInstructions);
+        if (fingerprint == null) {
+            return createErrorResult("Failed to compute fingerprint for function: " + sourceFunction.getName());
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("sourceFunction", sourceFunction.getName());
+        result.put("sourceAddress", AddressUtil.formatAddress(sourceFunction.getEntryPoint()));
+        result.put("sourceProgram", sourceProgram.getDomainFile().getPathname());
+        
+        List<Map<String, Object>> targetResults = new ArrayList<>();
+        int totalMatched = 0;
+        int totalPropagated = 0;
+        
+        for (Program targetProgram : targetPrograms) {
+            if (targetProgram.equals(sourceProgram)) {
+                continue; // Skip source program
+            }
+            
+            String targetPath = targetProgram.getDomainFile().getPathname();
+            Map<String, Object> targetResult = new HashMap<>();
+            targetResult.put("targetProgram", targetPath);
+            
+            // Try exact fingerprint match first (O(1) hash lookup)
+            List<FunctionFingerprintUtil.Candidate> exactMatches = 
+                FunctionFingerprintUtil.findMatches(targetProgram, fingerprint, maxInstructions);
+            
+            List<FunctionFingerprintUtil.Candidate.Scored> matches = new ArrayList<>();
+            
+            // Convert exact matches to scored candidates (similarity = 1.0)
+            for (FunctionFingerprintUtil.Candidate candidate : exactMatches) {
+                matches.add(new FunctionFingerprintUtil.Candidate.Scored(candidate, 1.0));
+            }
+            
+            // If no exact match, try fuzzy matching
+            if (matches.isEmpty()) {
+                matches = FunctionFingerprintUtil.findFuzzyMatches(
+                    sourceProgram, sourceFunction, targetProgram, maxInstructions, minSimilarity, 10);
+            }
+            
+            if (matches.isEmpty()) {
+                targetResult.put("matched", false);
+                targetResult.put("message", "No matches found above similarity threshold");
+                targetResults.add(targetResult);
+                continue;
+            }
+            
+            totalMatched++;
+            
+            // Check if match is unambiguous (single best match with clear winner)
+            FunctionFingerprintUtil.Candidate.Scored best = matches.get(0);
+            boolean isUnambiguous = matches.size() == 1 || 
+                (matches.size() > 1 && best.similarityScore() - matches.get(1).similarityScore() > 0.05);
+            
+            targetResult.put("matched", true);
+            targetResult.put("matchCount", matches.size());
+            targetResult.put("unambiguous", isUnambiguous);
+            targetResult.put("bestMatch", Map.of(
+                "function", best.candidate().functionName(),
+                "address", AddressUtil.formatAddress(best.candidate().entryPoint()),
+                "similarity", String.format("%.2f", best.similarityScore())
+            ));
+            
+            // Include other candidates if ambiguous
+            if (!isUnambiguous) {
+                List<Map<String, Object>> otherCandidates = new ArrayList<>();
+                for (int i = 1; i < Math.min(matches.size(), 5); i++) {
+                    FunctionFingerprintUtil.Candidate.Scored scored = matches.get(i);
+                    otherCandidates.add(Map.of(
+                        "function", scored.candidate().functionName(),
+                        "address", AddressUtil.formatAddress(scored.candidate().entryPoint()),
+                        "similarity", String.format("%.2f", scored.similarityScore())
+                    ));
+                }
+                targetResult.put("otherCandidates", otherCandidates);
+            }
+            
+            // Propagate metadata if requested and match is unambiguous
+            if (isUnambiguous && (propagateNames || propagateTags || propagateComments)) {
+                Function targetFunc = targetProgram.getFunctionManager().getFunctionAt(best.candidate().entryPoint());
+                if (targetFunc == null) {
+                    targetFunc = targetProgram.getFunctionManager().getFunctionContaining(best.candidate().entryPoint());
+                }
+                
+                if (targetFunc != null && !dryRun) {
+                    int txId = targetProgram.startTransaction("Propagate function metadata");
+                    try {
+                        List<String> propagated = new ArrayList<>();
+                        
+                        if (propagateNames && !sourceFunction.getName().equals(targetFunc.getName())) {
+                            String oldName = targetFunc.getName();
+                            targetFunc.setName(sourceFunction.getName(), SourceType.USER_DEFINED);
+                            propagated.add("name: " + oldName + " -> " + sourceFunction.getName());
+                        }
+                        
+                        if (propagateTags) {
+                            Set<FunctionTag> sourceTags = sourceFunction.getTags();
+                            for (FunctionTag sourceTag : sourceTags) {
+                                targetFunc.addTag(sourceTag.getName());
+                                propagated.add("tag: " + sourceTag.getName());
+                            }
+                        }
+                        
+                        if (propagateComments) {
+                            String comment = sourceFunction.getComment();
+                            if (comment != null && !comment.isEmpty()) {
+                                targetFunc.setComment(comment);
+                                propagated.add("comment: " + comment.substring(0, Math.min(50, comment.length())));
+                            }
+                        }
+                        
+                        targetProgram.endTransaction(txId, true);
+                        autoSaveProgram(targetProgram, "Function metadata propagation");
+                        invalidateFunctionCaches(targetPath);
+                        
+                        targetResult.put("propagated", propagated);
+                        totalPropagated++;
+                        
+                    } catch (Exception e) {
+                        targetProgram.endTransaction(txId, false);
+                        targetResult.put("propagationError", e.getMessage());
+                        logError("Error propagating metadata to " + targetPath, e);
+                    }
+                } else if (dryRun) {
+                    targetResult.put("dryRun", true);
+                    targetResult.put("wouldPropagate", List.of(
+                        propagateNames ? "name" : null,
+                        propagateTags ? "tags" : null,
+                        propagateComments ? "comments" : null
+                    ).stream().filter(java.util.Objects::nonNull).toList());
+                }
+            }
+            
+            targetResults.add(targetResult);
+        }
+        
+        result.put("targetResults", targetResults);
+        result.put("summary", Map.of(
+            "totalTargets", targetPrograms.size(),
+            "totalMatched", totalMatched,
+            "totalPropagated", totalPropagated
+        ));
+        result.put("success", true);
+        
+        return createJsonResult(result);
+    }
+    
     private double getOptionalDouble(CallToolRequest request, String key, double defaultValue) {
         // Use getParameterValue to support both camelCase and snake_case parameter names
         Object value = getParameterValue(request.arguments(), key);
@@ -1204,6 +1466,22 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         }
                         Object identifiersValue = identifiersList.size() == 1 ? identifiersList.get(0) : identifiersList;
                         verbose = getOptionalBoolean(request, "verbose", false);
+                        
+                        // Check if parameter is JSON-encoded array string
+                        if (identifiersValue instanceof String paramStr) {
+                            if (paramStr.trim().startsWith("[") && paramStr.trim().endsWith("]")) {
+                                try {
+                                    @SuppressWarnings("unchecked")
+                                    List<String> parsedList = JSON.readValue(paramStr, List.class);
+                                    if (!parsedList.isEmpty()) {
+                                        return handleListFunctionsByIdentifiers(program, parsedList, verbose);
+                                    }
+                                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                                    // Not valid JSON array, treat as regular string
+                                }
+                            }
+                        }
+                        
                         // Check if identifiers is an array
                         if (identifiersValue instanceof List) {
                             return handleListFunctionsByIdentifiers(program, (List<?>) identifiersValue, verbose);

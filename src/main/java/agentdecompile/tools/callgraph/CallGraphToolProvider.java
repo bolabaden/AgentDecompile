@@ -91,15 +91,10 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             "description", "Path in the Ghidra Project to the program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser."
         ));
         Map<String, Object> functionIdentifierProperty = new HashMap<>();
-        functionIdentifierProperty.put("type", "string");
-        functionIdentifierProperty.put("description", "Function name or address. Can be a single string or an array of strings for batch operations (required for all modes except common_callers).");
-        Map<String, Object> functionIdentifierArraySchema = new HashMap<>();
-        functionIdentifierArraySchema.put("type", "array");
-        functionIdentifierArraySchema.put("items", Map.of("type", "string"));
-        functionIdentifierArraySchema.put("description", "Array of function names or addresses for batch operations");
+        functionIdentifierProperty.put("description", "Function name or address. Can be a single string, an array of strings, or a JSON-encoded array string for batch operations (required for all modes except common_callers).");
         functionIdentifierProperty.put("oneOf", List.of(
-            Map.of("type", "string"),
-            functionIdentifierArraySchema
+            Map.of("type", "string", "description", "Single function identifier or JSON-encoded array of identifiers"),
+            Map.of("type", "array", "items", Map.of("type", "string"), "description", "Array of function names or addresses for batch operations")
         ));
         properties.put("functionIdentifier", functionIdentifierProperty);
         properties.put("mode", Map.of(
@@ -162,6 +157,23 @@ public class CallGraphToolProvider extends AbstractToolProvider {
                 List<Object> functionIdentifierList = getParameterAsList(request.arguments(), "functionIdentifier");
                 Object functionIdentifierValue = functionIdentifierList.isEmpty() ? null : (functionIdentifierList.size() == 1 ? functionIdentifierList.get(0) : functionIdentifierList);
                 String mode = getOptionalString(request, "mode", "graph");
+
+                // Check if it's a JSON-encoded array string
+                if (functionIdentifierValue instanceof String functionIdStr && !mode.equals("common_callers")) {
+                    if (functionIdStr.trim().startsWith("[") && functionIdStr.trim().endsWith("]")) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<String> parsedList = JSON.readValue(functionIdStr, List.class);
+                            if (parsedList.size() > 1) {
+                                return handleBatchGetCallGraph(program, request, parsedList);
+                            } else if (parsedList.size() == 1) {
+                                functionIdentifierValue = parsedList.get(0);
+                            }
+                        } catch (JsonProcessingException e) {
+                            // Not a valid JSON array, treat as regular string identifier
+                        }
+                    }
+                }
 
                 // Only enable batch mode for modes that use function_identifier (not common_callers)
                 if (functionIdentifierValue instanceof List && !mode.equals("common_callers")) {

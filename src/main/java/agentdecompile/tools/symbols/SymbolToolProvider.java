@@ -64,6 +64,8 @@ import agentdecompile.tools.imports.ImportExportToolProvider;
 import agentdecompile.util.AddressUtil;
 import agentdecompile.util.SchemaUtil;
 import agentdecompile.util.SymbolUtil;
+import ghidra.util.exception.DuplicateNameException;
+import ghidra.util.exception.InvalidInputException;
 
 /**
  * Tool provider for symbol-related operations.
@@ -91,6 +93,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         registerManageSymbolsTool();
     }
 
+    @SuppressWarnings("UseSpecificCatch")
     private void registerManageSymbolsTool() {
         Map<String, Object> properties = new HashMap<>();
         properties.put("programPath", SchemaUtil.stringProperty("Path to the program in the Ghidra Project. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser."));
@@ -103,7 +106,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         properties.put("labelName", SchemaUtil.stringProperty("Name(s) for the label(s) when mode='create_label'. Can be a single string or an array of strings matching the address array."));
         properties.put("newName", SchemaUtil.stringProperty("New name(s) for the data label(s) when mode='rename_data'. Can be a single string or an array of strings matching the address array."));
         properties.put("libraryFilter", SchemaUtil.stringProperty("Optional library name to filter by when mode='imports' (case-insensitive)"));
-        properties.put("maxResults", SchemaUtil.integerPropertyWithDefault("Maximum number of imports/exports to return when mode='imports' or 'exports'", 500));
+        properties.put("maxResults", SchemaUtil.integerPropertyWithDefault("Maximum number of imports/exports to return when mode='imports' or 'exports'", 75));
         properties.put("startIndex", SchemaUtil.integerPropertyWithDefault("Starting index for pagination (0-based)", 0));
         properties.put("offset", SchemaUtil.integerPropertyWithDefault("Alternative pagination offset parameter", 0));
         properties.put("limit", SchemaUtil.integerPropertyWithDefault("Alternative pagination limit parameter", 100));
@@ -127,28 +130,18 @@ public class SymbolToolProvider extends AbstractToolProvider {
                 Program program = getProgramFromArgs(request);
                 String mode = getString(request, "mode");
 
-                switch (mode) {
-                    case "classes":
-                        return handleClassesMode(program, request);
-                    case "namespaces":
-                        return handleNamespacesMode(program, request);
-                    case "imports":
-                        return handleImportsMode(program, request);
-                    case "exports":
-                        return handleExportsMode(program, request);
-                    case "create_label":
-                        return handleCreateLabelMode(program, request);
-                    case "symbols":
-                        return handleSymbolsMode(program, request);
-                    case "count":
-                        return handleCountMode(program, request);
-                    case "rename_data":
-                        return handleRenameDataMode(program, request);
-                    case "demangle":
-                        return handleDemangleMode(program, request);
-                    default:
-                        return createErrorResult("Invalid mode: " + mode + ". Valid modes are: classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle");
-                }
+                return switch (mode) {
+                    case "classes" -> handleClassesMode(program, request);
+                    case "namespaces" -> handleNamespacesMode(program, request);
+                    case "imports" -> handleImportsMode(program, request);
+                    case "exports" -> handleExportsMode(program, request);
+                    case "create_label" -> handleCreateLabelMode(program, request);
+                    case "symbols" -> handleSymbolsMode(program, request);
+                    case "count" -> handleCountMode(program, request);
+                    case "rename_data" -> handleRenameDataMode(program, request);
+                    case "demangle" -> handleDemangleMode(program, request);
+                    default -> createErrorResult("Invalid mode: " + mode + ". Valid modes are: classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle");
+                };
             } catch (IllegalArgumentException e) {
                 // Try to return default response with error message
                 Program program = tryGetProgramSafely(request.arguments());
@@ -423,7 +416,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                         "isPrimary", symbol.isPrimary(),
                         "success", true
                     ));
-                } catch (Exception e) {
+                } catch (InvalidInputException e) {
                     errors.add(Map.of("index", i, "address", addressList.get(i).toString(), "error", e.getMessage()));
                 }
             }
@@ -589,7 +582,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
 
             autoSaveProgram(program, "Rename data");
             return createJsonResult(resultData);
-        } catch (Exception e) {
+        } catch (DuplicateNameException | InvalidInputException e) {
             return createErrorResult("Error renaming data: " + e.getMessage());
         } finally {
             program.endTransaction(transactionID, success);
@@ -660,7 +653,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                         "newName", newName,
                         "success", true
                     ));
-                } catch (Exception e) {
+                } catch (DuplicateNameException | InvalidInputException e) {
                     errors.add(Map.of("index", i, "address", addressList.get(i).toString(), "error", e.getMessage()));
                 }
             }
@@ -778,7 +771,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                 "demangled", results.size(),
                 "results", results
             ));
-        } catch (Exception e) {
+        } catch (DuplicateNameException | InvalidInputException e) {
             return createErrorResult("Demangle failed: " + e.getMessage());
         } finally {
             program.endTransaction(txId, true);
@@ -811,27 +804,6 @@ public class SymbolToolProvider extends AbstractToolProvider {
         return "label_" + AddressUtil.formatAddress(address).replace("0x", "");
     }
 
-
-    private Function resolveFunction(Program program, String identifier) {
-        Address address = AddressUtil.resolveAddressOrSymbol(program, identifier);
-        if (address != null) {
-            Function function = program.getFunctionManager().getFunctionContaining(address);
-            if (function != null) {
-                return function;
-            }
-        }
-
-        FunctionManager functionManager = program.getFunctionManager();
-        ghidra.program.model.listing.FunctionIterator functions = functionManager.getFunctions(true);
-        while (functions.hasNext()) {
-            Function f = functions.next();
-            if (f.getName().equals(identifier) || f.getName().equalsIgnoreCase(identifier)) {
-                return f;
-            }
-        }
-
-        return null;
-    }
 
     /**
      * Demangle a symbol name using Ghidra's demangler service

@@ -139,21 +139,10 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             "description", "Path in the Ghidra Project to the program"
         ));
         Map<String, Object> targetProperty = new HashMap<>();
-        targetProperty.put("type", "string");
-        targetProperty.put("description", "Target address, symbol name, function name, or import name. Can be a single string or an array of strings for batch operations.");
-        Map<String, Object> targetArraySchema = new HashMap<>();
-        targetArraySchema.put("type", "array");
-        targetArraySchema.put(
-            "items",
-            Map.of("type", "string")
-        );
-        targetArraySchema.put(
-            "description",
-            "Array of target addresses, symbols, function names, or import names for batch operations"
-        );
+        targetProperty.put("description", "Target address, symbol name, function name, or import name. Can be a single string, an array of strings, or a JSON-encoded array string for batch operations.");
         targetProperty.put("oneOf", List.of(
-            Map.of("type", "string"),
-            targetArraySchema
+            Map.of("type", "string", "description", "Single target (address/symbol/function/import) or JSON-encoded array of targets"),
+            Map.of("type", "array", "items", Map.of("type", "string"), "description", "Array of target addresses, symbols, function names, or import names for batch operations")
         ));
         properties.put("target", targetProperty);
         properties.put("mode", Map.of(
@@ -233,7 +222,41 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
                 }
 
                 // Single target mode
-                String target = getString(request, "target");
+                String target = null;
+                if (!targetList.isEmpty()) {
+                    Object targetValue = targetList.get(0);
+                    // Check if it's a JSON-encoded array string
+                    if (targetValue instanceof String targetStr) {
+                        if (targetStr.trim().startsWith("[") && targetStr.trim().endsWith("]")) {
+                            try {
+                                @SuppressWarnings("unchecked")
+                                List<String> parsedList = JSON.readValue(targetStr, List.class);
+                                if (parsedList.size() > 1) {
+                                    return handleBatchGetReferences(program, request, parsedList);
+                                } else if (parsedList.size() == 1) {
+                                    target = parsedList.get(0);
+                                }
+                            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                                // Not a valid JSON array, treat as regular string identifier
+                                target = targetStr;
+                            }
+                        } else {
+                            target = targetStr;
+                        }
+                    } else {
+                        target = targetValue.toString();
+                    }
+                }
+                
+                if (target == null) {
+                    target = getString(request, "target");
+                }
+                
+                // Final null check (should never happen, but satisfies static analysis)
+                if (target == null) {
+                    return createErrorResult("Target parameter is required");
+                }
+                
                 String mode = getOptionalString(request, "mode", "both");
 
                 switch (mode) {
