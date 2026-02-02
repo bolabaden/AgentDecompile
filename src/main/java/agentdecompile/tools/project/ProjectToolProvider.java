@@ -1681,7 +1681,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         if (exchange != null) {
             exchange.progressNotification(new McpSchema.ProgressNotification(
                     progressToken, (double) totalFiles, (double) totalFiles,
-                    message + "."));
+                    messageBuilder.toString()));
         }
 
         return createJsonResult(result);

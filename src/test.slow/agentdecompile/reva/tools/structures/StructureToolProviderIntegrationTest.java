@@ -35,7 +35,9 @@ package agentdecompile.tools.structures;
 
 import static org.junit.Assert.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Before;
@@ -1020,17 +1022,226 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
         });
     }
 
-    /**
-     * Helper method to find a data type by name in all categories
-     */
-    private DataType findDataTypeByName(DataTypeManager dtm, String name) {
-        java.util.Iterator<DataType> iter = dtm.getAllDataTypes();
-        while (iter.hasNext()) {
-            DataType dt = iter.next();
-            if (dt.getName().equals(name)) {
-                return dt;
-            }
-        }
-        return null;
+    @Test
+    public void testSizePreservationWithUseReplace() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Create a structure with explicit size
+            Map<String, Object> createArgs = new HashMap<>();
+            createArgs.put("programPath", program_path);
+            createArgs.put("action", "create");
+            createArgs.put("name", "SizeTestStruct");
+            createArgs.put("size", 100);
+
+            CallToolResult createResult = client.callTool(new CallToolRequest("manage-structures", createArgs));
+            assertMcpResultNotError(createResult, "Create structure should not error");
+
+            TextContent createContent = (TextContent) createResult.content().get(0);
+            JsonNode createJson = parseJsonContent(createContent.text());
+            assertEquals("Initial size should be 100", 100, createJson.get("size").asInt());
+
+            // Add fields with default behavior (useReplace=true by default)
+            List<Map<String, Object>> fields = new ArrayList<>();
+            
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "field1");
+            field1.put("dataType", "int");
+            field1.put("offset", 0);
+            fields.add(field1);
+            
+            Map<String, Object> field2 = new HashMap<>();
+            field2.put("fieldName", "field2");
+            field2.put("dataType", "long");
+            field2.put("offset", 10);
+            fields.add(field2);
+            
+            Map<String, Object> field3 = new HashMap<>();
+            field3.put("fieldName", "field3");
+            field3.put("dataType", "int");
+            field3.put("offset", 90);
+            fields.add(field3);
+
+            Map<String, Object> addArgs = new HashMap<>();
+            addArgs.put("programPath", program_path);
+            addArgs.put("action", "add_field");
+            addArgs.put("structureName", "SizeTestStruct");
+            // Note: useReplace defaults to true now, so we don't need to set it
+            addArgs.put("fields", fields);
+
+            CallToolResult addResult = client.callTool(new CallToolRequest("manage-structures", addArgs));
+            assertMcpResultNotError(addResult, "Add field with default useReplace should not error");
+
+            TextContent addContent = (TextContent) addResult.content().get(0);
+            JsonNode addJson = parseJsonContent(addContent.text());
+
+            // Verify size was preserved
+            assertEquals("Original size should be 100", 100, addJson.get("originalSize").asInt());
+            assertEquals("Final size should still be 100", 100, addJson.get("finalSize").asInt());
+            assertFalse("Size should not have grown", addJson.has("sizeGrew") && addJson.get("sizeGrew").asBoolean());
+            assertEquals("Should have added 3 fields", 3, addJson.get("succeeded").asInt());
+
+            // Verify in Ghidra's data model
+            DataType dt = findDataTypeByName(program.getDataTypeManager(), "SizeTestStruct");
+            assertNotNull("Structure should exist", dt);
+            assertTrue("Should be a Structure", dt instanceof Structure);
+            Structure struct = (Structure) dt;
+            assertEquals("Structure size should be 100", 100, struct.getLength());
+        });
     }
-}
+
+    @Test
+    public void testSizeGrowthWithUseReplaceFalse() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Create a structure with explicit size
+            Map<String, Object> createArgs = new HashMap<>();
+            createArgs.put("programPath", program_path);
+            createArgs.put("action", "create");
+            createArgs.put("name", "GrowTestStruct");
+            createArgs.put("size", 50);
+
+            CallToolResult createResult = client.callTool(new CallToolRequest("manage-structures", createArgs));
+            assertMcpResultNotError(createResult, "Create structure should not error");
+
+            // Add fields with useReplace=false to allow size growth (old behavior)
+            List<Map<String, Object>> fields = new ArrayList<>();
+            
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "field1");
+            field1.put("dataType", "int");
+            field1.put("offset", 0);
+            fields.add(field1);
+            
+            Map<String, Object> field2 = new HashMap<>();
+            field2.put("fieldName", "field2");
+            field2.put("dataType", "long[5]"); // 40 bytes
+            field2.put("offset", 10);
+            fields.add(field2);
+
+            Map<String, Object> addArgs = new HashMap<>();
+            addArgs.put("programPath", program_path);
+            addArgs.put("action", "add_field");
+            addArgs.put("structureName", "GrowTestStruct");
+            addArgs.put("useReplace", false); // Explicitly disable to test old behavior
+            addArgs.put("fields", fields);
+
+            CallToolResult addResult = client.callTool(new CallToolRequest("manage-structures", addArgs));
+            assertMcpResultNotError(addResult, "Add field with useReplace=false should not error");
+
+            TextContent addContent = (TextContent) addResult.content().get(0);
+            JsonNode addJson = parseJsonContent(addContent.text());
+
+            // Verify size grew (old behavior)
+            assertEquals("Original size should be 50", 50, addJson.get("originalSize").asInt());
+            int finalSize = addJson.get("finalSize").asInt();
+            assertTrue("Final size should be greater than 50", finalSize > 50);
+            assertTrue("Should have sizeGrew flag", addJson.has("sizeGrew") && addJson.get("sizeGrew").asBoolean());
+            assertTrue("Should have sizeWarning", addJson.has("sizeWarning"));
+        });
+    }
+
+    @Test
+    public void testPreserveSizeFailsWhenSizeGrows() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Create a small structure
+            Map<String, Object> createArgs = new HashMap<>();
+            createArgs.put("programPath", program_path);
+            createArgs.put("action", "create");
+            createArgs.put("name", "SmallStruct");
+            createArgs.put("size", 20);
+
+            CallToolResult createResult = client.callTool(new CallToolRequest("manage-structures", createArgs));
+            assertMcpResultNotError(createResult, "Create structure should not error");
+
+            // Try to add a field that would cause growth without useReplace, with preserveSize=true
+            List<Map<String, Object>> fields = new ArrayList<>();
+            
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "bigField");
+            field1.put("dataType", "long[10]"); // 80 bytes
+            field1.put("offset", 5);
+            fields.add(field1);
+
+            Map<String, Object> addArgs = new HashMap<>();
+            addArgs.put("programPath", program_path);
+            addArgs.put("action", "add_field");
+            addArgs.put("structureName", "SmallStruct");
+            addArgs.put("preserveSize", true);
+            addArgs.put("fields", fields);
+
+            CallToolResult addResult = client.callTool(new CallToolRequest("manage-structures", addArgs));
+
+            // Should fail because size would grow
+            assertTrue("Should return error when preserveSize fails", addResult.isError());
+            
+            // Verify structure was not modified (transaction was rolled back)
+            DataType dt = findDataTypeByName(program.getDataTypeManager(), "SmallStruct");
+            assertNotNull("Structure should still exist", dt);
+            Structure struct = (Structure) dt;
+            assertEquals("Structure size should still be 20", 20, struct.getLength());
+            assertEquals("Should have no defined fields", 0, struct.getNumDefinedComponents());
+        });
+    }
+
+    @Test
+    public void testSizeGrowthWarningWithoutPreserveSize() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // Create a structure
+            Map<String, Object> createArgs = new HashMap<>();
+            createArgs.put("programPath", program_path);
+            createArgs.put("action", "create");
+            createArgs.put("name", "WarnStruct");
+            createArgs.put("size", 50);
+
+            CallToolResult createResult = client.callTool(new CallToolRequest("manage-structures", createArgs));
+            assertMcpResultNotError(createResult, "Create structure should not error");
+
+            // Add fields without useReplace - should succeed but warn
+            List<Map<String, Object>> fields = new ArrayList<>();
+            
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "field1");
+            field1.put("dataType", "int");
+            field1.put("offset", 0);
+            fields.add(field1);
+            
+            Map<String, Object> field2 = new HashMap<>();
+            field2.put("fieldName", "field2");
+            field2.put("dataType", "long[10]");
+            field2.put("offset", 10);
+            fields.add(field2);
+
+            Map<String, Object> addArgs = new HashMap<>();
+            addArgs.put("programPath", program_path);
+            addArgs.put("action", "add_field");
+            addArgs.put("structureName", "WarnStruct");
+            addArgs.put("fields", fields);
+
+            CallToolResult addResult = client.callTool(new CallToolRequest("manage-structures", addArgs));
+            assertMcpResultNotError(addResult, "Add field should not error");
+
+            TextContent addContent = (TextContent) addResult.content().get(0);
+            JsonNode addJson = parseJsonContent(addContent.text());
+
+            // Should have size tracking info
+            assertTrue("Should have originalSize", addJson.has("originalSize"));
+            assertTrue("Should have finalSize", addJson.has("finalSize"));
+            assertEquals("Original size should be 50", 50, addJson.get("originalSize").asInt());
+            
+            // Size should have grown
+            int finalSize = addJson.get("finalSize").asInt();
+            assertTrue("Final size should be greater than 50", finalSize > 50);
+            assertTrue("Should have sizeGrew flag", addJson.has("sizeGrew") && addJson.get("sizeGrew").asBoolean());
+            assertTrue("Should have sizeWarning", addJson.has("sizeWarning"));
+            
+            String warning = addJson.get("sizeWarning").asText();
+            assertTrue("Warning should mention useReplace", warning.contains("useReplace"));
+        });
+    }
+
