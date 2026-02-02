@@ -39,24 +39,42 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import ghidra.app.util.cparser.C.CParser;
-import ghidra.program.model.address.Address;
-import ghidra.program.model.data.*;
-import ghidra.program.model.listing.Data;
-import ghidra.program.model.listing.DataIterator;
-import ghidra.program.model.listing.Listing;
-import ghidra.program.model.listing.Program;
-import ghidra.program.model.mem.Memory;
-import ghidra.util.Msg;
-import ghidra.util.data.DataTypeParser;
-import ghidra.util.data.DataTypeParser.AllowedDataTypes;
-import io.modelcontextprotocol.server.McpSyncServer;
-import io.modelcontextprotocol.spec.McpSchema;
-import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import agentdecompile.tools.AbstractToolProvider;
+import agentdecompile.tools.ProgramValidationException;
 import agentdecompile.util.AddressUtil;
 import agentdecompile.util.DataTypeParserUtil;
 import agentdecompile.util.SchemaUtil;
+import ghidra.app.util.cparser.C.CParser;
+import ghidra.app.util.cparser.C.ParseException;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressOutOfBoundsException;
+import ghidra.program.model.data.BitFieldDataType;
+import ghidra.program.model.data.Category;
+import ghidra.program.model.data.CategoryPath;
+import ghidra.program.model.data.Composite;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeComponent;
+import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataTypeDependencyException;
+import ghidra.program.model.data.DataTypeManager;
+import ghidra.program.model.data.InvalidDataTypeException;
+import ghidra.program.model.data.Structure;
+import ghidra.program.model.data.StructureDataType;
+import ghidra.program.model.data.Union;
+import ghidra.program.model.data.UnionDataType;
+import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.Program;
+import ghidra.program.model.util.CodeUnitInsertionException;
+import ghidra.util.InvalidNameException;
+import ghidra.util.Msg;
+import ghidra.util.data.DataTypeParser;
+import ghidra.util.data.DataTypeParser.AllowedDataTypes;
+import ghidra.util.exception.CancelledException;
+import ghidra.util.exception.DuplicateNameException;
+import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 
 /**
  * Tool provider for structure definition and manipulation operations.
@@ -141,45 +159,40 @@ public class StructureToolProvider extends AbstractToolProvider {
         properties.put("force", SchemaUtil.booleanPropertyWithDefault("Force deletion even if structure is referenced when action='delete'", false));
         properties.put("nameFilter", SchemaUtil.stringProperty("Filter by name (substring match) when action='list'"));
         properties.put("includeBuiltIn", SchemaUtil.booleanPropertyWithDefault("Include built-in types when action='list'", false));
+        properties.put("preserveSize", SchemaUtil.booleanPropertyWithDefault("When true, fails if batch add_field would grow structure beyond original size. Use with structures created with explicit size parameter.", false));
+        properties.put("useReplace", SchemaUtil.booleanPropertyWithDefault("When true with add_field, use replaceAtOffset instead of insertAtOffset to avoid shifting/growing. Recommended for non-packed structures with explicit offsets.", true));
 
         List<String> required = List.of("programPath", "action");
 
         McpSchema.Tool tool = McpSchema.Tool.builder()
             .name("manage-structures")
             .title("Manage Structures")
-            .description("Parse, validate, create, modify, query, list, apply, or delete structures. Also parse entire C header files.")
+            .description("Parse, validate, create, modify, query, list, apply, or delete structures. Also parse entire C header files. " +
+                "IMPORTANT: When using add_field with explicit offsets on non-packed structures, Ghidra's insertAtOffset " +
+                "can cause the structure to grow beyond its intended size by shifting components. To prevent this: " +
+                "(1) Use useReplace=true to replace undefined bytes instead of inserting, " +
+                "(2) Use preserveSize=true to detect and reject size-growing operations, or " +
+                "(3) Use parse_header action with a complete C definition including #pragma pack(push, 1) for byte-perfect layouts.")
             .inputSchema(createSchema(properties, required))
             .build();
 
         registerTool(tool, (exchange, request) -> {
             try {
                 String action = getString(request, "action");
-                switch (action) {
-                    case "parse":
-                        return handleParseAction(request);
-                    case "validate":
-                        return handleValidateAction(request);
-                    case "create":
-                        return handleCreateAction(request);
-                    case "add_field":
-                        return handleAddFieldAction(request);
-                    case "modify_field":
-                        return handleModifyFieldAction(request);
-                    case "modify_from_c":
-                        return handleModifyFromCAction(request);
-                    case "info":
-                        return handleInfoAction(request);
-                    case "list":
-                        return handleListAction(request);
-                    case "apply":
-                        return handleApplyAction(request);
-                    case "delete":
-                        return handleDeleteAction(request);
-                    case "parse_header":
-                        return handleParseHeaderAction(request);
-                    default:
-                        return createErrorResult("Invalid action: " + action);
-                }
+                return switch (action) {
+                    case "parse" -> handleParseAction(request);
+                    case "validate" -> handleValidateAction(request);
+                    case "create" -> handleCreateAction(request);
+                    case "add_field" -> handleAddFieldAction(request);
+                    case "modify_field" -> handleModifyFieldAction(request);
+                    case "modify_from_c" -> handleModifyFromCAction(request);
+                    case "info" -> handleInfoAction(request);
+                    case "list" -> handleListAction(request);
+                    case "apply" -> handleApplyAction(request);
+                    case "delete" -> handleDeleteAction(request);
+                    case "parse_header" -> handleParseHeaderAction(request);
+                    default -> createErrorResult("Invalid action: " + action);
+                };
             } catch (Exception e) {
                 logError("Error in manage-structures", e);
                 return createErrorResult("Tool execution failed: " + e.getMessage());
@@ -249,7 +262,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                 result.put("error", "Failed to parse structure definition");
             }
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (ProgramValidationException | ParseException | IllegalArgumentException e) {
             Map<String, Object> result = new HashMap<>();
             result.put("valid", false);
             result.put("error", e.getMessage());
@@ -301,7 +314,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             Map<String, Object> result = createStructureInfo(resolved);
             result.put("message", "Successfully created structure: " + resolved.getName());
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (DataTypeDependencyException | InvalidNameException | DuplicateNameException e) {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to create structure: " + e.getMessage());
         }
@@ -332,6 +345,9 @@ public class StructureToolProvider extends AbstractToolProvider {
         }
         Integer offset = getOptionalInteger(request.arguments(), "offset", null);
         String comment = getOptionalString(request, "comment", null);
+        
+        // Get options for size preservation behavior
+        boolean useReplace = getOptionalBoolean(request, "useReplace", true);
 
         DataTypeManager dtm = program.getDataTypeManager();
         DataType dt = dtm.getDataType(structureName);
@@ -350,12 +366,13 @@ public class StructureToolProvider extends AbstractToolProvider {
             return createErrorResult("add_field is only supported for structures, not unions");
         }
         Structure struct = (Structure) composite;
+        int originalSize = struct.getLength();
 
         DataTypeParser parser = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL);
         DataType fieldType;
         try {
             fieldType = parser.parse(dataTypeStr);
-        } catch (Exception e) {
+        } catch (InvalidDataTypeException | CancelledException e) {
             return createErrorResult("Failed to parse data type: " + e.getMessage());
         }
         if (fieldType == null) {
@@ -366,7 +383,13 @@ public class StructureToolProvider extends AbstractToolProvider {
         try {
             DataTypeComponent component;
             if (offset != null) {
-                component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                if (useReplace) {
+                    // replaceAtOffset consumes undefined bytes at offset without shifting
+                    component = struct.replaceAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                } else {
+                    // insertAtOffset may shift existing components, potentially growing the structure
+                    component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                }
             } else {
                 component = struct.add(fieldType, fieldName, comment);
             }
@@ -376,20 +399,57 @@ public class StructureToolProvider extends AbstractToolProvider {
             Map<String, Object> result = createStructureInfo(struct);
             result.put("message", "Successfully added field: " + fieldName);
             result.put("fieldOrdinal", component.getOrdinal());
+            
+            // Add size tracking information
+            int finalSize = struct.getLength();
+            result.put("originalSize", originalSize);
+            result.put("finalSize", finalSize);
+            if (finalSize != originalSize) {
+                result.put("sizeGrew", true);
+                result.put("sizeGrowth", finalSize - originalSize);
+                result.put("sizeWarning", "Structure grew from " + originalSize + " to " + finalSize + 
+                    " bytes. Consider using useReplace=true for non-packed structures with explicit offsets.");
+            }
+            
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (IllegalArgumentException e) {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to add field: " + e.getMessage());
         }
     }
 
     /**
-     * Handle batch add field operations when fields parameter is an array
+     * Handle batch add field operations when fields parameter is an array.
+     * 
+     * <p>This method supports two important options to prevent structure size growth:
+     * <ul>
+     *   <li><b>preserveSize</b>: Validates that the final structure size matches the original
+     *       size. If the structure grows, the transaction is rolled back and an error is returned.
+     *       Use this when you've created a structure with an explicit size and need to maintain it.</li>
+     *   <li><b>useReplace</b>: Uses {@code replaceAtOffset()} instead of {@code insertAtOffset()}.
+     *       This replaces existing undefined bytes at the offset rather than inserting and shifting.
+     *       Recommended for non-packed structures with explicit field offsets.</li>
+     * </ul>
+     * 
+     * <p><b>Root cause of size growth:</b> Ghidra's {@code insertAtOffset()} will shift existing
+     * components to avoid conflicts, which can grow the structure. When adding fields with gaps
+     * or embedded complex types, the structure can expand beyond the intended size.
+     * 
+     * <p><b>Recommended approach for byte-perfect layouts:</b>
+     * <ol>
+     *   <li>Use {@code parse_header} action with C definition including {@code #pragma pack(push, 1)}</li>
+     *   <li>Or use {@code useReplace=true} with explicit offsets for non-packed structures</li>
+     *   <li>Or use {@code preserveSize=true} to detect and reject size-growing operations</li>
+     * </ol>
      */
     private McpSchema.CallToolResult handleBatchAddFields(Program program, CallToolRequest request,
             String structureName, List<Object> fieldsList) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
+        
+        // Get options for size preservation behavior
+        boolean preserveSize = getOptionalBoolean(request, "preserveSize", true);
+        boolean useReplace = getOptionalBoolean(request, "useReplace", true);
 
         // Find structure once for all fields
         DataTypeManager dtm = program.getDataTypeManager();
@@ -409,6 +469,9 @@ public class StructureToolProvider extends AbstractToolProvider {
             return createErrorResult("add_field is only supported for structures, not unions");
         }
         Structure struct = (Structure) composite;
+        
+        // Record original size for preserveSize validation
+        int originalSize = struct.getLength();
 
         DataTypeParser parser = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL);
         int txId = program.startTransaction("Batch Add Structure Fields");
@@ -443,8 +506,8 @@ public class StructureToolProvider extends AbstractToolProvider {
                     Integer offset = null;
                     if (fieldDef.containsKey("offset")) {
                         Object offsetObj = fieldDef.get("offset");
-                        if (offsetObj instanceof Number) {
-                            offset = ((Number) offsetObj).intValue();
+                        if (offsetObj instanceof Number number) {
+                            offset = number.intValue();
                         }
                     }
 
@@ -460,7 +523,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                     DataType fieldType;
                     try {
                         fieldType = parser.parse(dataTypeStr);
-                    } catch (Exception e) {
+                    } catch (InvalidDataTypeException | CancelledException e) {
                         errors.add(Map.of("index", i, "fieldName", fieldName, "error", "Failed to parse data type: " + e.getMessage()));
                         continue;
                     }
@@ -469,10 +532,17 @@ public class StructureToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
-                    // Add the field
+                    // Add the field - use replaceAtOffset when useReplace is true to avoid shifting/growing
                     DataTypeComponent component;
                     if (offset != null) {
-                        component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                        if (useReplace) {
+                            // replaceAtOffset consumes undefined bytes at offset without shifting
+                            // This preserves structure size for non-packed structures with explicit layouts
+                            component = struct.replaceAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                        } else {
+                            // insertAtOffset may shift existing components, potentially growing the structure
+                            component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                        }
                     } else {
                         component = struct.add(fieldType, fieldName, comment);
                     }
@@ -485,7 +555,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                     result.put("fieldOrdinal", component.getOrdinal());
                     results.add(result);
 
-                } catch (Exception e) {
+                } catch (IllegalArgumentException e) {
                     Map<String, Object> errorMap = new HashMap<>();
                     errorMap.put("index", i);
                     if (fieldsList.get(i) instanceof Map) {
@@ -500,6 +570,19 @@ public class StructureToolProvider extends AbstractToolProvider {
                 }
             }
 
+            // Validate size preservation if requested
+            int finalSize = struct.getLength();
+            if (preserveSize && finalSize != originalSize) {
+                program.endTransaction(txId, false); // Roll back the transaction
+                return createErrorResult(
+                    "Structure size grew from " + originalSize + " to " + finalSize + " bytes. " +
+                    "This can happen when insertAtOffset shifts components. " +
+                    "Solutions: (1) Use useReplace=true with explicit offsets, " +
+                    "(2) Use parse_header action with C definition and #pragma pack, or " +
+                    "(3) Remove preserveSize=true to allow size growth."
+                );
+            }
+
             program.endTransaction(txId, true);
             committed = true;
             autoSaveProgram(program, "Batch add structure fields");
@@ -510,6 +593,9 @@ public class StructureToolProvider extends AbstractToolProvider {
             }
             return createErrorResult("Error in batch add fields: " + e.getMessage());
         }
+
+        // Get final size after all operations
+        int finalSize = struct.getLength();
 
         Map<String, Object> resultData = new HashMap<>();
         resultData.put("success", true);
@@ -523,6 +609,17 @@ public class StructureToolProvider extends AbstractToolProvider {
         }
         // Include updated structure info
         resultData.putAll(createStructureInfo(struct));
+        
+        // Add size tracking information
+        resultData.put("originalSize", originalSize);
+        resultData.put("finalSize", finalSize);
+        if (finalSize != originalSize) {
+            resultData.put("sizeGrew", true);
+            resultData.put("sizeGrowth", finalSize - originalSize);
+            resultData.put("sizeWarning", "Structure grew from " + originalSize + " to " + finalSize + 
+                " bytes. Consider using useReplace=true or parse_header action for byte-perfect layouts.");
+        }
+        
         resultData.put("message", "Successfully added " + results.size() + " field(s) to structure: " + structureName);
 
         return createJsonResult(resultData);
@@ -612,7 +709,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             Map<String, Object> result = createStructureInfo(struct);
             result.put("message", "Successfully modified field");
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (InvalidDataTypeException | CancelledException | IllegalArgumentException | IndexOutOfBoundsException e) {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to modify field: " + e.getMessage());
         }
@@ -630,7 +727,7 @@ public class StructureToolProvider extends AbstractToolProvider {
         try {
             CParser parser = new CParser(dtm);
             parsedDt = parser.parse(cDefinition);
-        } catch (Exception e) {
+        } catch (ParseException e) {
             return createErrorResult("Failed to parse C definition: " + e.getMessage());
         }
 
@@ -658,7 +755,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             Map<String, Object> result = createStructureInfo(existingStruct);
             result.put("message", "Successfully modified structure from C definition: " + existingStruct.getName());
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (IllegalArgumentException e) {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to modify structure: " + e.getMessage());
         }
@@ -756,7 +853,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             result.put("structureName", structureName);
             result.put("address", AddressUtil.formatAddress(address));
             return createJsonResult(result);
-        } catch (Exception e) {
+        } catch (AddressOutOfBoundsException | CodeUnitInsertionException e) {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to apply structure: " + e.getMessage());
         }
@@ -807,7 +904,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                     result.put("structureName", structureName);
                     results.add(result);
 
-                } catch (Exception e) {
+                } catch (AddressOutOfBoundsException | CodeUnitInsertionException e) {
                     errors.add(Map.of("index", i, "addressOrSymbol", addressList.get(i).toString(), "error", e.getMessage()));
                 }
             }
@@ -943,7 +1040,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                             DataType resolved = dtm.resolve(dt, DataTypeConflictHandler.REPLACE_HANDLER);
                             createdTypes.add(createStructureInfo(resolved));
                         }
-                    } catch (Exception e) {
+                    } catch (ParseException e) {
                         // Skip failed parse, continue with next
                     }
                     currentDefinition = new StringBuilder();
@@ -991,13 +1088,11 @@ public class StructureToolProvider extends AbstractToolProvider {
     private Map<String, Object> createStructureInfo(DataType dt) {
         Map<String, Object> info = DataTypeParserUtil.createDataTypeInfo(dt);
 
-        if (dt instanceof Composite) {
-            Composite composite = (Composite) dt;
+        if (dt instanceof Composite composite) {
             info.put("isUnion", dt instanceof Union);
             info.put("numComponents", composite.getNumComponents());
 
-            if (dt instanceof Structure) {
-                Structure struct = (Structure) dt;
+            if (dt instanceof Structure struct) {
                 info.put("isPacked", struct.isPackingEnabled());
                 // hasFlexibleArray check would go here if method exists
             }
@@ -1087,8 +1182,8 @@ public class StructureToolProvider extends AbstractToolProvider {
         info.put("fields", fields);
 
         // Add C representation
-        if (composite instanceof Structure) {
-            info.put("cRepresentation", generateCRepresentation((Structure) composite));
+        if (composite instanceof Structure structure) {
+            info.put("cRepresentation", generateCRepresentation(structure));
         }
 
         return info;
@@ -1113,11 +1208,7 @@ public class StructureToolProvider extends AbstractToolProvider {
         // Check if the datatype is "undefined" or "undefined1"
         DataType fieldType = comp.getDataType();
         String typeName = fieldType.getName();
-        if (typeName != null && typeName.startsWith("undefined")) {
-            return true;
-        }
-
-        return false;
+        return typeName != null && typeName.startsWith("undefined");
     }
 
     /**

@@ -2,7 +2,7 @@
 # Builds the Ghidra extension and installs it to the Ghidra extensions directory
 
 param(
-    [string]$ProjectDir = "G:\GitHub\agentdecompile",
+    [string]$ProjectDir = "C:\GitHub\agentdecompile",
     [string]$GhidraInstallDir = "",
     [string]$GradlePath = "",
     [Alias('f')]
