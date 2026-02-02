@@ -1662,18 +1662,19 @@ public class ProjectToolProvider extends AbstractToolProvider {
         }
 
         // Build completion message
-        String message = "Import completed. " + importedDomainFiles.size() + " of " +
-            batchInfo.getTotalCount() + " files imported";
+        StringBuilder messageBuilder = new StringBuilder();
+        messageBuilder.append("Import completed. ").append(importedDomainFiles.size())
+            .append(" of ").append(batchInfo.getTotalCount()).append(" files imported");
         if (analyzeAfterImport && !analyzedFiles.isEmpty()) {
-            message += ", " + analyzedFiles.size() + " analyzed";
+            messageBuilder.append(", ").append(analyzedFiles.size()).append(" analyzed");
         }
         if (enableVersionControl && !versionedFiles.isEmpty()) {
-            message += ", " + versionedFiles.size() + " added to version control";
+            messageBuilder.append(", ").append(versionedFiles.size()).append(" added to version control");
         }
         if (!detailedErrors.isEmpty()) {
-            message += " (" + detailedErrors.size() + " error(s))";
+            messageBuilder.append(" (").append(detailedErrors.size()).append(" error(s))");
         }
-        result.put("message", message + ".");
+        result.put("message", messageBuilder.append(".").toString());
 
         // Send final progress notification
         if (exchange != null) {
@@ -3274,7 +3275,9 @@ public class ProjectToolProvider extends AbstractToolProvider {
                             writer.write(",\"" + (vars != null ? vars.size() : 0) + " vars\"");
                         }
                         if (includeComments) {
-                            writer.write(",\"" + (func.get("comment") != null ? func.get("comment").toString().replace("\"", "\"\"") : "") + "\"");
+                            Object commentObj = func.get("comment");
+                            String commentStr = commentObj != null ? commentObj.toString().replace("\"", "\"\"") : "";
+                            writer.write(",\"" + commentStr + "\"");
                         }
                         writer.write("\n");
                     }

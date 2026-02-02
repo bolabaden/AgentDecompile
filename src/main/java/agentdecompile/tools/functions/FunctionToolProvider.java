@@ -1700,7 +1700,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> functions = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
 
-        for (int i = 0; i < identifiers.size(); i++) {
+        int identifiersSize = identifiers.size();
+        for (int i = 0; i < identifiersSize; i++) {
             try {
                 String identifier = identifiers.get(i).toString();
                 Function function = null;
@@ -1993,7 +1994,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
         // Handle get mode separately (read-only, no transaction needed)
         if ("get".equals(mode)) {
-            for (int i = 0; i < functionList.size(); i++) {
+            int functionListSize = functionList.size();
+            for (int i = 0; i < functionListSize; i++) {
                 try {
                     String functionRef = functionList.get(i).toString();
                     Function function = getFunctionFromArgs(Map.of("function", functionRef), program, "function");
@@ -2039,7 +2041,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
         boolean committed = false;
 
         try {
-            for (int i = 0; i < functionList.size(); i++) {
+            int functionListSize = functionList.size();
+            for (int i = 0; i < functionListSize; i++) {
                 try {
                     String functionRef = functionList.get(i).toString();
                     Function function = getFunctionFromArgs(Map.of("function", functionRef), program, "function");
@@ -2451,7 +2454,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
         FunctionManager funcMgr = program.getFunctionManager();
 
         try {
-            for (int i = 0; i < addressList.size(); i++) {
+            int addressListSize = addressList.size();
+            for (int i = 0; i < addressListSize; i++) {
                 try {
                     String addressStr = addressList.get(i).toString();
                     Address address;
@@ -2756,7 +2760,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> errors = new ArrayList<>();
 
         try {
-            for (int i = 0; i < functionIdentifierList.size(); i++) {
+            int functionIdentifierListSize = functionIdentifierList.size();
+            for (int i = 0; i < functionIdentifierListSize; i++) {
                 try {
                     String functionIdentifier = functionIdentifierList.get(i).toString();
                     String prototypeStr = prototypeList.get(i).toString();
@@ -3595,7 +3600,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> errors = new ArrayList<>();
 
         try {
-            for (int i = 0; i < functionIdentifierList.size(); i++) {
+            int functionIdentifierListSize = functionIdentifierList.size();
+            for (int i = 0; i < functionIdentifierListSize; i++) {
                 try {
                     String functionIdentifier = functionIdentifierList.get(i).toString();
                     Function function;
