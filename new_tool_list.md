@@ -301,34 +301,26 @@
 
 **Description:** Parse, validate, create, modify, query, list, apply, or delete structures. Also parse entire C header files.
 
-**Actions:** `parse`, `validate`, `create`, `add_field`, `modify_field`, `modify_from_c`, `info`, `list`, `apply`, `delete`, `parse_header`
+**Actions:** `parse`, `validate`, `create`, `add_field`, `modify_field`, `modify_from_c`, `info`, `apply`, `delete`, `parse_header`
 
 **Parameters:**
 - `programPath` (string, optional): Path in the Ghidra Project to the program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser.
 - `action` (string, required): Action to perform enum
 - `cDefinition` (string, optional): C-style structure definition when action='parse', 'validate', or 'modify_from_c' (required for parse/validate/modify_from_c)
 - `headerContent` (string, optional): C header file content when action='parse_header' (required for parse_header)
-- `structureName` (string, optional): Name of the structure (required for add_field, modify_field, info, apply, delete; optional for list)
+- `structureName` (string, optional): Name of the structure (required for add_field, modify_field, apply, delete; optional for info to list all structures)
 - `name` (string, optional): Name of the structure when action='create' (required for create)
 - `size` (integer, optional): Initial size when action='create' (0 for auto-sizing, default: 0)
 - `type` (string, optional): Structure type when action='create' enum ('structure', 'union'; default: 'structure')
 - `category` (string, optional): Category path (default: '/')
 - `packed` (boolean, optional): Whether structure should be packed when action='create' (default: false)
 - `description` (string, optional): Description of the structure when action='create'
-- `fieldName` (string, optional): Name of the field when action='add_field' or 'modify_field' (single field mode, required for add_field unless using fields array)
-- `dataType` (string, optional): Data type when action='add_field' (single field mode, e.g., 'int', 'char[32]', required for add_field unless using fields array)
-- `offset` (integer, optional): Field offset when action='add_field' or 'modify_field' (optional, omit to append for add_field)
-- `comment` (string, optional): Field comment when action='add_field'
-- `fields` (array, optional): Array of field objects for batch add_field operations. Each field object must contain fieldName and dataType properties, with optional offset and comment properties. When provided, fieldName/dataType parameters are ignored for batch mode.
-- `newDataType` (string, optional): New data type for the field when action='modify_field'
-- `newFieldName` (string, optional): New name for the field when action='modify_field'
-- `newComment` (string, optional): New comment for the field when action='modify_field'
-- `newLength` (integer, optional): New length for the field when action='modify_field' (advanced, optional)
+- `fields` (array, optional): Array of field objects for add_field or modify_field. For add_field, each field object must include fieldName and dataType, with optional offset and comment. For modify_field, each field object must include fieldName or offset, and can include dataType, newFieldName, comment, and newLength as replacements.
 - `addressOrSymbol` (string or array, optional): Address or symbol name to apply structure when action='apply'. Can be a single string or an array of strings for batch operations. (required for apply)
 - `clearExisting` (boolean, optional): Clear existing data when action='apply' (default: true)
 - `force` (boolean, optional): Force deletion even if structure is referenced when action='delete' (default: false)
-- `nameFilter` (string, optional): Filter by name (substring match) when action='list'
-- `includeBuiltIn` (boolean, optional): Include built-in types when action='list' (default: false)
+- `nameFilter` (string, optional): Filter by name (substring match) when action='info' without structureName
+- `includeBuiltIn` (boolean, optional): Include built-in types when action='info' without structureName (default: false)
 
 ### 23. `manage-comments`
 
@@ -339,14 +331,12 @@
 **Parameters:**
 - `programPath` (string, optional): Path in the Ghidra Project to the program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser.
 - `action` (string, required): Action to perform enum
-- `address` (string, optional): Address where to set/get/remove the comment (required for set/remove when not using function/lineNumber)
-- `addressOrSymbol` (string, optional): Address or symbol name (alternative parameter, used for set/get/remove)
+- `addressOrSymbol` (string, optional): Address or symbol name where to set/get/remove the comment (required for set/remove when not using function/lineNumber)
 - `function` (string, optional): Function name or address when setting decompilation line comment or searching decompilation (required for set with lineNumber, optional for search_decomp)
-- `functionNameOrAddress` (string, optional): Function name or address (alternative parameter name)
 - `lineNumber` (integer, optional): Line number in the decompiled function when action='set' with decompilation (1-based, required for decompilation line comments)
 - `comment` (string, optional): The comment text to set (required for set)
 - `commentType` (string, optional): Type of comment enum ('pre', 'eol', 'post', 'plate', 'repeatable'; default: 'eol')
-- `comments` (array, optional): Array of comment objects for batch operations when action='set'
+- `comments` (array, optional): Array of comment objects for batch operations when action='set'. Each item should include addressOrSymbol, comment, and optional commentType.
 - `start` (string, optional): Start address of the range when action='get'
 - `end` (string, optional): End address of the range when action='get'
 - `commentTypes` (string, optional): Types of comments to retrieve/search (comma-separated: pre,eol,post,plate,repeatable)
@@ -365,12 +355,11 @@
 **Parameters:**
 - `programPath` (string, optional): Path in the Ghidra Project to the program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser.
 - `action` (string, required): Action to perform enum
-- `address` (string, optional): Address where to set/get/remove the bookmark (required for set/remove, optional for get)
-- `addressOrSymbol` (string, optional): Address or symbol name (alternative parameter name, used for remove action)
+- `addressOrSymbol` (string, optional): Address or symbol name where to set/get/remove the bookmark (required for set/remove, optional for get)
 - `type` (string, optional): Bookmark type enum ('Note', 'Warning', 'TODO', 'Bug', 'Analysis'; required for set/remove, optional for get/categories)
 - `category` (string, optional): Bookmark category for organization (required for set, optional for remove)
 - `comment` (string, optional): Bookmark comment text (required for set)
-- `bookmarks` (array, optional): Array of bookmark objects for batch operations when action='set'
+- `bookmarks` (array, optional): Array of bookmark objects for batch operations when action='set'. Each item should include addressOrSymbol, type, comment, and optional category.
 - `searchText` (string, optional): Text to search for in bookmark comments when action='search' (required for search)
 - `maxResults` (integer, optional): Maximum number of results to return when action='search' (default: 100)
 - `removeAll` (boolean, optional): Remove all bookmarks when action='removeAll' (default: false)

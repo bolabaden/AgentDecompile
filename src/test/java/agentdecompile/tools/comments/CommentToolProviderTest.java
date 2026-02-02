@@ -172,7 +172,7 @@ public class CommentToolProviderTest {
         Map<String, Object> args = new HashMap<>();
         args.put("programPath", "/test/program");
         args.put("action", "set");
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.put("comment", "Test comment");
         args.put("commentType", "eol");
 
@@ -184,7 +184,7 @@ public class CommentToolProviderTest {
         }
 
         // Missing address and function should throw
-        args.remove("address");
+        args.remove("addressOrSymbol");
         try {
             validateSetActionArgs(args);
             fail("Should throw exception for missing address/function in set action");
@@ -196,7 +196,7 @@ public class CommentToolProviderTest {
         }
 
         // Missing comment should throw
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.remove("comment");
         try {
             validateSetActionArgs(args);
@@ -241,7 +241,7 @@ public class CommentToolProviderTest {
         Map<String, Object> args = new HashMap<>();
         args.put("programPath", "/test/program");
         args.put("action", "remove");
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.put("commentType", "eol");
 
         // Valid remove action args
@@ -252,7 +252,7 @@ public class CommentToolProviderTest {
         }
 
         // Missing address should throw
-        args.remove("address");
+        args.remove("addressOrSymbol");
         try {
             validateRemoveActionArgs(args);
             fail("Should throw exception for missing address in remove action");
@@ -263,7 +263,7 @@ public class CommentToolProviderTest {
         }
 
         // Missing comment_type should throw
-        args.put("address", "0x401000");
+        args.put("addressOrSymbol", "0x401000");
         args.remove("commentType");
         try {
             validateRemoveActionArgs(args);
@@ -451,9 +451,9 @@ public class CommentToolProviderTest {
     private void validateSetActionArgs(Map<String, Object> args) {
         String action = (String) args.get("action");
         if ("set".equals(action)) {
-            if (args.get("address") == null && args.get("addressOrSymbol") == null &&
-                args.get("function") == null && args.get("functionNameOrAddress") == null) {
-                throw new IllegalArgumentException("address (or function+line_number) is required for action='set'");
+            if (args.get("addressOrSymbol") == null &&
+                args.get("function") == null) {
+                throw new IllegalArgumentException("addressOrSymbol (or function+lineNumber) is required for action='set'");
             }
             if (args.get("comment") == null) {
                 throw new IllegalArgumentException("comment is required for action='set'");
@@ -464,7 +464,7 @@ public class CommentToolProviderTest {
     private void validateSetDecompilationCommentArgs(Map<String, Object> args) {
         String action = (String) args.get("action");
         if ("set".equals(action)) {
-            if (args.get("function") == null && args.get("functionNameOrAddress") == null) {
+            if (args.get("function") == null) {
                 throw new IllegalArgumentException("function is required for decompilation line comments");
             }
             if (args.get("lineNumber") == null) {
@@ -479,8 +479,8 @@ public class CommentToolProviderTest {
     private void validateRemoveActionArgs(Map<String, Object> args) {
         String action = (String) args.get("action");
         if ("remove".equals(action)) {
-            if (args.get("address") == null && args.get("addressOrSymbol") == null) {
-                throw new IllegalArgumentException("address is required for action='remove'");
+            if (args.get("addressOrSymbol") == null) {
+                throw new IllegalArgumentException("addressOrSymbol is required for action='remove'");
             }
             if (args.get("commentType") == null) {
                 throw new IllegalArgumentException("comment_type is required for action='remove'");

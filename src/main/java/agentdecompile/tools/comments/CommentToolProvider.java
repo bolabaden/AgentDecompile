@@ -37,44 +37,41 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import java.util.regex.Pattern;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import agentdecompile.plugin.ConfigManager;
+import agentdecompile.tools.AbstractToolProvider;
+import agentdecompile.util.AddressUtil;
+import agentdecompile.util.AgentDecompileInternalServiceRegistry;
+import agentdecompile.util.DecompilationReadTracker;
+import agentdecompile.util.SchemaUtil;
+import agentdecompile.util.SmartSuggestionsUtil;
+import ghidra.app.decompiler.ClangLine;
+import ghidra.app.decompiler.ClangToken;
+import ghidra.app.decompiler.ClangTokenGroup;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
-import ghidra.app.decompiler.ClangTokenGroup;
-import ghidra.app.decompiler.ClangLine;
-import ghidra.app.decompiler.ClangToken;
 import ghidra.app.decompiler.component.DecompilerUtils;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
-import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CodeUnitIterator;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.FunctionManager;
-import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Listing;
-import ghidra.program.model.listing.CodeUnitIterator;
-import ghidra.util.Msg;
-import ghidra.util.exception.CancelledException;
+import ghidra.program.model.listing.Program;
 import ghidra.util.task.TaskMonitor;
 import ghidra.util.task.TimeoutTaskMonitor;
-import java.util.concurrent.TimeUnit;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
-import agentdecompile.plugin.ConfigManager;
-import agentdecompile.tools.AbstractToolProvider;
-import agentdecompile.util.AddressUtil;
-import agentdecompile.util.DecompilationReadTracker;
-import agentdecompile.util.AgentDecompileInternalServiceRegistry;
-import agentdecompile.util.SchemaUtil;
-import agentdecompile.util.SmartSuggestionsUtil;
 
 /**
  * Tool provider for comment-related operations.
@@ -128,10 +125,8 @@ public class CommentToolProvider extends AbstractToolProvider {
             "description", "Action to perform: 'set', 'get', 'remove', 'search', or 'search_decomp'",
             "enum", List.of("set", "get", "remove", "search", "search_decomp")
         ));
-        properties.put("address", SchemaUtil.stringProperty("Address where to set/get/remove the comment (required for set/remove when not using function/lineNumber)"));
-        properties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name (alternative parameter)"));
+        properties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name where to set/get/remove the comment (required for set/remove when not using function/lineNumber)"));
         properties.put("function", SchemaUtil.stringProperty("Function name or address when setting decompilation line comment or searching decompilation"));
-        properties.put("functionNameOrAddress", SchemaUtil.stringProperty("Function name or address (alternative parameter name)"));
         properties.put("lineNumber", SchemaUtil.integerProperty("Line number in the decompiled function when action='set' with decompilation (1-based)"));
         properties.put("comment", SchemaUtil.stringProperty("The comment text to set (required for set when not using batch mode)"));
         properties.put("commentType", SchemaUtil.stringPropertyWithDefault("Type of comment enum ('pre', 'eol', 'post', 'plate', 'repeatable')", "eol"));
@@ -139,15 +134,15 @@ public class CommentToolProvider extends AbstractToolProvider {
         Map<String, Object> commentItemSchema = new HashMap<>();
         commentItemSchema.put("type", "object");
         Map<String, Object> commentItemProperties = new HashMap<>();
-        commentItemProperties.put("address", SchemaUtil.stringProperty("Address or symbol name where to set the comment"));
+        commentItemProperties.put("addressOrSymbol", SchemaUtil.stringProperty("Address or symbol name where to set the comment"));
         commentItemProperties.put("comment", SchemaUtil.stringProperty("The comment text to set"));
         commentItemProperties.put("commentType", SchemaUtil.stringPropertyWithDefault("Type of comment enum ('pre', 'eol', 'post', 'plate', 'repeatable')", "eol"));
         commentItemSchema.put("properties", commentItemProperties);
-        commentItemSchema.put("required", List.of("address", "comment"));
+        commentItemSchema.put("required", List.of("addressOrSymbol", "comment"));
 
         Map<String, Object> commentsArraySchema = new HashMap<>();
         commentsArraySchema.put("type", "array");
-        commentsArraySchema.put("description", "Array of comment objects for batch setting. Each object should have 'address' (required), 'comment' (required), and optional 'commentType' (defaults to 'eol'). When provided, sets multiple comments in a single transaction.");
+        commentsArraySchema.put("description", "Array of comment objects for batch setting. Each object should have 'addressOrSymbol' (required), 'comment' (required), and optional 'commentType' (defaults to 'eol'). When provided, sets multiple comments in a single transaction.");
         commentsArraySchema.put("items", commentItemSchema);
         properties.put("comments", commentsArraySchema);
         properties.put("start", SchemaUtil.stringProperty("Start address of the range when action='get'"));
@@ -318,16 +313,10 @@ public class CommentToolProvider extends AbstractToolProvider {
             return handleBatchSetComments(program, request, commentsArray);
         }
 
-        String addressStr = getOptionalString(request, "address", null);
-        if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
 
         // Check if setting decompilation line comment (function + lineNumber instead of address)
         String functionStr = getOptionalString(request, "function", null);
-        if (functionStr == null) {
-            functionStr = getOptionalString(request, "functionNameOrAddress", null);
-        }
         Integer lineNumber = getOptionalInteger(request.arguments(), "lineNumber", null);
 
         // If we have function and lineNumber but no address, this is a decompilation line comment
@@ -337,7 +326,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         // Regular address-based comment
         if (addressStr == null) {
-            return createErrorResult("address is required for action='set' (or use 'comments' array for batch mode, or use function and lineNumber for decompilation line comments)");
+            return createErrorResult("addressOrSymbol is required for action='set' (or use 'comments' array for batch mode, or use function and lineNumber for decompilation line comments)");
         }
 
         Address address = AddressUtil.resolveAddressOrSymbol(program, addressStr);
@@ -443,9 +432,9 @@ public class CommentToolProvider extends AbstractToolProvider {
                     Map<String, Object> commentObj = commentsArray.get(i);
 
                     // Extract address
-                    Object addressObj = commentObj.get("address");
+                    Object addressObj = commentObj.get("addressOrSymbol");
                     if (addressObj == null) {
-                        errors.add(createErrorInfo(i, "Missing 'address' field in comment object"));
+                        errors.add(createErrorInfo(i, "Missing 'addressOrSymbol' field in comment object"));
                         continue;
                     }
                     String addressStr = addressObj.toString();
@@ -641,10 +630,7 @@ public class CommentToolProvider extends AbstractToolProvider {
     }
 
     private McpSchema.CallToolResult handleGetComments(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
-        String addressStr = getOptionalString(request, "address", null);
-        if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
         String startStr = getOptionalString(request, "start", null);
         String endStr = getOptionalString(request, "end", null);
         String commentTypesStr = getOptionalString(request, "commentTypes", null);
@@ -726,12 +712,9 @@ public class CommentToolProvider extends AbstractToolProvider {
     }
 
     private McpSchema.CallToolResult handleRemoveComment(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
-        String addressStr = getOptionalString(request, "address", null);
+        String addressStr = getOptionalString(request, "addressOrSymbol", null);
         if (addressStr == null) {
-            addressStr = getOptionalString(request, "addressOrSymbol", null);
-        }
-        if (addressStr == null) {
-            return createErrorResult("address is required for action='remove'");
+            return createErrorResult("addressOrSymbol is required for action='remove'");
         }
 
         Address address = AddressUtil.resolveAddressOrSymbol(program, addressStr);
