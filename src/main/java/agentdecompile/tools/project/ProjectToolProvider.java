@@ -1674,7 +1674,8 @@ public class ProjectToolProvider extends AbstractToolProvider {
         if (!detailedErrors.isEmpty()) {
             messageBuilder.append(" (").append(detailedErrors.size()).append(" error(s))");
         }
-        result.put("message", messageBuilder.append(".").toString());
+        messageBuilder.append(".");
+        result.put("message", messageBuilder.toString());
 
         // Send final progress notification
         if (exchange != null) {

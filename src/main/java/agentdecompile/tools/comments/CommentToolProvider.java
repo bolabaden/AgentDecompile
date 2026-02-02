@@ -833,7 +833,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
             while (commentAddrs.hasNext()) {
                 if (results.size() >= maxResults) break;
-                
+
                 Address addr = commentAddrs.next();
                 String comment = listing.getComment(type, addr);
 
