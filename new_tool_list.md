@@ -315,15 +315,16 @@
 - `category` (string, optional): Category path (default: '/')
 - `packed` (boolean, optional): Whether structure should be packed when action='create' (default: false)
 - `description` (string, optional): Description of the structure when action='create'
-- `fieldName` (string, optional): Name of the field when action='add_field' or 'modify_field' (required for add_field, optional for modify_field)
-- `dataType` (string, optional): Data type when action='add_field' (e.g., 'int', 'char[32]', required for add_field)
+- `fieldName` (string, optional): Name of the field when action='add_field' or 'modify_field' (single field mode, required for add_field unless using fields array)
+- `dataType` (string, optional): Data type when action='add_field' (single field mode, e.g., 'int', 'char[32]', required for add_field unless using fields array)
 - `offset` (integer, optional): Field offset when action='add_field' or 'modify_field' (optional, omit to append for add_field)
 - `comment` (string, optional): Field comment when action='add_field'
+- `fields` (array, optional): Array of field objects for batch add_field operations. Each field object must contain fieldName and dataType properties, with optional offset and comment properties. When provided, fieldName/dataType parameters are ignored for batch mode.
 - `newDataType` (string, optional): New data type for the field when action='modify_field'
 - `newFieldName` (string, optional): New name for the field when action='modify_field'
 - `newComment` (string, optional): New comment for the field when action='modify_field'
 - `newLength` (integer, optional): New length for the field when action='modify_field' (advanced, optional)
-- `addressOrSymbol` (string, optional): Address or symbol name to apply structure when action='apply' (required for apply)
+- `addressOrSymbol` (string or array, optional): Address or symbol name to apply structure when action='apply'. Can be a single string or an array of strings for batch operations. (required for apply)
 - `clearExisting` (boolean, optional): Clear existing data when action='apply' (default: true)
 - `force` (boolean, optional): Force deletion even if structure is referenced when action='delete' (default: false)
 - `nameFilter` (string, optional): Filter by name (substring match) when action='list'
