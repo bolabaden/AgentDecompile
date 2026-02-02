@@ -102,10 +102,15 @@ public class StructureToolProvider extends AbstractToolProvider {
             "description", "Action to perform: 'parse', 'validate', 'create', 'add_field', 'modify_field', 'modify_from_c', 'info', 'list', 'apply', 'delete', 'parse_header'",
             "enum", List.of("parse", "validate", "create", "add_field", "modify_field", "modify_from_c", "info", "list", "apply", "delete", "parse_header")
         ));
-        properties.put("cDefinition", SchemaUtil.stringProperty("C-style structure definition when action='parse', 'validate', or 'modify_from_c'"));
+        properties.put("cDefinition", SchemaUtil.stringProperty("C-style structure definition when action='parse', 'validate', or 'modify_from_c' (single structure mode)"));
+        properties.put("cDefinitions", Map.of(
+            "type", "array",
+            "description", "Array of C-style structure definitions for batch parse operation when action='parse'",
+            "items", Map.of("type", "string")
+        ));
         properties.put("headerContent", SchemaUtil.stringProperty("C header file content when action='parse_header'"));
         properties.put("structureName", SchemaUtil.stringProperty("Name of the structure"));
-        properties.put("name", SchemaUtil.stringProperty("Name of the structure when action='create'"));
+        properties.put("name", SchemaUtil.stringProperty("Name of the structure when action='create' (single structure mode)"));
         properties.put("size", SchemaUtil.integerPropertyWithDefault("Initial size when action='create'", 0));
         properties.put("type", Map.of(
             "type", "string",
@@ -113,6 +118,40 @@ public class StructureToolProvider extends AbstractToolProvider {
             "enum", List.of("structure", "union"),
             "default", "structure"
         ));
+        
+        // Add structures array for batch create operations
+        Map<String, Object> structureObjectSchema = new HashMap<>();
+        structureObjectSchema.put("type", "object");
+        structureObjectSchema.put("description", "Structure definition with name, size, type, category, packed, description, and optional fields array");
+        Map<String, Object> structureObjectProperties = new HashMap<>();
+        structureObjectProperties.put("name", SchemaUtil.stringProperty("Name of the structure"));
+        structureObjectProperties.put("size", SchemaUtil.integerProperty("Initial size (optional, default: 0)"));
+        structureObjectProperties.put("type", SchemaUtil.stringProperty("Structure type: 'structure' or 'union' (optional, default: 'structure')"));
+        structureObjectProperties.put("category", SchemaUtil.stringProperty("Category path (optional, default: '/')"));
+        structureObjectProperties.put("packed", SchemaUtil.booleanProperty("Whether structure should be packed (optional, default: false)"));
+        structureObjectProperties.put("description", SchemaUtil.stringProperty("Description of the structure (optional)"));
+        structureObjectProperties.put("fields", Map.of(
+            "type", "array",
+            "description", "Array of fields to add during creation (optional)",
+            "items", Map.of(
+                "type", "object",
+                "properties", Map.of(
+                    "fieldName", Map.of("type", "string"),
+                    "dataType", Map.of("type", "string"),
+                    "offset", Map.of("type", "integer"),
+                    "comment", Map.of("type", "string")
+                ),
+                "required", List.of("fieldName", "dataType")
+            )
+        ));
+        structureObjectSchema.put("properties", structureObjectProperties);
+        structureObjectSchema.put("required", List.of("name"));
+        
+        Map<String, Object> structuresArrayProperty = new HashMap<>();
+        structuresArrayProperty.put("type", "array");
+        structuresArrayProperty.put("description", "Array of structure definitions for batch create operations. Each structure object must have a name property.");
+        structuresArrayProperty.put("items", structureObjectSchema);
+        properties.put("structures", structuresArrayProperty);
         properties.put("category", SchemaUtil.stringPropertyWithDefault("Category path", "/"));
         properties.put("packed", SchemaUtil.booleanPropertyWithDefault("Whether structure should be packed when action='create'", false));
         properties.put("description", SchemaUtil.stringProperty("Description of the structure when action='create'"));
@@ -169,12 +208,7 @@ public class StructureToolProvider extends AbstractToolProvider {
         McpSchema.Tool tool = McpSchema.Tool.builder()
             .name("manage-structures")
             .title("Manage Structures")
-            .description("Parse, validate, create, modify, query, list, apply, or delete structures. Also parse entire C header files. " +
-                "IMPORTANT: When using add_field with explicit offsets on non-packed structures, Ghidra's insertAtOffset " +
-                "can cause the structure to grow beyond its intended size by shifting components. To prevent this: " +
-                "(1) Use useReplace=true to replace undefined bytes instead of inserting, " +
-                "(2) Use preserveSize=true to detect and reject size-growing operations, or " +
-                "(3) Use parse_header action with a complete C definition including #pragma pack(push, 1) for byte-perfect layouts.")
+            .description("Parse, validate, create, modify, query, list, apply, or delete structures. Also parse entire C header files.")
             .inputSchema(createSchema(properties, required))
             .build();
 
@@ -182,16 +216,39 @@ public class StructureToolProvider extends AbstractToolProvider {
             try {
                 String action = getString(request, "action");
                 return switch (action) {
-                    case "parse" -> handleParseAction(request);
+                    case "parse" -> {
+                        // Check if cDefinitions array is provided (batch mode)
+                        List<Object> cDefinitionsList = getParameterAsList(request.arguments(), "cDefinitions");
+                        if (cDefinitionsList.size() > 1 || (!cDefinitionsList.isEmpty() && cDefinitionsList.get(0) instanceof List)) {
+                            List<?> batchList = cDefinitionsList.size() > 1 ? cDefinitionsList : (List<?>) cDefinitionsList.get(0);
+                            yield handleBatchParseStructures(request, batchList);
+                        }
+                        yield handleParseAction(request);
+                    }
                     case "validate" -> handleValidateAction(request);
-                    case "create" -> handleCreateAction(request);
+                    case "create" -> {
+                        // Check if structures array is provided (batch mode)
+                        List<Object> structuresList = getParameterAsList(request.arguments(), "structures");
+                        if (structuresList.size() > 1 || (!structuresList.isEmpty() && structuresList.get(0) instanceof Map)) {
+                            yield handleBatchCreateStructures(request, structuresList);
+                        }
+                        yield handleCreateAction(request);
+                    }
                     case "add_field" -> handleAddFieldAction(request);
                     case "modify_field" -> handleModifyFieldAction(request);
                     case "modify_from_c" -> handleModifyFromCAction(request);
                     case "info" -> handleInfoAction(request);
                     case "list" -> handleListAction(request);
                     case "apply" -> handleApplyAction(request);
-                    case "delete" -> handleDeleteAction(request);
+                    case "delete" -> {
+                        // Check if structureNames array is provided (batch mode)
+                        List<Object> structureNamesList = getParameterAsList(request.arguments(), "structureNames");
+                        if (structureNamesList.size() > 1 || (!structureNamesList.isEmpty() && structureNamesList.get(0) instanceof List)) {
+                            List<?> batchList = structureNamesList.size() > 1 ? structureNamesList : (List<?>) structureNamesList.get(0);
+                            yield handleBatchDeleteStructures(request, batchList);
+                        }
+                        yield handleDeleteAction(request);
+                    }
                     case "parse_header" -> handleParseHeaderAction(request);
                     default -> createErrorResult("Invalid action: " + action);
                 };
@@ -311,10 +368,24 @@ public class StructureToolProvider extends AbstractToolProvider {
             }
 
             program.endTransaction(txId, true);
+            
+            // Check if fields array is provided for inline field addition
+            List<Object> fieldsList = getParameterAsList(request.arguments(), "fields");
+            if (!fieldsList.isEmpty() && resolved instanceof Composite) {
+                // Add fields in a separate transaction
+                McpSchema.CallToolResult fieldsResult = addFieldsToStructure(program, (Composite) resolved, fieldsList);
+                if (fieldsResult.isError()) {
+                    return fieldsResult;
+                }
+            }
+            
             autoSaveProgram(program, "Create structure");
 
             Map<String, Object> result = createStructureInfo(resolved);
             result.put("message", "Successfully created structure: " + resolved.getName());
+            if (!fieldsList.isEmpty()) {
+                result.put("fieldsAdded", fieldsList.size());
+            }
             return createJsonResult(result);
         } catch (DataTypeDependencyException | InvalidNameException | DuplicateNameException e) {
             program.endTransaction(txId, false);
@@ -578,10 +649,7 @@ public class StructureToolProvider extends AbstractToolProvider {
                 program.endTransaction(txId, false); // Roll back the transaction
                 return createErrorResult(
                     "Structure size grew from " + originalSize + " to " + finalSize + " bytes. " +
-                    "This can happen when insertAtOffset shifts components. " +
-                    "Solutions: (1) Use useReplace=true with explicit offsets, " +
-                    "(2) Use parse_header action with C definition and #pragma pack, or " +
-                    "(3) Remove preserveSize=true to allow size growth."
+                    "This can happen when insertAtOffset shifts components. "
                 );
             }
 
@@ -1294,6 +1362,265 @@ public class StructureToolProvider extends AbstractToolProvider {
 
         sb.append("};");
         return sb.toString();
+    }
+
+    /**
+     * Helper method to add fields to a structure (used for inline field addition during create)
+     */
+    private McpSchema.CallToolResult addFieldsToStructure(Program program, Composite composite, List<Object> fieldsList) {
+        List<Map<String, Object>> errors = new ArrayList<>();
+        DataTypeManager dtm = program.getDataTypeManager();
+        DataTypeParser parser = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL);
+        
+        int txId = program.startTransaction("Add fields to structure");
+        try {
+            for (int i = 0; i < fieldsList.size(); i++) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> fieldSpec = (Map<String, Object>) fieldsList.get(i);
+                    String fieldName = (String) fieldSpec.get("fieldName");
+                    String dataTypeStr = (String) fieldSpec.get("dataType");
+                    Integer offset = fieldSpec.containsKey("offset") ? ((Number) fieldSpec.get("offset")).intValue() : null;
+                    String comment = (String) fieldSpec.get("comment");
+                    
+                    DataType fieldType = parser.parse(dataTypeStr);
+                    if (fieldType == null) {
+                        errors.add(Map.of("index", i, "fieldName", fieldName, "error", "Invalid data type: " + dataTypeStr));
+                        continue;
+                    }
+                    
+                    if (composite instanceof Structure struct) {
+                        if (offset != null) {
+                            struct.replaceAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                        } else {
+                            struct.add(fieldType, fieldName, comment);
+                        }
+                    } else if (composite instanceof Union union) {
+                        union.add(fieldType, fieldName, comment);
+                    }
+                } catch (InvalidDataTypeException | CancelledException e) {
+                    errors.add(Map.of("index", i, "error", e.getMessage()));
+                }
+            }
+            program.endTransaction(txId, true);
+            autoSaveProgram(program, "Add fields to structure");
+            
+            if (!errors.isEmpty()) {
+                Map<String, Object> result = new HashMap<>();
+                result.put("partialSuccess", true);
+                result.put("errors", errors);
+                return createJsonResult(result);
+            }
+            return null; // Success
+        } catch (Exception e) {
+            program.endTransaction(txId, false);
+            return createErrorResult("Failed to add fields: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle batch structure creation
+     */
+    private McpSchema.CallToolResult handleBatchCreateStructures(io.modelcontextprotocol.spec.McpSchema.CallToolRequest request, List<Object> structuresList) {
+        Program program = getProgramFromArgs(request);
+        DataTypeManager dtm = program.getDataTypeManager();
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        
+        int txId = program.startTransaction("Batch Create Structures");
+        try {
+            for (int i = 0; i < structuresList.size(); i++) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> structSpec = (Map<String, Object>) structuresList.get(i);
+                    
+                    String name = (String) structSpec.get("name");
+                    if (name == null) {
+                        errors.add(Map.of("index", i, "error", "name is required"));
+                        continue;
+                    }
+                    
+                    int size = structSpec.containsKey("size") ? ((Number) structSpec.get("size")).intValue() : 0;
+                    String type = (String) structSpec.getOrDefault("type", "structure");
+                    String category = (String) structSpec.getOrDefault("category", "/");
+                    boolean packed = (Boolean) structSpec.getOrDefault("packed", false);
+                    String description = (String) structSpec.get("description");
+                    
+                    CategoryPath catPath = new CategoryPath(category);
+                    Category cat = dtm.createCategory(catPath);
+                    
+                    Composite composite;
+                    if ("union".equals(type)) {
+                        composite = new UnionDataType(catPath, name);
+                    } else {
+                        composite = new StructureDataType(catPath, name, size);
+                        if (packed) {
+                            ((Structure) composite).setPackingEnabled(true);
+                        }
+                    }
+                    
+                    if (description != null && !description.trim().isEmpty()) {
+                        composite.setDescription(description);
+                    }
+                    
+                    DataType resolved = dtm.resolve(composite, DataTypeConflictHandler.REPLACE_HANDLER);
+                    if (cat != null && resolved.getCategoryPath() != catPath) {
+                        resolved.setName(resolved.getName());
+                        cat.moveDataType(resolved, DataTypeConflictHandler.REPLACE_HANDLER);
+                    }
+                    
+                    // Handle inline fields if provided
+                    @SuppressWarnings("unchecked")
+                    List<Object> fields = (List<Object>) structSpec.get("fields");
+                    if (fields != null && !fields.isEmpty() && resolved instanceof Composite) {
+                        addFieldsToStructure(program, (Composite) resolved, fields);
+                    }
+                    
+                    Map<String, Object> structInfo = createStructureInfo(resolved);
+                    structInfo.put("index", i);
+                    results.add(structInfo);
+                } catch (Exception e) {
+                    errors.add(Map.of("index", i, "error", e.getMessage()));
+                }
+            }
+            
+            program.endTransaction(txId, true);
+            autoSaveProgram(program, "Batch create structures");
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("batchOperation", true);
+            result.put("results", results);
+            result.put("totalCreated", results.size());
+            if (!errors.isEmpty()) {
+                result.put("errors", errors);
+            }
+            return createJsonResult(result);
+        } catch (Exception e) {
+            program.endTransaction(txId, false);
+            return createErrorResult("Batch create failed: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle batch structure deletion
+     */
+    private McpSchema.CallToolResult handleBatchDeleteStructures(io.modelcontextprotocol.spec.McpSchema.CallToolRequest request, List<?> structureNames) {
+        Program program = getProgramFromArgs(request);
+        DataTypeManager dtm = program.getDataTypeManager();
+        boolean force = getOptionalBoolean(request, "force", false);
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        
+        int txId = program.startTransaction("Batch Delete Structures");
+        try {
+            for (int i = 0; i < structureNames.size(); i++) {
+                try {
+                    String structureName = structureNames.get(i).toString();
+                    DataType dt = findDataTypeByName(dtm, structureName);
+                    
+                    if (dt == null) {
+                        errors.add(Map.of("index", i, "structureName", structureName, "error", "Structure not found"));
+                        continue;
+                    }
+                    
+                    // Check for references if not forcing
+                    if (!force) {
+                        List<String> refs = new ArrayList<>();
+                        ghidra.program.model.listing.FunctionIterator functions = program.getFunctionManager().getFunctions(true);
+                        while (functions.hasNext() && refs.size() < 5) {
+                            ghidra.program.model.listing.Function func = functions.next();
+                            if (func.getReturnType().isEquivalent(dt)) {
+                                refs.add(func.getName());
+                            }
+                        }
+                        if (!refs.isEmpty()) {
+                            errors.add(Map.of("index", i, "structureName", structureName, "error", "Structure is referenced. Use force=true"));
+                            continue;
+                        }
+                    }
+                    
+                    boolean removed = dtm.remove(dt);
+                    if (removed) {
+                        results.add(Map.of("index", i, "structureName", structureName, "deleted", true));
+                    } else {
+                        errors.add(Map.of("index", i, "structureName", structureName, "error", "Failed to delete"));
+                    }
+                } catch (Exception e) {
+                    errors.add(Map.of("index", i, "structureName", structureNames.get(i).toString(), "error", e.getMessage()));
+                }
+            }
+            
+            program.endTransaction(txId, true);
+            autoSaveProgram(program, "Batch delete structures");
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("batchOperation", true);
+            result.put("results", results);
+            result.put("totalDeleted", results.size());
+            if (!errors.isEmpty()) {
+                result.put("errors", errors);
+            }
+            return createJsonResult(result);
+        } catch (Exception e) {
+            program.endTransaction(txId, false);
+            return createErrorResult("Batch delete failed: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle batch structure parsing
+     */
+    private McpSchema.CallToolResult handleBatchParseStructures(io.modelcontextprotocol.spec.McpSchema.CallToolRequest request, List<?> cDefinitions) {
+        Program program = getProgramFromArgs(request);
+        String category = getOptionalString(request, "category", "/");
+        DataTypeManager dtm = program.getDataTypeManager();
+        CParser parser = new CParser(dtm);
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        
+        int txId = program.startTransaction("Batch Parse Structures");
+        try {
+            CategoryPath catPath = new CategoryPath(category);
+            Category cat = dtm.createCategory(catPath);
+            
+            for (int i = 0; i < cDefinitions.size(); i++) {
+                try {
+                    String cDefinition = cDefinitions.get(i).toString();
+                    DataType dt = parser.parse(cDefinition);
+                    if (dt == null) {
+                        errors.add(Map.of("index", i, "error", "Failed to parse definition"));
+                        continue;
+                    }
+                    
+                    DataType resolved = dtm.resolve(dt, DataTypeConflictHandler.REPLACE_HANDLER);
+                    if (cat != null && resolved.getCategoryPath() != catPath) {
+                        resolved.setName(resolved.getName());
+                        cat.moveDataType(resolved, DataTypeConflictHandler.REPLACE_HANDLER);
+                    }
+                    
+                    Map<String, Object> structInfo = createStructureInfo(resolved);
+                    structInfo.put("index", i);
+                    results.add(structInfo);
+                } catch (Exception e) {
+                    errors.add(Map.of("index", i, "error", e.getMessage()));
+                }
+            }
+            
+            program.endTransaction(txId, true);
+            autoSaveProgram(program, "Batch parse structures");
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("batchOperation", true);
+            result.put("results", results);
+            result.put("totalParsed", results.size());
+            if (!errors.isEmpty()) {
+                result.put("errors", errors);
+            }
+            return createJsonResult(result);
+        } catch (Exception e) {
+            program.endTransaction(txId, false);
+            return createErrorResult("Batch parse failed: " + e.getMessage());
+        }
     }
 
 }
