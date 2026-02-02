@@ -72,7 +72,7 @@ args.put("description", "Custom protocol structure");
 
 ### Field Management
 
-#### Adding Regular Fields
+#### Adding Single Fields
 ```java
 // Add standard field to structure
 Map<String, Object> args = new HashMap<>();
@@ -82,6 +82,73 @@ args.put("fieldName", "timestamp");
 args.put("dataType", "uint64");
 args.put("comment", "Packet creation timestamp");
 // offset is optional - omit to append to end
+```
+
+#### Batch Adding Multiple Fields
+The `add_field` action supports adding multiple fields in a single operation using the `fields` array parameter:
+
+```java
+// Batch add multiple fields efficiently
+List<Map<String, Object>> fields = new ArrayList<>();
+
+// Field 1
+Map<String, Object> field1 = new HashMap<>();
+field1.put("fieldName", "list04_active_ptr");
+field1.put("dataType", "void *");
+field1.put("offset", 56);
+field1.put("comment", "Pointer to active list"); // optional
+fields.add(field1);
+
+// Field 2
+Map<String, Object> field2 = new HashMap<>();
+field2.put("fieldName", "list04_active_count");
+field2.put("dataType", "int");
+field2.put("offset", 60);
+fields.add(field2);
+
+// Field 3
+Map<String, Object> field3 = new HashMap<>();
+field3.put("fieldName", "list04_active_capacity");
+field3.put("dataType", "int");
+field3.put("offset", 64);
+fields.add(field3);
+
+Map<String, Object> args = new HashMap<>();
+args.put("programPath", programPath);
+args.put("structureName", "LightManager");
+args.put("fields", fields);  // Use fields array for batch mode
+```
+
+**Batch Mode Features:**
+- All fields are added in a single transaction for consistency
+- Individual field errors are reported without failing the entire operation
+- Returns detailed results including success count, failure count, and per-field status
+- Significantly more efficient than multiple individual calls
+- Fully backwards compatible - single field mode still works with fieldName/dataType parameters
+
+**Response Format for Batch Operations:**
+```json
+{
+  "success": true,
+  "structureName": "LightManager",
+  "total": 6,
+  "succeeded": 6,
+  "failed": 0,
+  "results": [
+    {
+      "index": 0,
+      "fieldName": "list04_active_ptr",
+      "dataType": "void *",
+      "offset": 56,
+      "fieldOrdinal": 0
+    }
+    // ... more results
+  ],
+  "message": "Successfully added 6 field(s) to structure: LightManager",
+  "name": "LightManager",
+  "size": 80,
+  "fields": [ /* complete field list */ ]
+}
 ```
 
 #### Adding Bitfield Fields
