@@ -43,3 +43,31 @@ uv run pytest
 - **Core Logic**: Logic resides in "src/main/java/agentdecompile".
 - **Testing**: Use "AddressUtil" for address normalization. Always wrap DB changes in transactions.
 - **License**: Business Source License 1.1.
+
+## Batch Operation Pattern
+
+Several MCP tools support batch operations to improve efficiency when performing multiple similar actions:
+
+### Tools with Batch Support
+- **manage-structures** `add_field` action - Add multiple fields using `fields` array parameter
+- **manage-structures** `apply` action - Apply structure to multiple addresses using array in `addressOrSymbol`
+- **manage-comments** `set` action - Set multiple comments using `comments` array parameter
+
+### Implementation Pattern
+When adding batch support to tools:
+1. Accept either single parameter OR array parameter
+2. Use `getParameterAsList()` to detect batch mode automatically
+3. Process all items in a single transaction for atomicity
+4. Return detailed results with per-item status (success/failure counts, results array, errors array)
+5. Maintain full backwards compatibility with single-item syntax
+
+Example batch detection:
+```java
+List<Object> itemsList = getParameterAsList(request.arguments(), "items");
+if (!itemsList.isEmpty() && itemsList.get(0) instanceof Map) {
+    return handleBatchOperation(program, request, itemsList);
+}
+// Fall through to single-item mode for backwards compatibility
+```
+
+See `StructureToolProvider.handleBatchAddFields()` for a complete implementation example.
