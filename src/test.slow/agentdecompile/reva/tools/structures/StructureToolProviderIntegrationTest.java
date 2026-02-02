@@ -245,6 +245,92 @@ public class StructureToolProviderIntegrationTest extends AgentDecompileIntegrat
     }
 
     @Test
+    public void testBatchAddStructureFields() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            // First create a structure
+            Map<String, Object> createArgs = new HashMap<>();
+            createArgs.put("programPath", program_path);
+            createArgs.put("action", "create");
+            createArgs.put("name", "BatchTestStruct");
+
+            CallToolResult createResult = client.callTool(new CallToolRequest("manage-structures", createArgs));
+            assertMcpResultNotError(createResult, "Create structure should not error");
+
+            // Batch add multiple fields
+            List<Map<String, Object>> fields = new ArrayList<>();
+            
+            Map<String, Object> field1 = new HashMap<>();
+            field1.put("fieldName", "list04_active_ptr");
+            field1.put("dataType", "void *");
+            field1.put("offset", 56);
+            fields.add(field1);
+            
+            Map<String, Object> field2 = new HashMap<>();
+            field2.put("fieldName", "list04_active_count");
+            field2.put("dataType", "int");
+            field2.put("offset", 60);
+            fields.add(field2);
+            
+            Map<String, Object> field3 = new HashMap<>();
+            field3.put("fieldName", "list04_active_capacity");
+            field3.put("dataType", "int");
+            field3.put("offset", 64);
+            fields.add(field3);
+            
+            Map<String, Object> field4 = new HashMap<>();
+            field4.put("fieldName", "list05_dynamic_ptr");
+            field4.put("dataType", "void *");
+            field4.put("offset", 68);
+            fields.add(field4);
+            
+            Map<String, Object> field5 = new HashMap<>();
+            field5.put("fieldName", "list05_dynamic_count");
+            field5.put("dataType", "int");
+            field5.put("offset", 72);
+            fields.add(field5);
+            
+            Map<String, Object> field6 = new HashMap<>();
+            field6.put("fieldName", "list05_dynamic_capacity");
+            field6.put("dataType", "int");
+            field6.put("offset", 76);
+            fields.add(field6);
+
+            Map<String, Object> batchArgs = new HashMap<>();
+            batchArgs.put("programPath", program_path);
+            batchArgs.put("action", "add_field");
+            batchArgs.put("structureName", "BatchTestStruct");
+            batchArgs.put("fields", fields);
+
+            CallToolResult result = client.callTool(new CallToolRequest("manage-structures", batchArgs));
+
+            assertNotNull("Result should not be null", result);
+            assertMcpResultNotError(result, "Result should not be an error");
+
+            TextContent content = (TextContent) result.content().get(0);
+            JsonNode json = parseJsonContent(content.text());
+
+            assertEquals("BatchTestStruct", json.get("structureName").asText());
+            assertEquals(6, json.get("total").asInt());
+            assertEquals(6, json.get("succeeded").asInt());
+            assertEquals(0, json.get("failed").asInt());
+            assertTrue("Should have success message", json.get("message").asText().contains("Successfully added 6 field(s)"));
+
+            // Verify fields were added
+            DataType dt = findDataTypeByName(program.getDataTypeManager(), "BatchTestStruct");
+            Structure struct = (Structure) dt;
+            assertEquals("Should have 6 components", 6, struct.getNumComponents());
+            assertEquals("list04_active_ptr", struct.getComponent(0).getFieldName());
+            assertEquals("list04_active_count", struct.getComponent(1).getFieldName());
+            assertEquals("list04_active_capacity", struct.getComponent(2).getFieldName());
+            assertEquals("list05_dynamic_ptr", struct.getComponent(3).getFieldName());
+            assertEquals("list05_dynamic_count", struct.getComponent(4).getFieldName());
+            assertEquals("list05_dynamic_capacity", struct.getComponent(5).getFieldName());
+        });
+    }
+
+    @Test
     public void testGetStructureInfo() throws Exception {
         withMcpClient(createMcpTransport(), client -> {
             client.initialize();
