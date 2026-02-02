@@ -98,10 +98,29 @@ public class StructureToolProvider extends AbstractToolProvider {
         properties.put("category", SchemaUtil.stringPropertyWithDefault("Category path", "/"));
         properties.put("packed", SchemaUtil.booleanPropertyWithDefault("Whether structure should be packed when action='create'", false));
         properties.put("description", SchemaUtil.stringProperty("Description of the structure when action='create'"));
-        properties.put("fieldName", SchemaUtil.stringProperty("Name of the field when action='add_field' or 'modify_field'"));
-        properties.put("dataType", SchemaUtil.stringProperty("Data type when action='add_field'"));
+        properties.put("fieldName", SchemaUtil.stringProperty("Name of the field when action='add_field' or 'modify_field' (single field mode)"));
+        properties.put("dataType", SchemaUtil.stringProperty("Data type when action='add_field' (single field mode)"));
         properties.put("offset", SchemaUtil.integerProperty("Field offset when action='add_field' or 'modify_field'"));
         properties.put("comment", SchemaUtil.stringProperty("Field comment when action='add_field'"));
+        
+        // Add fields array for batch add_field operations
+        Map<String, Object> fieldObjectSchema = new HashMap<>();
+        fieldObjectSchema.put("type", "object");
+        fieldObjectSchema.put("description", "Field definition with fieldName, dataType, offset (optional), and comment (optional)");
+        Map<String, Object> fieldObjectProperties = new HashMap<>();
+        fieldObjectProperties.put("fieldName", SchemaUtil.stringProperty("Name of the field"));
+        fieldObjectProperties.put("dataType", SchemaUtil.stringProperty("Data type of the field"));
+        fieldObjectProperties.put("offset", SchemaUtil.integerProperty("Field offset (optional, omit to append)"));
+        fieldObjectProperties.put("comment", SchemaUtil.stringProperty("Field comment (optional)"));
+        fieldObjectSchema.put("properties", fieldObjectProperties);
+        fieldObjectSchema.put("required", List.of("fieldName", "dataType"));
+        
+        Map<String, Object> fieldsArrayProperty = new HashMap<>();
+        fieldsArrayProperty.put("type", "array");
+        fieldsArrayProperty.put("description", "Array of field definitions for batch add_field operations. Each field object must have fieldName and dataType properties.");
+        fieldsArrayProperty.put("items", fieldObjectSchema);
+        properties.put("fields", fieldsArrayProperty);
+        
         properties.put("newDataType", SchemaUtil.stringProperty("New data type for the field when action='modify_field'"));
         properties.put("newFieldName", SchemaUtil.stringProperty("New name for the field when action='modify_field'"));
         properties.put("newComment", SchemaUtil.stringProperty("New comment for the field when action='modify_field'"));
@@ -294,6 +313,15 @@ public class StructureToolProvider extends AbstractToolProvider {
         if (structureName == null) {
             return createErrorResult("structureName is required for action='add_field'");
         }
+        
+        // Check if fields array is present (batch mode)
+        List<Object> fieldsList = getParameterAsList(request.arguments(), "fields");
+        if (!fieldsList.isEmpty() && fieldsList.get(0) instanceof Map) {
+            // Batch mode detected
+            return handleBatchAddFields(program, request, structureName, fieldsList);
+        }
+        
+        // Single field mode (backwards compatible)
         String fieldName = getOptionalString(request, "fieldName", null);
         if (fieldName == null) {
             return createErrorResult("fieldName is required for action='add_field'");
@@ -353,6 +381,151 @@ public class StructureToolProvider extends AbstractToolProvider {
             program.endTransaction(txId, false);
             return createErrorResult("Failed to add field: " + e.getMessage());
         }
+    }
+
+    /**
+     * Handle batch add field operations when fields parameter is an array
+     */
+    private McpSchema.CallToolResult handleBatchAddFields(Program program, CallToolRequest request,
+            String structureName, List<Object> fieldsList) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+
+        // Find structure once for all fields
+        DataTypeManager dtm = program.getDataTypeManager();
+        DataType dt = dtm.getDataType(structureName);
+        if (dt == null) {
+            dt = findDataTypeByName(dtm, structureName);
+        }
+        if (dt == null) {
+            return createErrorResult("Structure not found: " + structureName);
+        }
+        if (!(dt instanceof Composite)) {
+            return createErrorResult("Data type is not a structure or union: " + structureName);
+        }
+
+        Composite composite = (Composite) dt;
+        if (!(composite instanceof Structure)) {
+            return createErrorResult("add_field is only supported for structures, not unions");
+        }
+        Structure struct = (Structure) composite;
+
+        DataTypeParser parser = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL);
+        int txId = program.startTransaction("Batch Add Structure Fields");
+        boolean committed = false;
+
+        try {
+            for (int i = 0; i < fieldsList.size(); i++) {
+                try {
+                    if (!(fieldsList.get(i) instanceof Map)) {
+                        errors.add(Map.of("index", i, "error", "Field must be an object with fieldName and dataType"));
+                        continue;
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> fieldDef = (Map<String, Object>) fieldsList.get(i);
+                    
+                    // Extract field parameters
+                    Object fieldNameObj = fieldDef.get("fieldName");
+                    if (fieldNameObj == null) {
+                        errors.add(Map.of("index", i, "error", "fieldName is required for each field"));
+                        continue;
+                    }
+                    String fieldName = fieldNameObj.toString();
+
+                    Object dataTypeObj = fieldDef.get("dataType");
+                    if (dataTypeObj == null) {
+                        errors.add(Map.of("index", i, "fieldName", fieldName, "error", "dataType is required for each field"));
+                        continue;
+                    }
+                    String dataTypeStr = dataTypeObj.toString();
+
+                    Integer offset = null;
+                    if (fieldDef.containsKey("offset")) {
+                        Object offsetObj = fieldDef.get("offset");
+                        if (offsetObj instanceof Number) {
+                            offset = ((Number) offsetObj).intValue();
+                        }
+                    }
+
+                    String comment = null;
+                    if (fieldDef.containsKey("comment")) {
+                        Object commentObj = fieldDef.get("comment");
+                        if (commentObj != null) {
+                            comment = commentObj.toString();
+                        }
+                    }
+
+                    // Parse data type
+                    DataType fieldType;
+                    try {
+                        fieldType = parser.parse(dataTypeStr);
+                    } catch (Exception e) {
+                        errors.add(Map.of("index", i, "fieldName", fieldName, "error", "Failed to parse data type: " + e.getMessage()));
+                        continue;
+                    }
+                    if (fieldType == null) {
+                        errors.add(Map.of("index", i, "fieldName", fieldName, "error", "Could not parse data type: " + dataTypeStr));
+                        continue;
+                    }
+
+                    // Add the field
+                    DataTypeComponent component;
+                    if (offset != null) {
+                        component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
+                    } else {
+                        component = struct.add(fieldType, fieldName, comment);
+                    }
+
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("index", i);
+                    result.put("fieldName", fieldName);
+                    result.put("dataType", dataTypeStr);
+                    result.put("offset", component.getOffset());
+                    result.put("fieldOrdinal", component.getOrdinal());
+                    results.add(result);
+
+                } catch (Exception e) {
+                    Map<String, Object> errorMap = new HashMap<>();
+                    errorMap.put("index", i);
+                    if (fieldsList.get(i) instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> fieldDef = (Map<String, Object>) fieldsList.get(i);
+                        if (fieldDef.containsKey("fieldName")) {
+                            errorMap.put("fieldName", fieldDef.get("fieldName"));
+                        }
+                    }
+                    errorMap.put("error", e.getMessage());
+                    errors.add(errorMap);
+                }
+            }
+
+            program.endTransaction(txId, true);
+            committed = true;
+            autoSaveProgram(program, "Batch add structure fields");
+
+        } catch (Exception e) {
+            if (!committed) {
+                program.endTransaction(txId, false);
+            }
+            return createErrorResult("Error in batch add fields: " + e.getMessage());
+        }
+
+        Map<String, Object> resultData = new HashMap<>();
+        resultData.put("success", true);
+        resultData.put("structureName", structureName);
+        resultData.put("total", fieldsList.size());
+        resultData.put("succeeded", results.size());
+        resultData.put("failed", errors.size());
+        resultData.put("results", results);
+        if (!errors.isEmpty()) {
+            resultData.put("errors", errors);
+        }
+        // Include updated structure info
+        resultData.putAll(createStructureInfo(struct));
+        resultData.put("message", "Successfully added " + results.size() + " field(s) to structure: " + structureName);
+
+        return createJsonResult(resultData);
     }
 
     private McpSchema.CallToolResult handleModifyFieldAction(io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
