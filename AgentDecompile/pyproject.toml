@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "agentdecompile"
+version = "0.1.0"
+description = "A tool for decompiling and analyzing agent data."
+authors = ["Your Name <youremail@example.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+# Add other dependencies here
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

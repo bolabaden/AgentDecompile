@@ -41,10 +41,22 @@ It works by giving the AI specific "tools" to interact with Ghidra—reading mem
 
 ### Option 2: Build from Source
 If you want the absolute latest features:
-`ash
+If you want the absolute latest features, build and install from source. See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for full, non-interactive instructions.
+
+Quick terminal example (Windows PowerShell):
+
+```powershell
+$env:GHIDRA_INSTALL_DIR = 'C:\Path\To\ghidra_12.0_PUBLIC'
+.\build-and-install.ps1 -ProjectDir 'D:\AgentDecompile' -GhidraInstallDir $env:GHIDRA_INSTALL_DIR -GradlePath 'C:\Gradle\bin\gradle.bat' -ForceKillLocks
+```
+
+Quick terminal example (Linux/macOS):
+
+```bash
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
-gradle install
-`
+gradle buildExtension
+unzip dist/*AgentDecompile.zip -d "$GHIDRA_INSTALL_DIR/Ghidra/Extensions"
+```
 
 ### Enabling the Extension
 Once installed, you need to turn it on:
