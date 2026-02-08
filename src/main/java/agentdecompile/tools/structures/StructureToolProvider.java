@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.structures;
 
@@ -79,6 +62,13 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 /**
  * Tool provider for structure definition and manipulation operations.
  * Provides tools to create, modify, and apply structures in Ghidra programs.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.data.Structure}, {@link ghidra.program.model.data.DataTypeManager},
+ * {@link ghidra.app.util.cparser.C.CParser}, {@link ghidra.util.data.DataTypeParser} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Structure.html">Structure API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html">Listing API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class StructureToolProvider extends AbstractToolProvider {
     /**
@@ -267,9 +257,11 @@ public class StructureToolProvider extends AbstractToolProvider {
         }
         String category = getOptionalString(request, "category", "/");
 
+        // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
         DataTypeManager dtm = program.getDataTypeManager();
         CParser parser = new CParser(dtm);
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int txId = program.startTransaction("Parse C Structure");
         try {
             DataType dt = parser.parse(cDefinition);
@@ -278,14 +270,17 @@ public class StructureToolProvider extends AbstractToolProvider {
             }
 
             CategoryPath catPath = new CategoryPath(category);
+            // Ghidra API: DataTypeManager.createCategory(CategoryPath) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#createCategory(ghidra.program.model.data.CategoryPath)
             Category cat = dtm.createCategory(catPath);
 
+            // Ghidra API: DataTypeManager.resolve(DataType, DataTypeConflictHandler) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#resolve(ghidra.program.model.data.DataType,ghidra.program.model.data.DataTypeConflictHandler)
             DataType resolved = dtm.resolve(dt, DataTypeConflictHandler.REPLACE_HANDLER);
             if (cat != null && resolved.getCategoryPath() != catPath) {
                 resolved.setName(resolved.getName());
                 cat.moveDataType(resolved, DataTypeConflictHandler.REPLACE_HANDLER);
             }
 
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(txId, true);
             autoSaveProgram(program, "Parse C structure");
 
@@ -294,6 +289,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             return createJsonResult(result);
         } catch (Exception e) {
             program.endTransaction(txId, false);
+            // Ghidra API: Msg.error(Object, Object, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(this, "Failed to parse C structure", e);
             return createErrorResult("Failed to parse: " + e.getMessage());
         }
@@ -423,6 +419,7 @@ public class StructureToolProvider extends AbstractToolProvider {
         boolean useReplace = getOptionalBoolean(request, "useReplace", true);
 
         DataTypeManager dtm = program.getDataTypeManager();
+        // Ghidra API: DataTypeManager.getDataType(CategoryPath, String) / getDataType(String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getDataType(ghidra.program.model.data.CategoryPath,java.lang.String)
         DataType dt = dtm.getDataType(structureName);
         if (dt == null) {
             dt = findDataTypeByName(dtm, structureName);
@@ -439,6 +436,7 @@ public class StructureToolProvider extends AbstractToolProvider {
             return createErrorResult("add_field is only supported for structures, not unions");
         }
         Structure struct = (Structure) composite;
+        // Ghidra API: DataType.getLength() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getLength()
         int originalSize = struct.getLength();
 
         DataTypeParser parser = new DataTypeParser(dtm, dtm, null, AllowedDataTypes.ALL);
@@ -457,13 +455,14 @@ public class StructureToolProvider extends AbstractToolProvider {
             DataTypeComponent component;
             if (offset != null) {
                 if (useReplace) {
-                    // replaceAtOffset consumes undefined bytes at offset without shifting
+                    // Ghidra API: Structure.replaceAtOffset(int, DataType, int, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Structure.html#replaceAtOffset(int,ghidra.program.model.data.DataType,int,java.lang.String,java.lang.String)
                     component = struct.replaceAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
                 } else {
-                    // insertAtOffset may shift existing components, potentially growing the structure
+                    // Ghidra API: Structure.insertAtOffset(int, DataType, int, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Structure.html#insertAtOffset(int,ghidra.program.model.data.DataType,int,java.lang.String,java.lang.String)
                     component = struct.insertAtOffset(offset, fieldType, fieldType.getLength(), fieldName, comment);
                 }
             } else {
+                // Ghidra API: Structure.add(DataType, String, String) (Composite) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Composite.html#add(ghidra.program.model.data.DataType,java.lang.String,java.lang.String)
                 component = struct.add(fieldType, fieldName, comment);
             }
             program.endTransaction(txId, true);

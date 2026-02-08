@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.functions;
 
@@ -110,6 +93,16 @@ import agentdecompile.tools.ProgramValidationException;
 
 /**
  * Tool provider for function-related operations.
+ * <p>
+ * Ghidra API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.listing.Function} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html">Function API</a></li>
+ *   <li>{@link ghidra.app.cmd.function.CreateFunctionCmd} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/cmd/function/CreateFunctionCmd.html">CreateFunctionCmd API</a></li>
+ *   <li>{@link ghidra.app.util.parser.FunctionSignatureParser} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/util/parser/FunctionSignatureParser.html">FunctionSignatureParser API</a></li>
+ *   <li>{@link ghidra.program.model.pcode.HighFunctionDBUtil} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunctionDBUtil.html">HighFunctionDBUtil API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class FunctionToolProvider extends AbstractToolProvider {
 
@@ -285,6 +278,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
     public void programClosed(Program program) {
         super.programClosed(program);
 
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
 
         // Clear similarity cache using removeIf (thread-safe, no iterator-while-modifying)
@@ -339,6 +333,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
             TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(FUNCTION_INFO_CACHE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             List<Map<String, Object>> functionList = new ArrayList<>();
+            // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
             FunctionIterator functions = program.getFunctionManager().getFunctions(true);
             int processed = 0;
 
@@ -442,6 +437,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
      * @return Map containing function information
      */
     private Map<String, Object> createFunctionInfo(Function function, TaskMonitor monitor) {
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         AddressSetView body = function.getBody();
 
         // Get caller/callee counts with timeout support
@@ -449,11 +445,13 @@ public class FunctionToolProvider extends AbstractToolProvider {
         int calleeCount = -1;
         if (monitor != null && !monitor.isCancelled()) {
             try {
+                // Ghidra API: Function.getProgram(), Program.getReferenceManager(), getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getProgram()
                 ReferenceManager refManager = function.getProgram().getReferenceManager();
                 FunctionManager funcManager = function.getProgram().getFunctionManager();
 
                 // Count callers (references TO this function)
                 Set<Address> callerAddresses = new HashSet<>();
+                // Ghidra API: ReferenceManager.getReferencesTo(Address), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
                 ReferenceIterator refsTo = refManager.getReferencesTo(function.getEntryPoint());
                 int refCount = 0;
                 while (refsTo.hasNext()) {
@@ -473,6 +471,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 // Count callees (references FROM this function)
                 if (!monitor.isCancelled()) {
                     Set<Address> calleeAddresses = new HashSet<>();
+                    // Ghidra API: Program.getListing(), Listing.getInstructions(AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(ghidra.program.model.address.AddressSetView,boolean)
                     for (Instruction instr : function.getProgram().getListing().getInstructions(body, true)) {
                         if (monitor.isCancelled()) {
                             break;
@@ -1343,16 +1342,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 "description", "Alternative pagination offset parameter (default: 0)",
                 "default", 0
         ));
-        properties.put("limit", Map.of(
-                "type", "integer",
-                "description", "Alternative pagination limit parameter (default: 100)",
-                "default", 100
-        ));
-        properties.put("maxResults", Map.of(
-                "type", "integer",
-                "description", "Maximum number of functions to return (alternative to maxCount/limit, default: 100)",
-                "default", 1000
-        ));
         properties.put("filterDefaultNames", Map.of(
                 "type", "boolean",
                 "description", "Whether to filter out default Ghidra generated names like FUN_, DAT_, etc. (default: true)",
@@ -1404,21 +1393,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 Program program = getProgramFromArgs(request);
                 String mode = getOptionalString(request, "mode", "all");
 
-                // Handle pagination
+                // Handle pagination: single cap is maxCount (limit accepted as legacy fallback)
                 int startIndex;
-                int maxCount;
-                // Check for legacy offset/limit parameters (supports both camelCase and snake_case)
+                int maxCount = getOptionalInt(request, "maxCount", getOptionalInt(request, "limit", 100));
                 Object offsetValue = getParameterAsList(request.arguments(), "offset").isEmpty() ? null : getOptionalInt(request, "offset", -1);
                 if (offsetValue != null && (Integer) offsetValue >= 0) {
-                    int offset = (Integer) offsetValue;
-                    int limit = getOptionalInt(request, "limit", 100);
-                    startIndex = offset;
-                    maxCount = limit;
+                    startIndex = (Integer) offsetValue;
                 } else {
-                    // Use startIndex/maxCount (new standard, supports both camelCase and snake_case)
-                    // maxResults handled dynamically
                     startIndex = getOptionalInt(request, "startIndex", 0);
-                    maxCount = getOptionalInt(request, "maxCount", 100);
                 }
 
                 boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
@@ -1433,14 +1415,15 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         boolean untagged = getOptionalBoolean(request, "untagged", false);
                         boolean hasTags = getOptionalBoolean(request, "hasTags", false);
                         verbose = getOptionalBoolean(request, "verbose", false);
-                        return handleListFunctionsAll(program, startIndex, maxCount, filterDefaultNames, filterByTag, untagged, hasTags, verbose);
+                        return handleListFunctionsAll(program, startIndex, maxCount, filterDefaultNames, filterByTag, untagged, hasTags, verbose, null);
                     }
                     case "search" -> {
                         String query = getOptionalString(request, "query", null);
-                        if (query == null || query.trim().isEmpty()) {
-                            return createErrorResult("query parameter is required when mode='search'");
-                        }
                         verbose = getOptionalBoolean(request, "verbose", false);
+                        if (query == null || query.trim().isEmpty()) {
+                            // No query: return a useful list instead of an error (e.g. first maxCount functions)
+                            return handleListFunctionsAll(program, startIndex, maxCount, filterDefaultNames, null, false, false, verbose, "query omitted; listing functions. Use 'query' for substring search.");
+                        }
                         return handleListFunctionsSearch(program, query, startIndex, maxCount, filterDefaultNames, verbose);
                     }
                     case "similarity" -> {
@@ -1499,7 +1482,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 if (program != null) {
                     // Return "all" mode as default with error message
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
-                    McpSchema.CallToolResult defaultResult = handleListFunctionsAll(program, 0, 100, true, null, false, false, false);
+                    McpSchema.CallToolResult defaultResult = handleListFunctionsAll(program, 0, 100, true, null, false, false, false, null);
                     // Prepend error message to result
                     if (defaultResult.content() != null && !defaultResult.content().isEmpty()) {
                         try {
@@ -1547,10 +1530,13 @@ public class FunctionToolProvider extends AbstractToolProvider {
     }
 
     /**
-     * Handle list-functions mode='all' - list all functions
+     * Handle list-functions mode='all' - list all functions.
+     *
+     * @param resultNote optional note to include in the result (e.g. when falling back from search without query); null to omit
      */
     private McpSchema.CallToolResult handleListFunctionsAll(Program program, int startIndex, int maxCount,
-            boolean filterDefaultNames, String filterByTag, boolean untagged, boolean hasTags, boolean verbose) {
+            boolean filterDefaultNames, String filterByTag, boolean untagged, boolean hasTags, boolean verbose,
+            String resultNote) {
         // Check mutual exclusivity
         if (untagged && filterByTag != null && !filterByTag.isEmpty()) {
             return createErrorResult("Cannot use both 'untagged' and 'filterByTag' - they are mutually exclusive");
@@ -1637,6 +1623,9 @@ public class FunctionToolProvider extends AbstractToolProvider {
         }
         if (hasTags) {
             result.put("hasTags", true);
+        }
+        if (resultNote != null && !resultNote.isEmpty()) {
+            result.put("note", resultNote);
         }
         return createJsonResult(result);
     }

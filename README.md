@@ -66,8 +66,7 @@ See the [Usage Guide](docs/USAGE.md) for detailed connection instructions.
 
 ## License
 
-This project is licensed under the **Business Source License 1.1**. See [LICENSE](LICENSE) for details.
-Free for personal, educational, and internal business use. 
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [LICENSE](LICENSE) for details. AGPL-3.0 is a strong copyleft license that also requires offering source to users who interact with the software over a network (e.g. SaaS). 
 
 ## Contributing
 

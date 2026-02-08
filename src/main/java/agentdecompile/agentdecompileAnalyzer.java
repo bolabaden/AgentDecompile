@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile;
 
@@ -43,7 +26,12 @@ import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
 /**
- * Provide class-level documentation that describes what this analyzer does.
+ * Ghidra analyzer implementation (template/skeleton).
+ * <p>
+ * Ghidra API: {@link ghidra.app.services.AbstractAnalyzer}, {@link ghidra.program.model.listing.Program} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/services/AbstractAnalyzer.html">AbstractAnalyzer API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class agentdecompileAnalyzer extends AbstractAnalyzer {
 
@@ -55,23 +43,21 @@ public class agentdecompileAnalyzer extends AbstractAnalyzer {
 	}
 
 	@Override
+	// Ghidra API: AbstractAnalyzer.getDefaultEnablement(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/services/AbstractAnalyzer.html#getDefaultEnablement(ghidra.program.model.listing.Program)
 	public boolean getDefaultEnablement(Program program) {
 
-		// Return true if analyzer should be enabled by default
-
 		return true;
 	}
 
 	@Override
+	// Ghidra API: AbstractAnalyzer.canAnalyze(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/services/AbstractAnalyzer.html#canAnalyze(ghidra.program.model.listing.Program)
 	public boolean canAnalyze(Program program) {
 
-		// Examine 'program' to determine of this analyzer should analyze it.  Return true
-		// if it can.
-
 		return true;
 	}
 
 	@Override
+	// Ghidra API: AbstractAnalyzer.registerOptions(Options, Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/services/AbstractAnalyzer.html#registerOptions(ghidra.framework.options.Options,ghidra.program.model.listing.Program)
 	public void registerOptions(Options options, Program program) {
 
 		// If this analyzer has custom options, register them here
@@ -81,11 +67,9 @@ public class agentdecompileAnalyzer extends AbstractAnalyzer {
 	}
 
 	@Override
+	// Ghidra API: AbstractAnalyzer.added(Program, AddressSetView, TaskMonitor, MessageLog) - https://ghidra.re/ghidra_docs/api/ghidra/app/services/AbstractAnalyzer.html#added(ghidra.program.model.listing.Program,ghidra.program.model.address.AddressSetView,ghidra.util.task.TaskMonitor,ghidra.app.util.importer.MessageLog)
 	public boolean added(Program program, AddressSetView set, TaskMonitor monitor, MessageLog log)
 			throws CancelledException {
-
-		// Perform analysis when things get added to the 'program'.  Return true if the
-		// analysis succeeded.
 
 		return false;
 	}

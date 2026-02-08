@@ -23,14 +23,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Filter that logs incoming MCP requests and responses.
- *
- * <p>This filter provides two logging modes:
- * <ul>
- *   <li><b>Debug mode</b> ({@link ConfigManager#isDebugMode()}): Logs request headers to Ghidra's log</li>
- *   <li><b>Request logging</b> ({@link ConfigManager#isRequestLoggingEnabled()}): Logs full HTTP
- *       request/response bodies to agentdecompile-tools.log for debugging MCP protocol issues</li>
- * </ul>
+ * Filter that logs incoming MCP requests and responses (debug mode: Ghidra log; request logging: agentdecompile-tools.log).
+ * <p>
+ * Ghidra API: {@link ghidra.util.Msg}. Jakarta Servlet: {@link jakarta.servlet.Filter}.
+ * Uses {@link agentdecompile.util.AgentDecompileToolLogger} for request/response body logging.
+ * </p>
  */
 public class RequestLoggingFilter implements Filter {
     private final ConfigManager configManager;
@@ -80,6 +77,7 @@ public class RequestLoggingFilter implements Filter {
             headers.append(name).append("=").append(req.getHeader(name)).append("; ");
         }
 
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, String.format("MCP Request: %s %s Headers: %s",
             req.getMethod(),
             req.getRequestURI(),
@@ -112,6 +110,7 @@ public class RequestLoggingFilter implements Filter {
         );
 
         // Log to Ghidra's application log for correlation
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, String.format("[AgentDecompile:%s] HTTP %s %s",
             requestId, request.getMethod(), request.getRequestURI()));
 

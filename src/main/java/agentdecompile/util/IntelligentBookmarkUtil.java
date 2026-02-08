@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -55,17 +38,15 @@ import ghidra.util.Msg;
 
 /**
  * Utility for intelligent automatic bookmarking of frequently referenced addresses.
- *
- * This utility tracks address access frequency and automatically creates bookmarks
- * when addresses exceed a percentile-based threshold (top 2-5% by reference count).
- * This helps identify important locations in the binary that are referenced multiple times.
- *
- * The bookmarking is intelligent in that it:
- * - Only bookmarks addresses that are actually referenced (not just accessed)
- * - Uses percentile-based thresholds to bookmark only the top 2-5% of addresses
- * - Uses appropriate bookmark types based on context (function entry points, data, etc.)
- * - Avoids duplicate bookmarks
- * - Respects existing bookmarks
+ * Tracks address access frequency and creates bookmarks when addresses exceed a
+ * percentile-based threshold (top 2-5% by reference count).
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.BookmarkManager}, {@link ghidra.program.model.listing.Bookmark},
+ * {@link ghidra.program.model.symbol.ReferenceManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html">BookmarkManager API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html">ReferenceManager API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class IntelligentBookmarkUtil {
 
@@ -106,6 +87,7 @@ public class IntelligentBookmarkUtil {
         percentile = Math.max(MIN_PERCENTILE, Math.min(MAX_PERCENTILE, percentile));
 
         // Get or calculate percentile threshold for this program
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
         Integer threshold = programPercentileThresholds.get(programPath);
         
@@ -117,13 +99,16 @@ public class IntelligentBookmarkUtil {
                 return false;
             }
             programPercentileThresholds.put(programPath, threshold);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(IntelligentBookmarkUtil.class,
                 "Calculated percentile threshold for " + programPath + ": " + threshold +
                 " (percentile: " + percentile + "%)");
         }
 
         // Get reference count for this address
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
         ReferenceIterator refIter = refManager.getReferencesTo(address);
 
         int referenceCount = 0;
@@ -151,28 +136,37 @@ public class IntelligentBookmarkUtil {
         }
 
         // Check if bookmark already exists
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
         String bookmarkType = determineBookmarkType(program, address, hasCallRef, hasReadRef, hasWriteRef);
         String category = "Auto-Important";
+        // Ghidra API: BookmarkManager.getBookmark(Address, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String)
         Bookmark existing = bookmarkMgr.getBookmark(address, bookmarkType, category);
 
         if (existing != null) {
             // Bookmark already exists, update comment with reference count
             try {
+                // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
                 int txId = program.startTransaction("Update auto-bookmark");
                 try {
+                    // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                     bookmarkMgr.removeBookmark(existing);
                     String comment = String.format("Auto-bookmarked: %d references (threshold: %d)",
                         referenceCount, threshold);
+                    // Ghidra API: BookmarkManager.setBookmark(Address, String, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#setBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String,java.lang.String)
                     bookmarkMgr.setBookmark(address, bookmarkType, category, comment);
+                    // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                     program.endTransaction(txId, true);
                     return true;
                 } catch (Exception e) {
+                    // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                     program.endTransaction(txId, false);
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(IntelligentBookmarkUtil.class, "Failed to update bookmark: " + e.getMessage());
                     return false;
                 }
             } catch (Exception e) {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(IntelligentBookmarkUtil.class, "Failed to update bookmark: " + e.getMessage());
                 return false;
             }
@@ -180,22 +174,29 @@ public class IntelligentBookmarkUtil {
 
         // Create new bookmark
         try {
+            // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int txId = program.startTransaction("Auto-bookmark frequent address");
             try {
                 String comment = String.format("Auto-bookmarked: %d references (threshold: %d)",
                     referenceCount, threshold);
+                // Ghidra API: BookmarkManager.setBookmark(Address, String, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#setBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String,java.lang.String)
                 bookmarkMgr.setBookmark(address, bookmarkType, category, comment);
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(txId, true);
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(IntelligentBookmarkUtil.class,
                     "Auto-bookmarked address " + AddressUtil.formatAddress(address) +
                     " with " + referenceCount + " references");
                 return true;
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(txId, false);
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(IntelligentBookmarkUtil.class, "Failed to create bookmark: " + e.getMessage());
                 return false;
             }
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(IntelligentBookmarkUtil.class, "Failed to create bookmark: " + e.getMessage());
             return false;
         }
@@ -215,11 +216,13 @@ public class IntelligentBookmarkUtil {
             boolean hasCallRef, boolean hasReadRef, boolean hasWriteRef) {
 
         // Check if it's a function entry point
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         if (program.getFunctionManager().getFunctionAt(address) != null) {
             return "Analysis"; // Function entry points get Analysis bookmarks
         }
 
         // Check if it's code
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
         if (program.getListing().getInstructionAt(address) != null) {
             if (hasCallRef) {
                 return "Analysis"; // Called code locations
@@ -228,6 +231,7 @@ public class IntelligentBookmarkUtil {
         }
 
         // Check if it's data
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         if (program.getListing().getDataAt(address) != null) {
             if (hasWriteRef) {
                 return "Warning"; // Writable data (potentially important)
@@ -253,12 +257,15 @@ public class IntelligentBookmarkUtil {
     private static Integer calculatePercentileThreshold(Program program, double percentile) {
         try {
             List<Integer> referenceCounts = new ArrayList<>();
+            // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
             ReferenceManager refManager = program.getReferenceManager();
             
             // Collect reference counts for all functions
+            // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
             FunctionIterator functions = program.getFunctionManager().getFunctions(true);
             while (functions.hasNext()) {
                 Function func = functions.next();
+                // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                 Address entryPoint = func.getEntryPoint();
                 if (entryPoint != null) {
                     int refCount = countReferences(refManager, entryPoint);
@@ -269,10 +276,13 @@ public class IntelligentBookmarkUtil {
             }
             
             // Collect reference counts for all data addresses
+            // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
             Listing listing = program.getListing();
+            // Ghidra API: Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
             DataIterator dataIter = listing.getDefinedData(true);
             while (dataIter.hasNext()) {
                 Data data = dataIter.next();
+                // Ghidra API: Data.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getAddress()
                 Address dataAddr = data.getAddress();
                 if (dataAddr != null) {
                     int refCount = countReferences(refManager, dataAddr);
@@ -284,6 +294,7 @@ public class IntelligentBookmarkUtil {
             
             // If we have no reference counts, return null (don't bookmark anything)
             if (referenceCounts.isEmpty()) {
+                // Ghidra API: Msg.debug(Class, String), Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(IntelligentBookmarkUtil.class,
                     "No reference counts found for program " + program.getDomainFile().getPathname());
                 return null;
@@ -313,8 +324,10 @@ public class IntelligentBookmarkUtil {
             int threshold = referenceCounts.get(percentileIndex);
             
             // Cache the reference counts for this program (useful for debugging)
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             programReferenceCounts.put(program.getDomainFile().getPathname(), referenceCounts);
             
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(IntelligentBookmarkUtil.class,
                 "Calculated percentile threshold: " + threshold + " (percentile: " + percentile +
                 "%, index: " + percentileIndex + "/" + size + ", total addresses: " + size + ")");
@@ -322,6 +335,7 @@ public class IntelligentBookmarkUtil {
             return threshold;
             
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(IntelligentBookmarkUtil.class,
                 "Failed to calculate percentile threshold: " + e.getMessage());
             return null;
@@ -337,6 +351,7 @@ public class IntelligentBookmarkUtil {
      */
     private static int countReferences(ReferenceManager refManager, Address address) {
         int count = 0;
+        // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
         ReferenceIterator refIter = refManager.getReferencesTo(address);
         while (refIter.hasNext()) {
             refIter.next();
@@ -375,6 +390,7 @@ public class IntelligentBookmarkUtil {
         if (program == null) {
             return;
         }
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
         programPercentileThresholds.remove(programPath);
         programReferenceCounts.remove(programPath);

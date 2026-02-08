@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.headless;
 
@@ -81,6 +64,12 @@ import utility.application.ApplicationLayout;
  *
  * launcher.stop()
  * </pre>
+ * <p>
+ * Ghidra API: {@link ghidra.framework.HeadlessGhidraApplicationConfiguration}, {@link ghidra.base.project.GhidraProject} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/package-summary.html">ghidra.framework</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html">GhidraProject API</a>.
+ * PyGhidra: <a href="https://ghidra.re/ghidra_docs/api/ghidra/pyghidra/package-summary.html">ghidra.pyghidra</a>.
+ * </p>
  */
 public class AgentDecompileHeadlessLauncher {
 
@@ -178,16 +167,21 @@ public class AgentDecompileHeadlessLauncher {
      * @throws IllegalStateException if Ghidra is not initialized and autoInitializeGhidra is false
      */
     public void start() throws IOException {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Starting AgentDecompile MCP server in headless mode...");
 
         // Initialize Ghidra application if needed
+        // Ghidra API: Application.isInitialized() - https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html#isInitialized()
         if (!Application.isInitialized()) {
             if (autoInitializeGhidra) {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Initializing Ghidra application in headless mode...");
                 try {
                     ApplicationLayout layout = new GhidraApplicationLayout();
                     ApplicationConfiguration config = new HeadlessGhidraApplicationConfiguration();
+                    // Ghidra API: Application.initializeApplication(ApplicationLayout, ApplicationConfiguration) - https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html#initializeApplication(ghidra.framework.ApplicationLayout,ghidra.framework.ApplicationConfiguration)
                     Application.initializeApplication(layout, config);
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Ghidra application initialized");
                 } catch (IOException e) {
                     throw new IOException("Failed to initialize Ghidra application layout", e);
@@ -201,9 +195,11 @@ public class AgentDecompileHeadlessLauncher {
 
         // Create config manager based on mode
         if (configFile != null) {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Loading configuration from: " + configFile.getAbsolutePath());
             configManager = new ConfigManager(configFile);
         } else {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Using default configuration (in-memory)");
             configManager = new ConfigManager();
         }
@@ -211,6 +207,7 @@ public class AgentDecompileHeadlessLauncher {
         // Use random port if requested
         if (useRandomPort) {
             int randomPort = configManager.setRandomAvailablePort();
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Using random port: " + randomPort);
         }
 
@@ -224,30 +221,39 @@ public class AgentDecompileHeadlessLauncher {
             try {
                 ProjectUtil.ProjectOpenResult result = ProjectUtil.createOrOpenProject(
                     projectLocation, projectName, true, this, forceIgnoreLock);
+                // Ghidra API: ProjectOpenResult.getGhidraProject() returns GhidraProject - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html
                 ghidraProject = result.getGhidraProject();
                 if (result.wasAlreadyOpen()) {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Project '" + projectName + "' is already open, using active project");
                 } else if (result.wasCreated()) {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Created new project: " + projectName);
                 } else {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Opened project: " + projectName);
                 }
             } catch (IOException e) {
                 if (forceIgnoreLock && isLockRelatedError(e)) {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Project is locked, attempting to delete lock files and retry...");
                     releaseLockFiles(projectLocation, projectName);
                     try {
                         ProjectUtil.ProjectOpenResult result = ProjectUtil.createOrOpenProject(
                             projectLocation, projectName, true, this, true);
-                        ghidraProject = result.getGhidraProject();
+                        // Ghidra API: ProjectOpenResult.getGhidraProject() returns GhidraProject - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html
+                ghidraProject = result.getGhidraProject();
                         if (result.wasAlreadyOpen()) {
+                            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                             Msg.info(this, "Project '" + projectName + "' is already open, using active project");
                         } else {
+                            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                             Msg.info(this, "Opened project after deleting lock files: " + projectName);
                         }
                     } catch (IOException retryException) {
                         // IMPORTANT: Do not crash the MCP server if a project cannot be opened.
                         // The server should still start so users can choose/open another project.
+                        // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                         Msg.error(this,
                             "Failed to open project after deleting lock files: " + projectName +
                                 ". Starting AgentDecompile without an active project.",
@@ -258,6 +264,7 @@ public class AgentDecompileHeadlessLauncher {
                     // IMPORTANT: Do not crash the MCP server if a project cannot be opened.
                     // Starting without an active project is valid; tools will surface "no active project"
                     // errors where appropriate and project-management tools can still be used.
+                    // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                     Msg.error(this,
                         "Failed to open project '" + projectName + "'. Starting AgentDecompile without an active project. " +
                             "You can open a different project using the project tools.",
@@ -266,6 +273,7 @@ public class AgentDecompileHeadlessLauncher {
                 }
             } catch (Exception e) {
                 // IMPORTANT: Do not crash the MCP server if a project cannot be opened.
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this,
                     "Failed to create/open project '" + projectName + "'. Starting AgentDecompile without an active project.",
                     e);
@@ -277,6 +285,7 @@ public class AgentDecompileHeadlessLauncher {
         serverManager = new McpServerManager(configManager);
         serverManager.startServer();
 
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "AgentDecompile MCP server started in headless mode");
     }
 
@@ -285,6 +294,7 @@ public class AgentDecompileHeadlessLauncher {
      * Stop the server and cleanup
      */
     public void stop() {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Stopping AgentDecompile MCP server...");
 
         if (serverManager != null) {
@@ -300,15 +310,19 @@ public class AgentDecompileHeadlessLauncher {
         // Close Ghidra project (but don't delete it - it's persistent)
         if (ghidraProject != null) {
             try {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Closing project: " + projectName);
+                // Ghidra API: GhidraProject.close() - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#close()
                 ghidraProject.close();
             } catch (Exception e) {
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this, "Error closing project: " + e.getMessage(), e);
             } finally {
                 ghidraProject = null;
             }
         }
 
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "AgentDecompile MCP server stopped");
     }
 
@@ -419,6 +433,7 @@ public class AgentDecompileHeadlessLauncher {
         for (Map.Entry<Long, Set<File>> entry : lockingProcesses.entrySet()) {
             long pid = entry.getKey();
             if (pid == currentPid) {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Current process (" + pid + ") already owns lock files for project " + projectName);
                 continue;
             }
@@ -456,9 +471,11 @@ public class AgentDecompileHeadlessLauncher {
                 }
             }
             if (!pids.isEmpty()) {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Detected potential locking PID(s) " + pids + " in " + lockFile.getName());
             }
         } catch (IOException e) {
+            // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(this, "Unable to read lock file '" + lockFile.getAbsolutePath() + "': " + e.getMessage());
         }
         return pids;
@@ -482,37 +499,49 @@ public class AgentDecompileHeadlessLauncher {
         String fileDescription = lockFiles.stream()
             .map(File::getName)
             .collect(Collectors.joining(", "));
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Detected Windows lock held by pid " + pid + " for files [" + fileDescription + "]");
 
         ProcessHandle.of(pid).ifPresentOrElse(handle -> {
             if (!handle.isAlive()) {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Process " + pid + " already exited.");
                 return;
             }
             String commandDescription = handle.info().command().orElse("unknown");
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Requesting graceful termination of process " + pid + " (" + commandDescription + ")");
             try {
                 handle.destroy();
             } catch (UnsupportedOperationException | SecurityException ex) {
+                // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                 Msg.warn(this, "Unable to request graceful termination of process " + pid + ": " + ex.getMessage());
             }
 
             if (!waitForProcessExit(handle, 2000)) {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Process " + pid + " still alive after graceful request; forcing termination");
                 try {
                     handle.destroyForcibly();
                 } catch (UnsupportedOperationException | SecurityException ex) {
+                    // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                     Msg.warn(this, "Unable to forcefully terminate process " + pid + ": " + ex.getMessage());
                 }
                 if (!waitForProcessExit(handle, 2000)) {
+                    // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                     Msg.warn(this, "Process " + pid + " remained alive after forced termination attempt");
                 } else {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "Process " + pid + " terminated after forced termination");
                 }
             } else {
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "Process " + pid + " terminated gracefully");
             }
-        }, () -> Msg.info(this, "No running process found for pid " + pid));
+        }, () -> {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
+            Msg.info(this, "No running process found for pid " + pid);
+        });
     }
 
     private boolean waitForProcessExit(ProcessHandle handle, long timeoutMs) {

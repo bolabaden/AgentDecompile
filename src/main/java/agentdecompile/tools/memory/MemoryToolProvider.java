@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.memory;
 
@@ -61,6 +44,12 @@ import agentdecompile.util.SchemaUtil;
 /**
  * Tool provider for memory-related operations.
  * Provides tools to list memory blocks and read memory content.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.mem.Memory}, {@link ghidra.program.model.mem.MemoryBlock} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html">Memory API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html">MemoryBlock API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class MemoryToolProvider extends AbstractToolProvider {
 
@@ -153,11 +142,14 @@ public class MemoryToolProvider extends AbstractToolProvider {
     }
 
     private McpSchema.CallToolResult handleBlocksMode(Program program) {
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         List<Map<String, Object>> blockData = new ArrayList<>();
 
+        // Ghidra API: Memory.getBlocks() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBlocks()
         for (MemoryBlock block : memory.getBlocks()) {
             Map<String, Object> blockInfo = new HashMap<>();
+            // Ghidra API: MemoryBlock.getName(), getStart(), getEnd(), getSize(), isRead(), isWrite(), isExecute(), isInitialized(), isVolatile(), isMapped(), isOverlay() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html
             blockInfo.put("name", block.getName());
             blockInfo.put("start", AddressUtil.formatAddress(block.getStart()));
             blockInfo.put("end", AddressUtil.formatAddress(block.getEnd()));
@@ -228,19 +220,24 @@ public class MemoryToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> resultData = new HashMap<>();
+        // Ghidra API: Data.getAddress(), getDataType(), getName(), getLength() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html
         resultData.put("address", AddressUtil.formatAddress(data.getAddress()));
         resultData.put("dataType", data.getDataType().getName());
         resultData.put("length", data.getLength());
 
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
         Symbol primarySymbol = symbolTable.getPrimarySymbol(data.getAddress());
         if (primarySymbol != null) {
+            // Ghidra API: Symbol.getName(), Symbol.getParentNamespace(), Namespace.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
             resultData.put("symbolName", primarySymbol.getName());
             resultData.put("symbolNamespace", primarySymbol.getParentNamespace().getName());
         }
 
         StringBuilder hexString = new StringBuilder();
         try {
+            // Ghidra API: Data.getBytes() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getBytes()
             byte[] bytes = data.getBytes();
             for (byte b : bytes) {
                 hexString.append(String.format("%02x", b & 0xff));
@@ -250,9 +247,11 @@ public class MemoryToolProvider extends AbstractToolProvider {
             resultData.put("hexBytesError", "Memory access error: " + e.getMessage());
         }
 
+        // Ghidra API: Data.getDefaultValueRepresentation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getDefaultValueRepresentation()
         String representation = data.getDefaultValueRepresentation();
         resultData.put("representation", representation);
 
+        // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getValue()
         Object value = data.getValue();
         if (value != null) {
             resultData.put("valueType", value.getClass().getSimpleName());
@@ -271,13 +270,16 @@ public class MemoryToolProvider extends AbstractToolProvider {
         if (limit <= 0) limit = 100;
         if (limit > 1000) limit = 1000;
 
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
         List<Map<String, Object>> dataItems = new ArrayList<>();
         int count = 0;
         int skipped = 0;
 
+        // Ghidra API: Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
         DataIterator dataIter = listing.getDefinedData(true);
         while (dataIter.hasNext() && dataItems.size() < limit) {
+            // Ghidra API: DataIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/DataIterator.html#next()
             Data data = dataIter.next();
             count++;
 
@@ -287,17 +289,21 @@ public class MemoryToolProvider extends AbstractToolProvider {
             }
 
             Map<String, Object> item = new HashMap<>();
+            // Ghidra API: Data.getAddress(), getDataType(), getName(), getLength(), getDefaultValueRepresentation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html
             item.put("address", AddressUtil.formatAddress(data.getAddress()));
             item.put("dataType", data.getDataType().getName());
             item.put("length", data.getLength());
             item.put("representation", data.getDefaultValueRepresentation());
 
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
+            // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
             Symbol primarySymbol = symbolTable.getPrimarySymbol(data.getAddress());
             if (primarySymbol != null) {
                 item.put("label", primarySymbol.getName());
             }
 
+            // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
             Object value = data.getValue();
             if (value != null) {
                 item.put("value", value.toString());
@@ -322,8 +328,10 @@ public class MemoryToolProvider extends AbstractToolProvider {
         if (limit <= 0) limit = 100;
         if (limit > 1000) limit = 1000;
 
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         List<MemoryBlock> allBlocks = new ArrayList<>();
+        // Ghidra API: Memory.getBlocks() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBlocks()
         for (MemoryBlock block : memory.getBlocks()) {
             allBlocks.add(block);
         }
@@ -333,6 +341,7 @@ public class MemoryToolProvider extends AbstractToolProvider {
         for (int i = offset; i < endIndex; i++) {
             MemoryBlock block = allBlocks.get(i);
             Map<String, Object> segmentInfo = new HashMap<>();
+            // Ghidra API: MemoryBlock.getName(), getStart(), getEnd(), getSize(), isRead(), isWrite(), isExecute() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html
             segmentInfo.put("name", block.getName());
             segmentInfo.put("start", AddressUtil.formatAddress(block.getStart()));
             segmentInfo.put("end", AddressUtil.formatAddress(block.getEnd()));

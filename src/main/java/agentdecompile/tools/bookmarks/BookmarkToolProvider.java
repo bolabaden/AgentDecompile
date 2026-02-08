@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.bookmarks;
 
@@ -52,6 +35,13 @@ import agentdecompile.util.SchemaUtil;
 /**
  * Tool provider for bookmark-related operations. Provides tools to set, get,
  * remove, and search bookmarks in programs.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.BookmarkManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html">BookmarkManager API</a>,
+ * {@link ghidra.program.model.listing.Bookmark} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html">Bookmark API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class BookmarkToolProvider extends AbstractToolProvider {
 
@@ -193,25 +183,33 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         String comment = getString(request, "comment");
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Set Bookmark");
             try {
+                // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
                 BookmarkManager bookmarkMgr = program.getBookmarkManager();
+                // Ghidra API: BookmarkManager.getBookmark(Address, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String)
                 Bookmark existing = bookmarkMgr.getBookmark(address, type, category);
                 if (existing != null) {
+                    // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                     bookmarkMgr.removeBookmark(existing);
                 }
+                // Ghidra API: BookmarkManager.setBookmark(Address, String, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#setBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String,java.lang.String)
                 Bookmark bookmark = bookmarkMgr.setBookmark(address, type, category, comment);
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
+                // Ghidra API: Bookmark.getId() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getId()
                 result.put("id", bookmark.getId());
                 result.put("address", AddressUtil.formatAddress(address));
                 result.put("type", type);
                 result.put("category", category);
                 result.put("comment", comment);
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Set bookmark");
                 return createJsonResult(result);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -252,9 +250,11 @@ public class BookmarkToolProvider extends AbstractToolProvider {
             List<Map<String, Object>> bookmarksArray) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Batch Set Bookmarks");
             try {
                 for (int i = 0; i < bookmarksArray.size(); i++) {
@@ -299,15 +299,19 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     }
 
                     // Set the bookmark (remove existing if present)
+                    // Ghidra API: BookmarkManager.getBookmark(Address, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String)
                     Bookmark existing = bookmarkMgr.getBookmark(address, type, category);
                     if (existing != null) {
+                        // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                         bookmarkMgr.removeBookmark(existing);
                     }
+                    // Ghidra API: BookmarkManager.setBookmark(Address, String, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#setBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String,java.lang.String)
                     Bookmark bookmark = bookmarkMgr.setBookmark(address, type, category, comment);
 
                     // Record success
                     Map<String, Object> result = new HashMap<>();
                     result.put("index", i);
+                    // Ghidra API: Bookmark.getId() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getId()
                     result.put("id", bookmark.getId());
                     result.put("address", AddressUtil.formatAddress(address));
                     result.put("type", type);
@@ -316,6 +320,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     results.add(result);
                 }
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Batch set bookmarks");
 
@@ -332,6 +337,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
 
                 return createJsonResult(response);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -367,6 +373,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         String typeFilter = getOptionalString(request, "type", null);
         String categoryFilter = getOptionalString(request, "category", null);
 
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
         List<Map<String, Object>> bookmarks = new ArrayList<>();
 
@@ -375,6 +382,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
             if (address == null) {
                 return createErrorResult("Could not resolve address or symbol: " + addressStr);
             }
+            // Ghidra API: BookmarkManager.getBookmarks(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmarks(ghidra.program.model.address.Address)
             Bookmark[] bookmarksAtAddr = bookmarkMgr.getBookmarks(address);
             for (Bookmark bookmark : bookmarksAtAddr) {
                 if (matchesFilters(bookmark, typeFilter, categoryFilter)) {
@@ -382,6 +390,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                 }
             }
         } else {
+            // Ghidra API: BookmarkManager.getBookmarksIterator(String) or getBookmarksIterator() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmarksIterator(java.lang.String)
             Iterator<Bookmark> iter = typeFilter != null ? bookmarkMgr.getBookmarksIterator(typeFilter) : bookmarkMgr.getBookmarksIterator();
             while (iter.hasNext()) {
                 Bookmark bookmark = iter.next();
@@ -410,19 +419,23 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         String typeFilter = getOptionalString(request, "type", null);
         int maxResults = getOptionalInt(request, "maxResults", 100);
 
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
         List<Map<String, Object>> results = new ArrayList<>();
-        Iterator<Bookmark> iter = typeFilter != null 
-            ? bookmarkMgr.getBookmarksIterator(typeFilter) 
+        // Ghidra API: BookmarkManager.getBookmarksIterator(String) or getBookmarksIterator() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmarksIterator(java.lang.String)
+        Iterator<Bookmark> iter = typeFilter != null
+            ? bookmarkMgr.getBookmarksIterator(typeFilter)
             : bookmarkMgr.getBookmarksIterator();
 
         String searchTextLower = hasSearchText ? searchText.toLowerCase() : null;
         while (iter.hasNext() && results.size() < maxResults) {
             Bookmark bookmark = iter.next();
+            // Ghidra API: Bookmark.getTypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString()
             if (typeFilter != null && !bookmark.getTypeString().equals(typeFilter)) {
                 continue;
             }
             if (hasSearchText) {
+                // Ghidra API: Bookmark.getComment() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getComment()
                 String comment = bookmark.getComment();
                 if (comment == null || !comment.toLowerCase().contains(searchTextLower)) {
                     continue;
@@ -475,24 +488,30 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         String category = getOptionalString(request, "category", "");
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Remove Bookmark");
             try {
+                // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
                 BookmarkManager bookmarkMgr = program.getBookmarkManager();
+                // Ghidra API: BookmarkManager.getBookmark(Address, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String)
                 Bookmark bookmark = bookmarkMgr.getBookmark(address, type, category);
                 if (bookmark == null) {
                     return createErrorResult("No bookmark found at address " + AddressUtil.formatAddress(address)
                             + " with type " + type + " and category " + category);
                 }
+                // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                 bookmarkMgr.removeBookmark(bookmark);
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
                 result.put("address", AddressUtil.formatAddress(address));
                 result.put("type", type);
                 result.put("category", category);
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Remove bookmark");
                 return createJsonResult(result);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -513,9 +532,11 @@ public class BookmarkToolProvider extends AbstractToolProvider {
             List<Map<String, Object>> bookmarksArray) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Batch Remove Bookmarks");
             try {
                 for (int i = 0; i < bookmarksArray.size(); i++) {
@@ -552,12 +573,14 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     }
 
                     // Remove the bookmark
+                    // Ghidra API: BookmarkManager.getBookmark(Address, String, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmark(ghidra.program.model.address.Address,java.lang.String,java.lang.String)
                     Bookmark bookmark = bookmarkMgr.getBookmark(address, type, category);
                     if (bookmark == null) {
                         errors.add(createErrorInfo(i, "No bookmark found at address " + AddressUtil.formatAddress(address)
                                 + " with type " + type + " and category " + category));
                         continue;
                     }
+                    // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                     bookmarkMgr.removeBookmark(bookmark);
 
                     // Record success
@@ -569,6 +592,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     results.add(result);
                 }
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Batch remove bookmarks");
 
@@ -585,6 +609,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
 
                 return createJsonResult(response);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -606,11 +631,14 @@ public class BookmarkToolProvider extends AbstractToolProvider {
         String categoryFilter = getOptionalString(request, "category", null);
         
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Remove All Bookmarks");
             try {
+                // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
                 BookmarkManager bookmarkMgr = program.getBookmarkManager();
-                Iterator<Bookmark> iter = typeFilter != null 
-                    ? bookmarkMgr.getBookmarksIterator(typeFilter) 
+                // Ghidra API: BookmarkManager.getBookmarksIterator(String) or getBookmarksIterator() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmarksIterator(java.lang.String)
+                Iterator<Bookmark> iter = typeFilter != null
+                    ? bookmarkMgr.getBookmarksIterator(typeFilter)
                     : bookmarkMgr.getBookmarksIterator();
                 
                 int removedCount = 0;
@@ -620,25 +648,30 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                     Bookmark bookmark = iter.next();
                     
                     // Apply filters
+                    // Ghidra API: Bookmark.getTypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString()
                     if (typeFilter != null && !bookmark.getTypeString().equals(typeFilter)) {
                         continue;
                     }
+                    // Ghidra API: Bookmark.getCategory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getCategory()
                     if (categoryFilter != null && !bookmark.getCategory().equals(categoryFilter)) {
                         continue;
                     }
                     
                     // Record bookmark info before removing
                     Map<String, Object> bookmarkInfo = new HashMap<>();
+                    // Ghidra API: Bookmark.getAddress(), getTypeString(), getCategory(), getComment() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getAddress(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getCategory(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getComment()
                     bookmarkInfo.put("address", AddressUtil.formatAddress(bookmark.getAddress()));
                     bookmarkInfo.put("type", bookmark.getTypeString());
                     bookmarkInfo.put("category", bookmark.getCategory());
                     bookmarkInfo.put("comment", bookmark.getComment());
                     removedBookmarks.add(bookmarkInfo);
                     
+                    // Ghidra API: BookmarkManager.removeBookmark(Bookmark) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#removeBookmark(ghidra.program.model.listing.Bookmark)
                     bookmarkMgr.removeBookmark(bookmark);
                     removedCount++;
                 }
                 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Remove all bookmarks");
                 
@@ -655,6 +688,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
                 
                 return createJsonResult(result);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -672,13 +706,17 @@ public class BookmarkToolProvider extends AbstractToolProvider {
      */
     private McpSchema.CallToolResult handleListCategories(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
         String type = getOptionalString(request, "type", null);
+        // Ghidra API: Program.getBookmarkManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getBookmarkManager()
         BookmarkManager bookmarkMgr = program.getBookmarkManager();
         Map<String, Integer> categoryCounts = new HashMap<>();
+        // Ghidra API: BookmarkManager.getBookmarksIterator(String) or getBookmarksIterator() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/BookmarkManager.html#getBookmarksIterator(java.lang.String)
         Iterator<Bookmark> iter = type != null ? bookmarkMgr.getBookmarksIterator(type) : bookmarkMgr.getBookmarksIterator();
 
         while (iter.hasNext()) {
             Bookmark bookmark = iter.next();
+            // Ghidra API: Bookmark.getTypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString()
             if (type == null || bookmark.getTypeString().equals(type)) {
+                // Ghidra API: Bookmark.getCategory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getCategory()
                 String category = bookmark.getCategory();
                 categoryCounts.put(category, categoryCounts.getOrDefault(category, 0) + 1);
             }
@@ -705,9 +743,11 @@ public class BookmarkToolProvider extends AbstractToolProvider {
      * @return true if bookmark matches filters
      */
     private boolean matchesFilters(Bookmark bookmark, String typeFilter, String categoryFilter) {
+        // Ghidra API: Bookmark.getTypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString()
         if (typeFilter != null && !bookmark.getTypeString().equals(typeFilter)) {
             return false;
         }
+        // Ghidra API: Bookmark.getCategory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getCategory()
         if (categoryFilter != null && !bookmark.getCategory().equals(categoryFilter)) {
             return false;
         }
@@ -722,6 +762,7 @@ public class BookmarkToolProvider extends AbstractToolProvider {
      */
     private Map<String, Object> bookmarkToMap(Bookmark bookmark) {
         Map<String, Object> map = new HashMap<>();
+        // Ghidra API: Bookmark.getId(), getAddress(), getTypeString(), getCategory(), getComment() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getId(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getAddress(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getTypeString(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getCategory(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Bookmark.html#getComment()
         map.put("id", bookmark.getId());
         map.put("address", AddressUtil.formatAddress(bookmark.getAddress()));
         map.put("type", bookmark.getTypeString());

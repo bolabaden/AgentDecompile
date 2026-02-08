@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.plugin.config;
 
@@ -44,7 +27,13 @@ import ghidra.util.bean.opteditor.OptionsVetoException;
 
 /**
  * Configuration backend that uses Ghidra's ToolOptions.
- * This is used in GUI mode where configuration is persisted to Ghidra's tool options.
+ * Used in GUI mode where configuration is persisted to Ghidra's tool options.
+ * <p>
+ * Ghidra API: {@link ghidra.framework.options.ToolOptions}, {@link ghidra.framework.options.OptionsChangeListener},
+ * {@link ghidra.framework.plugintool.PluginTool} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html">ToolOptions API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ToolOptionsBackend implements ConfigurationBackend, OptionsChangeListener {
 
@@ -57,41 +46,49 @@ public class ToolOptionsBackend implements ConfigurationBackend, OptionsChangeLi
      * @param category The options category (e.g., "AgentDecompile Server Options")
      */
     public ToolOptionsBackend(PluginTool tool, String category) {
+        // Ghidra API: PluginTool.getOptions(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getOptions(java.lang.String)
         this.toolOptions = tool.getOptions(category);
 
         // Register as listener for Ghidra's option changes
+        // Ghidra API: ToolOptions.addOptionsChangeListener(OptionsChangeListener) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#addOptionsChangeListener(ghidra.framework.options.OptionsChangeListener)
         toolOptions.addOptionsChangeListener(this);
     }
 
     @Override
     public int getInt(String category, String name, int defaultValue) {
+        // Ghidra API: ToolOptions.getInt(String, int) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#getInt(java.lang.String,int)
         return toolOptions.getInt(name, defaultValue);
     }
 
     @Override
     public void setInt(String category, String name, int value) {
+        // Ghidra API: ToolOptions.setInt(String, int) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#setInt(java.lang.String,int)
         toolOptions.setInt(name, value);
         // optionsChanged() will be called automatically by Ghidra
     }
 
     @Override
     public String getString(String category, String name, String defaultValue) {
+        // Ghidra API: ToolOptions.getString(String, String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#getString(java.lang.String,java.lang.String)
         return toolOptions.getString(name, defaultValue);
     }
 
     @Override
     public void setString(String category, String name, String value) {
+        // Ghidra API: ToolOptions.setString(String, String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#setString(java.lang.String,java.lang.String)
         toolOptions.setString(name, value);
         // optionsChanged() will be called automatically by Ghidra
     }
 
     @Override
     public boolean getBoolean(String category, String name, boolean defaultValue) {
+        // Ghidra API: ToolOptions.getBoolean(String, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#getBoolean(java.lang.String,boolean)
         return toolOptions.getBoolean(name, defaultValue);
     }
 
     @Override
     public void setBoolean(String category, String name, boolean value) {
+        // Ghidra API: ToolOptions.setBoolean(String, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#setBoolean(java.lang.String,boolean)
         toolOptions.setBoolean(name, value);
         // optionsChanged() will be called automatically by Ghidra
     }
@@ -114,6 +111,7 @@ public class ToolOptionsBackend implements ConfigurationBackend, OptionsChangeLi
     @Override
     public void dispose() {
         if (toolOptions != null) {
+            // Ghidra API: ToolOptions.removeOptionsChangeListener(OptionsChangeListener) - https://ghidra.re/ghidra_docs/api/ghidra/framework/options/ToolOptions.html#removeOptionsChangeListener(ghidra.framework.options.OptionsChangeListener)
             toolOptions.removeOptionsChangeListener(this);
         }
         listeners.clear();
@@ -126,6 +124,7 @@ public class ToolOptionsBackend implements ConfigurationBackend, OptionsChangeLi
     public void optionsChanged(ToolOptions options, String optionName, Object oldValue, Object newValue)
             throws OptionsVetoException {
 
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "ToolOptions changed: " + optionName + " from " + oldValue + " to " + newValue);
 
         // Notify our listeners
@@ -134,6 +133,7 @@ public class ToolOptionsBackend implements ConfigurationBackend, OptionsChangeLi
             try {
                 listener.onConfigurationChanged("", optionName, oldValue, newValue);
             } catch (Exception e) {
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this, "Error notifying configuration listener", e);
             }
         }

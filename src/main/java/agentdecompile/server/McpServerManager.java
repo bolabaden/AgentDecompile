@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.server;
 
@@ -96,6 +79,16 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
  * This class is responsible for initializing, configuring, and starting the MCP server,
  * as well as registering all resources and tools. It handles multiple tools accessing
  * the same server instance and coordinates program lifecycle events across tools.
+ * <p>
+ * MCP Java SDK references (v0.17.0):
+ * <ul>
+ *   <li>{@link io.modelcontextprotocol.server.McpSyncServer} - <a href="https://github.com/modelcontextprotocol/java-sdk">MCP Java SDK</a></li>
+ *   <li>{@link io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider} - HTTP streamable transport</li>
+ *   <li>MCP Server docs: <a href="https://modelcontextprotocol.info/docs/sdk/java/mcp-server/">MCP Java Server</a></li>
+ * </ul>
+ * Ghidra API: {@link ghidra.framework.plugintool.PluginTool}, {@link ghidra.program.model.listing.Program}
+ * - <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API</a>
+ * </p>
  */
 public class McpServerManager implements AgentDecompileMcpService, ConfigChangeListener {
     private static final String MCP_MSG_ENDPOINT = "/mcp/message";
@@ -237,12 +230,14 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
     public void startServer() {
         // Check if server is enabled in config
         if (!configManager.isServerEnabled()) {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "MCP server is disabled in configuration. Not starting server.");
             return;
         }
 
         // Check if server is already running
         if (httpServer != null && httpServer.isRunning()) {
+            // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(this, "MCP server is already running.");
             return;
         }
@@ -250,6 +245,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         int serverPort = configManager.getServerPort();
         String serverHost = configManager.getServerHost();
         String baseUrl = "http://" + serverHost + ":" + serverPort;
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Starting MCP server on " + baseUrl);
 
         ServletContextHandler servletContextHandler = new ServletContextHandler(ServletContextHandler.SESSIONS);
@@ -259,6 +255,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         if (configManager.isApiKeyEnabled()) {
             FilterHolder filterHolder = new FilterHolder(new ApiKeyAuthFilter(configManager));
             servletContextHandler.addFilter(filterHolder, "/*", EnumSet.of(DispatcherType.REQUEST));
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "API key authentication enabled for MCP server");
         }
 
@@ -335,6 +332,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         threadPool.submit(() -> {
             try {
                 httpServer.start();
+                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                 Msg.info(this, "MCP server started successfully");
 
                 // Mark server as ready
@@ -344,9 +342,11 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
                 httpServer.join();
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
+                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(this, "MCP server was interrupted - this is normal during shutdown");
                     Thread.currentThread().interrupt(); // Restore interrupt status
                 } else {
+                    // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                     Msg.error(this, "Error starting MCP server", e);
                 }
             }
@@ -363,6 +363,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
                 totalWait += waitInterval;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                 Msg.warn(this, "Interrupted while waiting for server startup");
                 return;
             }
@@ -370,6 +371,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
 
         if (serverReady) {
         } else {
+            // Ghidra API: Msg.error(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object)
             Msg.error(this, "Server failed to start within timeout");
         }
 
@@ -378,6 +380,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
     @Override
     public void registerTool(PluginTool tool) {
         registeredTools.add(tool);
+        // Ghidra API: Msg.debug(Object, String), PluginTool.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Registered tool with MCP server: " + tool.getName());
     }
 
@@ -396,6 +399,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             activeProgram = null;
         }
 
+        // Ghidra API: Msg.debug(Object, String), PluginTool.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Unregistered tool from MCP server: " + tool.getName());
     }
 
@@ -416,6 +420,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             provider.programOpened(program);
         }
 
+        // Ghidra API: Msg.debug(Object, String), PluginTool.getName(), Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Program opened in tool " + tool.getName() + ": " + program.getName());
     }
 
@@ -447,6 +452,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             }
         }
 
+        // Ghidra API: Msg.debug(Object, String), PluginTool.getName(), Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Program closed in tool " + tool.getName() + ": " + program.getName());
     }
 
@@ -480,6 +486,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
     public void setActiveProgram(Program program, PluginTool tool) {
         this.activeProgram = program;
         this.activeTool = tool;
+        // Ghidra API: Msg.debug(Object, String), Program.getName(), PluginTool.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Active program changed to: " + (program != null ? program.getName() : "null") +
                   " in tool: " + (tool != null ? tool.getName() : "null"));
     }
@@ -497,10 +504,12 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
      * This method gracefully stops the current server and starts a new one.
      */
     public void restartServer() {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Restarting MCP server...");
 
         // Check if server is enabled in config
         if (!configManager.isServerEnabled()) {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "MCP server is disabled in configuration. Stopping server.");
             stopServer();
             return;
@@ -515,6 +524,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         // Start the server with new configuration
         startServer();
 
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "MCP server restart complete");
     }
 
@@ -547,6 +557,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
      * This is used internally for restart operations.
      */
     private void stopServer() {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Stopping MCP server...");
 
         // Mark server as not ready
@@ -558,10 +569,12 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
                 httpServer.stop();
                 httpServer = null;
             } catch (Exception e) {
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this, "Error stopping HTTP server", e);
             }
         }
 
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "MCP server stopped");
     }
 
@@ -572,25 +585,30 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             if (null != name && null != oldValue && null != newValue)
                 switch (name) {
                     case ConfigManager.SERVER_PORT -> {
+                        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(this, "Server port changed from " + oldValue + " to " + newValue + ". Restarting server...");
                         restartServer();
-                }
+                    }
                     case ConfigManager.SERVER_HOST -> {
+                        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(this, "Server host changed from " + oldValue + " to " + newValue + ". Restarting server...");
                         restartServer();
-                }
+                    }
                     case ConfigManager.SERVER_ENABLED -> {
+                        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(this, "Server enabled setting changed from " + oldValue + " to " + newValue + ". Restarting server...");
                         restartServer();
-                }
+                    }
                     case ConfigManager.API_KEY_ENABLED -> {
+                        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(this, "API key authentication setting changed from " + oldValue + " to " + newValue + ". Restarting server...");
                         restartServer();
-                }
+                    }
                     case ConfigManager.API_KEY -> {
+                        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(this, "API key changed. Restarting server...");
                         restartServer();
-                }
+                    }
                     default -> {
                 }
             }
@@ -601,6 +619,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
      * Shut down the MCP server and clean up resources
      */
     public void shutdown() {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Shutting down MCP server...");
 
         // Remove config change listener and dispose
@@ -628,6 +647,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             try {
                 httpServer.stop();
             } catch (Exception e) {
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this, "Error stopping HTTP server", e);
             }
         }
@@ -644,6 +664,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
 
         serverReady = false;
 
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "MCP server shutdown complete");
     }
 

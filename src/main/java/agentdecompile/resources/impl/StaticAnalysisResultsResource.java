@@ -64,17 +64,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Resource provider for SARIF 2.1.0 format static analysis reports. Provides
- * comprehensive program analysis results in standardized SARIF JSON format: -
- * All functions (with parameters, variables, tags, comments) - All
- * symbols/labels (with addresses, types, namespaces) - All bookmarks (with
- * type, category, comment, address) - All strings (with addresses, content,
- * length) - All data types and structures - Memory layout analysis -
- * Imports/exports analysis - Function tags and categorization - Static analysis
- * findings and observations
- *
- * Uses caching to improve performance - reports are regenerated only when
- * programs change.
+ * Resource provider for SARIF 2.1.0 format static analysis reports.
+ * Provides comprehensive program analysis: functions, symbols, bookmarks, strings,
+ * data types, memory layout, imports/exports, and findings.
+ * <p>
+ * Uses caching; reports are regenerated only when programs change.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Program}, {@link ghidra.program.model.listing.Listing},
+ * {@link ghidra.program.model.symbol.SymbolTable}, {@link ghidra.program.model.data.DataTypeManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * MCP: <a href="https://modelcontextprotocol.io/">MCP spec</a>.
+ * </p>
  */
 public class StaticAnalysisResultsResource extends AbstractResourceProvider {
 
@@ -127,10 +128,10 @@ public class StaticAnalysisResultsResource extends AbstractResourceProvider {
 
                         List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
 
-                        // DIAGNOSTIC: Log what getOpenPrograms() returned
                         logInfo("=== DIAGNOSTIC: getOpenPrograms() returned " + openPrograms.size() + " program(s) ===");
                         for (int i = 0; i < openPrograms.size(); i++) {
                             Program p = openPrograms.get(i);
+                            // Ghidra API: Program.getName(), getDomainFile(), DomainFile.getPathname(), Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
                             logInfo("Program[" + i + "]: name='" + p.getName()
                                     + "', path='" + p.getDomainFile().getPathname()
                                     + "', closed=" + p.isClosed()
@@ -336,17 +337,18 @@ public class StaticAnalysisResultsResource extends AbstractResourceProvider {
 
         ObjectNode programDoc = JSON.createObjectNode();
 
-        // Basic program information
+        // Ghidra API: Program.getName(), getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         programDoc.put("name", program.getName());
         programDoc.put("path", program.getDomainFile().getPathname());
         logInfo("Added basic info: name=" + program.getName() + ", path=" + program.getDomainFile().getPathname());
+        // Ghidra API: Program.getExecutableFormat(), getCreationDate(), getModificationNumber() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getExecutableFormat()
         programDoc.put("executableFormat", program.getExecutableFormat());
         if (program.getCreationDate() != null) {
             programDoc.put("creationDate", program.getCreationDate().toString());
         }
         programDoc.put("modificationNumber", program.getModificationNumber());
 
-        // Language and compiler information
+        // Ghidra API: Program.getLanguage(), getCompilerSpec() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getLanguage()
         Language language = program.getLanguage();
         CompilerSpec compilerSpec = program.getCompilerSpec();
         ObjectNode languageInfo = JSON.createObjectNode();
@@ -357,9 +359,10 @@ public class StaticAnalysisResultsResource extends AbstractResourceProvider {
         languageInfo.put("addressSize", language.getDefaultSpace().getSize());
         programDoc.set("language", languageInfo);
 
-        // Memory layout
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         ArrayNode memoryBlocks = programDoc.putArray("memoryBlocks");
+        // Ghidra API: Memory.getBlocks() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBlocks()
         MemoryBlock[] blocks = memory.getBlocks();
         for (MemoryBlock block : blocks) {
             ObjectNode blockInfo = JSON.createObjectNode();
@@ -374,10 +377,11 @@ public class StaticAnalysisResultsResource extends AbstractResourceProvider {
         }
         programDoc.put("totalMemorySize", memory.getSize());
 
-        // Collect ALL functions with comprehensive details
         ArrayNode functions = programDoc.putArray("functions");
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager functionManager = program.getFunctionManager();
         logInfo("FunctionManager.getFunctionCount(): " + functionManager.getFunctionCount());
+        // Ghidra API: FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
         FunctionIterator funcIter = functionManager.getFunctions(true);
         int funcCount = 0;
         while (funcIter.hasNext()) {
@@ -424,6 +428,7 @@ public class StaticAnalysisResultsResource extends AbstractResourceProvider {
         // Statistics
         ObjectNode statistics = JSON.createObjectNode();
         statistics.put("totalFunctions", functionManager.getFunctionCount());
+        // Ghidra API: Program.getSymbolTable(), SymbolTable.getNumSymbols() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         statistics.put("totalSymbols", program.getSymbolTable().getNumSymbols());
         statistics.put("totalComments", comments.size());
         statistics.put("totalBookmarks", bookmarks.size());

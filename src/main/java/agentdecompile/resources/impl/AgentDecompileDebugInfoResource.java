@@ -17,17 +17,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Resource provider for AgentDecompile debug information.
- * Exposes comprehensive debug information as JSON including:
- * - System information (Java, OS)
- * - Ghidra information (version, extensions)
- * - AgentDecompile configuration and status
- * - MCP server status and registered tools
- * - Open programs information
- * 
- * This is a read-only resource that provides the same information
- * as the capture-agentdecompile-debug-info tool, but as a JSON resource
- * instead of a zip file.
+ * Resource provider for AgentDecompile debug information as JSON (system, Ghidra, config, MCP status, open programs).
+ * Read-only; same data as capture-agentdecompile-debug-info tool but as a JSON resource.
+ * <p>
+ * MCP: {@link io.modelcontextprotocol.spec.McpSchema.Resource} -
+ * <a href="https://modelcontextprotocol.io/">MCP spec</a>.
+ * Uses {@link agentdecompile.debug.DebugInfoCollector} for data collection.
+ * </p>
  */
 public class AgentDecompileDebugInfoResource extends AbstractResourceProvider {
     private static final String RESOURCE_ID = "ghidra://agentdecompile-debug-info";

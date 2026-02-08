@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -42,7 +25,6 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import ghidra.program.model.address.Address;
-import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
@@ -60,6 +42,11 @@ import ghidra.program.model.symbol.Symbol;
  * Provides heuristics-based suggestions for comment types, function names,
  * variable names, etc. Uses a canonical naming grammar and semantic analysis
  * to produce high-quality, predictable function names.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Program}, {@link ghidra.program.model.listing.Function},
+ * {@link ghidra.program.model.symbol.ReferenceManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class SmartSuggestionsUtil {
 
@@ -248,11 +235,15 @@ public class SmartSuggestionsUtil {
             return suggestion;
         }
 
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager funcManager = program.getFunctionManager();
 
         // Function entry point -> plate header
+        // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
         Function function = funcManager.getFunctionContaining(address);
+        // Ghidra API: Function.getEntryPoint(), Address.equals(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         if (function != null && function.getEntryPoint().equals(address)) {
             suggestion.put("commentType", "plate");
             suggestion.put("confidence", 0.9);
@@ -261,6 +252,7 @@ public class SmartSuggestionsUtil {
         }
 
         // Data -> pre (structure/field context)
+        // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data data = listing.getDataAt(address);
         if (data != null) {
             suggestion.put("commentType", "pre");
@@ -270,8 +262,10 @@ public class SmartSuggestionsUtil {
         }
 
         // Instruction -> eol
+        // Ghidra API: Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
         Instruction instruction = listing.getInstructionAt(address);
         if (instruction != null) {
+            // Ghidra API: Instruction.getFlowType(), FlowType.isCall() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlowType()
             if (instruction.getFlowType().isCall()) {
                 suggestion.put("commentType", "eol");
                 suggestion.put("confidence", 0.85);
@@ -337,6 +331,7 @@ public class SmartSuggestionsUtil {
         // Strategy 5: low-confidence fallbacks if nothing else is strong
         if (candidates.isEmpty()) {
             CandidateName fallback = new CandidateName();
+            // Ghidra API: Function.getEntryPoint(), Address.getOffset() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
             fallback.name = "func_" + Long.toHexString(function.getEntryPoint().getOffset());
             fallback.score = 0.4;
             fallback.reasons.add("Fallback: no strong semantic signals; naming by address");
@@ -532,12 +527,17 @@ public class SmartSuggestionsUtil {
             return suggestion;
         }
 
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager funcManager = program.getFunctionManager();
+        // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
         Function function = funcManager.getFunctionContaining(address);
 
         // If it's a function entry point, suggest function header comment
+        // Ghidra API: Function.getEntryPoint(), Address.equals(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         if (function != null && function.getEntryPoint().equals(address)) {
+            // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
             String funcName = function.getName();
+            // Ghidra API: Function.getParameterCount() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getParameterCount()
             int paramCount = function.getParameterCount();
 
             StringBuilder comment = new StringBuilder();
@@ -557,8 +557,10 @@ public class SmartSuggestionsUtil {
         }
 
         // Data structure comment
+        // Ghidra API: Program.getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data data = program.getListing().getDataAt(address);
         if (data != null) {
+            // Ghidra API: Data.getDataType(), DataType.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getDataType()
             String dataType = data.getDataType().getName();
             suggestion.put("text", "Data: " + dataType);
             suggestion.put("confidence", 0.7);
@@ -594,8 +596,10 @@ public class SmartSuggestionsUtil {
         }
 
         // 1. Existing defined type takes precedence
+        // Ghidra API: Program.getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data data = program.getListing().getDataAt(address);
         if (data != null) {
+            // Ghidra API: Data.getDataType(), DataType.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getDataType()
             String currentType = data.getDataType().getName();
             suggestion.put("dataType", currentType);
             suggestion.put("confidence", 0.9);
@@ -615,15 +619,20 @@ public class SmartSuggestionsUtil {
         }
 
         // 3. Heuristic: look at references to this address (read vs write)
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
         ReferenceIterator refIter = refManager.getReferencesTo(address);
         boolean isWritten = false;
         boolean isRead = false;
         while (refIter.hasNext()) {
+            // Ghidra API: ReferenceIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceIterator.html#next()
             Reference ref = refIter.next();
+            // Ghidra API: Reference.getReferenceType(), ReferenceType.isWrite() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getReferenceType()
             if (ref.getReferenceType().isWrite()) {
                 isWritten = true;
             }
+            // Ghidra API: Reference.getReferenceType(), ReferenceType.isRead() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getReferenceType()
             if (ref.getReferenceType().isRead()) {
                 isRead = true;
             }
@@ -660,12 +669,16 @@ public class SmartSuggestionsUtil {
 
         info.apiCalls = findAPICalls(program, function);
         info.nearbyStrings = findNearbyStrings(program, function);
+        // Ghidra API: Function.getParameterCount() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getParameterCount()
         info.parameterCount = function.getParameterCount();
+        // Ghidra API: Function.getReturnType(), DataType.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getReturnType()
         info.returnTypeName = function.getReturnType() != null ? function.getReturnType().getName() : null;
         info.returnsValue = info.returnTypeName != null && !"void".equalsIgnoreCase(info.returnTypeName);
 
         // callers / callees
+        // Ghidra API: Function.getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
         info.calleeCount = function.getCalledFunctions(null).size();
+        // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor)
         info.callerCount = function.getCallingFunctions(null).size();
         info.isLeaf = (info.calleeCount == 0);
 
@@ -683,7 +696,9 @@ public class SmartSuggestionsUtil {
     }
 
     private static void analyzeControlFlow(SemanticInfo info) {
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = info.program.getListing();
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         AddressSetView body = info.function.getBody();
 
         boolean hasBackwardsBranch = false;
@@ -691,19 +706,25 @@ public class SmartSuggestionsUtil {
         boolean maybeThunk = true;
 
         for (Address addr : body.getAddresses(true)) {
+            // Ghidra API: Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
             Instruction instr = listing.getInstructionAt(addr);
             if (instr == null) {
                 continue;
             }
 
             // Check for computed jumps which often indicate switches
+            // Ghidra API: Instruction.getFlowType(), FlowType.isComputed() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlowType()
             if (instr.getFlowType().isComputed()) {
                 hasSwitch = true;
             }
 
+            // Ghidra API: Instruction.getFlowType(), FlowType.isJump(), isConditional() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlowType()
             if (instr.getFlowType().isJump() || instr.getFlowType().isConditional()) {
+                // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesFrom(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
                 for (Reference ref : info.program.getReferenceManager().getReferencesFrom(addr)) {
+                    // Ghidra API: Reference.getToAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getToAddress()
                     Address to = ref.getToAddress();
+                    // Ghidra API: Address.compareTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#compareTo(ghidra.program.model.address.Address)
                     if (to != null && to.compareTo(addr) < 0) {
                         hasBackwardsBranch = true;
                     }
@@ -712,6 +733,7 @@ public class SmartSuggestionsUtil {
 
             // Thunk detection: if we see more than a couple real instructions,
             // stop treating it as a thunk
+            // Ghidra API: Instruction.getMnemonicString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getMnemonicString()
             String mnemonic = instr.getMnemonicString().toLowerCase();
             // Count non-trivial instructions (not just jumps, nops, pushes, pops, rets)
             if (!mnemonic.equals("jmp") && !mnemonic.equals("nop") && !mnemonic.equals("push") &&
@@ -1174,23 +1196,32 @@ public class SmartSuggestionsUtil {
 
     private static List<String> findNearbyStrings(Program program, Function function) {
         List<String> strings = new ArrayList<>();
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         AddressSetView body = function.getBody();
 
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
+        // Ghidra API: AddressSetView.getAddresses(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSetView.html#getAddresses(boolean)
         for (Address addr : body.getAddresses(true)) {
+            // Ghidra API: Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
             Instruction instr = listing.getInstructionAt(addr);
             if (instr == null) {
                 continue;
             }
+            // Ghidra API: ReferenceManager.getReferencesFrom(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesFrom(ghidra.program.model.address.Address)
             Reference[] refs = refManager.getReferencesFrom(addr);
             for (Reference ref : refs) {
+                // Ghidra API: Reference.getToAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getToAddress()
                 Address toAddr = ref.getToAddress();
                 if (toAddr == null) {
                     continue;
                 }
+                // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                 Data data = listing.getDataAt(toAddr);
+                // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
                 if (data != null && data.getValue() instanceof String) {
                     String str = (String) data.getValue();
                     if (str.length() > 3 && str.length() < 100) {
@@ -1205,20 +1236,30 @@ public class SmartSuggestionsUtil {
 
     private static List<String> findAPICalls(Program program, Function function) {
         List<String> apiCalls = new ArrayList<>();
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         AddressSetView body = function.getBody();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
+        // Ghidra API: AddressSetView.getAddresses(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSetView.html#getAddresses(boolean)
         for (Address addr : body.getAddresses(true)) {
+            // Ghidra API: Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
             Instruction instr = listing.getInstructionAt(addr);
+            // Ghidra API: Instruction.getFlowType(), FlowType.isCall() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlowType()
             if (instr != null && instr.getFlowType().isCall()) {
+                // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesFrom(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
                 Reference[] refs = program.getReferenceManager().getReferencesFrom(addr);
                 for (Reference ref : refs) {
+                    // Ghidra API: Reference.getToAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getToAddress()
                     Address toAddr = ref.getToAddress();
                     if (toAddr == null) {
                         continue;
                     }
+                    // Ghidra API: Program.getSymbolTable(), SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
                     Symbol symbol = program.getSymbolTable().getPrimarySymbol(toAddr);
+                    // Ghidra API: Symbol.isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#isExternal()
                     if (symbol != null && symbol.isExternal()) {
+                        // Ghidra API: Symbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
                         String name = symbol.getName();
                         if (name != null && !name.isEmpty()) {
                             apiCalls.add(name);
@@ -1377,6 +1418,7 @@ public class SmartSuggestionsUtil {
 
         // Very small contextual tweak: if function name already contains the base,
         // avoid repeating it; otherwise, we might add a short suffix hint.
+        // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
         String funcNameLower = function.getName().toLowerCase();
         String baseLower = base.toLowerCase();
 

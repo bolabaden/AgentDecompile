@@ -7,6 +7,13 @@ import ghidra.program.model.listing.Program;
  * Service interface for accessing the application-level MCP server.
  * This service is provided by the AgentDecompileApplicationPlugin and consumed by tool-level plugins
  * to register with the shared MCP server that persists across tool sessions.
+ * <p>
+ * Ghidra API: {@link ghidra.framework.plugintool.PluginTool} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html">PluginTool API</a>,
+ * {@link ghidra.program.model.listing.Program} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html">Program API</a>.
+ * MCP: <a href="https://github.com/modelcontextprotocol/java-sdk">MCP Java SDK</a>.
+ * </p>
  */
 public interface AgentDecompileMcpService {
     

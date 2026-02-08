@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.decompiler;
 
@@ -95,6 +78,16 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 
 /**
  * Tool provider for function decompilation operations.
+ * <p>
+ * Ghidra Decompiler API references:
+ * <ul>
+ *   <li>{@link ghidra.app.decompiler.DecompInterface} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html">DecompInterface API</a></li>
+ *   <li>{@link ghidra.app.decompiler.DecompileResults} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html">DecompileResults API</a></li>
+ *   <li>{@link ghidra.program.model.pcode.HighFunctionDBUtil} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunctionDBUtil.html">HighFunctionDBUtil API</a> (persist variable changes)</li>
+ *   <li>{@link ghidra.app.decompiler.component.DecompilerUtils} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html">DecompilerUtils API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/package-summary.html">ghidra.app.decompiler package</a>.
+ * </p>
  */
 public class DecompilerToolProvider extends AbstractToolProvider {
 
@@ -113,6 +106,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
     public void programClosed(Program program) {
         super.programClosed(program);
 
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
 
         // Remove read tracking entries for the closed program using shared tracker
@@ -218,7 +212,9 @@ public class DecompilerToolProvider extends AbstractToolProvider {
         decompiler.toggleSyntaxTree(true);
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
+            // Ghidra API: Program.getName() (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
             logError(toolName + ": Failed to initialize decompiler for " + program.getName());
             decompiler.dispose();
             return null;
@@ -239,16 +235,19 @@ public class DecompilerToolProvider extends AbstractToolProvider {
             Function function,
             String toolName) {
         TaskMonitor timeoutMonitor = createTimeoutMonitor();
+        // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
         DecompileResults results = decompiler.decompileFunction(function, 0, timeoutMonitor);
 
         if (isTimedOut(timeoutMonitor)) {
             String msg = "Decompilation timed out after " + getTimeoutSeconds() + " seconds";
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
             logError(toolName + ": " + msg + " for " + function.getName());
             return DecompilationAttempt.failure(msg);
         }
 
         if (!results.decompileCompleted()) {
             String msg = "Decompilation failed: " + results.getErrorMessage();
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
             logError(toolName + ": " + msg + " for " + function.getName());
             return DecompilationAttempt.failure(msg);
         }
@@ -319,6 +318,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
         int processedCount = 0;
 
         // Process local variables
+        // Ghidra API: HighFunction.getLocalSymbolMap(), LocalSymbolMap.getSymbols() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getLocalSymbolMap(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/LocalSymbolMap.html#getSymbols()
         Iterator<HighSymbol> localVars = highFunction.getLocalSymbolMap().getSymbols();
         while (localVars.hasNext()) {
             HighSymbol symbol = localVars.next();
@@ -327,11 +327,13 @@ public class DecompilerToolProvider extends AbstractToolProvider {
                     processedCount++;
                 }
             } catch (DuplicateNameException | InvalidInputException e) {
+                // Ghidra API: HighSymbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighSymbol.html#getName()
                 logError(toolName + ": Failed to process local variable " + symbol.getName(), e);
             }
         }
 
         // Process global variables
+        // Ghidra API: HighFunction.getGlobalSymbolMap(), GlobalSymbolMap.getSymbols() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getGlobalSymbolMap(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/GlobalSymbolMap.html#getSymbols()
         Iterator<HighSymbol> globalVars = highFunction.getGlobalSymbolMap().getSymbols();
         while (globalVars.hasNext()) {
             HighSymbol symbol = globalVars.next();
@@ -340,6 +342,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
                     processedCount++;
                 }
             } catch (DuplicateNameException | InvalidInputException e) {
+                // Ghidra API: HighSymbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighSymbol.html#getName()
                 logError(toolName + ": Failed to process global variable " + symbol.getName(), e);
             }
         }
@@ -357,11 +360,14 @@ public class DecompilerToolProvider extends AbstractToolProvider {
      */
     private Address findAddressForLine(Program program, List<ClangLine> clangLines, int lineNumber) {
         for (ClangLine clangLine : clangLines) {
+            // Ghidra API: ClangLine.getLineNumber() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangLine.html#getLineNumber()
             if (clangLine.getLineNumber() == lineNumber) {
+                // Ghidra API: ClangLine.getAllTokens() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangLine.html#getAllTokens()
                 List<ClangToken> tokens = clangLine.getAllTokens();
 
                 // Find the first address on this line
                 for (ClangToken token : tokens) {
+                    // Ghidra API: ClangToken.getMinAddress() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangToken.html#getMinAddress()
                     Address tokenAddr = token.getMinAddress();
                     if (tokenAddr != null) {
                         return tokenAddr;
@@ -370,6 +376,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
 
                 // If no direct address, find closest
                 if (!tokens.isEmpty()) {
+                    // Ghidra API: DecompilerUtils.getClosestAddress(Program, ClangNode) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html#getClosestAddress(ghidra.program.model.listing.Program,ghidra.app.decompiler.ClangNode)
                     return DecompilerUtils.getClosestAddress(program, tokens.get(0));
                 }
                 break;
@@ -398,6 +405,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
         int changedCount = 0;
 
         // Process local variables
+        // Ghidra API: HighFunction.getLocalSymbolMap(), LocalSymbolMap.getSymbols() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getLocalSymbolMap(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/LocalSymbolMap.html#getSymbols()
         Iterator<HighSymbol> localVars = highFunction.getLocalSymbolMap().getSymbols();
         while (localVars.hasNext()) {
             HighSymbol symbol = localVars.next();
@@ -407,6 +415,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
         }
 
         // Process global variables
+        // Ghidra API: HighFunction.getGlobalSymbolMap(), GlobalSymbolMap.getSymbols() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getGlobalSymbolMap(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/GlobalSymbolMap.html#getSymbols()
         Iterator<HighSymbol> globalVars = highFunction.getGlobalSymbolMap().getSymbols();
         while (globalVars.hasNext()) {
             HighSymbol symbol = globalVars.next();
@@ -485,14 +494,17 @@ public class DecompilerToolProvider extends AbstractToolProvider {
         Map<Address, Integer> callCounts = new HashMap<>();
         boolean timedOut = false;
 
+        // Ghidra API: Program.getReferenceManager(), getFunctionManager(), getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         ReferenceManager refManager = program.getReferenceManager();
         FunctionManager funcManager = program.getFunctionManager();
         Listing listing = program.getListing();
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         AddressSetView functionBody = function.getBody();
 
         int instrCount = 0;
         int refCount = 0;
 
+        // Ghidra API: Listing.getInstructions(AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(ghidra.program.model.address.AddressSetView,boolean)
         for (Instruction instr : listing.getInstructions(functionBody, true)) {
             // Check timeout periodically on instruction boundary
             if (++instrCount % TIMEOUT_CHECK_INSTRUCTION_INTERVAL == 0 && monitor.isCancelled()) {
@@ -502,6 +514,7 @@ public class DecompilerToolProvider extends AbstractToolProvider {
 
             if (countCallers) {
                 // For callers: get references TO each instruction in this function
+                // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
                 ReferenceIterator refsTo = refManager.getReferencesTo(instr.getAddress());
                 while (refsTo.hasNext()) {
                     // Check timeout in inner loop for addresses with many references
@@ -511,8 +524,10 @@ public class DecompilerToolProvider extends AbstractToolProvider {
                     }
                     Reference ref = refsTo.next();
                     if (ref.getReferenceType().isCall()) {
+                        // Ghidra API: FunctionManager.getFunctionContaining(Address), Reference.getFromAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address), https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getFromAddress()
                         Function caller = funcManager.getFunctionContaining(ref.getFromAddress());
                         if (caller != null) {
+                            // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                             callCounts.merge(caller.getEntryPoint(), 1, Integer::sum);
                         }
                     }
@@ -523,10 +538,12 @@ public class DecompilerToolProvider extends AbstractToolProvider {
                 // No inner-loop timeout check needed here because getReferencesFrom() typically
                 // returns very few references per instruction (usually 0-1 call targets),
                 // unlike getReferencesTo() which can return thousands for popular functions
+                // Ghidra API: Instruction.getReferencesFrom() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getReferencesFrom()
                 Reference[] refsFrom = instr.getReferencesFrom();
                 for (Reference ref : refsFrom) {
                     if (ref.getReferenceType().isCall()) {
                         // Resolve to function entry point (ref.getToAddress() may be inside function)
+                        // Ghidra API: FunctionManager.getFunctionAt(Address), Reference.getToAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionAt(ghidra.program.model.address.Address), https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getToAddress()
                         Function callee = funcManager.getFunctionAt(ref.getToAddress());
                         if (callee == null) {
                             // Try to find containing function if not at entry point

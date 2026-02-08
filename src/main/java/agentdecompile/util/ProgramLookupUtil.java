@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -52,6 +35,17 @@ import agentdecompile.tools.ProgramValidationException;
 /**
  * Utility class for consistent program lookup across all AgentDecompile tools.
  * Provides helpful error messages with suggestions when programs cannot be found.
+ * <p>
+ * Ghidra API references:
+ * <ul>
+ *   <li>{@link ghidra.framework.main.AppInfo} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html">AppInfo API</a></li>
+ *   <li>{@link ghidra.framework.model.Project} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html">Project API</a></li>
+ *   <li>{@link ghidra.framework.model.ToolManager} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ToolManager.html">ToolManager API</a></li>
+ *   <li>{@link ghidra.app.services.ProgramManager} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/services/ProgramManager.html">ProgramManager API</a></li>
+ *   <li>{@link ghidra.program.model.listing.Program} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html">Program API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ProgramLookupUtil {
 
@@ -62,22 +56,27 @@ public class ProgramLookupUtil {
      * @return The current program from the active Code Browser, or null if not available
      */
     public static Program getCurrentProgramFromGUI() {
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
             return null;
         }
 
+        // Ghidra API: Project.getToolManager() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getToolManager()
         ToolManager toolManager = project.getToolManager();
         if (toolManager == null) {
             return null;
         }
 
-        // Find a Code Browser tool with ProgramManager service
+        // Ghidra API: ToolManager.getRunningTools() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ToolManager.html#getRunningTools()
         PluginTool[] runningTools = toolManager.getRunningTools();
         for (PluginTool runningTool : runningTools) {
+            // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
             ProgramManager programManager = runningTool.getService(ProgramManager.class);
             if (programManager != null) {
+                // Ghidra API: ProgramManager.getCurrentProgram() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/ProgramManager.html#getCurrentProgram()
                 Program currentProgram = programManager.getCurrentProgram();
+                // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
                 if (currentProgram != null && !currentProgram.isClosed()) {
                     return currentProgram;
                 }
@@ -91,69 +90,104 @@ public class ProgramLookupUtil {
      * Get a validated program by its path with helpful error messages.
      * This method first attempts to find the program using AgentDecompileProgramManager,
      * and if that fails, provides a helpful error message with available programs.
+     * <p>
+     * If multiple programs are available and no path is specified, this method will
+     * return the first available program instead of throwing an exception, to provide
+     * a "best effort" experience.
      *
      * @param programPath The path to the program (e.g., "/Hatchery.exe"), or null to use current program from GUI
      * @return A valid Program object
-     * @throws ProgramValidationException if the program cannot be found or is invalid
+     * @throws ProgramValidationException if no programs are available
      */
     public static Program getValidatedProgram(String programPath) throws ProgramValidationException {
-        // If programPath is null or empty, try to get current program from GUI (like GhidraMCP)
-        if (programPath == null || programPath.trim().isEmpty()) {
-            Program currentProgram = getCurrentProgramFromGUI();
-            if (currentProgram != null) {
-                return currentProgram;
-            }
-            throw new ProgramValidationException("Program path is required when no program is currently active in the Code Browser");
-        }
-
-        // Normalize the program path (trim whitespace)
-        String normalizedPath = programPath.trim();
-
-        // First try the standard lookup with normalized path
-        Program program = AgentDecompileProgramManager.getProgramByPath(normalizedPath);
-        if (program != null && !program.isClosed()) {
-            return program;
-        }
-
-        // Get list of available programs directly as Program objects for reliable fallback logic
-        // This avoids the issue where path-based lookup fails even though the program is available
-        List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
-        List<String> availableProgramPaths = getAvailableProgramPaths();
-
-        // FIX 1: If only one program exists in the project or is loaded, use it regardless of input
-        // This handles the common case where there's only one program and any input should work
-        if (openPrograms.size() == 1) {
-            Program singleProgram = openPrograms.get(0);
-            if (singleProgram != null && !singleProgram.isClosed()) {
-                String singleProgramPath = singleProgram.getDomainFile().getPathname();
-                Msg.info(ProgramLookupUtil.class, "Only one program available, using '" + singleProgramPath + 
-                         "' instead of requested '" + normalizedPath + "'");
-                return singleProgram;
-            }
+        // Use the list-based resolution
+        List<Program> programs = resolvePrograms(programPath);
+        
+        if (programs.isEmpty()) {
+            throw new ProgramValidationException("No programs are available in the current project");
         }
         
-        // Also check if there's only one program path available in the project
-        // (handles cases where open programs list is empty but project has one program)
-        if (openPrograms.isEmpty() && availableProgramPaths.size() == 1) {
-            String singleProgramPath = availableProgramPaths.get(0);
-            Program singleProgram = AgentDecompileProgramManager.getProgramByPath(singleProgramPath);
-            if (singleProgram != null && !singleProgram.isClosed()) {
-                Msg.info(ProgramLookupUtil.class, "Only one program available in project, using '" + singleProgramPath + 
-                         "' instead of requested '" + normalizedPath + "'");
-                return singleProgram;
+        // If multiple programs are found but we need one, return the first one
+        // This avoids "Program path is required" errors
+        if (programs.size() > 1) {
+            Program first = programs.get(0);
+            Msg.info(ProgramLookupUtil.class, "Multiple programs available, auto-selecting first: " + first.getName());
+            return first;
+        }
+        
+        return programs.get(0);
+    }
+
+    /**
+     * Resolve valid programs based on the provided path (or lack thereof).
+     * <p>
+     * If path is provided: Returns list containing that specific program.
+     * If path is null/empty:
+     * 1. If GUI active program exists, returns [activeProgram]
+     * 2. If open programs exist, returns all open programs
+     * 3. If project has programs, returns all project programs (opened)
+     * 
+     * @param programPath The path to the program, or null/empty
+     * @return List of matching programs (never null, but may be empty)
+     * @throws ProgramValidationException if a specific path was requested but not found
+     */
+    public static List<Program> resolvePrograms(String programPath) throws ProgramValidationException {
+        // If programPath is null or empty, try to resolve "all applicable"
+        if (programPath == null || programPath.trim().isEmpty()) {
+            // 1. Try active GUI program
+            Program currentProgram = getCurrentProgramFromGUI();
+            if (currentProgram != null) {
+                // If we are in GUI mode and have an active program, user likely intends to act on it
+                List<Program> result = new ArrayList<>();
+                result.add(currentProgram);
+                return result;
             }
+            
+            // 2. Get all open programs
+            List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
+            if (!openPrograms.isEmpty()) {
+                return openPrograms;
+            }
+            
+            // 3. If no open programs, check available paths
+            List<String> availableProgramPaths = getAvailableProgramPaths();
+            if (!availableProgramPaths.isEmpty()) {
+                // Return all available programs (opening them)
+                List<Program> result = new ArrayList<>();
+                for (String path : availableProgramPaths) {
+                    Program p = AgentDecompileProgramManager.getProgramByPath(path);
+                    if (p != null && !p.isClosed()) {
+                        result.add(p);
+                    }
+                }
+                return result;
+            }
+            
+            return new ArrayList<>();
         }
 
-        // FIX 2: Check if the requested path matches any available program when normalized
-        // This handles cases where the path lookup fails but the path appears in suggestions
-        // (e.g., due to subtle differences in how paths are stored vs requested)
-        // Search directly through Program objects to avoid re-lookup failures
+        // Normalize the program path
+        String normalizedPath = programPath.trim();
+
+        // Try the standard lookup
+        Program program = AgentDecompileProgramManager.getProgramByPath(normalizedPath);
+        if (program != null && !program.isClosed()) {
+            List<Program> result = new ArrayList<>();
+            result.add(program);
+            return result;
+        }
+
+        // Try fallback lookup (exact match with normalization)
+        List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
         Program matchedProgram = findExactMatchWithNormalization(normalizedPath, openPrograms);
         if (matchedProgram != null && !matchedProgram.isClosed()) {
-            return matchedProgram;
+            List<Program> result = new ArrayList<>();
+            result.add(matchedProgram);
+            return result;
         }
 
-        // If not found, build a helpful error message with suggestions
+        // If not found, build error message
+        List<String> availableProgramPaths = getAvailableProgramPaths();
         String errorMessage = buildErrorMessageWithSuggestions(normalizedPath, availableProgramPaths);
         throw new ProgramValidationException(errorMessage);
     }
@@ -170,16 +204,21 @@ public class ProgramLookupUtil {
     private static Program findExactMatchWithNormalization(String requestedPath, List<Program> openPrograms) {
         // Try various normalization strategies to find an exact match
         for (Program program : openPrograms) {
+            // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
             if (program == null || program.isClosed()) {
                 continue;
             }
-            
+
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String domainPath = program.getDomainFile().getPathname();
+            // Ghidra API: Program.getExecutablePath() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getExecutablePath()
             String executablePath = program.getExecutablePath();
+            // Ghidra API: Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
             String programName = program.getName();
-            
+
             // Check domain path match (always non-null)
             if (pathsMatch(requestedPath, domainPath)) {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (domain path): '" + 
                          requestedPath + "' matched '" + domainPath + "'");
                 return program;
@@ -187,6 +226,7 @@ public class ProgramLookupUtil {
             
             // Check executable path match (may be null)
             if (executablePath != null && pathsMatch(requestedPath, executablePath)) {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (executable path): '" + 
                          requestedPath + "' matched '" + executablePath + "'");
                 return program;
@@ -194,6 +234,7 @@ public class ProgramLookupUtil {
             
             // Check program name match (may be null)
             if (programName != null && pathsMatch(requestedPath, programName)) {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(ProgramLookupUtil.class, "Found exact match with normalization (program name): '" + 
                          requestedPath + "' matched '" + programName + "'");
                 return program;
@@ -308,18 +349,22 @@ public class ProgramLookupUtil {
         // First add all open programs
         List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
         for (Program prog : openPrograms) {
+            // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
             if (prog != null && !prog.isClosed()) {
+                // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 paths.add(prog.getDomainFile().getPathname());
             }
         }
 
-        // Then add programs from the project if available
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project != null) {
             try {
+                // Ghidra API: Project.getProjectData(), ProjectData.getRootFolder() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectData(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()
                 DomainFolder rootFolder = project.getProjectData().getRootFolder();
                 collectProgramPaths(rootFolder, paths);
             } catch (Exception e) {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(ProgramLookupUtil.class, "Error collecting project programs: " + e.getMessage());
             }
         }
@@ -338,14 +383,16 @@ public class ProgramLookupUtil {
      * @param paths The list to add paths to
      */
     private static void collectProgramPaths(DomainFolder folder, List<String> paths) {
-        // Add programs in this folder
+        // Ghidra API: DomainFolder.getFiles() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFiles()
         for (DomainFile file : folder.getFiles()) {
+            // Ghidra API: DomainFile.getContentType() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getContentType()
             if ("Program".equals(file.getContentType())) {
+                // Ghidra API: DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 paths.add(file.getPathname());
             }
         }
 
-        // Recurse into subfolders
+        // Ghidra API: DomainFolder.getFolders() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFolders()
         for (DomainFolder subfolder : folder.getFolders()) {
             collectProgramPaths(subfolder, paths);
         }

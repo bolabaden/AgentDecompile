@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -57,6 +40,14 @@ import ghidra.util.exception.NotFoundException;
  * <p>
  * Provides consistent project opening/creation logic for both headless launcher
  * and tool providers, ensuring no conflicts or divergent behavior.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.base.project.GhidraProject} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html">GhidraProject API</a>,
+ * {@link ghidra.framework.model.Project} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html">Project API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ProjectUtil {
 
@@ -166,6 +157,7 @@ public class ProjectUtil {
         }
 
         String projectLocationPath = projectDir.getAbsolutePath();
+        // Ghidra API: ProjectLocator(String, String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#%3Cinit%3E(java.lang.String,java.lang.String)
         ProjectLocator locator = new ProjectLocator(projectLocationPath, projectName);
 
         // If forceIgnoreLock is true, delete lock files before attempting to open
@@ -174,13 +166,16 @@ public class ProjectUtil {
         }
 
         // Check if project already exists
+        // Ghidra API: ProjectLocator.getMarkerFile(), getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getMarkerFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
         boolean projectExists = locator.getMarkerFile().exists() && locator.getProjectDir().exists();
 
         if (projectExists) {
             // Try to open existing project
             logInfo(logContext, "Opening existing project: " + projectName + " at " + projectLocationPath);
             try {
+                // Ghidra API: GhidraProject.openProject(String, String, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#openProject(java.lang.String,java.lang.String,boolean)
                 GhidraProject ghidraProject = GhidraProject.openProject(projectLocationPath, projectName, enableUpgrade);
+                // Ghidra API: GhidraProject.getProject() - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#getProject()
                 Project project = ghidraProject.getProject();
                 return new ProjectOpenResult(project, ghidraProject, false, false);
             } catch (LockException e) {
@@ -209,7 +204,9 @@ public class ProjectUtil {
             // Create new project
             logInfo(logContext, "Creating new project: " + projectName + " at " + projectLocationPath);
             try {
+                // Ghidra API: GhidraProject.createProject(String, String, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#createProject(java.lang.String,java.lang.String,boolean)
                 GhidraProject ghidraProject = GhidraProject.createProject(projectLocationPath, projectName, false);
+                // Ghidra API: GhidraProject.getProject() - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#getProject()
                 Project project = ghidraProject.getProject();
                 return new ProjectOpenResult(project, ghidraProject, false, true);
             } catch (IOException e) {
@@ -234,14 +231,17 @@ public class ProjectUtil {
             Object logContext,
             LockException lockException) throws IOException {
 
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project activeProject = AppInfo.getActiveProject();
         if (activeProject != null) {
             // Verify the active project matches the requested one
+            // Ghidra API: Project.getProjectLocator(), ProjectLocator.getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectLocator(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
             String activeProjectDir = activeProject.getProjectLocator().getProjectDir().getAbsolutePath();
             String requestedDirAbsolute = new File(requestedProjectDir).getAbsolutePath();
 
             if (activeProjectDir.equals(requestedDirAbsolute) || activeProject.getName().equals(requestedProjectName)) {
                 // Active project matches - use it
+                // Ghidra API: Project.getName() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getName()
                 String logMsg = "Project is locked (already open), using active project: " + activeProject.getName();
                 logInfo(logContext, logMsg);
                 // Return null for ghidraProject since we're using the active project
@@ -284,7 +284,9 @@ public class ProjectUtil {
      * @return True if the project exists (marker file and project directory both exist)
      */
     public static boolean projectExists(File projectDir, String projectName) {
+        // Ghidra API: ProjectLocator(String, String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#%3Cinit%3E(java.lang.String,java.lang.String)
         ProjectLocator locator = new ProjectLocator(projectDir.getAbsolutePath(), projectName);
+        // Ghidra API: ProjectLocator.getMarkerFile(), getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getMarkerFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
         return locator.getMarkerFile().exists() && locator.getProjectDir().exists();
     }
 
@@ -296,8 +298,10 @@ public class ProjectUtil {
      * @return The active Project if it matches, or null if it doesn't match or no active project exists
      */
     public static Project getMatchingActiveProject(String requestedProjectDir, String requestedProjectName) {
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project activeProject = AppInfo.getActiveProject();
         if (activeProject != null) {
+            // Ghidra API: Project.getProjectLocator(), ProjectLocator.getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectLocator(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
             String activeProjectDir = activeProject.getProjectLocator().getProjectDir().getAbsolutePath();
             String requestedDirAbsolute = new File(requestedProjectDir).getAbsolutePath();
 
@@ -583,8 +587,10 @@ public class ProjectUtil {
      */
     private static void logInfo(Object logContext, String message) {
         if (logContext != null) {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(logContext, message);
         } else {
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(ProjectUtil.class, message);
         }
     }

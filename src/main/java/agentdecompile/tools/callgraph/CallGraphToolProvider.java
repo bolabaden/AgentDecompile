@@ -36,9 +36,17 @@ import agentdecompile.util.DecompilationReadTracker;
 /**
  * Tool provider for call graph analysis operations.
  * Provides tools for analyzing function call relationships and hierarchies.
- *
- * <p>Uses Ghidra's built-in Function.getCallingFunctions() and
- * Function.getCalledFunctions() for accurate call relationship detection.</p>
+ * <p>
+ * Uses Ghidra's built-in {@link ghidra.program.model.listing.Function#getCallingFunctions(TaskMonitor)}
+ * and {@link ghidra.program.model.listing.Function#getCalledFunctions(TaskMonitor)} for call relationships.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Function} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html">Function API</a>,
+ * {@link ghidra.app.decompiler.DecompInterface} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html">DecompInterface API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class CallGraphToolProvider extends AbstractToolProvider {
 
@@ -205,6 +213,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     result.put("nodes", new ArrayList<>());
                     result.put("edges", new ArrayList<>());
@@ -251,8 +260,10 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("centerFunction", Map.of(
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName() (Namespace), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
             "name", centerFunction.getName(),
             "address", AddressUtil.formatAddress(centerFunction.getEntryPoint())
         ));
@@ -281,6 +292,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("direction", traverseCallers ? "callers" : "callees");
         result.put("maxDepth", maxDepth);
@@ -337,6 +349,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         });
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("targetFunctions", targetFunctions.stream()
             .map(f -> Map.of(
@@ -369,6 +382,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         monitor.checkCancelled();
 
         List<Map<String, Object>> results = new ArrayList<>();
+        // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor) or getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> related = getCallers
             ? function.getCallingFunctions(monitor)
             : function.getCalledFunctions(monitor);
@@ -381,6 +395,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             boolean isCycle = visited.contains(funcKey);
 
             Map<String, Object> info = new HashMap<>();
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName() (Namespace), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
             info.put("name", relatedFunc.getName());
             info.put("address", AddressUtil.formatAddress(relatedFunc.getEntryPoint()));
 
@@ -417,6 +432,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         monitor.checkCancelled();
 
         Map<String, Object> node = new HashMap<>();
+        // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName() (Namespace), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         node.put("name", function.getName());
         node.put("address", AddressUtil.formatAddress(function.getEntryPoint()));
         node.put("depth", currentDepth);
@@ -441,6 +457,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         visited.add(funcKey);
         nodeCount[0]++;
 
+        // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor) or getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> related = getCallers
             ? function.getCallingFunctions(monitor)
             : function.getCalledFunctions(monitor);
@@ -470,8 +487,10 @@ public class CallGraphToolProvider extends AbstractToolProvider {
      * Resolve a function at or containing the given address.
      */
     private Function resolveFunction(Program program, Address address) {
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionAt(ghidra.program.model.address.Address)
         Function function = program.getFunctionManager().getFunctionAt(address);
         if (function == null) {
+            // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
             function = program.getFunctionManager().getFunctionContaining(address);
         }
         return function;
@@ -490,6 +509,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
      * Create a unique key for a function using its entry point address.
      */
     private String getFunctionKey(Function function) {
+        // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         return AddressUtil.formatAddress(function.getEntryPoint());
     }
 
@@ -576,6 +596,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> callers = function.getCallingFunctions(monitor);
 
         List<Map<String, Object>> callerList = new ArrayList<>();
@@ -621,6 +642,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Function.getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> callees = function.getCalledFunctions(monitor);
 
         List<Map<String, Object>> calleeList = new ArrayList<>();
@@ -671,10 +693,12 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             args.put("functionNameOrAddress", functionIdentifier);
             targetFunction = getFunctionFromArgs(args, program);
         } catch (IllegalArgumentException e) {
+            // Ghidra API: Program.getName() (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
             return createErrorResult("Function not found: " + e.getMessage() + " in program " + program.getName());
         }
 
         // Get all references to this function
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
         ReferenceIterator refIter = refManager.getReferencesTo(targetFunction.getEntryPoint());
 
@@ -687,6 +711,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             Reference ref = refIter.next();
             if (ref.getReferenceType().isCall() || ref.getReferenceType().isFlow()) {
                 Address fromAddr = ref.getFromAddress();
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
                 Function caller = program.getFunctionManager().getFunctionContaining(fromAddr);
                 if (caller != null && !caller.equals(targetFunction)) {
                     callingFunctions.add(caller);
@@ -706,6 +731,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             : List.of();
 
         // Get program path for tracking
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
 
         // Decompile each caller
@@ -821,7 +847,9 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         decompiler.toggleSyntaxTree(true);
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
+            // Ghidra API: Program.getName() (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
             logError("get-call-graph: Failed to initialize decompiler for " + program.getName());
             decompiler.dispose();
             return null;
@@ -833,16 +861,19 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             DecompInterface decompiler,
             Function function) {
         TaskMonitor timeoutMonitor = createTimeoutMonitor();
+        // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
         DecompileResults results = decompiler.decompileFunction(function, 0, timeoutMonitor);
 
         if (timeoutMonitor.isCancelled()) {
             String msg = "Decompilation timed out after " + DEFAULT_TIMEOUT_SECONDS + " seconds";
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
             logError("get-call-graph: " + msg + " for " + function.getName());
             return DecompilationAttempt.failure(msg);
         }
 
         if (!results.decompileCompleted()) {
             String msg = "Decompilation failed: " + results.getErrorMessage();
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
             logError("get-call-graph: " + msg + " for " + function.getName());
             return DecompilationAttempt.failure(msg);
         }
@@ -1000,6 +1031,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> callers = function.getCallingFunctions(monitor);
 
         List<Map<String, Object>> callerList = new ArrayList<>();
@@ -1011,6 +1043,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("targetFunction", Map.of(
             "name", function.getName(),
@@ -1033,6 +1066,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Function.getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
         Set<Function> callees = function.getCalledFunctions(monitor);
 
         List<Map<String, Object>> calleeList = new ArrayList<>();
@@ -1044,6 +1078,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("targetFunction", Map.of(
             "name", function.getName(),
@@ -1082,6 +1117,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
         }
 
         // Get all references to this function
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
         ReferenceIterator refIter = refManager.getReferencesTo(targetFunction.getEntryPoint());
 
@@ -1094,6 +1130,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             Reference ref = refIter.next();
             if (ref.getReferenceType().isCall() || ref.getReferenceType().isFlow()) {
                 Address fromAddr = ref.getFromAddress();
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
                 Function caller = program.getFunctionManager().getFunctionContaining(fromAddr);
                 if (caller != null && !caller.equals(targetFunction)) {
                     callingFunctions.add(caller);
@@ -1113,6 +1150,7 @@ public class CallGraphToolProvider extends AbstractToolProvider {
             : List.of();
 
         // Get program path for tracking
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
 
         // Decompile each caller

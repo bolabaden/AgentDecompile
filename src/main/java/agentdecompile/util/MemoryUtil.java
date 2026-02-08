@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -45,6 +28,15 @@ import ghidra.program.model.mem.MemoryBlock;
 
 /**
  * Utility functions for working with Ghidra memory.
+ * <p>
+ * Ghidra Memory API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.mem.Memory} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html">Memory API</a></li>
+ *   <li>{@link ghidra.program.model.mem.MemoryBlock} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html">MemoryBlock API</a></li>
+ *   <li>{@link ghidra.program.model.mem.MemoryAccessException} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryAccessException.html">MemoryAccessException API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/package-summary.html">ghidra.program.model.mem package</a>.
+ * </p>
  */
 public class MemoryUtil {
 
@@ -112,10 +104,12 @@ public class MemoryUtil {
      * @return Byte array or null if an error occurred
      */
     public static byte[] readMemoryBytes(Program program, Address address, int length) {
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         byte[] bytes = new byte[length];
 
         try {
+            // Ghidra API: Memory.getBytes(Address, byte[]) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBytes(ghidra.program.model.address.Address,byte[])
             int read = memory.getBytes(address, bytes);
             if (read != length) {
                 byte[] actualBytes = new byte[read];
@@ -135,8 +129,11 @@ public class MemoryUtil {
      * @return The memory block or null if not found
      */
     public static MemoryBlock findBlockByName(Program program, String blockName) {
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
+        // Ghidra API: Memory.getBlocks() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBlocks()
         for (MemoryBlock block : memory.getBlocks()) {
+            // Ghidra API: MemoryBlock.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html#getName()
             if (block.getName().equals(blockName)) {
                 return block;
             }
@@ -151,7 +148,9 @@ public class MemoryUtil {
      * @return The memory block or null if not found
      */
     public static MemoryBlock getBlockContaining(Program program, Address address) {
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
+        // Ghidra API: Memory.getBlock(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBlock(ghidra.program.model.address.Address)
         return memory.getBlock(address);
     }
 
@@ -170,6 +169,7 @@ public class MemoryUtil {
             int chunkSize,
             Consumer<byte[]> processor) {
 
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         Address currentAddress = startAddress;
         long remaining = length;
@@ -179,9 +179,11 @@ public class MemoryUtil {
             byte[] buffer = new byte[currentChunkSize];
 
             try {
+                // Ghidra API: Memory.getBytes(Address, byte[]) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getBytes(ghidra.program.model.address.Address,byte[])
                 int read = memory.getBytes(currentAddress, buffer);
                 if (read > 0) {
                     processor.accept(buffer);
+                    // Ghidra API: Address.add(long) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#add(long)
                     currentAddress = currentAddress.add(read);
                     remaining -= read;
                 } else {

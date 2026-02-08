@@ -1,6 +1,9 @@
 package agentdecompile.util;
 
-
+/**
+ * Comparator that orders items by similarity to a search string using longest-common-substring scoring.
+ * Used by string tools for similarity-based search. Implements {@link java.util.Comparator}; no Ghidra or MCP API.
+ */
 public class SimilarityComparator<T> implements java.util.Comparator<T> {
     
     public static abstract class StringExtractor<T> {

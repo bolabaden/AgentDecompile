@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.resources;
 
@@ -40,6 +23,13 @@ import io.modelcontextprotocol.server.McpSyncServer;
 /**
  * Base implementation of the ResourceProvider interface.
  * Provides common functionality for all resource providers.
+ * <p>
+ * MCP SDK: {@link io.modelcontextprotocol.server.McpSyncServer} -
+ * <a href="https://github.com/modelcontextprotocol/java-sdk">MCP Java SDK</a>,
+ * <a href="https://modelcontextprotocol.info/docs/sdk/java/mcp-server/">MCP Java Server</a>.
+ * Ghidra API: {@link ghidra.program.model.listing.Program} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html">Program API</a>.
+ * </p>
  */
 public abstract class AbstractResourceProvider implements ResourceProvider {
     protected final McpSyncServer server;
@@ -72,6 +62,7 @@ public abstract class AbstractResourceProvider implements ResourceProvider {
      * @param message The message to log
      */
     protected void logError(String message) {
+        // Ghidra API: Msg.error(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object)
         Msg.error(this, message);
     }
 
@@ -81,6 +72,7 @@ public abstract class AbstractResourceProvider implements ResourceProvider {
      * @param e The exception that caused the error
      */
     protected void logError(String message, Exception e) {
+        // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
         Msg.error(this, message, e);
     }
 
@@ -89,6 +81,7 @@ public abstract class AbstractResourceProvider implements ResourceProvider {
      * @param message The message to log
      */
     protected void logInfo(String message) {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, message);
     }
 }

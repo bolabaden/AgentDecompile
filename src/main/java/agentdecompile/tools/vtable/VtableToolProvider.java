@@ -42,6 +42,13 @@ import agentdecompile.util.AddressUtil;
  * Provides tools for analyzing vtable structures and finding indirect calls
  * through vtable slots, which is essential for understanding C++ virtual
  * method dispatch in reverse engineering.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Listing}, {@link ghidra.program.model.mem.Memory},
+ * {@link ghidra.program.model.symbol.ReferenceManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html">Instruction API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/FlowType.html">FlowType API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class VtableToolProvider extends AbstractToolProvider {
 
@@ -132,6 +139,7 @@ public class VtableToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     result.put("vtables", new ArrayList<>());
                     return createJsonResult(result);
@@ -213,18 +221,22 @@ public class VtableToolProvider extends AbstractToolProvider {
         // Validate and clamp parameters
         maxEntries = clampValue(maxEntries, 1, MAX_ENTRIES_LIMIT);
 
+        // Ghidra API: Program.getDefaultPointerSize() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDefaultPointerSize()
         int pointerSize = program.getDefaultPointerSize();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
-        // Check if there's already a structure defined at this address
+        // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data existingData = listing.getDataAt(vtableAddr);
         Structure existingStructure = null;
         String structureName = null;
 
         if (existingData != null) {
+            // Ghidra API: Data.getDataType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getDataType()
             DataType dataType = existingData.getDataType();
             if (dataType instanceof Structure structure) {
                 existingStructure = structure;
+                // Ghidra API: Structure.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Structure.html#getName()
                 structureName = existingStructure.getName();
             }
         }
@@ -239,6 +251,7 @@ public class VtableToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("vtableAddress", AddressUtil.formatAddress(vtableAddr));
         result.put("pointerSize", pointerSize);
@@ -264,10 +277,13 @@ public class VtableToolProvider extends AbstractToolProvider {
             Structure structure, int maxEntries) {
 
         List<Map<String, Object>> entries = new ArrayList<>();
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager funcMgr = program.getFunctionManager();
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
         int pointerSize = program.getDefaultPointerSize();
 
+        // Ghidra API: Structure.getComponents() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Structure.html#getComponents()
         DataTypeComponent[] components = structure.getComponents();
         int slot = 0;
 
@@ -278,10 +294,14 @@ public class VtableToolProvider extends AbstractToolProvider {
             }
             Map<String, Object> entry = new HashMap<>();
             entry.put("slot", slot);
+            // Ghidra API: DataTypeComponent.getOffset() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeComponent.html#getOffset()
             entry.put("offset", String.format("0x%x", component.getOffset()));
+            // Ghidra API: DataTypeComponent.getFieldName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeComponent.html#getFieldName()
             entry.put("fieldName", component.getFieldName());
 
+            // Ghidra API: DataTypeComponent.getDataType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeComponent.html#getDataType()
             DataType fieldType = component.getDataType();
+            // Ghidra API: DataType.getDisplayName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getDisplayName()
             entry.put("fieldType", fieldType.getDisplayName());
 
             // Try to read the actual pointer value and resolve the function
@@ -292,9 +312,12 @@ public class VtableToolProvider extends AbstractToolProvider {
 
                 entry.put("address", AddressUtil.formatAddress(targetAddr));
 
+                // Ghidra API: FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionAt(ghidra.program.model.address.Address)
                 Function func = funcMgr.getFunctionAt(targetAddr);
                 if (func != null) {
+                    // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
                     entry.put("functionName", func.getName());
+                    // Ghidra API: Function.getSignature(), FunctionSignature.getPrototypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getSignature()
                     String signature = func.getSignature().getPrototypeString();
                     if (signature != null) {
                         entry.put("signature", signature);
@@ -326,7 +349,9 @@ public class VtableToolProvider extends AbstractToolProvider {
 
         List<Map<String, Object>> entries = new ArrayList<>();
         int pointerSize = program.getDefaultPointerSize();
+        // Ghidra API: Program.getMemory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         Memory memory = program.getMemory();
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager funcMgr = program.getFunctionManager();
 
         Address current = vtableAddr;
@@ -348,7 +373,6 @@ public class VtableToolProvider extends AbstractToolProvider {
                     entry.put("address", AddressUtil.formatAddress(targetAddr));
                     entry.put("functionName", func.getName());
 
-                    // Add signature if available
                     String signature = func.getSignature().getPrototypeString();
                     if (signature != null) {
                         entry.put("signature", signature);
@@ -391,9 +415,11 @@ public class VtableToolProvider extends AbstractToolProvider {
 
         TaskMonitor monitor = createTimeoutMonitor();
         int pointerSize = program.getDefaultPointerSize();
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function targetFunc = program.getFunctionManager().getFunctionAt(functionAddr);
 
         if (targetFunc == null) {
+            // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
             targetFunc = program.getFunctionManager().getFunctionContaining(functionAddr);
         }
         if (targetFunc == null) {
@@ -447,6 +473,7 @@ public class VtableToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("functionAddress", AddressUtil.formatAddress(functionAddr));
         result.put("functionName", targetFunc.getName());
@@ -512,20 +539,24 @@ public class VtableToolProvider extends AbstractToolProvider {
             TaskMonitor monitor) throws CancelledException {
 
         List<VtableSlotInfo> results = new ArrayList<>();
-        Set<String> seen = new HashSet<>(); // Deduplication: vtableAddr:slotIndex
+        Set<String> seen = new HashSet<>();
         int pointerSize = program.getDefaultPointerSize();
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refMgr = program.getReferenceManager();
 
-        // Find all data references to this function (vtable entries are data refs)
+        // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
         ReferenceIterator refs = refMgr.getReferencesTo(functionAddr);
         while (refs.hasNext()) {
             monitor.checkCancelled();
+            // Ghidra API: ReferenceIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceIterator.html#next()
             Reference ref = refs.next();
 
+            // Ghidra API: Reference.getReferenceType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getReferenceType()
             if (!ref.getReferenceType().isData()) {
                 continue;
             }
 
+            // Ghidra API: Reference.getFromAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getFromAddress()
             Address refAddr = ref.getFromAddress();
 
             // Try to find the start of the vtable by walking backwards
@@ -567,12 +598,11 @@ public class VtableToolProvider extends AbstractToolProvider {
         FunctionManager funcMgr = program.getFunctionManager();
 
         Address current = pointerAddr;
-        int backtrackLimit = 100; // Don't go back more than 100 entries
+        int backtrackLimit = 100;
 
         for (int i = 0; i < backtrackLimit; i++) {
             monitor.checkCancelled();
 
-            // Check bounds before subtract
             Address prev;
             try {
                 prev = current.subtractNoWrap(pointerSize);
@@ -584,7 +614,6 @@ public class VtableToolProvider extends AbstractToolProvider {
                 long pointerValue = readPointer(memory, prev, pointerSize);
                 Address targetAddr = toAddress(program, pointerValue);
 
-                // Check if previous entry points to a function
                 if (funcMgr.getFunctionAt(targetAddr) == null) {
                     // Previous entry is not a function pointer
                     // Could be RTTI, so check one more back
@@ -663,8 +692,8 @@ public class VtableToolProvider extends AbstractToolProvider {
 
                 // Check if still in vtable
                 Address targetAddr = toAddress(program, pointerValue);
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 if (program.getFunctionManager().getFunctionAt(targetAddr) == null) {
-                    // Allow one non-function (RTTI), but stop after that if still no match
                     if (slot > 0) {
                         try {
                             Address nextAddr = current.add(pointerSize);
@@ -694,18 +723,19 @@ public class VtableToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> results = new ArrayList<>();
         Listing listing = program.getListing();
 
+        // Ghidra API: Listing.getInstructions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(boolean)
         InstructionIterator iter = listing.getInstructions(true);
         while (iter.hasNext() && results.size() < maxResults) {
             monitor.checkCancelled();
             Instruction instr = iter.next();
 
-            // Check if this is an indirect call
+            // Ghidra API: Instruction.getFlowType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlowType()
             FlowType flowType = instr.getFlowType();
             if (!flowType.isCall() || !flowType.isComputed()) {
                 continue;
             }
 
-            // Extract offset from operand
+            // Ghidra API: Instruction.getDefaultOperandRepresentation(int) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getDefaultOperandRepresentation(int)
             String operandRep = instr.getDefaultOperandRepresentation(0);
             Integer offset = extractOffsetFromOperand(operandRep);
 
@@ -716,9 +746,11 @@ public class VtableToolProvider extends AbstractToolProvider {
                 caller.put("operand", operandRep);
                 caller.put("offset", String.format("0x%x", offset));
 
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
                 Function func = program.getFunctionManager().getFunctionContaining(instr.getAddress());
                 if (func != null) {
                     caller.put("function", func.getName());
+                    // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                     caller.put("functionAddress", AddressUtil.formatAddress(func.getEntryPoint()));
                 }
 
@@ -763,9 +795,10 @@ public class VtableToolProvider extends AbstractToolProvider {
     }
 
     private String guessClassNameFromVtable(Program program, Address vtableAddr) {
-        // Try to find a symbol at or near the vtable address
+        // Ghidra API: Program.getSymbolTable(), SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         var symbol = program.getSymbolTable().getPrimarySymbol(vtableAddr);
         if (symbol != null) {
+            // Ghidra API: Symbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
             String name = symbol.getName();
             // Common vtable symbol patterns
             if (name.contains("vtable") || name.contains("vftable") || name.startsWith("??_7")) {
@@ -773,7 +806,6 @@ public class VtableToolProvider extends AbstractToolProvider {
             }
         }
 
-        // Check for RTTI pointer before vtable (common in MSVC)
         int pointerSize = program.getDefaultPointerSize();
         try {
             Address rttiAddr = vtableAddr.subtractNoWrap(pointerSize);
@@ -793,8 +825,10 @@ public class VtableToolProvider extends AbstractToolProvider {
 
     private long readPointer(Memory memory, Address addr, int pointerSize) throws MemoryAccessException {
         if (pointerSize == 8) {
+            // Ghidra API: Memory.getLong(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getLong(ghidra.program.model.address.Address)
             return memory.getLong(addr);
         } else {
+            // Ghidra API: Memory.getInt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/Memory.html#getInt(ghidra.program.model.address.Address)
             return memory.getInt(addr) & 0xFFFFFFFFL;
         }
     }
@@ -806,6 +840,7 @@ public class VtableToolProvider extends AbstractToolProvider {
      * This is acceptable for typical vtable analysis on standard executables.
      */
     private Address toAddress(Program program, long offset) {
+        // Ghidra API: Program.getAddressFactory(), AddressFactory.getDefaultAddressSpace(), AddressSpace.getAddress(long) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getAddressFactory()
         return program.getAddressFactory().getDefaultAddressSpace().getAddress(offset);
     }
 

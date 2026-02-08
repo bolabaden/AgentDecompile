@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.plugin;
 
@@ -59,6 +42,16 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 /**
  * Manages access to open programs in Ghidra.
  * This is a singleton service that can be accessed throughout the application.
+ * <p>
+ * Ghidra API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.listing.Program} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html">Program API</a></li>
+ *   <li>{@link ghidra.framework.model.Project} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html">Project API</a></li>
+ *   <li>{@link ghidra.framework.model.DomainFile} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html">DomainFile API</a></li>
+ *   <li>{@link ghidra.app.util.task.ProgramOpener} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/util/task/ProgramOpener.html">ProgramOpener API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class AgentDecompileProgramManager {
     // Cache of opened programs by path to avoid repeatedly opening the same program
@@ -78,59 +71,75 @@ public class AgentDecompileProgramManager {
     public static List<Program> getOpenPrograms() {
         List<Program> openPrograms = new ArrayList<>();
 
-        // First try to get programs from the tool manager
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No active project found");
-            // Still check cache and registered programs even without a project
             return getCachedAndRegisteredPrograms();
         }
 
+        // Ghidra API: Project.getToolManager() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getToolManager()
         ToolManager toolManager = project.getToolManager();
         if (toolManager != null) {
+            // Ghidra API: ToolManager.getRunningTools() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ToolManager.html#getRunningTools()
             PluginTool[] runningTools = toolManager.getRunningTools();
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Found " + runningTools.length + " running tools");
 
             for (PluginTool tool : runningTools) {
+                // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
                 ProgramManager programManager = tool.getService(ProgramManager.class);
                 if (programManager != null) {
+                    // Ghidra API: ProgramManager.getAllOpenPrograms() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/ProgramManager.html#getAllOpenPrograms()
                     Program[] programs = programManager.getAllOpenPrograms();
+                    // Ghidra API: Msg.debug(Class, String), PluginTool.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AgentDecompileProgramManager.class, "Tool " + tool.getName() + " has " + programs.length + " open programs");
                     for (Program program : programs) {
+                        // Ghidra API: Program.isClosed(), getName(), getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                         if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
                             openPrograms.add(program);
+                            // Ghidra API: Msg.debug(Class, String), Program.getName(), Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                             Msg.debug(AgentDecompileProgramManager.class, "Added program: " + program.getName() + " with domain path: " + program.getDomainFile().getPathname());
                         }
                     }
                 } else {
+                    // Ghidra API: Msg.debug(Class, String), PluginTool.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AgentDecompileProgramManager.class, "Tool " + tool.getName() + " has no ProgramManager service");
                 }
             }
         } else {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No tool manager found");
         }
 
         // If no tools were found (common in test environments),
         // try to get programs directly from the AgentDecompilePlugin's tool
         if (openPrograms.isEmpty()) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No programs found via ToolManager, trying AgentDecompilePlugin tool");
             AgentDecompilePlugin agentdecompilePlugin = AgentDecompileInternalServiceRegistry.getService(AgentDecompilePlugin.class);
             if (agentdecompilePlugin != null && agentdecompilePlugin.getTool() != null) {
+                // Ghidra API: PluginTool getTool() - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html
                 PluginTool tool = agentdecompilePlugin.getTool();
                 ProgramManager programManager = tool.getService(ProgramManager.class);
                 if (programManager != null) {
                     Program[] programs = programManager.getAllOpenPrograms();
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AgentDecompileProgramManager.class, "AgentDecompilePlugin tool has " + programs.length + " open programs");
                     for (Program program : programs) {
                         if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
                             openPrograms.add(program);
+                            // Ghidra API: Msg.debug(Class, String), Program.getName(), Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                             Msg.debug(AgentDecompileProgramManager.class, "Added program from AgentDecompilePlugin: " + program.getName() + " with domain path: " + program.getDomainFile().getPathname());
                         }
                     }
                 } else {
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AgentDecompileProgramManager.class, "AgentDecompilePlugin tool has no ProgramManager service");
                 }
             } else {
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(AgentDecompileProgramManager.class, "AgentDecompilePlugin not found or has no tool");
             }
         }
@@ -140,14 +149,17 @@ public class AgentDecompileProgramManager {
         for (Program program : cachedAndRegistered) {
             if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
                 openPrograms.add(program);
+                // Ghidra API: Msg.debug(Class, String), Program.getName(), Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(AgentDecompileProgramManager.class, "Added cached/registered program: " + program.getName() + " with domain path: " + program.getDomainFile().getPathname());
             }
         }
 
         // If still no programs are open, automatically open all programs from the project
         if (openPrograms.isEmpty()) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No programs currently open, auto-opening programs from project");
             List<String> projectProgramPaths = collectProgramPathsFromProject(project);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Found " + projectProgramPaths.size() + " programs in project");
 
             for (String programPath : projectProgramPaths) {
@@ -155,14 +167,17 @@ public class AgentDecompileProgramManager {
                     Program program = getProgramByPath(programPath);
                     if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
                         openPrograms.add(program);
+                        // Ghidra API: Msg.info(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                         Msg.info(AgentDecompileProgramManager.class, "Auto-opened program from project: " + programPath);
                     }
                 } catch (Exception e) {
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AgentDecompileProgramManager.class, "Failed to auto-open program " + programPath + ": " + e.getMessage());
                 }
             }
         }
 
+        // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(AgentDecompileProgramManager.class, "Total open programs found: " + openPrograms.size());
         return openPrograms;
     }
@@ -176,21 +191,27 @@ public class AgentDecompileProgramManager {
     private static List<Program> getOpenProgramsWithoutAutoOpen() {
         List<Program> openPrograms = new ArrayList<>();
 
-        // First try to get programs from the tool manager
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No active project found");
             return getCachedAndRegisteredPrograms();
         }
 
+        // Ghidra API: Project.getToolManager() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getToolManager()
         ToolManager toolManager = project.getToolManager();
         if (toolManager != null) {
+            // Ghidra API: ToolManager.getRunningTools() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ToolManager.html#getRunningTools()
             PluginTool[] runningTools = toolManager.getRunningTools();
             for (PluginTool tool : runningTools) {
+                // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
                 ProgramManager programManager = tool.getService(ProgramManager.class);
                 if (programManager != null) {
+                    // Ghidra API: ProgramManager.getAllOpenPrograms() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/ProgramManager.html#getAllOpenPrograms()
                     Program[] programs = programManager.getAllOpenPrograms();
                     for (Program program : programs) {
+                        // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
                         if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
                             openPrograms.add(program);
                         }
@@ -199,13 +220,15 @@ public class AgentDecompileProgramManager {
             }
         }
 
-        // Try AgentDecompilePlugin's tool as fallback
         if (openPrograms.isEmpty()) {
             AgentDecompilePlugin agentdecompilePlugin = AgentDecompileInternalServiceRegistry.getService(AgentDecompilePlugin.class);
             if (agentdecompilePlugin != null && agentdecompilePlugin.getTool() != null) {
+                // Ghidra API: AgentDecompilePlugin.getTool() - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html
                 PluginTool tool = agentdecompilePlugin.getTool();
+                // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
                 ProgramManager programManager = tool.getService(ProgramManager.class);
                 if (programManager != null) {
+                    // Ghidra API: ProgramManager.getAllOpenPrograms() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/ProgramManager.html#getAllOpenPrograms()
                     Program[] programs = programManager.getAllOpenPrograms();
                     for (Program program : programs) {
                         if (program != null && !program.isClosed() && !openPrograms.contains(program)) {
@@ -234,14 +257,13 @@ public class AgentDecompileProgramManager {
     private static List<Program> getCachedAndRegisteredPrograms() {
         List<Program> programs = new ArrayList<>();
 
-        // Add valid programs from cache
         for (Program program : programCache.values()) {
+            // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
             if (program != null && !program.isClosed()) {
                 programs.add(program);
             }
         }
 
-        // Add valid registered programs
         for (Program program : registeredPrograms.values()) {
             if (program != null && !program.isClosed() && !programs.contains(program)) {
                 programs.add(program);
@@ -263,9 +285,11 @@ public class AgentDecompileProgramManager {
         }
 
         try {
+            // Ghidra API: Project.getProjectData(), ProjectData.getRootFolder() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectData(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()
             DomainFolder rootFolder = project.getProjectData().getRootFolder();
             collectProgramPathsRecursive(rootFolder, paths);
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Error collecting program paths from project: " + e.getMessage());
         }
 
@@ -283,13 +307,16 @@ public class AgentDecompileProgramManager {
         }
 
         // Add programs in this folder
+        // Ghidra API: DomainFolder.getFiles() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFiles()
         for (DomainFile file : folder.getFiles()) {
+            // Ghidra API: DomainFile.getContentType() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getContentType()
             if ("Program".equals(file.getContentType())) {
+                // Ghidra API: DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 paths.add(file.getPathname());
             }
         }
 
-        // Recurse into subfolders
+        // Ghidra API: DomainFolder.getFolders() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFolders()
         for (DomainFolder subfolder : folder.getFolders()) {
             collectProgramPathsRecursive(subfolder, paths);
         }
@@ -301,15 +328,18 @@ public class AgentDecompileProgramManager {
      */
     public static List<DomainFile> getAllProgramFiles() {
         List<DomainFile> programFiles = new ArrayList<>();
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
             return programFiles;
         }
 
         try {
+            // Ghidra API: Project.getProjectData(), ProjectData.getRootFolder() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectData(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()
             DomainFolder rootFolder = project.getProjectData().getRootFolder();
             collectProgramFilesRecursive(rootFolder, programFiles);
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Error collecting program files from project: " + e.getMessage());
         }
 
@@ -326,14 +356,15 @@ public class AgentDecompileProgramManager {
             return;
         }
 
-        // Add programs in this folder
+        // Ghidra API: DomainFolder.getFiles() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFiles()
         for (DomainFile file : folder.getFiles()) {
+            // Ghidra API: DomainFile.getContentType() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getContentType()
             if ("Program".equals(file.getContentType())) {
                 programFiles.add(file);
             }
         }
 
-        // Recurse into subfolders
+        // Ghidra API: DomainFolder.getFolders() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFolders()
         for (DomainFolder subfolder : folder.getFolders()) {
             collectProgramFilesRecursive(subfolder, programFiles);
         }
@@ -346,8 +377,10 @@ public class AgentDecompileProgramManager {
      */
     public static void registerProgram(Program program) {
         if (program != null && !program.isClosed()) {
+            // Ghidra API: Program.getDomainFile() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String programPath = program.getDomainFile().getPathname();
             registeredPrograms.put(programPath, program);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Registered program: " + programPath);
         }
     }
@@ -358,9 +391,11 @@ public class AgentDecompileProgramManager {
      */
     public static void unregisterProgram(Program program) {
         if (program != null) {
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String programPath = program.getDomainFile().getPathname();
             registeredPrograms.remove(programPath);
             programCache.remove(programPath);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Unregistered program: " + programPath);
         }
     }
@@ -372,9 +407,11 @@ public class AgentDecompileProgramManager {
      */
     public static void programClosed(Program program) {
         if (program != null) {
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String programPath = program.getDomainFile().getPathname();
             registeredPrograms.remove(programPath);
             programCache.remove(programPath);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Program closed, cleared cache: " + programPath);
         }
     }
@@ -385,10 +422,12 @@ public class AgentDecompileProgramManager {
      * @param program The program that was opened
      */
     public static void programOpened(Program program) {
+        // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
         if (program != null && !program.isClosed()) {
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String programPath = program.getDomainFile().getPathname();
-            // Clear any stale cache entry and let normal lookup repopulate
             programCache.remove(programPath);
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Program opened, cleared stale cache: " + programPath);
         }
     }
@@ -399,6 +438,7 @@ public class AgentDecompileProgramManager {
      * @return The canonical domain path
      */
     public static String getCanonicalProgramPath(Program program) {
+        // Ghidra API: Program.getDomainFile() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         return program.getDomainFile().getPathname();
     }
 
@@ -413,7 +453,9 @@ public class AgentDecompileProgramManager {
             return;
         }
 
+        // Ghidra API: Program.getDomainFile() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile()
         DomainFile domainFile = program.getDomainFile();
+        // Ghidra API: DomainFile.isVersioned(), isCheckedOut(), isReadOnly() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isVersioned(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isCheckedOut(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isReadOnly()
         Msg.debug(AgentDecompileProgramManager.class,
             "Program state - versioned: " + domainFile.isVersioned() +
             ", checked out: " + domainFile.isCheckedOut() +
@@ -421,19 +463,23 @@ public class AgentDecompileProgramManager {
 
         if (domainFile.isVersioned() && !domainFile.isCheckedOut()) {
             try {
-                // Attempt non-exclusive checkout
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(AgentDecompileProgramManager.class,
                     "Attempting auto-checkout for: " + programPath);
+                // Ghidra API: DomainFile.checkout(boolean, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#checkout(boolean,ghidra.util.task.TaskMonitor)
                 boolean success = domainFile.checkout(false, TaskMonitor.DUMMY);
                 if (success) {
+                    // Ghidra API: Msg.info(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
                     Msg.info(AgentDecompileProgramManager.class,
                         "Auto-checked out versioned program: " + programPath);
                 } else {
+                    // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                     Msg.warn(AgentDecompileProgramManager.class,
                         "Failed to auto-checkout versioned program: " + programPath +
                         " (may be checked out exclusively by another user)");
                 }
             } catch (CancelledException | IOException e) {
+                // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(AgentDecompileProgramManager.class,
                     "Could not auto-checkout program " + programPath + ": " + e.getMessage(), e);
                 // Continue anyway - program is still usable in read-only mode
@@ -451,11 +497,12 @@ public class AgentDecompileProgramManager {
             return null;
         }
 
+        // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(AgentDecompileProgramManager.class, "Looking for program with path: " + programPath);
 
-        // Check registered programs first (for test environments)
         if (registeredPrograms.containsKey(programPath)) {
             Program registeredProgram = registeredPrograms.get(programPath);
+            // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
             if (!registeredProgram.isClosed()) {
                 Msg.debug(AgentDecompileProgramManager.class, "Found program in registry: " + programPath);
                 ensureCheckedOut(registeredProgram, programPath);
@@ -469,7 +516,6 @@ public class AgentDecompileProgramManager {
         // Check cache next
         if (programCache.containsKey(programPath)) {
             Program cachedProgram = programCache.get(programPath);
-            // Ensure the program is still valid
             if (!cachedProgram.isClosed()) {
                 Msg.debug(AgentDecompileProgramManager.class, "Found program in cache: " + programPath);
                 ensureCheckedOut(cachedProgram, programPath);
@@ -480,16 +526,16 @@ public class AgentDecompileProgramManager {
             }
         }
 
-        // First try to find among currently open programs (without auto-opening all)
         List<Program> openPrograms = getOpenProgramsWithoutAutoOpen();
         Msg.debug(AgentDecompileProgramManager.class, "Checking " + openPrograms.size() + " currently open programs");
 
         for (Program program : openPrograms) {
             // Check the Ghidra project path first (most common case)
+            // Ghidra API: Program.getDomainFile() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String domainPath = program.getDomainFile().getPathname();
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Comparing '" + programPath + "' with domain path '" + domainPath + "'");
             if (domainPath.equals(programPath)) {
-                // Use canonical domain path as cache key for consistency
                 String canonicalPath = getCanonicalProgramPath(program);
                 programCache.put(canonicalPath, program);
                 Msg.debug(AgentDecompileProgramManager.class, "Found program by domain path: " + programPath);
@@ -498,11 +544,11 @@ public class AgentDecompileProgramManager {
             }
 
             // Also check executable path and name for backward compatibility
+            // Ghidra API: Program.getExecutablePath(), getName() (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getExecutablePath(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
             String executablePath = program.getExecutablePath();
             String programName = program.getName();
             Msg.debug(AgentDecompileProgramManager.class, "Also checking executable path '" + executablePath + "' and name '" + programName + "'");
             if (executablePath.equals(programPath) || programName.equals(programPath)) {
-                // Use canonical domain path as cache key for consistency
                 String canonicalPath = getCanonicalProgramPath(program);
                 programCache.put(canonicalPath, program);
                 Msg.debug(AgentDecompileProgramManager.class, "Found program by executable path or name: " + programPath);
@@ -511,9 +557,10 @@ public class AgentDecompileProgramManager {
             }
         }
 
-        // Get the DomainFile for the program path
+        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
+            // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(AgentDecompileProgramManager.class, "No active project");
             return null;
         }
@@ -531,20 +578,23 @@ public class AgentDecompileProgramManager {
                 String folderPath = "/" + relativePath.substring(0, lastSlash);
                 String fileName = relativePath.substring(lastSlash + 1);
 
+                // Ghidra API: ProjectData.getFolder(String), DomainFolder.getFile(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getFolder(java.lang.String)
+                // Ghidra API: ProjectData.getFolder(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getFolder(java.lang.String)
                 DomainFolder folder = project.getProjectData().getFolder(folderPath);
                 if (folder != null) {
+                    // Ghidra API: DomainFolder.getFile(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFolder.html#getFile(java.lang.String)
                     domainFile = folder.getFile(fileName);
                 }
             } else {
-                // No folders, file is directly in root
+                // Ghidra API: ProjectData.getRootFolder(), DomainFolder.getFile(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()
                 domainFile = project.getProjectData().getRootFolder().getFile(relativePath);
             }
         } else {
-            // Handle paths without leading slash
             domainFile = project.getProjectData().getRootFolder().getFile(programPath);
         }
 
         if (domainFile == null) {
+            // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(AgentDecompileProgramManager.class, "Could not find program: " + programPath);
             return null;
         }
@@ -559,20 +609,24 @@ public class AgentDecompileProgramManager {
             // Use the class itself as the consumer to ensure a stable, non-null reference
             // false for readOnly means open for update
             // false for okToUpgrade means don't show upgrade dialogs (upgrades happen automatically)
+            // Ghidra API: DomainFile.getDomainObject(DomainObjectConsumer, boolean, boolean, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getDomainObject(ghidra.framework.model.DomainObjectConsumer,boolean,boolean,ghidra.util.task.TaskMonitor)
             DomainObject domainObject = domainFile.getDomainObject(CACHE_CONSUMER, false, false, TaskMonitor.DUMMY);
 
             if (domainObject instanceof Program prog1) {
                 program = prog1;
             } else {
+                // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                 Msg.warn(AgentDecompileProgramManager.class, "Domain object is not a Program: " + programPath);
                 if (domainObject != null) {
+                    // Ghidra API: DomainObject.release(DomainObjectConsumer) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#release(ghidra.framework.model.DomainObjectConsumer)
                     domainObject.release(CACHE_CONSUMER);
                 }
             }
         } catch (CancelledException | VersionException | IOException e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(AgentDecompileProgramManager.class, "Failed to open program " + programPath + ": " + e.getMessage(), e);
-            // Fall back to ProgramOpener if getDomainObject fails
             try {
+                // Ghidra API: ProgramOpener.openProgram(ProgramLocator, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/util/task/ProgramOpener.html#openProgram(ghidra.app.plugin.core.progmgr.ProgramLocator,ghidra.util.task.TaskMonitor)
                 ProgramOpener programOpener = new ProgramOpener(CACHE_CONSUMER);
                 ProgramLocator locator = new ProgramLocator(domainFile);
                 program = programOpener.openProgram(locator, TaskMonitor.DUMMY);
@@ -602,6 +656,7 @@ public class AgentDecompileProgramManager {
         if (program == null || program.isClosed()) {
             return false;
         }
+        // Ghidra API: Program.isClosed() (above) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
         String canonicalPath = getCanonicalProgramPath(program);
         return programCache.containsKey(canonicalPath) &&
                programCache.get(canonicalPath) == program;
@@ -614,6 +669,7 @@ public class AgentDecompileProgramManager {
      * @return true if the program was in the cache and released, false otherwise
      */
     public static boolean releaseProgramFromCache(Program program) {
+        // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
         if (program == null || program.isClosed()) {
             return false;
         }
@@ -622,11 +678,14 @@ public class AgentDecompileProgramManager {
         Program cachedProgram = programCache.remove(canonicalPath);
 
         if (cachedProgram != null && cachedProgram == program) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class,
                 "Releasing program from cache: " + canonicalPath);
             try {
+                // Ghidra API: Program.release(DomainObjectConsumer) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#release(ghidra.framework.model.DomainObjectConsumer)
                 program.release(CACHE_CONSUMER);
             } catch (Exception e) {
+                // Ghidra API: Msg.warn(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.warn(AgentDecompileProgramManager.class,
                     "Failed to release cached program consumer for " + canonicalPath + ": " + e.getMessage(), e);
             }
@@ -647,10 +706,10 @@ public class AgentDecompileProgramManager {
             return null;
         }
 
+        // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(AgentDecompileProgramManager.class,
             "Re-opening program to cache: " + programPath);
 
-        // Clear any existing cache entry first
         programCache.remove(programPath);
 
         // Use getProgramByPath which will open and cache the program
@@ -665,8 +724,10 @@ public class AgentDecompileProgramManager {
         for (Program program : programCache.values()) {
             if (program != null && !program.isClosed()) {
                 try {
+                    // Ghidra API: Program.release(DomainObjectConsumer) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#release(ghidra.framework.model.DomainObjectConsumer)
                     program.release(CACHE_CONSUMER);
                 } catch (Exception e) {
+                    // Ghidra API: Msg.warn(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object,java.lang.Throwable)
                     Msg.warn(AgentDecompileProgramManager.class,
                         "Failed to release cached program during cleanup: " + e.getMessage(), e);
                 }

@@ -38,9 +38,17 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 /**
  * Tool provider for data flow analysis operations.
  * Provides tools for tracing how values flow through a function.
- *
- * <p>Uses Ghidra's SSA (Static Single Assignment) form from the decompiler
- * to trace data dependencies via Varnode def-use chains.</p>
+ * <p>
+ * Uses Ghidra's SSA (Static Single Assignment) form from the decompiler
+ * to trace data dependencies via Varnode def-use chains.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.app.decompiler.DecompInterface}, {@link ghidra.program.model.pcode.HighFunction} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html">DecompInterface API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html">HighFunction API</a>,
+ * {@link ghidra.app.decompiler.component.DecompilerUtils} for backward/forward slicing.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class DataFlowToolProvider extends AbstractToolProvider {
 
@@ -99,8 +107,10 @@ public class DataFlowToolProvider extends AbstractToolProvider {
                 String direction = getString(request, "direction");
 
                 Address functionAddress = getAddressFromArgs(request, program, "functionAddress");
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 Function function = program.getFunctionManager().getFunctionAt(functionAddress);
                 if (function == null) {
+                    // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
                     function = program.getFunctionManager().getFunctionContaining(functionAddress);
                 }
                 if (function == null) {
@@ -115,6 +125,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
                         if (startAddress == null) {
                             return createErrorResult("Could not resolve startAddress: " + startAddressStr);
                         }
+                        // Ghidra API: Function.getBody(), AddressSetView.contains(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
                         if (!function.getBody().contains(startAddress)) {
                             return createErrorResult("startAddress is not within the function");
                         }
@@ -134,6 +145,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     result.put("dataFlow", new ArrayList<>());
                     return createJsonResult(result);
@@ -192,8 +204,10 @@ public class DataFlowToolProvider extends AbstractToolProvider {
             List<Map<String, Object>> terminators = findTerminators(sliceOps, direction);
 
             Map<String, Object> result = new HashMap<>();
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             result.put("programPath", program.getDomainFile().getPathname());
             result.put("function", function.getName());
+            // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
             result.put("functionAddress", AddressUtil.formatAddress(function.getEntryPoint()));
             result.put("startAddress", AddressUtil.formatAddress(targetAddress));
             result.put("direction", direction.toString().toLowerCase());
@@ -204,6 +218,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
             return createJsonResult(result);
 
         } finally {
+            // Ghidra API: DecompInterface.dispose() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#dispose()
             decompiler.dispose();
         }
     }
@@ -227,7 +242,6 @@ public class DataFlowToolProvider extends AbstractToolProvider {
                 return createErrorResult("Could not get high-level function representation");
             }
 
-            // Find the variable by name (searches both local and global symbols)
             HighVariable targetVar = findVariableByName(hf, variableName);
             if (targetVar == null) {
                 List<String> availableVars = getAvailableVariableNames(hf);
@@ -238,7 +252,6 @@ public class DataFlowToolProvider extends AbstractToolProvider {
             // Collect all accesses
             List<Map<String, Object>> accesses = collectVariableAccesses(targetVar);
 
-            // Build response
             Map<String, Object> result = new HashMap<>();
             result.put("programPath", program.getDomainFile().getPathname());
             result.put("function", function.getName());
@@ -246,6 +259,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
             result.put("variableName", variableName);
             result.put("variableType", getVariableType(targetVar));
             if (targetVar.getDataType() != null) {
+                // Ghidra API: HighVariable.getDataType(), DataType.getDisplayName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighVariable.html#getDataType()
                 result.put("dataType", targetVar.getDataType().getDisplayName());
             }
             result.put("accessCount", accesses.size());
@@ -264,10 +278,11 @@ public class DataFlowToolProvider extends AbstractToolProvider {
 
     private DecompInterface createConfiguredDecompiler(Program program) {
         DecompInterface decompiler = new DecompInterface();
-        decompiler.toggleCCode(false);  // Don't need C code for data flow
-        decompiler.toggleSyntaxTree(true);  // CRITICAL: Required for SSA/data flow analysis
+        decompiler.toggleCCode(false);
+        decompiler.toggleSyntaxTree(true);
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
             return null;
         }
@@ -297,6 +312,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
         Set<PcodeOp> result = new HashSet<>();
         outer:
         for (Varnode seed : seedVarnodes) {
+            // Ghidra API: DecompilerUtils.getForwardSliceToPCodeOps(Varnode) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html#getForwardSliceToPCodeOps(ghidra.program.model.pcode.Varnode)
             Set<PcodeOp> slice = DecompilerUtils.getForwardSliceToPCodeOps(seed);
             if (slice != null) {
                 for (PcodeOp op : slice) {
@@ -315,17 +331,16 @@ public class DataFlowToolProvider extends AbstractToolProvider {
     private List<Varnode> findVarnodesAtAddress(HighFunction hf, Address targetAddress) {
         List<Varnode> varnodes = new ArrayList<>();
 
+        // Ghidra API: HighFunction.getPcodeOps(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getPcodeOps(ghidra.program.model.address.Address)
         Iterator<PcodeOpAST> ops = hf.getPcodeOps(targetAddress);
         while (ops.hasNext()) {
             PcodeOpAST op = ops.next();
 
-            // Add output varnode
             Varnode output = op.getOutput();
             if (output != null) {
                 varnodes.add(output);
             }
 
-            // Add input varnodes (skip constants for forward slice seeds)
             for (int i = 0; i < op.getNumInputs(); i++) {
                 Varnode input = op.getInput(i);
                 if (input != null && !input.isConstant()) {
@@ -338,7 +353,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
     }
 
     private HighVariable findVariableByName(HighFunction hf, String variableName) {
-        // Search local symbols first
+        // Ghidra API: HighFunction.getLocalSymbolMap() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getLocalSymbolMap()
         LocalSymbolMap localSymbols = hf.getLocalSymbolMap();
         Iterator<HighSymbol> localIter = localSymbols.getSymbols();
         while (localIter.hasNext()) {
@@ -348,7 +363,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
             }
         }
 
-        // Also search global symbols
+        // Ghidra API: HighFunction.getGlobalSymbolMap() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/pcode/HighFunction.html#getGlobalSymbolMap()
         GlobalSymbolMap globalSymbols = hf.getGlobalSymbolMap();
         Iterator<HighSymbol> globalIter = globalSymbols.getSymbols();
         while (globalIter.hasNext()) {
@@ -629,6 +644,7 @@ public class DataFlowToolProvider extends AbstractToolProvider {
     private DecompileResults decompileFunction(DecompInterface decompiler, Function function) {
         int timeout = getDecompilerTimeout();
         TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(timeout, TimeUnit.SECONDS);
+        // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
         return decompiler.decompileFunction(function, timeout, monitor);
     }
 
