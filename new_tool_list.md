@@ -173,9 +173,9 @@
 
 ### 10. `list-project-files`
 
-**Description:** List the full project file and folder hierarchy (entire tree). Works for both local and shared/versioned projects.
+**Description:** List the full project file and folder hierarchy (entire tree). Works for both local and shared/versioned projects. Argumentless: takes no parameters; any arguments provided (e.g. `folderPath`, `recursive`) are ignored.
 
-**Parameters:** None
+**Parameters:** None (any arguments sent are ignored)
 
 ### 11. `list-open-programs` (GUI Mode Only)
 
