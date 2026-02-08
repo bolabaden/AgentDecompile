@@ -25,7 +25,6 @@ import java.util.Map;
 import ghidra.app.plugin.core.progmgr.ProgramLocator;
 import ghidra.app.services.ProgramManager;
 import ghidra.app.util.task.ProgramOpener;
-import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.DomainFolder;
 import ghidra.framework.model.DomainObject;
@@ -72,8 +71,7 @@ public class AgentDecompileProgramManager {
     public static List<Program> getOpenPrograms() {
         List<Program> openPrograms = new ArrayList<>();
 
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No active project found");
@@ -192,8 +190,7 @@ public class AgentDecompileProgramManager {
     private static List<Program> getOpenProgramsWithoutAutoOpen() {
         List<Program> openPrograms = new ArrayList<>();
 
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "No active project found");
@@ -333,7 +330,7 @@ public class AgentDecompileProgramManager {
      */
     public static List<DomainFile> getAllProgramFiles() {
         List<DomainFile> programFiles = new ArrayList<>();
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return programFiles;
         }
@@ -567,8 +564,7 @@ public class AgentDecompileProgramManager {
             }
         }
 
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(AgentDecompileProgramManager.class, "No active project");

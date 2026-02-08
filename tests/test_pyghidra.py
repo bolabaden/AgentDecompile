@@ -48,3 +48,9 @@ class TestPyGhidraIntegration:
         """AgentDecompile classes can be imported after Ghidra initialization"""
         from agentdecompile.headless import AgentDecompileHeadlessLauncher
         assert AgentDecompileHeadlessLauncher is not None
+
+    def test_java_output_redirect_via_callback(self, ghidra_initialized):
+        """Java System.out/err can be redirected via StderrWriter callback (no Python subclass of OutputStream)."""
+        from agentdecompile_cli import __main__ as cli_main
+        # Should not raise; redirect uses Java interface impl from Python, not extending OutputStream
+        cli_main._redirect_java_outputs()

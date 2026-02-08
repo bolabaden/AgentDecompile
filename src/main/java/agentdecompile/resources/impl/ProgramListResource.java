@@ -25,7 +25,6 @@ import java.util.Map;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.Project;
 import ghidra.program.model.listing.Program;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncResourceSpecification;
@@ -99,7 +98,7 @@ public class ProgramListResource extends AbstractResourceProvider {
         List<ResourceContents> resourceContents = new ArrayList<>();
 
         // If no project is active, try to open from last 'open' path or env (same behavior as 'open')
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             String path = ProjectToolProvider.getLastOpenedProjectPath();
             if (path == null) {
@@ -107,7 +106,7 @@ public class ProgramListResource extends AbstractResourceProvider {
             }
             if (path != null) {
                 ProjectUtil.tryOpenProjectFromGprPath(path);
-                project = AppInfo.getActiveProject();
+                project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             }
         }
 

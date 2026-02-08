@@ -183,8 +183,8 @@ public class ProjectToolProvider extends AbstractToolProvider {
             Program program = null;
 
             if (!headlessMode) {
-                // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-                Project project = AppInfo.getActiveProject();
+                // Ghidra API: ProjectUtil.getActiveProjectOrHeadlessFallback() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
+                Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
                 if (project != null) {
                     ToolManager toolManager = project.getToolManager();
                     if (toolManager != null) {
@@ -250,7 +250,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         // Register the tool with a handler
         registerTool(tool, (exchange, request) -> {
             // Get the active project
-            Project project = AppInfo.getActiveProject();
+            Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
@@ -310,7 +310,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         // Register the tool with a handler
         registerTool(tool, (exchange, request) -> {
             // Get the active project
-            Project project = AppInfo.getActiveProject();
+            Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
@@ -376,7 +376,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
 
         registerTool(tool, (exchange, request) -> {
             // Argumentless tool: ignore request.arguments() (equivalent of *args, **kwargs accepted but ignored)
-            Project project = AppInfo.getActiveProject();
+            Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
@@ -1054,7 +1054,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         }
 
         // Get the active project
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return createErrorResult("No active project found");
         }
@@ -1458,7 +1458,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         boolean exclusive = getOptionalBoolean(request, "exclusive", false);
 
         // Get the DomainFile for the program
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return createErrorResult("No active project found");
         }
@@ -1537,7 +1537,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         }
 
         // Get the DomainFile for the program
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return createErrorResult("No active project found");
         }
@@ -1621,7 +1621,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
         }
 
         // Get the DomainFile for the program
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return createErrorResult("No active project found");
         }
@@ -2135,7 +2135,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
             }
 
             // Get project metadata
-            result.put("isActive", (AppInfo.getActiveProject() == project));
+            result.put("isActive", (ProjectUtil.getActiveProjectOrHeadlessFallback() == project));
             result.put("programCount", allPrograms.size());
             result.put("availablePrograms", availablePrograms);
             result.put("openAllProgramsRequested", shouldOpenAllPrograms);
@@ -2211,7 +2211,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
             }
 
             // Get the active project
-            Project project = AppInfo.getActiveProject();
+            Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found. Please open a project first using open with a .gpr file.");
             }
@@ -2365,7 +2365,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
                 }
 
                 // Get the active project
-                Project project = AppInfo.getActiveProject();
+                Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
                 if (project == null) {
                     return createErrorResult("No active project found");
                 }
@@ -2490,7 +2490,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
             }
 
             // Get the active project
-            Project project = AppInfo.getActiveProject();
+            Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
@@ -2780,7 +2780,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
 
         // Use custom import loop (similar to handleImportOperation)
         DomainFile importedFile = null;
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             throw new Exception("No active project found");
         }

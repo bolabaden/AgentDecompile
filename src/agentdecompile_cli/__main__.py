@@ -27,41 +27,41 @@ if TYPE_CHECKING:
 def _redirect_java_outputs():
     """Redirect Java's System.out and System.err to Python stderr.
 
-    This ensures Java log messages don't corrupt the MCP JSON-RPC stdout stream.
+    Uses a Java callback interface (StderrWriter) so we do not extend Java's
+    OutputStream from Python (JPype does not allow extending Java classes).
+    This ensures Java log messages go through our Python stderr and the
+    JSON-RPC log filter without corrupting the MCP stdout stream.
     """
     try:
-        # Import Java classes after PyGhidra is initialized
-        from java.lang import System  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from java.io import PrintStream, OutputStream  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from jpype import JImplements, JOverride  # pyright: ignore[reportMissingImports]
 
-        # Create a custom OutputStream that writes to our Python stderr
-        class PythonStderrOutputStream(OutputStream):
-            def write(self, b):
-                """Write byte to Python stderr (buffered for performance)."""
-                if isinstance(b, int):
-                    # Single byte
-                    sys.stderr.write(chr(b))
-                elif isinstance(b, bytes):
-                    # Byte array
-                    sys.stderr.write(b.decode('utf-8', errors='replace'))
-                elif hasattr(b, '__iter__'):
-                    # Array of bytes
-                    for byte_val in b:
-                        sys.stderr.write(chr(byte_val))
-                else:
-                    # Fallback
-                    sys.stderr.write(str(b))
+        from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+            JavaOutputRedirect,
+            StderrWriter,
+        )
 
-            def flush(self):
-                """Flush the stream."""
-                sys.stderr.flush()
+        @JImplements(StderrWriter)
+        class PyStderrWriter:
+            """Implements Java StderrWriter interface; writes to Python sys.stderr."""
 
-        # Redirect Java System.out and System.err
-        python_stderr_stream = PrintStream(PythonStderrOutputStream())
-        System.setOut(python_stderr_stream)
-        System.setErr(python_stderr_stream)
+            @JOverride
+            def write(self, b, off, len_val):
+                # Java byte[] b, int off, int len -> write slice to sys.stderr
+                if b is None or len_val <= 0:
+                    return
+                try:
+                    # Java byte is signed (-128..127); normalize to 0..255 for Python bytes
+                    chunk = bytes(
+                        (int(b[i]) & 0xFF for i in range(off, off + len_val))
+                    )
+                    sys.stderr.write(chunk.decode("utf-8", errors="replace"))
+                    sys.stderr.flush()
+                except Exception:
+                    sys.stderr.write(f"<write error: {len_val} bytes>\n")
+                    sys.stderr.flush()
 
-        sys.stderr.write("Java output redirection enabled\n")
+        writer = PyStderrWriter()
+        JavaOutputRedirect.redirectToWriter(writer)
 
     except Exception as e:
         # If redirection fails, the Python filters will handle it
@@ -425,15 +425,7 @@ def main():
         import gc
         gc.collect()
 
-        # Initialize project manager (lazy - project created on first tool use)
-        sys.stderr.write("Initializing project manager...\n")
         project_manager = ProjectManager()
-        sys.stderr.write(
-            "Project manager ready (project will be created on first use)\n"
-        )
-
-        # Start AgentDecompile server (blocking, 4-7 seconds)
-        sys.stderr.write("Starting AgentDecompile server...\n")
         launcher = AgentDecompileLauncher(config_file=args.config, use_random_port=True)
         port = launcher.start()
         sys.stderr.write(f"AgentDecompile server ready on port {port}\n")
