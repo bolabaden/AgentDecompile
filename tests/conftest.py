@@ -151,7 +151,7 @@ async def mcp_client(
         async def test_something(mcp_client):
             response = await mcp_client.call_tool(
                 name="list-project-files",
-                arguments={"folderPath": "/"}
+                arguments={}
             )
             assert response is not None
     """

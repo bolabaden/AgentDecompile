@@ -150,7 +150,7 @@ class TestMCPToolCalls:
 
         result = await mcp_stdio_client.call_tool(
             "list-project-files",
-            arguments={"folderPath": "/"}
+            arguments={}
         )
 
         # Should get a response (even if no files in project yet)
@@ -243,7 +243,7 @@ class TestBinaryAutoImport:
         # Try to list files in project
         result = await mcp_stdio_client.call_tool(
             "list-project-files",
-            arguments={"folderPath": "/"}
+            arguments={}
         )
 
         # Ideally we'd check if the binary was imported, but that requires

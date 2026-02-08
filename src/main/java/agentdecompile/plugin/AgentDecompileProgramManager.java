@@ -38,6 +38,7 @@ import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.VersionException;
 import ghidra.util.task.TaskMonitor;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
+import agentdecompile.util.ProjectUtil;
 
 /**
  * Manages access to open programs in Ghidra.
@@ -324,22 +325,31 @@ public class AgentDecompileProgramManager {
 
     /**
      * Get all program domain files from the project.
+     * Uses the same merged source as list-project-files (repository + local) so
+     * shared/versioned projects see all program paths; returns only DomainFiles
+     * that can be resolved (checked out or local).
+     *
      * @return List of DomainFile objects for all programs in the project
      */
     public static List<DomainFile> getAllProgramFiles() {
         List<DomainFile> programFiles = new ArrayList<>();
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
         Project project = AppInfo.getActiveProject();
         if (project == null) {
             return programFiles;
         }
 
         try {
-            // Ghidra API: Project.getProjectData(), ProjectData.getRootFolder() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectData(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()
-            DomainFolder rootFolder = project.getProjectData().getRootFolder();
-            collectProgramFilesRecursive(rootFolder, programFiles);
+            Map<String, Object> listResult = ProjectUtil.buildListProjectFilesData(project);
+            List<String> paths = ProjectUtil.getProgramPathsFromListResult(listResult);
+            ghidra.framework.model.ProjectData projectData = project.getProjectData();
+            for (String programPath : paths) {
+                String pathKey = programPath.startsWith("/") ? programPath.substring(1) : programPath;
+                DomainFile df = projectData.getFile(pathKey);
+                if (df != null && "Program".equals(df.getContentType())) {
+                    programFiles.add(df);
+                }
+            }
         } catch (Exception e) {
-            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileProgramManager.class, "Error collecting program files from project: " + e.getMessage());
         }
 

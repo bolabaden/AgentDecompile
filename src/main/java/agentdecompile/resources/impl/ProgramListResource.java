@@ -113,7 +113,7 @@ public class ProgramListResource extends AbstractResourceProvider {
 
         // First content: same response as list-project-files (metadata + items)
         try {
-            Map<String, Object> listProjectFilesData = ProjectUtil.buildListProjectFilesData(project, "/", true);
+            Map<String, Object> listProjectFilesData = ProjectUtil.buildListProjectFilesData(project);
             String listProjectFilesJson = JSON.writeValueAsString(listProjectFilesData);
             resourceContents.add(new TextResourceContents(RESOURCE_ID, RESOURCE_MIME_TYPE, listProjectFilesJson));
         } catch (JsonProcessingException e) {

@@ -214,7 +214,7 @@ class TestImportedFilesInProject:
         # Now verify files appear in list-project-files
         list_result = await mcp_stdio_client.call_tool(
             "list-project-files",
-            arguments={"folderPath": "/", "recursive": True}
+            arguments={}
         )
 
         assert list_result is not None
@@ -281,7 +281,7 @@ class TestImportedFilesInProject:
         # Verify files appear in list-project-files
         list_result = await mcp_stdio_client.call_tool(
             "list-project-files",
-            arguments={"folderPath": "/", "recursive": True}
+            arguments={}
         )
 
         assert list_result is not None

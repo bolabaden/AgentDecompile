@@ -9,7 +9,7 @@ The `agentdecompile.tools.project` package provides MCP tools for Ghidra project
 ## Key Tools
 
 - `get-current-program` - Get the currently active program with metadata
-- `list-project-files` - List files and folders in the Ghidra project with optional recursion
+- `list-project-files` - List the full project file/folder tree (no parameters; works for shared/versioned projects)
 - `list-open-programs` - List all programs currently open in Ghidra across all tools
 - `open` - Open a Ghidra project (.gpr file) or a program file. Automatically detects type based on path extension
 - `open-program-in-code-browser` - Open a specific program in Code Browser (GUI mode only)

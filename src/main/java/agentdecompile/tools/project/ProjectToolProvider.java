@@ -359,68 +359,26 @@ public class ProjectToolProvider extends AbstractToolProvider {
     }
 
     /**
-     * Register a tool to list files and folders in the Ghidra project
+     * Register a tool to list the full project file/folder tree (no parameters).
+     * Always lists the entire hierarchy; works for both local and shared/versioned projects.
      */
     private void registerListProjectFilesTool() {
-        // Define schema for the tool
         Map<String, Object> properties = new HashMap<>();
-        properties.put("folderPath", SchemaUtil.stringProperty(
-            "Path to the folder to list contents of. Use '/' for the root folder."
-        ));
-        properties.put("recursive", SchemaUtil.booleanPropertyWithDefault(
-            "Whether to list files recursively", true
-        ));
+        List<String> required = new ArrayList<>();
 
-        List<String> required = List.of("folderPath");
-
-        // Create the tool
         McpSchema.Tool tool = McpSchema.Tool.builder()
             .name("list-project-files")
             .title("List Project Files")
-            .description("List files and folders in the Ghidra project")
+            .description("List the full project file and folder hierarchy (entire tree). No parameters.")
             .inputSchema(createSchema(properties, required))
             .build();
 
-        // Register the tool with a handler
         registerTool(tool, (exchange, request) -> {
-            String folderPath;
-            boolean hasIncorrectArgs = false;
-            try {
-                folderPath = getString(request, "folderPath");
-            } catch (IllegalArgumentException e) {
-                hasIncorrectArgs = true;
-                folderPath = "/";
-            }
-
-            boolean recursive = getOptionalBoolean(request, "recursive", false);
-            if (hasIncorrectArgs) {
-                recursive = true;
-            }
-
             Project project = AppInfo.getActiveProject();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
-
-            Map<String, Object> combinedResult = ProjectUtil.buildListProjectFilesData(project, folderPath, recursive);
-            if (Boolean.TRUE.equals(((Map<?, ?>) combinedResult.get("metadata")).get("folderNotFound"))) {
-                return createErrorResult("Folder not found: " + folderPath);
-            }
-
-            Msg.info(this, "=== DIAGNOSTIC: list-project-files ===");
-            Msg.info(this, "folderPath=" + folderPath + ", recursive=" + recursive);
-            Msg.info(this, "Collected " + ((List<?>) combinedResult.get("items")).size() + " items total");
-            try {
-                List<DomainFile> allProgramFiles = AgentDecompileProgramManager.getAllProgramFiles();
-                Msg.info(this, "Cross-check: getAllProgramFiles() found " + allProgramFiles.size() + " program files");
-            } catch (Exception e) {
-                Msg.warn(this, "Error in cross-check getAllProgramFiles(): " + e.getMessage());
-            }
-
-            if (hasIncorrectArgs) {
-                combinedResult.put("error", createIncorrectArgsErrorMap());
-            }
-
+            Map<String, Object> combinedResult = ProjectUtil.buildListProjectFilesData(project);
             return createJsonResult(combinedResult);
         });
     }

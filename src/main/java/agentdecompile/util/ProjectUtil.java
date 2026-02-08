@@ -32,11 +32,14 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import ghidra.base.project.GhidraProject;
+import ghidra.framework.client.RepositoryAdapter;
 import ghidra.framework.main.AppInfo;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.model.DomainFolder;
 import ghidra.framework.model.Project;
+import ghidra.framework.model.ProjectData;
 import ghidra.framework.model.ProjectLocator;
+import ghidra.framework.remote.RepositoryItem;
 import ghidra.framework.store.LockException;
 import ghidra.util.Msg;
 import ghidra.util.NotOwnerException;
@@ -341,77 +344,89 @@ public class ProjectUtil {
     }
 
     /**
-     * Build the same structure as list-project-files: metadata plus items list.
-     * Used by the list-project-files tool and the open-programs resource.
+     * Build the full project tree for list-project-files: metadata plus items list.
+     * Always lists the entire project hierarchy (root, recursive). Works correctly
+     * for both local and shared/versioned projects by using RepositoryAdapter
+     * when connected to a Ghidra Server. No caching: every call refreshes and
+     * builds live results.
      *
      * @param project active project, or null for empty result
-     * @param folderPath folder to list (e.g. "/" for root)
-     * @param recursive whether to list recursively
      * @return map with "metadata" and "items" (same shape as list-project-files response)
      */
-    public static Map<String, Object> buildListProjectFilesData(Project project, String folderPath, boolean recursive) {
+    public static Map<String, Object> buildListProjectFilesData(Project project) {
         Map<String, Object> metadata = new HashMap<>();
         List<Map<String, Object>> items = new ArrayList<>();
-        metadata.put("folderPath", folderPath != null ? folderPath : "/");
-        metadata.put("folderName", "");
-        metadata.put("isRecursive", recursive);
+        metadata.put("folderPath", "/");
+        metadata.put("folderName", "/");
+        metadata.put("isRecursive", true);
         metadata.put("itemCount", 0);
 
         if (project == null) {
-            metadata.put("itemCount", 0);
             Map<String, Object> out = new HashMap<>();
             out.put("metadata", metadata);
             out.put("items", items);
             return out;
         }
 
+        ProjectData projectData = project.getProjectData();
         try {
-            project.getProjectData().refresh(true);
+            projectData.refresh(true);
         } catch (Exception e) {
             Msg.warn(ProjectUtil.class, "Error refreshing project data (continuing anyway): " + e.getMessage());
         }
 
-        DomainFolder folder;
-        if ("/".equals(folderPath) || folderPath == null || folderPath.isEmpty()) {
-            folder = project.getProjectData().getRootFolder();
-        } else {
-            folder = project.getProjectData().getFolder(folderPath);
-            if (folder == null && folderPath.startsWith("/")) {
-                String pathWithoutLeadingSlash = folderPath.substring(1);
-                folder = project.getProjectData().getFolder(pathWithoutLeadingSlash);
+        Set<String> addedPaths = new HashSet<>();
+
+        RepositoryAdapter repo = projectData.getRepository();
+        if (repo != null) {
+            try {
+                if (!repo.isConnected()) {
+                    repo.connect();
+                }
+            } catch (IOException e) {
+                Msg.debug(ProjectUtil.class, "Could not connect to repository: " + e.getMessage());
+            }
+            if (repo.isConnected()) {
+                collectFromRepositoryRecursive(repo, projectData, items, addedPaths);
             }
         }
-        if (folder == null) {
-            metadata.put("folderNotFound", true);
-            Map<String, Object> out = new HashMap<>();
-            out.put("metadata", metadata);
-            out.put("items", items);
-            return out;
+
+        if (projectData.getRootFolder() != null) {
+            collectRecursiveViaProjectData(project, items, addedPaths);
         }
 
-        metadata.put("folderName", folder.getName());
-        String pathPrefix = ("/".equals(folderPath) || folderPath == null || folderPath.isEmpty())
-            ? ""
-            : (folderPath.endsWith("/") ? folderPath : folderPath + "/");
-
-        if (recursive) {
-            // Use robust approach that works with shared/versioned projects.
-            // DomainFolder.getFiles()/getFolders() may return cached/incomplete data
-            // for shared projects connected to a Ghidra Server, so we use the
-            // ProjectData iterator as the primary source of truth for files.
-            collectRecursiveViaProjectData(project, folder, items);
-        } else {
-            collectFilesInFolder(folder, items, pathPrefix);
-            // Augment with ProjectData iterator to catch files/folders missed
-            // by the cached DomainFolder.getFiles()/getFolders() in shared projects
-            augmentNonRecursiveWithProjectData(project, folder, items);
-        }
         metadata.put("itemCount", items.size());
 
         Map<String, Object> out = new HashMap<>();
         out.put("metadata", metadata);
         out.put("items", items);
         return out;
+    }
+
+    /**
+     * Extract all file (program) paths from a list-project-files result.
+     * Used so callers (e.g. getAllProgramFiles) use the same merged repo+local source.
+     *
+     * @param listResult result from {@link #buildListProjectFilesData(Project)}
+     * @return list of programPath strings (with leading slash)
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> getProgramPathsFromListResult(Map<String, Object> listResult) {
+        List<String> paths = new ArrayList<>();
+        Object itemsObj = listResult.get("items");
+        if (!(itemsObj instanceof List)) {
+            return paths;
+        }
+        for (Object o : (List<?>) itemsObj) {
+            if (!(o instanceof Map)) continue;
+            Map<String, Object> item = (Map<String, Object>) o;
+            if (!"file".equals(item.get("type"))) continue;
+            Object path = item.get("programPath");
+            if (path instanceof String string) {
+                paths.add(string);
+            }
+        }
+        return paths;
     }
 
     private static void collectFilesInFolder(DomainFolder folder, List<Map<String, Object>> filesList, String pathPrefix) {
@@ -559,7 +574,71 @@ public class ProjectUtil {
     }
 
     /**
-     * Collect all files and folders recursively using a robust approach that
+     * List all files and folders from the shared repository (RepositoryAdapter), starting at root.
+     * Paths are stored without leading slash in the repo; we emit folderPath with "/" prefix.
+     *
+     * @param repo connected repository
+     * @param projectData used to resolve DomainFile for programPath when possible
+     * @param items list to append to
+     * @param addedPaths paths already added this call (no leading slash); updated as we add
+     */
+    private static void collectFromRepositoryRecursive(RepositoryAdapter repo, ProjectData projectData,
+            List<Map<String, Object>> items, Set<String> addedPaths) {
+        collectFromRepositoryAt(repo, "", projectData, items, addedPaths);
+    }
+
+    private static void collectFromRepositoryAt(RepositoryAdapter repo, String folderPath,
+            ProjectData projectData, List<Map<String, Object>> items, Set<String> addedPaths) {
+        try {
+            String[] subfolders = repo.getSubfolderList(folderPath);
+            if (subfolders != null) {
+                for (String name : subfolders) {
+                    String subPath = folderPath.isEmpty() ? name : folderPath + "/" + name;
+                    String displayPath = "/" + subPath;
+                    if (addedPaths.add(subPath)) {
+                        Map<String, Object> folderInfo = new HashMap<>();
+                        folderInfo.put("folderPath", displayPath);
+                        folderInfo.put("type", "folder");
+                        folderInfo.put("childCount", 0);
+                        items.add(folderInfo);
+                    }
+                    collectFromRepositoryAt(repo, subPath, projectData, items, addedPaths);
+                }
+            }
+            RepositoryItem[] repoItems = repo.getItemList(folderPath);
+            if (repoItems != null) {
+                for (RepositoryItem item : repoItems) {
+                    if (item == null) continue;
+                    String pathName = item.getPathName();
+                    if (pathName == null || pathName.isEmpty()) continue;
+                    if (addedPaths.contains(pathName)) continue;
+                    addedPaths.add(pathName);
+                    String displayPath = pathName.startsWith("/") ? pathName : "/" + pathName;
+                    DomainFile domainFile = projectData.getFile(pathName);
+                    if (domainFile != null) {
+                        items.add(buildFileInfoMap(domainFile));
+                    } else {
+                        Map<String, Object> fileInfo = new HashMap<>();
+                        fileInfo.put("programPath", displayPath);
+                        fileInfo.put("type", "file");
+                        fileInfo.put("name", item.getName());
+                        int lastSlash = displayPath.lastIndexOf('/');
+                        fileInfo.put("folderPath", lastSlash > 0 ? displayPath.substring(0, lastSlash + 1) : "/");
+                        try {
+                            String contentType = item.getContentType();
+                            if (contentType != null) fileInfo.put("contentType", contentType);
+                        } catch (Exception ignored) { }
+                        items.add(fileInfo);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            Msg.debug(ProjectUtil.class, "Error listing repository folder " + folderPath + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Collect all files and folders recursively from project root using a robust approach that
      * works correctly with shared/versioned Ghidra projects.
      * <p>
      * Uses ProjectData's Iterable&lt;DomainFile&gt; iterator as the primary source of truth
@@ -570,19 +649,23 @@ public class ProjectUtil {
      * (folders that exist in the project but contain no files).
      *
      * @param project the active project
-     * @param startFolder the folder to start from
      * @param items list to collect results into
+     * @param addedPaths paths already added this call (e.g. from repository); no leading slash; updated as we add
      */
-    private static void collectRecursiveViaProjectData(Project project, DomainFolder startFolder,
-            List<Map<String, Object>> items) {
-        if (startFolder == null || project == null) {
+    private static void collectRecursiveViaProjectData(Project project, List<Map<String, Object>> items,
+            Set<String> addedPaths) {
+        if (project == null) {
+            return;
+        }
+        DomainFolder startFolder = project.getProjectData().getRootFolder();
+        if (startFolder == null) {
             return;
         }
 
         String startPath = startFolder.getPathname();
         boolean isRoot = "/".equals(startPath);
 
-        Set<String> addedFilePaths = new HashSet<>();
+        Set<String> addedFilePaths = addedPaths != null ? addedPaths : new HashSet<>();
         // LinkedHashSet preserves insertion order for consistent output
         Set<String> discoveredFolderPaths = new LinkedHashSet<>();
 
@@ -593,16 +676,17 @@ public class ProjectUtil {
         try {
             for (DomainFile file : project.getProjectData()) {
                 String filePath = file.getPathname();
+                String pathKey = (filePath != null && filePath.startsWith("/")) ? filePath.substring(1) : filePath;
 
                 // Filter to files under the target folder
-                boolean underTarget = isRoot || filePath.startsWith(startPath + "/");
-                if (!underTarget || addedFilePaths.contains(filePath)) {
+                boolean underTarget = isRoot || (filePath != null && filePath.startsWith(startPath + "/"));
+                if (!underTarget || addedFilePaths.contains(pathKey)) {
                     continue;
                 }
 
                 try {
                     items.add(buildFileInfoMap(file));
-                    addedFilePaths.add(filePath);
+                    addedFilePaths.add(pathKey);
 
                     // Discover intermediate folders from file path
                     int lastSlash = filePath.lastIndexOf('/');
@@ -632,20 +716,25 @@ public class ProjectUtil {
         // (folders that exist in the project structure but contain no files)
         collectSubfolderPathsRecursive(startFolder, discoveredFolderPaths);
 
-        // Phase 3: Build folder entries and insert them before file entries
+        // Phase 3: Build folder entries and insert them before file entries (skip if already from repo)
         List<Map<String, Object>> folderItems = new ArrayList<>();
         for (String folderPath : discoveredFolderPaths) {
+            String pathKey = (folderPath != null && folderPath.startsWith("/")) ? folderPath.substring(1) : folderPath;
+            if (addedFilePaths.contains(pathKey)) {
+                continue; // already added by repository listing
+            }
             try {
                 DomainFolder df = project.getProjectData().getFolder(folderPath);
                 if (df != null) {
                     folderItems.add(buildFolderInfoMap(df));
+                    addedFilePaths.add(pathKey);
                 } else {
-                    // Folder exists logically (has files under it) but getFolder() can't resolve it
                     Map<String, Object> folderInfo = new HashMap<>();
                     folderInfo.put("folderPath", folderPath);
                     folderInfo.put("type", "folder");
                     folderInfo.put("childCount", 0);
                     folderItems.add(folderInfo);
+                    addedFilePaths.add(pathKey);
                 }
             } catch (Exception e) {
                 Msg.debug(ProjectUtil.class, "Error building folder info for " + folderPath + ": " + e.getMessage());
@@ -656,8 +745,7 @@ public class ProjectUtil {
         items.addAll(0, folderItems);
 
         Msg.debug(ProjectUtil.class, "collectRecursiveViaProjectData: found " +
-            addedFilePaths.size() + " files, " + discoveredFolderPaths.size() + " folders" +
-            " under " + startPath);
+            addedFilePaths.size() + " paths, " + discoveredFolderPaths.size() + " folders under " + startPath);
     }
 
     /**
