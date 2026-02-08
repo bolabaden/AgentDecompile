@@ -23,11 +23,18 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import ghidra.base.project.GhidraProject;
 import ghidra.framework.main.AppInfo;
+import ghidra.framework.model.DomainFile;
+import ghidra.framework.model.DomainFolder;
 import ghidra.framework.model.Project;
 import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.store.LockException;
@@ -288,6 +295,483 @@ public class ProjectUtil {
         ProjectLocator locator = new ProjectLocator(projectDir.getAbsolutePath(), projectName);
         // Ghidra API: ProjectLocator.getMarkerFile(), getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getMarkerFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
         return locator.getMarkerFile().exists() && locator.getProjectDir().exists();
+    }
+
+    /**
+     * Try to open a Ghidra project from a .gpr file path.
+     * Applies shared-project auth from environment if set. Used by the open-programs resource
+     * when no project is active (path from last 'open' or AGENT_DECOMPILE_PROJECT_PATH env).
+     *
+     * @param gprPath absolute path to the project .gpr file
+     * @return true if a project is now active (opened or was already open)
+     */
+    public static boolean tryOpenProjectFromGprPath(String gprPath) {
+        if (gprPath == null || !gprPath.toLowerCase().endsWith(".gpr")) {
+            return false;
+        }
+        File projectFile = new File(gprPath);
+        if (!projectFile.exists()) {
+            return false;
+        }
+        String projectDir = projectFile.getParent();
+        String projectName = projectFile.getName();
+        if (projectName.toLowerCase().endsWith(".gpr")) {
+            projectName = projectName.substring(0, projectName.length() - 4);
+        }
+        if (projectDir == null) {
+            return false;
+        }
+        File projectDirFile = new File(projectDir);
+        if (!projectExists(projectDirFile, projectName)) {
+            return false;
+        }
+        if (SharedProjectEnvConfig.hasAuthFromEnv()) {
+            SharedProjectEnvConfig.applySharedProjectAuthFromEnv(null);
+        }
+        String forceIgnoreLockEnv = System.getenv("AGENT_DECOMPILE_FORCE_IGNORE_LOCK");
+        boolean forceIgnoreLock = forceIgnoreLockEnv != null
+            && ("true".equalsIgnoreCase(forceIgnoreLockEnv) || "1".equals(forceIgnoreLockEnv));
+        try {
+            ProjectOpenResult result = createOrOpenProject(projectDirFile, projectName, true, null, forceIgnoreLock);
+            return result.getProject() != null;
+        } catch (IOException e) {
+            Msg.debug(ProjectUtil.class, "tryOpenProjectFromGprPath failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Build the same structure as list-project-files: metadata plus items list.
+     * Used by the list-project-files tool and the open-programs resource.
+     *
+     * @param project active project, or null for empty result
+     * @param folderPath folder to list (e.g. "/" for root)
+     * @param recursive whether to list recursively
+     * @return map with "metadata" and "items" (same shape as list-project-files response)
+     */
+    public static Map<String, Object> buildListProjectFilesData(Project project, String folderPath, boolean recursive) {
+        Map<String, Object> metadata = new HashMap<>();
+        List<Map<String, Object>> items = new ArrayList<>();
+        metadata.put("folderPath", folderPath != null ? folderPath : "/");
+        metadata.put("folderName", "");
+        metadata.put("isRecursive", recursive);
+        metadata.put("itemCount", 0);
+
+        if (project == null) {
+            metadata.put("itemCount", 0);
+            Map<String, Object> out = new HashMap<>();
+            out.put("metadata", metadata);
+            out.put("items", items);
+            return out;
+        }
+
+        try {
+            project.getProjectData().refresh(true);
+        } catch (Exception e) {
+            Msg.warn(ProjectUtil.class, "Error refreshing project data (continuing anyway): " + e.getMessage());
+        }
+
+        DomainFolder folder;
+        if ("/".equals(folderPath) || folderPath == null || folderPath.isEmpty()) {
+            folder = project.getProjectData().getRootFolder();
+        } else {
+            folder = project.getProjectData().getFolder(folderPath);
+            if (folder == null && folderPath.startsWith("/")) {
+                String pathWithoutLeadingSlash = folderPath.substring(1);
+                folder = project.getProjectData().getFolder(pathWithoutLeadingSlash);
+            }
+        }
+        if (folder == null) {
+            metadata.put("folderNotFound", true);
+            Map<String, Object> out = new HashMap<>();
+            out.put("metadata", metadata);
+            out.put("items", items);
+            return out;
+        }
+
+        metadata.put("folderName", folder.getName());
+        String pathPrefix = ("/".equals(folderPath) || folderPath == null || folderPath.isEmpty())
+            ? ""
+            : (folderPath.endsWith("/") ? folderPath : folderPath + "/");
+
+        if (recursive) {
+            // Use robust approach that works with shared/versioned projects.
+            // DomainFolder.getFiles()/getFolders() may return cached/incomplete data
+            // for shared projects connected to a Ghidra Server, so we use the
+            // ProjectData iterator as the primary source of truth for files.
+            collectRecursiveViaProjectData(project, folder, items);
+        } else {
+            collectFilesInFolder(folder, items, pathPrefix);
+            // Augment with ProjectData iterator to catch files/folders missed
+            // by the cached DomainFolder.getFiles()/getFolders() in shared projects
+            augmentNonRecursiveWithProjectData(project, folder, items);
+        }
+        metadata.put("itemCount", items.size());
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("metadata", metadata);
+        out.put("items", items);
+        return out;
+    }
+
+    private static void collectFilesInFolder(DomainFolder folder, List<Map<String, Object>> filesList, String pathPrefix) {
+        if (folder == null) {
+            return;
+        }
+        try {
+            for (DomainFolder subfolder : folder.getFolders()) {
+                try {
+                    Map<String, Object> folderInfo = new HashMap<>();
+                    String fp = pathPrefix.isEmpty() ? "/" + subfolder.getName() : pathPrefix + subfolder.getName();
+                    folderInfo.put("folderPath", fp);
+                    folderInfo.put("type", "folder");
+                    try {
+                        folderInfo.put("childCount", subfolder.getFiles().length + subfolder.getFolders().length);
+                    } catch (Exception e) {
+                        folderInfo.put("childCount", 0);
+                    }
+                    filesList.add(folderInfo);
+                } catch (Exception e) {
+                    Msg.debug(ProjectUtil.class, "Error processing subfolder: " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            Msg.debug(ProjectUtil.class, "Error getting subfolders: " + e.getMessage());
+        }
+        try {
+            for (DomainFile file : folder.getFiles()) {
+                try {
+                    Map<String, Object> fileInfo = new HashMap<>();
+                    fileInfo.put("programPath", file.getPathname());
+                    fileInfo.put("type", "file");
+                    fileInfo.put("contentType", file.getContentType());
+                    fileInfo.put("lastModified", file.getLastModifiedTime());
+                    fileInfo.put("readOnly", file.isReadOnly());
+                    fileInfo.put("versioned", file.isVersioned());
+                    fileInfo.put("checkedOut", file.isCheckedOut());
+                    if ("Program".equals(file.getContentType()) && file.getMetadata() != null) {
+                        try {
+                            Object lang = file.getMetadata().get("CREATED_WITH_LANGUAGE");
+                            if (lang != null) {
+                                fileInfo.put("programLanguage", lang);
+                            }
+                            Object md5 = file.getMetadata().get("Executable MD5");
+                            if (md5 != null) {
+                                fileInfo.put("executableMD5", md5);
+                            }
+                        } catch (Exception e) {
+                            // ignore
+                        }
+                    }
+                    filesList.add(fileInfo);
+                } catch (Exception e) {
+                    Msg.debug(ProjectUtil.class, "Error processing file: " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            Msg.debug(ProjectUtil.class, "Error getting files: " + e.getMessage());
+        }
+    }
+
+    private static void collectFilesRecursive(DomainFolder folder, List<Map<String, Object>> filesList, String pathPrefix) {
+        if (folder == null) {
+            return;
+        }
+        collectFilesInFolder(folder, filesList, pathPrefix);
+        try {
+            for (DomainFolder subfolder : folder.getFolders()) {
+                if (subfolder == null) {
+                    continue;
+                }
+                String newPrefix = pathPrefix.isEmpty()
+                    ? "/" + subfolder.getName() + "/"
+                    : (pathPrefix.endsWith("/") ? pathPrefix + subfolder.getName() + "/" : pathPrefix + "/" + subfolder.getName() + "/");
+                collectFilesRecursive(subfolder, filesList, newPrefix);
+            }
+        } catch (Exception e) {
+            Msg.debug(ProjectUtil.class, "Error getting subfolders: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // Robust collection methods for shared/versioned projects
+    // =========================================================================
+
+    /**
+     * Build a file info map from a DomainFile (extracted to avoid duplication).
+     */
+    private static Map<String, Object> buildFileInfoMap(DomainFile file) {
+        Map<String, Object> fileInfo = new HashMap<>();
+        fileInfo.put("programPath", file.getPathname());
+        fileInfo.put("type", "file");
+        try {
+            fileInfo.put("contentType", file.getContentType());
+        } catch (Exception e) {
+            fileInfo.put("contentType", "Unknown");
+        }
+        try {
+            fileInfo.put("lastModified", file.getLastModifiedTime());
+        } catch (Exception e) {
+            // ignore
+        }
+        try {
+            fileInfo.put("readOnly", file.isReadOnly());
+        } catch (Exception e) {
+            fileInfo.put("readOnly", false);
+        }
+        try {
+            fileInfo.put("versioned", file.isVersioned());
+            fileInfo.put("checkedOut", file.isCheckedOut());
+        } catch (Exception e) {
+            // ignore - version info may not be available
+        }
+        try {
+            if ("Program".equals(file.getContentType()) && file.getMetadata() != null) {
+                Map<String, String> metadata = file.getMetadata();
+                Object lang = metadata.get("CREATED_WITH_LANGUAGE");
+                if (lang != null) {
+                    fileInfo.put("programLanguage", lang);
+                }
+                Object md5 = metadata.get("Executable MD5");
+                if (md5 != null) {
+                    fileInfo.put("executableMD5", md5);
+                }
+            }
+        } catch (Exception e) {
+            // ignore metadata errors - not critical for file listing
+        }
+        return fileInfo;
+    }
+
+    /**
+     * Build a folder info map from a DomainFolder.
+     */
+    private static Map<String, Object> buildFolderInfoMap(DomainFolder folder) {
+        Map<String, Object> folderInfo = new HashMap<>();
+        folderInfo.put("folderPath", folder.getPathname());
+        folderInfo.put("type", "folder");
+        try {
+            folderInfo.put("childCount", folder.getFiles().length + folder.getFolders().length);
+        } catch (Exception e) {
+            folderInfo.put("childCount", 0);
+        }
+        return folderInfo;
+    }
+
+    /**
+     * Collect all files and folders recursively using a robust approach that
+     * works correctly with shared/versioned Ghidra projects.
+     * <p>
+     * Uses ProjectData's Iterable&lt;DomainFile&gt; iterator as the primary source of truth
+     * for files, since DomainFolder.getFiles()/getFolders() may return cached/incomplete
+     * data for shared projects connected to a Ghidra Server.
+     * <p>
+     * Supplements with DomainFolder.getFolders() traversal to discover empty folders
+     * (folders that exist in the project but contain no files).
+     *
+     * @param project the active project
+     * @param startFolder the folder to start from
+     * @param items list to collect results into
+     */
+    private static void collectRecursiveViaProjectData(Project project, DomainFolder startFolder,
+            List<Map<String, Object>> items) {
+        if (startFolder == null || project == null) {
+            return;
+        }
+
+        String startPath = startFolder.getPathname();
+        boolean isRoot = "/".equals(startPath);
+
+        Set<String> addedFilePaths = new HashSet<>();
+        // LinkedHashSet preserves insertion order for consistent output
+        Set<String> discoveredFolderPaths = new LinkedHashSet<>();
+
+        // Phase 1: Iterate ALL project files using ProjectData's Iterable<DomainFile>
+        // This is the most reliable approach for shared/versioned projects because
+        // it queries both local and server-side filesystems and merges the results,
+        // unlike DomainFolder.getFiles() which may return only cached data.
+        try {
+            for (DomainFile file : project.getProjectData()) {
+                String filePath = file.getPathname();
+
+                // Filter to files under the target folder
+                boolean underTarget = isRoot || filePath.startsWith(startPath + "/");
+                if (!underTarget || addedFilePaths.contains(filePath)) {
+                    continue;
+                }
+
+                try {
+                    items.add(buildFileInfoMap(file));
+                    addedFilePaths.add(filePath);
+
+                    // Discover intermediate folders from file path
+                    int lastSlash = filePath.lastIndexOf('/');
+                    String dir = (lastSlash > 0) ? filePath.substring(0, lastSlash) : "/";
+                    while (dir != null && !dir.isEmpty()) {
+                        if (dir.equals(startPath)) break;
+                        if ("/".equals(dir) && isRoot) break;
+                        if (!isRoot && !dir.startsWith(startPath + "/")) break;
+                        discoveredFolderPaths.add(dir);
+                        int idx = dir.lastIndexOf('/');
+                        if (idx <= 0) break;
+                        dir = dir.substring(0, idx);
+                    }
+                } catch (Exception e) {
+                    Msg.debug(ProjectUtil.class, "Error processing file " + filePath + ": " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            Msg.warn(ProjectUtil.class, "Error iterating project data for files (falling back to folder traversal): " + e.getMessage());
+            // Fall back to the old approach if the iterator fails entirely
+            String pathPrefix = isRoot ? "" : (startPath.endsWith("/") ? startPath : startPath + "/");
+            collectFilesRecursive(startFolder, items, pathPrefix);
+            return;
+        }
+
+        // Phase 2: Traverse folder hierarchy using getFolders() to discover empty folders
+        // (folders that exist in the project structure but contain no files)
+        collectSubfolderPathsRecursive(startFolder, discoveredFolderPaths);
+
+        // Phase 3: Build folder entries and insert them before file entries
+        List<Map<String, Object>> folderItems = new ArrayList<>();
+        for (String folderPath : discoveredFolderPaths) {
+            try {
+                DomainFolder df = project.getProjectData().getFolder(folderPath);
+                if (df != null) {
+                    folderItems.add(buildFolderInfoMap(df));
+                } else {
+                    // Folder exists logically (has files under it) but getFolder() can't resolve it
+                    Map<String, Object> folderInfo = new HashMap<>();
+                    folderInfo.put("folderPath", folderPath);
+                    folderInfo.put("type", "folder");
+                    folderInfo.put("childCount", 0);
+                    folderItems.add(folderInfo);
+                }
+            } catch (Exception e) {
+                Msg.debug(ProjectUtil.class, "Error building folder info for " + folderPath + ": " + e.getMessage());
+            }
+        }
+
+        // Insert folders at the beginning for consistent output (folders before files)
+        items.addAll(0, folderItems);
+
+        Msg.debug(ProjectUtil.class, "collectRecursiveViaProjectData: found " +
+            addedFilePaths.size() + " files, " + discoveredFolderPaths.size() + " folders" +
+            " under " + startPath);
+    }
+
+    /**
+     * Recursively collect subfolder paths using DomainFolder.getFolders().
+     * Used to discover empty folders that can't be found via file paths alone.
+     */
+    private static void collectSubfolderPathsRecursive(DomainFolder folder, Set<String> paths) {
+        if (folder == null) return;
+        try {
+            for (DomainFolder subfolder : folder.getFolders()) {
+                if (subfolder == null) continue;
+                String path = subfolder.getPathname();
+                if (!paths.contains(path)) {
+                    paths.add(path);
+                }
+                collectSubfolderPathsRecursive(subfolder, paths);
+            }
+        } catch (Exception e) {
+            Msg.debug(ProjectUtil.class, "Error traversing subfolders: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Augment a non-recursive folder listing with files and folders discovered
+     * via ProjectData iterator, to handle shared/versioned projects where
+     * DomainFolder.getFiles()/getFolders() may return cached/incomplete data.
+     *
+     * @param project the active project
+     * @param folder the folder being listed
+     * @param items the existing items list to augment
+     */
+    private static void augmentNonRecursiveWithProjectData(Project project, DomainFolder folder,
+            List<Map<String, Object>> items) {
+        if (project == null || folder == null) {
+            return;
+        }
+
+        String folderPathname = folder.getPathname();
+        boolean isRoot = "/".equals(folderPathname);
+
+        // Track what's already been collected by the standard approach
+        Set<String> existingFilePaths = new HashSet<>();
+        Set<String> existingFolderPaths = new HashSet<>();
+        for (Map<String, Object> item : items) {
+            if ("file".equals(item.get("type"))) {
+                existingFilePaths.add((String) item.get("programPath"));
+            } else if ("folder".equals(item.get("type"))) {
+                existingFolderPaths.add((String) item.get("folderPath"));
+            }
+        }
+
+        // Iterate all project files to find any missing items in this folder
+        try {
+            for (DomainFile file : project.getProjectData()) {
+                String filePath = file.getPathname();
+
+                // Determine the parent folder path of this file
+                int lastSlash = filePath.lastIndexOf('/');
+                String parentPath = (lastSlash > 0) ? filePath.substring(0, lastSlash) : "/";
+
+                if (parentPath.equals(folderPathname)) {
+                    // Direct child file - add if not already present
+                    if (!existingFilePaths.contains(filePath)) {
+                        try {
+                            items.add(buildFileInfoMap(file));
+                            existingFilePaths.add(filePath);
+                        } catch (Exception e) {
+                            Msg.debug(ProjectUtil.class, "Error adding augmented file: " + e.getMessage());
+                        }
+                    }
+                } else {
+                    // Check if this file reveals a missing immediate subfolder
+                    boolean isUnderFolder = isRoot
+                        ? filePath.startsWith("/")
+                        : filePath.startsWith(folderPathname + "/");
+
+                    if (isUnderFolder) {
+                        // Extract the immediate subfolder name
+                        String remainder = isRoot
+                            ? filePath.substring(1)
+                            : filePath.substring(folderPathname.length() + 1);
+                        int nextSlash = remainder.indexOf('/');
+                        if (nextSlash > 0) {
+                            String subfolderPath = isRoot
+                                ? "/" + remainder.substring(0, nextSlash)
+                                : folderPathname + "/" + remainder.substring(0, nextSlash);
+
+                            if (!existingFolderPaths.contains(subfolderPath)) {
+                                try {
+                                    DomainFolder sf = project.getProjectData().getFolder(subfolderPath);
+                                    if (sf != null) {
+                                        items.add(buildFolderInfoMap(sf));
+                                    } else {
+                                        Map<String, Object> folderInfo = new HashMap<>();
+                                        folderInfo.put("folderPath", subfolderPath);
+                                        folderInfo.put("type", "folder");
+                                        folderInfo.put("childCount", 0);
+                                        items.add(folderInfo);
+                                    }
+                                    existingFolderPaths.add(subfolderPath);
+                                } catch (Exception e) {
+                                    Msg.debug(ProjectUtil.class, "Error adding augmented folder: " + e.getMessage());
+                                }
+                            }
+                        } else if (nextSlash < 0) {
+                            // File is directly in the root-relative path without subfolder
+                            // This case is already handled by the parentPath check above
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Msg.debug(ProjectUtil.class, "Error in ProjectData augmentation: " + e.getMessage());
+        }
     }
 
     /**

@@ -105,7 +105,29 @@ import agentdecompile.util.AddressUtil;
  */
 public class ProjectToolProvider extends AbstractToolProvider {
 
+    /** Cached project path from last successful 'open' (project path prioritizes over env when auto-opening). */
+    private static volatile String lastOpenedProjectPath;
+
     private final boolean headlessMode;
+
+    /**
+     * Returns the project path last passed to and successfully opened by the 'open' tool.
+     * Used by the open-programs resource to auto-open when no project is active (prioritized over env).
+     *
+     * @return path to .gpr file or null
+     */
+    public static String getLastOpenedProjectPath() {
+        return lastOpenedProjectPath;
+    }
+
+    /**
+     * Sets the last successfully opened project path (called by 'open' tool on success).
+     *
+     * @param path path to .gpr file
+     */
+    public static void setLastOpenedProjectPath(String path) {
+        lastOpenedProjectPath = path;
+    }
 
     /**
      * Constructor
@@ -361,118 +383,40 @@ public class ProjectToolProvider extends AbstractToolProvider {
 
         // Register the tool with a handler
         registerTool(tool, (exchange, request) -> {
-            // Get the folder path from the request
             String folderPath;
             boolean hasIncorrectArgs = false;
             try {
                 folderPath = getString(request, "folderPath");
             } catch (IllegalArgumentException e) {
-                // Incorrect arguments - use defaults and show full list
                 hasIncorrectArgs = true;
                 folderPath = "/";
             }
 
-            // Get the recursive flag
             boolean recursive = getOptionalBoolean(request, "recursive", false);
-            
-            // If incorrect arguments, force recursive=true to show full list
             if (hasIncorrectArgs) {
                 recursive = true;
             }
 
-            // Get the active project
             Project project = AppInfo.getActiveProject();
             if (project == null) {
                 return createErrorResult("No active project found");
             }
 
-            // CRITICAL: Refresh project data FIRST to ensure getFiles() returns fresh data, not cached data
-            // According to Ghidra API docs, getFiles() "may return cached information and does not force a full refresh"
-            // We must call refresh(true) to sync the Domain folder/file structure with the underlying file structure
-            try {
-                project.getProjectData().refresh(true); // true = refresh all folders, not just previously visited ones
-                Msg.info(this, "Refreshed project data before listing files");
-            } catch (Exception e) {
-                Msg.warn(this, "Error refreshing project data (continuing anyway): " + e.getMessage());
-                // Continue anyway - cached data is better than no data
-            }
-
-            // CRITICAL: Get the folder AFTER refresh to ensure we have a fresh reference
-            // Folder references obtained before refresh() may be stale and return cached file lists
-            DomainFolder folder;
-            if (folderPath.equals("/")) {
-                folder = project.getProjectData().getRootFolder();
-            } else {
-                // Try to get folder - if it doesn't exist, it might be because it hasn't been discovered yet
-                folder = project.getProjectData().getFolder(folderPath);
-                if (folder == null && recursive) {
-                    // If recursive and folder not found, try to discover it by walking from root
-                    Msg.debug(this, "Folder not found at path: " + folderPath + ", attempting discovery from root");
-                    folder = project.getProjectData().getRootFolder();
-                    // Will discover all folders recursively anyway
-                }
-            }
-
-            if (folder == null) {
+            Map<String, Object> combinedResult = ProjectUtil.buildListProjectFilesData(project, folderPath, recursive);
+            if (Boolean.TRUE.equals(((Map<?, ?>) combinedResult.get("metadata")).get("folderNotFound"))) {
                 return createErrorResult("Folder not found: " + folderPath);
             }
-            
-            // Additional safety: Log folder info to verify we have the right folder
-            Msg.debug(this, "Using folder: " + folder.getName() + " at path: " + folder.getPathname() + 
-                " (requested: " + folderPath + ")");
 
-            // Get files and folders in the specified path
-            List<Map<String, Object>> filesList = new ArrayList<>();
-
-            // Add metadata about the current folder
-            Map<String, Object> metadataInfo = new HashMap<>();
-            metadataInfo.put("folderPath", folderPath);
-            metadataInfo.put("folderName", folder.getName());
-            metadataInfo.put("isRecursive", recursive);
-
-            // Get the files and folders
-            // Use folderPath as prefix (ensure it ends with / for proper path construction)
-            String pathPrefix = (
-                folderPath.equals("/")
-                ? ""
-                : (folderPath.endsWith("/")
-                    ? folderPath
-                    : folderPath + "/"
-            ));
-            
-            // Collect files and folders
-            if (recursive) {
-                collectFilesRecursive(folder, filesList, pathPrefix);
-            } else {
-                collectFilesInFolder(folder, filesList, pathPrefix);
-            }
-
-            // Log for debugging - helps diagnose collection issues
             Msg.info(this, "=== DIAGNOSTIC: list-project-files ===");
             Msg.info(this, "folderPath=" + folderPath + ", recursive=" + recursive);
-            Msg.info(this, "Folder name: " + folder.getName() + ", pathname: " + folder.getPathname());
-            Msg.info(this, "Collected " + filesList.size() + " items total");
-            
-            // Also try using getAllProgramFiles() as a cross-check
+            Msg.info(this, "Collected " + ((List<?>) combinedResult.get("items")).size() + " items total");
             try {
                 List<DomainFile> allProgramFiles = AgentDecompileProgramManager.getAllProgramFiles();
                 Msg.info(this, "Cross-check: getAllProgramFiles() found " + allProgramFiles.size() + " program files");
-                for (DomainFile progFile : allProgramFiles) {
-                    Msg.debug(this, "  Program file: " + progFile.getPathname());
-                }
             } catch (Exception e) {
                 Msg.warn(this, "Error in cross-check getAllProgramFiles(): " + e.getMessage());
             }
 
-            metadataInfo.put("itemCount", filesList.size());
-
-            // Create combined result as single JSON object for better MCP client compatibility
-            // Some MCP clients may only show the first content item from multi-content responses
-            Map<String, Object> combinedResult = new HashMap<>();
-            combinedResult.put("metadata", metadataInfo);
-            combinedResult.put("items", filesList);
-            
-            // If incorrect arguments, add error message
             if (hasIncorrectArgs) {
                 combinedResult.put("error", createIncorrectArgsErrorMap());
             }
@@ -820,158 +764,6 @@ public class ProjectToolProvider extends AbstractToolProvider {
             }
         } catch (Exception e) {
             errors.add("Error collecting imported files: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Collect files and subfolders from a folder
-     * @param folder The folder to collect from
-     * @param filesList The list to add files to
-     * @param pathPrefix The path prefix for subfolder names
-     */
-    private void collectFilesInFolder(DomainFolder folder, List<Map<String, Object>> filesList, String pathPrefix) {
-        if (folder == null) {
-            Msg.warn(this, "collectFilesInFolder: folder is null");
-            return;
-        }
-
-        // Add subfolders first
-        try {
-            DomainFolder[] subfolders = folder.getFolders();
-            Msg.debug(this, "collectFilesInFolder: found " + subfolders.length + " subfolders in: " + folder.getPathname());
-            for (DomainFolder subfolder : subfolders) {
-                try {
-                    Map<String, Object> folderInfo = new HashMap<>();
-                    String folderPath = pathPrefix.isEmpty() ? "/" + subfolder.getName() : pathPrefix + subfolder.getName();
-                    folderInfo.put("folderPath", folderPath);
-                    folderInfo.put("type", "folder");
-                    
-                    // Get child count - this forces discovery of files/folders in this subfolder
-                    try {
-                        int fileCount = subfolder.getFiles().length;
-                        int folderCount = subfolder.getFolders().length;
-                        folderInfo.put("childCount", fileCount + folderCount);
-                        Msg.debug(this, "Subfolder " + subfolder.getPathname() + " has " + fileCount + " files, " + folderCount + " subfolders");
-                    } catch (Exception e) {
-                        folderInfo.put("childCount", 0);
-                        Msg.debug(this, "Could not get child count for subfolder " + subfolder.getPathname() + ": " + e.getMessage());
-                    }
-                    
-                    filesList.add(folderInfo);
-                } catch (Exception e) {
-                    Msg.warn(this, "Error processing subfolder: " + e.getMessage());
-                    // Continue with next subfolder
-                }
-            }
-        } catch (Exception e) {
-            Msg.warn(this, "Error getting subfolders from " + folder.getName() + ": " + e.getMessage());
-        }
-
-        // Add files - collect ALL files, not just Programs
-        try {
-            DomainFile[] files = folder.getFiles();
-            Msg.info(this, "collectFilesInFolder: found " + files.length + " files in folder: " + folder.getPathname());
-            
-            // Count by content type for diagnostics
-            Map<String, Integer> contentTypeCounts = new HashMap<>();
-            for (DomainFile file : files) {
-                String contentType = file.getContentType();
-                contentTypeCounts.put(contentType, contentTypeCounts.getOrDefault(contentType, 0) + 1);
-            }
-            Msg.info(this, "File type breakdown: " + contentTypeCounts);
-            
-            for (DomainFile file : files) {
-                try {
-                    Map<String, Object> fileInfo = new HashMap<>();
-                    fileInfo.put("programPath", file.getPathname());
-                    fileInfo.put("type", "file");
-                    fileInfo.put("contentType", file.getContentType());
-                    fileInfo.put("lastModified", file.getLastModifiedTime());
-                    fileInfo.put("readOnly", file.isReadOnly());
-                    fileInfo.put("versioned", file.isVersioned());
-                    fileInfo.put("checkedOut", file.isCheckedOut());
-                    
-                    Msg.debug(this, "  Adding file: " + file.getPathname() + " (type: " + file.getContentType() + ")");
-
-                    // Add program-specific metadata when available
-                    if (file.getContentType().equals("Program")) {
-                        try {
-                            if (file.getMetadata() != null) {
-                                Object languageObj = file.getMetadata().get("CREATED_WITH_LANGUAGE");
-                                if (languageObj != null) {
-                                    fileInfo.put("programLanguage", languageObj);
-                                }
-                                Object md5Obj = file.getMetadata().get("Executable MD5");
-                                if (md5Obj != null) {
-                                    fileInfo.put("executableMD5", md5Obj);
-                                }
-                            }
-                        } catch (Exception e) {
-                            // Ignore metadata errors - not critical for file listing
-                            Msg.debug(this, "Error reading metadata for " + file.getName() + ": " + e.getMessage());
-                        }
-                    }
-
-                    filesList.add(fileInfo);
-                } catch (Exception e) {
-                    Msg.warn(this, "Error processing file " + file.getName() + ": " + e.getMessage());
-                    // Continue with next file
-                }
-            }
-        } catch (Exception e) {
-            Msg.warn(this, "Error getting files from " + folder.getName() + ": " + e.getMessage());
-        }
-    }
-
-    /**
-     * Recursively collect files and subfolders from a folder.
-     * Uses aggressive discovery to ensure ALL files are found, even in unvisited folders.
-     * @param folder The folder to collect from
-     * @param filesList The list to add files to
-     * @param pathPrefix The path prefix for subfolder names
-     */
-    private void collectFilesRecursive(DomainFolder folder, List<Map<String, Object>> filesList, String pathPrefix) {
-        if (folder == null) {
-            return;
-        }
-        
-        // Collect files in current folder
-        collectFilesInFolder(folder, filesList, pathPrefix);
-
-        // CRITICAL: Get folders AFTER collecting files to ensure fresh discovery
-        // Also try to discover folders by attempting to access them
-        DomainFolder[] subfolders;
-        try {
-            subfolders = folder.getFolders();
-            Msg.debug(this, "collectFilesRecursive: found " + subfolders.length + " subfolders in: " + folder.getPathname());
-        } catch (Exception e) {
-            Msg.warn(this, "Error getting subfolders from " + folder.getPathname() + ": " + e.getMessage());
-            subfolders = new DomainFolder[0];
-        }
-
-        // Recursively collect files in subfolders
-        for (DomainFolder subfolder : subfolders) {
-            if (subfolder == null) {
-                continue;
-            }
-            
-            try {
-                String newPrefix;
-                if (pathPrefix.isEmpty()) {
-                    newPrefix = "/" + subfolder.getName() + "/";
-                } else {
-                    newPrefix = pathPrefix.endsWith("/") ? pathPrefix + subfolder.getName() + "/" : pathPrefix + "/" + subfolder.getName() + "/";
-                }
-                
-                // Force discovery by accessing the folder's pathname
-                String subfolderPath = subfolder.getPathname();
-                Msg.debug(this, "Recursing into subfolder: " + subfolderPath);
-                
-                collectFilesRecursive(subfolder, filesList, newPrefix);
-            } catch (Exception e) {
-                Msg.warn(this, "Error processing subfolder " + subfolder.getName() + ": " + e.getMessage());
-                // Continue with next subfolder
-            }
         }
     }
 
@@ -2416,6 +2208,7 @@ public class ProjectToolProvider extends AbstractToolProvider {
             ToolLogCollector.addLogsToResult(result, logCollector);
             logCollector.stop();
 
+            setLastOpenedProjectPath(projectPath);
             return createJsonResult(result);
 
         } catch (IllegalArgumentException e) {
