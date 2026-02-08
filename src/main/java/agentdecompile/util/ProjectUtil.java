@@ -863,6 +863,22 @@ public class ProjectUtil {
     }
 
     /**
+     * Get the effective active project: GUI active project, or in headless the project
+     * opened by the headless launcher (e.g. from AGENT_DECOMPILE_PROJECT_PATH).
+     * Use this instead of {@link ghidra.framework.main.AppInfo#getActiveProject()} for
+     * tools that must work in headless with shared/local projects.
+     *
+     * @return the active project, or the headless-opened project, or null
+     */
+    public static Project getActiveProjectOrHeadlessFallback() {
+        Project active = AppInfo.getActiveProject();
+        if (active != null) {
+            return active;
+        }
+        return HeadlessProjectHolder.getProject();
+    }
+
+    /**
      * Get the active project if it matches the requested project.
      *
      * @param requestedProjectDir The directory of the requested project
@@ -870,8 +886,7 @@ public class ProjectUtil {
      * @return The active Project if it matches, or null if it doesn't match or no active project exists
      */
     public static Project getMatchingActiveProject(String requestedProjectDir, String requestedProjectName) {
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project activeProject = AppInfo.getActiveProject();
+        Project activeProject = getActiveProjectOrHeadlessFallback();
         if (activeProject != null) {
             // Ghidra API: Project.getProjectLocator(), ProjectLocator.getProjectDir() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectLocator(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectLocator.html#getProjectDir()
             String activeProjectDir = activeProject.getProjectLocator().getProjectDir().getAbsolutePath();

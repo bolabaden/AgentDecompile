@@ -56,8 +56,7 @@ public class ProgramLookupUtil {
      * @return The current program from the active Code Browser, or null if not available
      */
     public static Program getCurrentProgramFromGUI() {
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
             return null;
         }
@@ -356,8 +355,7 @@ public class ProgramLookupUtil {
             }
         }
 
-        // Ghidra API: AppInfo.getActiveProject() - https://ghidra.re/ghidra_docs/api/ghidra/framework/main/AppInfo.html#getActiveProject()
-        Project project = AppInfo.getActiveProject();
+        Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project != null) {
             try {
                 // Ghidra API: Project.getProjectData(), ProjectData.getRootFolder() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html#getProjectData(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html#getRootFolder()

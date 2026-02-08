@@ -35,9 +35,11 @@ import ghidra.base.project.GhidraProject;
 import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
 import ghidra.framework.HeadlessGhidraApplicationConfiguration;
+import ghidra.framework.model.Project;
 import ghidra.util.Msg;
 import agentdecompile.plugin.ConfigManager;
 import agentdecompile.server.McpServerManager;
+import agentdecompile.util.HeadlessProjectHolder;
 import agentdecompile.util.ProjectUtil;
 import agentdecompile.util.SharedProjectEnvConfig;
 import utility.application.ApplicationLayout;
@@ -45,10 +47,12 @@ import utility.application.ApplicationLayout;
 /**
  * Headless launcher for AgentDecompile MCP server.
  * <p>
- * This class enables AgentDecompile to run in headless Ghidra mode without the GUI plugin system.
- * It can be invoked from pyghidra or other headless contexts.
+ * This class enables AgentDecompile to run in headless Ghidra mode without the
+ * GUI plugin system. It can be invoked from pyghidra or other headless
+ * contexts.
  * <p>
- * Projects are ephemeral in stdio mode - created in temp directories and cleaned up on exit.
+ * Projects are ephemeral in stdio mode - created in temp directories and
+ * cleaned up on exit.
  * <p>
  * Usage from pyghidra:
  * <pre>
@@ -66,18 +70,21 @@ import utility.application.ApplicationLayout;
  * launcher.stop()
  * </pre>
  * <p>
- * Ghidra API: {@link ghidra.framework.HeadlessGhidraApplicationConfiguration}, {@link ghidra.base.project.GhidraProject} -
+ * Ghidra API:
+ * {@link ghidra.framework.HeadlessGhidraApplicationConfiguration}, {@link ghidra.base.project.GhidraProject}
+ * -
  * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/package-summary.html">ghidra.framework</a>,
- * <a href="https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html">GhidraProject API</a>.
- * PyGhidra: <a href="https://ghidra.re/ghidra_docs/api/ghidra/pyghidra/package-summary.html">ghidra.pyghidra</a>.
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html">GhidraProject
+ * API</a>. PyGhidra:
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/pyghidra/package-summary.html">ghidra.pyghidra</a>.
  * </p>
  */
 public class AgentDecompileHeadlessLauncher {
 
     private static final String LOCK_ENV_VAR = "AGENT_DECOMPILE_FORCE_IGNORE_LOCK";
     private static final List<String> LOCK_FILE_SUFFIXES = List.of(".lock", ".lock~", ".~lock");
-    private static final Pattern PID_KEY_PATTERN =
-        Pattern.compile("(?i)\\b(pid|process(?:\\s*id)?)\\b\\s*[:=]\\s*(\\d+)");
+    private static final Pattern PID_KEY_PATTERN
+            = Pattern.compile("(?i)\\b(pid|process(?:\\s*id)?)\\b\\s*[:=]\\s*(\\d+)");
     private static final Pattern GENERIC_NUMBER_PATTERN = Pattern.compile("\\b(\\d{4,6})\\b");
     private static final long MIN_WINDOWS_PID = 1000;
     private static final long MAX_WINDOWS_PID = 99999;
@@ -100,6 +107,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Constructor with configuration file
+     *
      * @param configFile The configuration file to load, or null for defaults
      */
     public AgentDecompileHeadlessLauncher(File configFile) {
@@ -107,8 +115,9 @@ public class AgentDecompileHeadlessLauncher {
     }
 
     /**
-     * Constructor with configuration file path
-     * Convenience constructor for PyGhidra scripts that use string paths
+     * Constructor with configuration file path Convenience constructor for
+     * PyGhidra scripts that use string paths
+     *
      * @param configFilePath Path to the configuration file
      */
     public AgentDecompileHeadlessLauncher(String configFilePath) {
@@ -117,8 +126,10 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Constructor with random port option
+     *
      * @param configFile The configuration file to load, or null for defaults
-     * @param useRandomPort Whether to use a random available port instead of configured port
+     * @param useRandomPort Whether to use a random available port instead of
+     * configured port
      */
     public AgentDecompileHeadlessLauncher(File configFile, boolean useRandomPort) {
         this(configFile, true, useRandomPort);
@@ -126,9 +137,12 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Constructor with full control
+     *
      * @param configFile The configuration file to load, or null for defaults
-     * @param autoInitializeGhidra Whether to automatically initialize Ghidra if not already initialized
-     * @param useRandomPort Whether to use a random available port instead of configured port
+     * @param autoInitializeGhidra Whether to automatically initialize Ghidra if
+     * not already initialized
+     * @param useRandomPort Whether to use a random available port instead of
+     * configured port
      */
     public AgentDecompileHeadlessLauncher(File configFile, boolean autoInitializeGhidra, boolean useRandomPort) {
         this(configFile, autoInitializeGhidra, useRandomPort, null, null);
@@ -136,9 +150,12 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Constructor with project parameters
+     *
      * @param configFile The configuration file to load, or null for defaults
-     * @param useRandomPort Whether to use a random available port instead of configured port
-     * @param projectLocation The directory where projects are stored (e.g., .agentdecompile/projects)
+     * @param useRandomPort Whether to use a random available port instead of
+     * configured port
+     * @param projectLocation The directory where projects are stored (e.g.,
+     * .agentdecompile/projects)
      * @param projectName The name of the project to create/open
      */
     public AgentDecompileHeadlessLauncher(File configFile, boolean useRandomPort, File projectLocation, String projectName) {
@@ -147,14 +164,19 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Constructor with full control and project parameters
+     *
      * @param configFile The configuration file to load, or null for defaults
-     * @param autoInitializeGhidra Whether to automatically initialize Ghidra if not already initialized
-     * @param useRandomPort Whether to use a random available port instead of configured port
-     * @param projectLocation The directory where projects are stored (e.g., .agentdecompile/projects), or null for no project
-     * @param projectName The name of the project to create/open, or null for no project
+     * @param autoInitializeGhidra Whether to automatically initialize Ghidra if
+     * not already initialized
+     * @param useRandomPort Whether to use a random available port instead of
+     * configured port
+     * @param projectLocation The directory where projects are stored (e.g.,
+     * .agentdecompile/projects), or null for no project
+     * @param projectName The name of the project to create/open, or null for no
+     * project
      */
     public AgentDecompileHeadlessLauncher(File configFile, boolean autoInitializeGhidra, boolean useRandomPort,
-                               File projectLocation, String projectName) {
+            File projectLocation, String projectName) {
         this.configFile = configFile;
         this.autoInitializeGhidra = autoInitializeGhidra;
         this.useRandomPort = useRandomPort;
@@ -164,52 +186,40 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Start the MCP server in headless mode
+     *
      * @throws IOException if configuration file cannot be read
-     * @throws IllegalStateException if Ghidra is not initialized and autoInitializeGhidra is false
+     * @throws IllegalStateException if Ghidra is not initialized and
+     * autoInitializeGhidra is false
      */
     public void start() throws IOException {
-        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-        Msg.info(this, "Starting AgentDecompile MCP server in headless mode...");
-
         // Initialize Ghidra application if needed
         // Ghidra API: Application.isInitialized() - https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html#isInitialized()
         if (!Application.isInitialized()) {
             if (autoInitializeGhidra) {
-                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                Msg.info(this, "Initializing Ghidra application in headless mode...");
                 try {
                     ApplicationLayout layout = new GhidraApplicationLayout();
                     ApplicationConfiguration config = new HeadlessGhidraApplicationConfiguration();
                     // Ghidra API: Application.initializeApplication(ApplicationLayout, ApplicationConfiguration) - https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html#initializeApplication(ghidra.framework.ApplicationLayout,ghidra.framework.ApplicationConfiguration)
                     Application.initializeApplication(layout, config);
-                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                    Msg.info(this, "Ghidra application initialized");
                 } catch (IOException e) {
                     throw new IOException("Failed to initialize Ghidra application layout", e);
                 }
             } else {
                 throw new IllegalStateException(
-                    "Ghidra application is not initialized. " +
-                    "Call Application.initializeApplication() first or set autoInitializeGhidra=true");
+                        "Ghidra application is not initialized. "
+                        + "Call Application.initializeApplication() first or set autoInitializeGhidra=true");
             }
         }
 
         // Create config manager based on mode
         if (configFile != null) {
-            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-            Msg.info(this, "Loading configuration from: " + configFile.getAbsolutePath());
             configManager = new ConfigManager(configFile);
         } else {
-            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-            Msg.info(this, "Using default configuration (in-memory)");
             configManager = new ConfigManager();
         }
 
-        // Use random port if requested
         if (useRandomPort) {
-            int randomPort = configManager.setRandomAvailablePort();
-            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-            Msg.info(this, "Using random port: " + randomPort);
+            configManager.setRandomAvailablePort();
         }
 
         // Configure shared-project authentication from environment before opening any project
@@ -226,44 +236,42 @@ public class AgentDecompileHeadlessLauncher {
 
             try {
                 ProjectUtil.ProjectOpenResult result = ProjectUtil.createOrOpenProject(
-                    projectLocation, projectName, true, this, forceIgnoreLock);
+                    projectLocation,
+                    projectName, true,
+                    this,
+                    forceIgnoreLock
+                );
                 // Ghidra API: ProjectOpenResult.getGhidraProject() returns GhidraProject - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html
                 ghidraProject = result.getGhidraProject();
-                if (result.wasAlreadyOpen()) {
-                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                    Msg.info(this, "Project '" + projectName + "' is already open, using active project");
-                } else if (result.wasCreated()) {
-                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                    Msg.info(this, "Created new project: " + projectName);
-                } else {
-                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                    Msg.info(this, "Opened project: " + projectName);
+                Project project = result.getProject();
+                if (project != null) {
+                    HeadlessProjectHolder.setProject(project);
                 }
+                // Project opened; HeadlessProjectHolder already set for tools
             } catch (IOException e) {
                 if (forceIgnoreLock && isLockRelatedError(e)) {
-                    // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                    Msg.info(this, "Project is locked, attempting to delete lock files and retry...");
                     releaseLockFiles(projectLocation, projectName);
                     try {
                         ProjectUtil.ProjectOpenResult result = ProjectUtil.createOrOpenProject(
-                            projectLocation, projectName, true, this, true);
-                        // Ghidra API: ProjectOpenResult.getGhidraProject() returns GhidraProject - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html
-                ghidraProject = result.getGhidraProject();
-                        if (result.wasAlreadyOpen()) {
-                            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                            Msg.info(this, "Project '" + projectName + "' is already open, using active project");
-                        } else {
-                            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                            Msg.info(this, "Opened project after deleting lock files: " + projectName);
+                            projectLocation,
+                            projectName,
+                            true,
+                            this,
+                            forceIgnoreLock
+                        );
+                        ghidraProject = result.getGhidraProject();
+                        if (result.getProject() != null) {
+                            HeadlessProjectHolder.setProject(result.getProject());
                         }
+                        // Project opened after lock cleanup
                     } catch (IOException retryException) {
                         // IMPORTANT: Do not crash the MCP server if a project cannot be opened.
                         // The server should still start so users can choose/open another project.
                         // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                         Msg.error(this,
-                            "Failed to open project after deleting lock files: " + projectName +
-                                ". Starting AgentDecompile without an active project.",
-                            retryException);
+                                "Failed to open project after deleting lock files: " + projectName
+                                + ". Starting AgentDecompile without an active project.",
+                                retryException);
                         ghidraProject = null;
                     }
                 } else {
@@ -272,37 +280,33 @@ public class AgentDecompileHeadlessLauncher {
                     // errors where appropriate and project-management tools can still be used.
                     // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                     Msg.error(this,
-                        "Failed to open project '" + projectName + "'. Starting AgentDecompile without an active project. " +
-                            "You can open a different project using the project tools.",
-                        e);
+                            "Failed to open project '" + projectName + "'. Starting AgentDecompile without an active project. "
+                            + "You can open a different project using the project tools.",
+                            e);
                     ghidraProject = null;
                 }
             } catch (Exception e) {
                 // IMPORTANT: Do not crash the MCP server if a project cannot be opened.
                 // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this,
-                    "Failed to create/open project '" + projectName + "'. Starting AgentDecompile without an active project.",
-                    e);
+                        "Failed to create/open project '" + projectName + "'. Starting AgentDecompile without an active project.",
+                        e);
                 ghidraProject = null;
             }
         }
 
-        // Create and start server manager
         serverManager = new McpServerManager(configManager);
         serverManager.startServer();
 
-        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-        Msg.info(this, "AgentDecompile MCP server started in headless mode");
+        int port = serverManager.getServerPort();
+        String projectSummary = (projectName != null) ? "project=" + projectName : "no project";
+        Msg.info(this, "AgentDecompile headless: " + projectSummary + ", port=" + port);
     }
-
 
     /**
      * Stop the server and cleanup
      */
     public void stop() {
-        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-        Msg.info(this, "Stopping AgentDecompile MCP server...");
-
         if (serverManager != null) {
             serverManager.shutdown();
             serverManager = null;
@@ -313,12 +317,9 @@ public class AgentDecompileHeadlessLauncher {
             configManager = null;
         }
 
-        // Close Ghidra project (but don't delete it - it's persistent)
+        HeadlessProjectHolder.clear();
         if (ghidraProject != null) {
             try {
-                // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-                Msg.info(this, "Closing project: " + projectName);
-                // Ghidra API: GhidraProject.close() - https://ghidra.re/ghidra_docs/api/ghidra/base/project/GhidraProject.html#close()
                 ghidraProject.close();
             } catch (Exception e) {
                 // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
@@ -327,13 +328,11 @@ public class AgentDecompileHeadlessLauncher {
                 ghidraProject = null;
             }
         }
-
-        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
-        Msg.info(this, "AgentDecompile MCP server stopped");
     }
 
     /**
      * Get the server port
+     *
      * @return The server port, or -1 if server is not running
      */
     public int getPort() {
@@ -345,6 +344,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Check if server is running
+     *
      * @return True if the server is running
      */
     public boolean isRunning() {
@@ -353,6 +353,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Check if server is ready to accept connections
+     *
      * @return True if the server is ready
      */
     public boolean isServerReady() {
@@ -361,6 +362,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Wait for server to be ready
+     *
      * @param timeoutMs Maximum time to wait in milliseconds
      * @return True if server became ready within timeout, false otherwise
      */
@@ -385,6 +387,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Sleep for the specified duration, handling interrupts
+     *
      * @param ms Duration to sleep in milliseconds
      * @return True if sleep completed normally, false if interrupted
      */
@@ -400,9 +403,9 @@ public class AgentDecompileHeadlessLauncher {
 
     private static boolean isForceIgnoreLockEnabled() {
         String forceIgnoreLockEnv = System.getenv(LOCK_ENV_VAR);
-        return forceIgnoreLockEnv != null &&
-            (forceIgnoreLockEnv.equalsIgnoreCase("true") ||
-             forceIgnoreLockEnv.equalsIgnoreCase("1"));
+        return forceIgnoreLockEnv != null
+                && (forceIgnoreLockEnv.equalsIgnoreCase("true")
+                || forceIgnoreLockEnv.equalsIgnoreCase("1"));
     }
 
     private static boolean isLockRelatedError(IOException e) {
@@ -503,8 +506,8 @@ public class AgentDecompileHeadlessLauncher {
 
     private void terminateLockingProcess(long pid, Set<File> lockFiles) {
         String fileDescription = lockFiles.stream()
-            .map(File::getName)
-            .collect(Collectors.joining(", "));
+                .map(File::getName)
+                .collect(Collectors.joining(", "));
         // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, "Detected Windows lock held by pid " + pid + " for files [" + fileDescription + "]");
 
@@ -567,6 +570,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Get the configuration manager
+     *
      * @return The configuration manager, or null if not started
      */
     public ConfigManager getConfigManager() {
@@ -575,6 +579,7 @@ public class AgentDecompileHeadlessLauncher {
 
     /**
      * Get the server manager
+     *
      * @return The server manager, or null if not started
      */
     public McpServerManager getServerManager() {

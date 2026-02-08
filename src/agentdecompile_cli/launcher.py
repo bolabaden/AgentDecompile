@@ -11,6 +11,32 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+
+def _log_config_block(projects_dir: Path, project_name: str) -> None:
+    """Write a single readable configuration block to stderr (no password value)."""
+    lines = [
+        "AgentDecompile configuration:",
+        f"  project: {projects_dir / project_name}",
+    ]
+    project_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH")
+    if project_path:
+        lines.append(f"  AGENT_DECOMPILE_PROJECT_PATH: {project_path}")
+    host = os.getenv("AGENT_DECOMPILE_SERVER_HOST")
+    port = os.getenv("AGENT_DECOMPILE_SERVER_PORT")
+    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+    if host or port or repo:
+        lines.append(
+            f"  server: host={host or '(not set)'}, port={port or '(not set)'}, repository={repo or '(not set)'}"
+        )
+    if os.getenv("AGENT_DECOMPILE_SERVER_USERNAME"):
+        lines.append("  AGENT_DECOMPILE_SERVER_USERNAME: (set)")
+    if os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD"):
+        lines.append("  AGENT_DECOMPILE_SERVER_PASSWORD: (set)")
+    ghidra_dir = os.getenv("GHIDRA_INSTALL_DIR")
+    if ghidra_dir:
+        lines.append(f"  GHIDRA_INSTALL_DIR: {ghidra_dir}")
+    sys.stderr.write("\n".join(lines) + "\n")
+
 if TYPE_CHECKING:
     from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         AgentDecompileHeadlessLauncher,
@@ -103,11 +129,6 @@ class AgentDecompileLauncher:
 
                 # Use the project directory
                 projects_dir = project_dir
-
-                sys.stderr.write(
-                    f"Using project from AGENT_DECOMPILE_PROJECT_PATH: {project_gpr}\n"
-                )
-                sys.stderr.write(f"Project location: {projects_dir}/{project_name}\n")
             else:
                 # Stdio mode: ephemeral projects in temp directory (session-scoped, auto-cleanup)
                 # Keeps working directory clean - no .agentdecompile creation in cwd
@@ -118,41 +139,14 @@ class AgentDecompileLauncher:
                 # Use temp directory for the project (not .agentdecompile/projects)
                 projects_dir = self.temp_project_dir
 
-                sys.stderr.write(f"Project location: {projects_dir}/{project_name}\n")
+            # Log configuration once in a readable block (no password value)
+            _log_config_block(projects_dir, project_name)
 
             # Convert to Java File objects
             java_project_location = File(str(projects_dir))
 
-            # Ensure environment variables are available to Java
-            # Java reads environment variables via System.getenv(), so we need to ensure
-            # they're set in the Python process before Java code runs.
-            # Package relevant environment variables as a dictionary for reference/documentation.
-            # These are automatically available to Java since they're in the process environment.
-            _env_vars = {  # Prefixed with _ to indicate it's for reference only
-                "AGENT_DECOMPILE_API_KEY": os.getenv("AGENT_DECOMPILE_API_KEY", ""),
-                "AGENT_DECOMPILE_FORCE_IGNORE_LOCK": os.getenv("AGENT_DECOMPILE_FORCE_IGNORE_LOCK", ""),
-                "AGENT_DECOMPILE_PROJECT_PATH": os.getenv("AGENT_DECOMPILE_PROJECT_PATH", ""),
-                # Shared project / Ghidra Server (auth applied automatically at startup)
-                "AGENT_DECOMPILE_SERVER_USERNAME": os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", ""),
-                "AGENT_DECOMPILE_SERVER_PASSWORD": os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", ""),
-                "AGENT_DECOMPILE_SERVER_HOST": os.getenv("AGENT_DECOMPILE_SERVER_HOST", ""),
-                "AGENT_DECOMPILE_SERVER_PORT": os.getenv("AGENT_DECOMPILE_SERVER_PORT", ""),
-                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": os.getenv(
-                    "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", ""
-                ),
-                "AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH": os.getenv(
-                    "AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH", ""
-                ),
-                "AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT": os.getenv(
-                    "AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT", ""
-                ),
-            }
-            # Environment variables are automatically available to Java via System.getenv()
-            # since they're set in the Python process environment before Java code runs
-
             # Create launcher with project parameters
             if self.config_file:
-                sys.stderr.write(f"Using config file: {self.config_file}\n")
                 java_config_file = File(str(self.config_file))
                 self.java_launcher = AgentDecompileHeadlessLauncher(
                     java_config_file,
@@ -161,7 +155,6 @@ class AgentDecompileLauncher:
                     project_name,
                 )
             else:
-                sys.stderr.write("Using default configuration\n")
                 # Use constructor with project parameters
                 self.java_launcher = AgentDecompileHeadlessLauncher(
                     None,
@@ -171,14 +164,11 @@ class AgentDecompileLauncher:
                     project_name,
                 )
 
-            # Start server
-            sys.stderr.write("Starting AgentDecompile MCP server...\n")
             self.java_launcher.start()  # pyright: ignore[reportOptionalMemberAccess]
 
-            # Wait for server to be ready
             if self.java_launcher.waitForServer(30000):  # pyright: ignore[reportOptionalMemberAccess]
                 self.port = self.java_launcher.getPort()  # pyright: ignore[reportOptionalMemberAccess]
-                sys.stderr.write(f"AgentDecompile server ready on port {self.port}\n")
+                sys.stderr.write(f"AgentDecompile ready on port {self.port}\n")
 
                 return self.port  # pyright: ignore[reportReturnType]
             else:
