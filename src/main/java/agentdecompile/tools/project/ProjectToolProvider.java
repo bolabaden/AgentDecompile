@@ -359,7 +359,8 @@ public class ProjectToolProvider extends AbstractToolProvider {
     }
 
     /**
-     * Register a tool to list the full project file/folder tree (no parameters).
+     * Register a tool to list the full project file/folder tree.
+     * Argumentless: takes no parameters; any arguments sent (e.g. folderPath, recursive) are ignored.
      * Always lists the entire hierarchy; works for both local and shared/versioned projects.
      */
     private void registerListProjectFilesTool() {
@@ -369,11 +370,12 @@ public class ProjectToolProvider extends AbstractToolProvider {
         McpSchema.Tool tool = McpSchema.Tool.builder()
             .name("list-project-files")
             .title("List Project Files")
-            .description("List the full project file and folder hierarchy (entire tree). No parameters.")
+            .description("List the full project file and folder hierarchy (entire tree). Takes no arguments; any arguments provided are ignored.")
             .inputSchema(createSchema(properties, required))
             .build();
 
         registerTool(tool, (exchange, request) -> {
+            // Argumentless tool: ignore request.arguments() (equivalent of *args, **kwargs accepted but ignored)
             Project project = AppInfo.getActiveProject();
             if (project == null) {
                 return createErrorResult("No active project found");
