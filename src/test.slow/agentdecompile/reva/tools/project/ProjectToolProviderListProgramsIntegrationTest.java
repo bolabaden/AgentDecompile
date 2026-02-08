@@ -33,8 +33,8 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import agentdecompile.AgentDecompileIntegrationTestBase;
 
 /**
- * Integration tests for list-project-files and list-open-programs tools
- * with the onlyShowCheckedOutPrograms parameter.
+ * Integration tests for list-project-files and list-open-programs tools.
+ * list-project-files takes no arguments and returns the full project tree.
  */
 public class ProjectToolProviderListProgramsIntegrationTest extends AgentDecompileIntegrationTestBase {
 
@@ -44,34 +44,20 @@ public class ProjectToolProviderListProgramsIntegrationTest extends AgentDecompi
     }
 
     @Test
-    public void testListProjectFilesShowsAllPrograms() throws Exception {
+    public void testListProjectFilesShowsFullTree() throws Exception {
         withMcpClient(createMcpTransport(), client -> {
             client.initialize();
 
-            // Call list-project-files with recursive=true to get all programs
             Map<String, Object> args = new HashMap<>();
-            args.put("folderPath", "/");
-            args.put("recursive", true);
-            args.put("onlyShowCheckedOutPrograms", false);
-
             CallToolResult result = client.callTool(new CallToolRequest("list-project-files", args));
 
             assertNotNull("Result should not be null", result);
             assertNotNull("Response content should not be null", result.content());
             assertTrue("Should have at least one content item", !result.content().isEmpty());
 
-            // Parse the response
             String responseJson = ((TextContent) result.content().get(0)).text();
             JsonNode response = objectMapper.readTree(responseJson);
-
-            // Should have metadata
-            if (response.isArray() && response.size() > 0) {
-                JsonNode metadata = response.get(0);
-                if (metadata.has("onlyShowCheckedOutPrograms")) {
-                    assertFalse("onlyShowCheckedOutPrograms should be false", 
-                        metadata.get("onlyShowCheckedOutPrograms").asBoolean());
-                }
-            }
+            assertTrue("Response should have metadata and items", response.has("metadata") || response.has("items"));
 
             return null;
         });

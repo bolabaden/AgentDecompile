@@ -25,8 +25,8 @@ class TestProgramTools:
     """Test program-related MCP tools"""
 
     async def test_list_project_files(self, mcp_client: ClientSession):
-        """list-project-files tool returns file list (may be empty)"""
-        response_result = await mcp_client.call_tool("list-project-files", {"folderPath": "/"})
+        """list-project-files tool returns file list (may be empty). No parameters."""
+        response_result = await mcp_client.call_tool("list-project-files", {})
 
         # Should get a response (even if no files in project)
         assert response_result is not None
@@ -49,7 +49,7 @@ class TestProgramTools:
         """list-project-files result has expected structure when programs are open"""
         # This test uses test_program fixture to ensure at least one program is available
         # Note: test_program may not be registered with MCP server's project manager
-        response_result = await mcp_client.call_tool("list-project-files", {"folderPath": "/"})
+        response_result = await mcp_client.call_tool("list-project-files", {})
 
         # Handle case where no programs are open in the MCP server's project
         if response_result.isError:
@@ -73,15 +73,10 @@ class TestProgramTools:
                 assert "type" in item
                 assert "text" in item
 
-    async def test_list_project_files_only_checked_out(self, mcp_client: ClientSession):
-        """list-project-files with onlyShowCheckedOutPrograms parameter"""
-        # Test with onlyShowCheckedOutPrograms=True
-        response_result = await mcp_client.call_tool(
-            "list-project-files",
-            {"folderPath": "/", "recursive": True, "onlyShowCheckedOutPrograms": True}
-        )
+    async def test_list_project_files_no_args(self, mcp_client: ClientSession):
+        """list-project-files takes no arguments and returns full tree"""
+        response_result = await mcp_client.call_tool("list-project-files", {})
 
-        # Should get a response
         assert response_result is not None
 
         if not response_result.isError:
@@ -92,25 +87,6 @@ class TestProgramTools:
             assert "content" in result
             content = result["content"]
             assert isinstance(content, list)
-
-            # Check metadata if available
-            if content:
-                # First item might be metadata
-                import json
-                try:
-                    metadata = json.loads(content[0].get("text", "{}"))
-                    if "onlyShowCheckedOutPrograms" in metadata:
-                        assert metadata["onlyShowCheckedOutPrograms"] is True
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass  # Not metadata, that's okay
-
-        # Test with onlyShowCheckedOutPrograms=False (default)
-        response_result2 = await mcp_client.call_tool(
-            "list-project-files",
-            {"folderPath": "/", "recursive": True, "onlyShowCheckedOutPrograms": False}
-        )
-
-        assert response_result2 is not None
 
     async def test_list_open_programs_shows_all(self, mcp_client: ClientSession):
         """list-open-programs shows all programs, not just open ones"""

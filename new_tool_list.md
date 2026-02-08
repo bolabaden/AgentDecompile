@@ -173,11 +173,9 @@
 
 ### 10. `list-project-files`
 
-**Description:** List files and folders in the Ghidra project.
+**Description:** List the full project file and folder hierarchy (entire tree). Works for both local and shared/versioned projects.
 
-**Parameters:**
-- `folderPath` (string, required): Path to the folder to list contents of. Use '/' for the root folder.
-- `recursive` (boolean, optional): Whether to list files recursively (default: false)
+**Parameters:** None
 
 ### 11. `list-open-programs` (GUI Mode Only)
 
