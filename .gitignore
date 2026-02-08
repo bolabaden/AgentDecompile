@@ -23,3 +23,5 @@ gradle/wrapper/
 .agentdecompile/
 .history/
 .env
+.pytest_cache/
+.pytest_ghidra/

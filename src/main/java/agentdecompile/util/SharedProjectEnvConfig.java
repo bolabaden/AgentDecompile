@@ -60,6 +60,8 @@ public final class SharedProjectEnvConfig {
     public static final String ENV_GHIDRA_SERVER_KEYSTORE_PATH = "AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH";
     /** Environment variable: Allow console password prompt (true/false). */
     public static final String ENV_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT = "AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT";
+    /** Environment variable: Path to Ghidra project file (.gpr) to open when no project is active. */
+    public static final String ENV_PROJECT_PATH = "AGENT_DECOMPILE_PROJECT_PATH";
 
     /** Default Ghidra Server port when not specified. */
     public static final int DEFAULT_SERVER_PORT = 13100;
@@ -128,6 +130,16 @@ public final class SharedProjectEnvConfig {
      */
     public static String getKeystorePath() {
         return trimOrNull(System.getenv(ENV_GHIDRA_SERVER_KEYSTORE_PATH));
+    }
+
+    /**
+     * Read project path (.gpr file) from environment.
+     * Used when no project is active to auto-open (e.g. by open-programs resource).
+     *
+     * @return absolute path to .gpr file or null if unset/empty
+     */
+    public static String getProjectPath() {
+        return trimOrNull(System.getenv(ENV_PROJECT_PATH));
     }
 
     /**

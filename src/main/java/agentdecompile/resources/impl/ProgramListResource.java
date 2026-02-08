@@ -20,10 +20,13 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import ghidra.framework.main.AppInfo;
+import ghidra.framework.model.Project;
 import ghidra.program.model.listing.Program;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncResourceSpecification;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -33,6 +36,9 @@ import io.modelcontextprotocol.spec.McpSchema.ResourceContents;
 import io.modelcontextprotocol.spec.McpSchema.TextResourceContents;
 import agentdecompile.plugin.AgentDecompileProgramManager;
 import agentdecompile.resources.AbstractResourceProvider;
+import agentdecompile.tools.project.ProjectToolProvider;
+import agentdecompile.util.ProjectUtil;
+import agentdecompile.util.SharedProjectEnvConfig;
 
 /**
  * Resource provider that exposes the list of all programs in the project.
@@ -82,12 +88,38 @@ public class ProgramListResource extends AbstractResourceProvider {
 
     /**
      * Generate the current resource contents for the programs resource.
-     * This method is called both for read requests and when notifying subscribers.
+     * If no project is active, tries to open the project from the path last passed to 'open'
+     * or from AGENT_DECOMPILE_PROJECT_PATH (former takes priority). Then includes the same
+     * response as list-project-files (metadata + items) as the first content, followed by
+     * per-program sub-resources.
      *
-     * @return ReadResourceResult containing all program resource contents
+     * @return ReadResourceResult containing list-project-files payload plus all program resource contents
      */
     private ReadResourceResult generateResourceContents() {
         List<ResourceContents> resourceContents = new ArrayList<>();
+
+        // If no project is active, try to open from last 'open' path or env (same behavior as 'open')
+        Project project = AppInfo.getActiveProject();
+        if (project == null) {
+            String path = ProjectToolProvider.getLastOpenedProjectPath();
+            if (path == null) {
+                path = SharedProjectEnvConfig.getProjectPath();
+            }
+            if (path != null) {
+                ProjectUtil.tryOpenProjectFromGprPath(path);
+                project = AppInfo.getActiveProject();
+            }
+        }
+
+        // First content: same response as list-project-files (metadata + items)
+        try {
+            Map<String, Object> listProjectFilesData = ProjectUtil.buildListProjectFilesData(project, "/", true);
+            String listProjectFilesJson = JSON.writeValueAsString(listProjectFilesData);
+            resourceContents.add(new TextResourceContents(RESOURCE_ID, RESOURCE_MIME_TYPE, listProjectFilesJson));
+        } catch (JsonProcessingException e) {
+            logError("Error serializing list-project-files data", e);
+            resourceContents.add(new TextResourceContents(RESOURCE_ID, RESOURCE_MIME_TYPE, "{\"metadata\":{\"error\":\"serialization failed\"},\"items\":[]}"));
+        }
 
         // Get all program files from the project (not just open ones)
         List<ghidra.framework.model.DomainFile> programFiles = AgentDecompileProgramManager.getAllProgramFiles();
