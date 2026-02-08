@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -53,15 +36,19 @@ import ghidra.program.model.listing.Program;
 
 /**
  * Computes and indexes function fingerprints for cross-program matching.
- *
- * <p>Goal: match "the same" function across multiple executables where addresses differ,
+ * <p>
+ * Goal: match "the same" function across multiple executables where addresses differ,
  * but code is identical or near-identical. The fingerprint is intentionally independent
- * of address and symbol names.</p>
- *
- * <p>Implementation details:
- * - Uses a normalized signature of the first N instructions (mnemonics + operand-type categories)
- * - Includes coarse size metadata (function body address count and sampled instruction count)
- * - Hashes the normalized signature via SHA-256</p>
+ * of address and symbol names. Uses a normalized signature of the first N instructions
+ * (mnemonics + operand-type categories), size metadata, and SHA-256.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Function}, {@link ghidra.program.model.listing.Instruction},
+ * {@link ghidra.program.model.listing.Listing}, {@link ghidra.program.model.lang.OperandType} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html">Function API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html">Instruction API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public final class FunctionFingerprintUtil {
     /** Default number of instructions to sample from each function for fingerprinting. */
@@ -168,7 +155,9 @@ public final class FunctionFingerprintUtil {
      * @return cached index
      */
     public static CachedProgramIndex getOrBuildIndex(Program program, int maxInstructions) {
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
+        // Ghidra API: Program.getModificationNumber() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getModificationNumber()
         long mod = program.getModificationNumber();
 
         CachedProgramIndex cached = INDEX_CACHE.get(programPath);
@@ -177,9 +166,12 @@ public final class FunctionFingerprintUtil {
         }
 
         Map<String, List<Candidate>> byFingerprint = new HashMap<>();
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
         FunctionIterator it = program.getFunctionManager().getFunctions(true);
         while (it.hasNext()) {
+            // Ghidra API: FunctionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionIterator.html#next()
             Function f = it.next();
+            // Ghidra API: Function.isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#isExternal()
             if (f == null || f.isExternal()) {
                 continue;
             }
@@ -187,12 +179,14 @@ public final class FunctionFingerprintUtil {
             if (fp == null) {
                 continue;
             }
+            // Ghidra API: Function.getName(), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
             Candidate cand = new Candidate(programPath, f.getName(), f.getEntryPoint());
             byFingerprint.computeIfAbsent(fp, k -> new ArrayList<>()).add(cand);
         }
 
         // Make candidate lists deterministic
         for (Map.Entry<String, List<Candidate>> e : byFingerprint.entrySet()) {
+            // Ghidra API: Address.compareTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#compareTo(ghidra.program.model.address.Address)
             e.getValue().sort((a, b) -> a.entryPoint().compareTo(b.entryPoint()));
         }
 
@@ -203,13 +197,16 @@ public final class FunctionFingerprintUtil {
     }
 
     private static String buildCanonicalSignature(Program program, Function function, int maxInstructions) {
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
+        // Ghidra API: Listing.getInstructions(AddressSetView, boolean), Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(ghidra.program.model.address.AddressSetView,boolean)
         InstructionIterator instrIter = listing.getInstructions(function.getBody(), true);
 
         StringBuilder sb = new StringBuilder(4096);
 
         long bodySize = 0;
         try {
+            // Ghidra API: Function.getBody(), AddressSetView.getNumAddresses() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
             bodySize = function.getBody().getNumAddresses();
         } catch (Exception e) {
             bodySize = 0;
@@ -221,14 +218,18 @@ public final class FunctionFingerprintUtil {
 
         int count = 0;
         while (instrIter.hasNext() && count < maxInstructions) {
+            // Ghidra API: InstructionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/InstructionIterator.html#next()
             Instruction instr = instrIter.next();
             if (instr == null) {
                 continue;
             }
+            // Ghidra API: Instruction.getMnemonicString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getMnemonicString()
             sb.append(instr.getMnemonicString());
             sb.append('(');
+            // Ghidra API: Instruction.getNumOperands() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getNumOperands()
             int opCount = instr.getNumOperands();
             for (int i = 0; i < opCount; i++) {
+                // Ghidra API: Instruction.getOperandType(int) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getOperandType(int)
                 int opType = instr.getOperandType(i);
                 sb.append(operandTypeCategory(opType));
                 if (i + 1 < opCount) {
@@ -323,6 +324,7 @@ public final class FunctionFingerprintUtil {
         long sourceBodySize = 0;
         int sourceInstructionCount = 0;
         try {
+            // Ghidra API: Function.getBody(), AddressSetView.getNumAddresses() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
             sourceBodySize = sourceFunction.getBody().getNumAddresses();
             // Extract instruction count from signature (format: "C=64;")
             int cIdx = sourceSig.indexOf("C=");
@@ -425,7 +427,9 @@ public final class FunctionFingerprintUtil {
      * @return cached signature index
      */
     private static CachedSignatureIndex getOrBuildSignatureIndex(Program program, int maxInstructions) {
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
+        // Ghidra API: Program.getModificationNumber() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getModificationNumber()
         long mod = program.getModificationNumber();
 
         CachedSignatureIndex cached = SIGNATURE_INDEX_CACHE.get(programPath);
@@ -435,11 +439,15 @@ public final class FunctionFingerprintUtil {
         }
 
         List<CachedSignatureIndex.IndexedFunction> indexed = new ArrayList<>();
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
         FunctionIterator it = program.getFunctionManager().getFunctions(true);
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String targetPath = program.getDomainFile().getPathname();
 
         while (it.hasNext()) {
+            // Ghidra API: FunctionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionIterator.html#next()
             Function f = it.next();
+            // Ghidra API: Function.isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#isExternal()
             if (f == null || f.isExternal()) {
                 continue;
             }
@@ -452,6 +460,7 @@ public final class FunctionFingerprintUtil {
             long bodySize = 0;
             int instructionCount = 0;
             try {
+                // Ghidra API: Function.getBody(), AddressSetView.getNumAddresses() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
                 bodySize = f.getBody().getNumAddresses();
                 // Extract instruction count from signature
                 int cIdx = sig.indexOf("C=");
@@ -469,11 +478,13 @@ public final class FunctionFingerprintUtil {
                 // Ignore size extraction errors
             }
 
+            // Ghidra API: Function.getName(), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
             Candidate cand = new Candidate(targetPath, f.getName(), f.getEntryPoint());
             indexed.add(new CachedSignatureIndex.IndexedFunction(cand, sig, bodySize, instructionCount));
         }
 
         // Sort by address for determinism
+        // Ghidra API: Address.compareTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#compareTo(ghidra.program.model.address.Address)
         indexed.sort((a, b) -> a.candidate().entryPoint().compareTo(b.candidate().entryPoint()));
 
         CachedSignatureIndex built = new CachedSignatureIndex(mod, maxInstructions,

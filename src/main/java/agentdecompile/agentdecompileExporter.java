@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile;
 
@@ -46,7 +29,12 @@ import ghidra.program.model.address.AddressSetView;
 import ghidra.util.task.TaskMonitor;
 
 /**
- * Provide class-level documentation that describes what this exporter does.
+ * Ghidra exporter implementation (template/skeleton).
+ * <p>
+ * Ghidra API: {@link ghidra.app.util.exporter.Exporter}, {@link ghidra.framework.model.DomainObject} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/Exporter.html">Exporter API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class agentdecompileExporter extends Exporter {
 
@@ -69,10 +57,10 @@ public class agentdecompileExporter extends Exporter {
 	}
 
 	@Override
+	// Ghidra API: Exporter.export(File, DomainObject, AddressSetView, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/Exporter.html#export(java.io.File,ghidra.framework.model.DomainObject,ghidra.program.model.address.AddressSetView,ghidra.util.task.TaskMonitor)
 	public boolean export(File file, DomainObject domainObj, AddressSetView addrSet,
 			TaskMonitor monitor) throws ExporterException, IOException {
 
-		// Perform the export, and return true if it succeeded
 
 		return false;
 	}

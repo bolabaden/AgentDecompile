@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.datatypes;
 
@@ -56,6 +39,12 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 /**
  * Tool provider for data type operations.
  * Provides tools to list data type archives and access data types.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.data.DataTypeManager}, {@link ghidra.program.model.data.DataType} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html">DataTypeManager API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Category.html">Category API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class DataTypeToolProvider extends AbstractToolProvider {
     /**
@@ -133,6 +122,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         Program targetProgram = getProgramFromArgs(request);
         List<Map<String, Object>> archivesData = new ArrayList<>();
 
+        // Ghidra API: BuiltInDataTypeManager.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/BuiltInDataTypeManager.html#getDataTypeManager()
         DataTypeManager builtInDTM = BuiltInDataTypeManager.getDataTypeManager();
         Map<String, Object> builtInInfo = new HashMap<>();
         builtInInfo.put("name", builtInDTM.getName());
@@ -142,6 +132,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         builtInInfo.put("categoryCount", builtInDTM.getCategoryCount());
         archivesData.add(builtInInfo);
 
+        // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
         DataTypeManager dtm = targetProgram.getDataTypeManager();
         Map<String, Object> archiveInfo = new HashMap<>();
         archiveInfo.put("name", dtm.getName());
@@ -149,14 +140,17 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         archiveInfo.put("id", dtm.getUniversalID() != null ? dtm.getUniversalID().getValue() : null);
         archiveInfo.put("dataTypeCount", dtm.getDataTypeCount(true));
         archiveInfo.put("categoryCount", dtm.getCategoryCount());
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         archiveInfo.put("programPath", targetProgram.getDomainFile().getPathname());
         archivesData.add(archiveInfo);
 
         List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
         for (Program program : openPrograms) {
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             if (program.getDomainFile().getPathname().equals(targetProgram.getDomainFile().getPathname())) {
                 continue;
             }
+            // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
             DataTypeManager programDtm = program.getDataTypeManager();
             Map<String, Object> programArchiveInfo = new HashMap<>();
             programArchiveInfo.put("name", programDtm.getName());
@@ -164,18 +158,22 @@ public class DataTypeToolProvider extends AbstractToolProvider {
             programArchiveInfo.put("id", programDtm.getUniversalID() != null ? programDtm.getUniversalID().getValue() : null);
             programArchiveInfo.put("dataTypeCount", programDtm.getDataTypeCount(true));
             programArchiveInfo.put("categoryCount", programDtm.getCategoryCount());
+            // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             programArchiveInfo.put("programPath", program.getDomainFile().getPathname());
             archivesData.add(programArchiveInfo);
         }
 
         agentdecompile.plugin.AgentDecompilePlugin plugin = AgentDecompileInternalServiceRegistry.getService(agentdecompile.plugin.AgentDecompilePlugin.class);
         if (plugin != null) {
+            // Ghidra API: Tool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugin/Tool.html#getService(java.lang.Class)
             DataTypeArchiveService archiveService = plugin.getTool().getService(DataTypeArchiveService.class);
             if (archiveService != null) {
+                // Ghidra API: DataTypeArchiveService.getDataTypeManagers() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/DataTypeArchiveService.html#getDataTypeManagers()
                 DataTypeManager[] managers = archiveService.getDataTypeManagers();
                 for (DataTypeManager standaloneDtm : managers) {
                     boolean isProgramDTM = false;
                     for (Program program : openPrograms) {
+                        // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
                         if (standaloneDtm == program.getDataTypeManager()) {
                             isProgramDTM = true;
                             break;
@@ -210,6 +208,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         int startIndex = getOptionalInt(request, "startIndex", 0);
         int maxCount = getOptionalInt(request, "maxCount", 100);
 
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = targetProgram.getDomainFile().getPathname();
         DataTypeManager dtm = DataTypeParserUtil.findDataTypeManager(archiveName, programPath);
         if (dtm == null) {
@@ -218,9 +217,12 @@ public class DataTypeToolProvider extends AbstractToolProvider {
 
         Category category;
         if (categoryPath.equals("/")) {
+            // Ghidra API: DataTypeManager.getRootCategory() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getRootCategory()
             category = dtm.getRootCategory();
         } else {
+            // Ghidra API: CategoryPath constructor - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/CategoryPath.html#CategoryPath(java.lang.String)
             ghidra.program.model.data.CategoryPath path = new ghidra.program.model.data.CategoryPath(categoryPath);
+            // Ghidra API: DataTypeManager.getCategory(CategoryPath) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getCategory(ghidra.program.model.data.CategoryPath)
             category = dtm.getCategory(path);
             if (category == null) {
                 return createErrorResult("Category not found: " + categoryPath);
@@ -231,6 +233,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         if (includeSubcategories) {
             addDataTypesRecursively(category, dataTypes);
         } else {
+            // Ghidra API: Category.getDataTypes() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Category.html#getDataTypes()
             for (DataType dt : category.getDataTypes()) {
                 dataTypes.add(dt);
             }
@@ -263,6 +266,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
         }
         String archiveName = getOptionalString(request, "archiveName", "");
 
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = targetProgram.getDomainFile().getPathname();
         try {
             Map<String, Object> result = DataTypeParserUtil.parseDataTypeFromString(dataTypeString, archiveName, programPath);
@@ -311,13 +315,18 @@ public class DataTypeToolProvider extends AbstractToolProvider {
                 return createErrorResult("Could not find data type: " + dataTypeString);
             }
 
+            // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionID = program.startTransaction("Apply Data Type");
             boolean success = false;
             try {
+                // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
                 ghidra.program.model.listing.Listing listing = program.getListing();
+                // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                 if (listing.getDataAt(address) != null) {
+                    // Ghidra API: Listing.clearCodeUnits(Address, Address, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#clearCodeUnits(ghidra.program.model.address.Address,ghidra.program.model.address.Address,boolean)
                     listing.clearCodeUnits(address, address.add(dataType.getLength() - 1), false);
                 }
+                // Ghidra API: Listing.createData(Address, DataType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#createData(ghidra.program.model.address.Address,ghidra.program.model.data.DataType)
                 ghidra.program.model.listing.Data createdData = listing.createData(address, dataType);
                 if (createdData == null) {
                     throw new Exception("Failed to create data at address: " + address);
@@ -332,6 +341,7 @@ public class DataTypeToolProvider extends AbstractToolProvider {
                 resultData.put("length", dataType.getLength());
                 return createJsonResult(resultData);
             } finally {
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionID, success);
             }
         } catch (Exception e) {
@@ -358,10 +368,12 @@ public class DataTypeToolProvider extends AbstractToolProvider {
             return createErrorResult("Error parsing data type: " + e.getMessage());
         }
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int transactionID = program.startTransaction("Batch Apply Data Type");
         boolean committed = false;
 
         try {
+            // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
             ghidra.program.model.listing.Listing listing = program.getListing();
 
             for (int i = 0; i < addressList.size(); i++) {
@@ -375,11 +387,14 @@ public class DataTypeToolProvider extends AbstractToolProvider {
                     }
 
                     // Clear existing data if present
+                    // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                     if (listing.getDataAt(address) != null) {
+                        // Ghidra API: Listing.clearCodeUnits(Address, Address, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#clearCodeUnits(ghidra.program.model.address.Address,ghidra.program.model.address.Address,boolean)
                         listing.clearCodeUnits(address, address.add(dataType.getLength() - 1), false);
                     }
 
                     // Create data with the specified type
+                    // Ghidra API: Listing.createData(Address, DataType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#createData(ghidra.program.model.address.Address,ghidra.program.model.data.DataType)
                     ghidra.program.model.listing.Data createdData = listing.createData(address, dataType);
                     if (createdData == null) {
                         errors.add(Map.of("index", i, "addressOrSymbol", addressOrSymbol, "error", "Failed to create data at address"));
@@ -399,12 +414,14 @@ public class DataTypeToolProvider extends AbstractToolProvider {
                 }
             }
 
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(transactionID, true);
             committed = true;
             autoSaveProgram(program, "Batch apply data type");
 
         } catch (Exception e) {
             if (!committed) {
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionID, false);
             }
             return createErrorResult("Error in batch apply data type: " + e.getMessage());
@@ -432,11 +449,13 @@ public class DataTypeToolProvider extends AbstractToolProvider {
      */
     private void addDataTypesRecursively(Category category, List<DataType> dataTypes) {
         // Add data types from this category
+        // Ghidra API: Category.getDataTypes() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Category.html#getDataTypes()
         for (DataType dt : category.getDataTypes()) {
             dataTypes.add(dt);
         }
 
         // Add data types from subcategories
+        // Ghidra API: Category.getCategories() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Category.html#getCategories()
         for (Category subCategory : category.getCategories()) {
             addDataTypesRecursively(subCategory, dataTypes);
         }

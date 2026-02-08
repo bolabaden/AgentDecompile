@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.plugin;
 
@@ -55,6 +38,12 @@ import agentdecompile.plugin.config.ToolOptionsBackend;
  * Configuration manager for the AgentDecompile plugin.
  * Supports both GUI mode (via ToolOptions) and headless mode (via file or in-memory).
  * The backend abstraction allows the same configuration API to work in different contexts.
+ * <p>
+ * Ghidra API: {@link ghidra.framework.plugintool.PluginTool} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html">PluginTool API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/options/package-summary.html">ToolOptions</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ConfigManager implements ConfigurationBackendListener {
     // Configuration option categories
@@ -166,6 +155,7 @@ public class ConfigManager implements ConfigurationBackendListener {
      * Register all options with Ghidra's options system (GUI mode only)
      */
     private void registerOptionsWithGhidra(ToolOptionsBackend toolBackend) {
+        // Ghidra API: HelpLocation.<init>(String, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/HelpLocation.html#%3Cinit%3E(java.lang.String,java.lang.String)
         HelpLocation help = new HelpLocation("AgentDecompile", "Configuration");
 
         var toolOptions = toolBackend.getToolOptions();
@@ -221,14 +211,17 @@ public class ConfigManager implements ConfigurationBackendListener {
         String apiKey;
         if (envApiKey != null && !envApiKey.trim().isEmpty()) {
             apiKey = envApiKey;
+            // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(this, "Using API key from environment variable: " + apiKey);
         } else {
             apiKey = backend.getString(SERVER_OPTIONS, API_KEY, DEFAULT_API_KEY);
             if (apiKey == null || apiKey.isEmpty()) {
                 apiKey = generateDefaultApiKey();
                 backend.setString(SERVER_OPTIONS, API_KEY, apiKey);
+                // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(this, "Generated new default API key: " + apiKey);
             } else {
+                // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(this, "Using API key from backend: " + apiKey);
             }
         }
@@ -247,6 +240,7 @@ public class ConfigManager implements ConfigurationBackendListener {
         cachedOptions.put(IMPORT_MAX_DEPTH,
             backend.getInt(SERVER_OPTIONS, IMPORT_MAX_DEPTH, DEFAULT_IMPORT_MAX_DEPTH));
 
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Loaded AgentDecompile configuration settings");
     }
 
@@ -255,6 +249,7 @@ public class ConfigManager implements ConfigurationBackendListener {
      */
     @Override
     public void onConfigurationChanged(String category, String name, Object oldValue, Object newValue) {
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Configuration changed: " + name + " from " + oldValue + " to " + newValue);
 
         // Update our cache
@@ -278,6 +273,7 @@ public class ConfigManager implements ConfigurationBackendListener {
      */
     public void addConfigChangeListener(ConfigChangeListener listener) {
         configChangeListeners.add(listener);
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Added config change listener: " + listener.getClass().getSimpleName());
     }
 
@@ -287,6 +283,7 @@ public class ConfigManager implements ConfigurationBackendListener {
      */
     public void removeConfigChangeListener(ConfigChangeListener listener) {
         configChangeListeners.remove(listener);
+        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Removed config change listener: " + listener.getClass().getSimpleName());
     }
 
@@ -302,6 +299,7 @@ public class ConfigManager implements ConfigurationBackendListener {
             try {
                 listener.onConfigChanged(category, name, oldValue, newValue);
             } catch (Exception e) {
+                // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                 Msg.error(this, "Error notifying config change listener: " + listener.getClass().getSimpleName(), e);
             }
         }
@@ -343,6 +341,7 @@ public class ConfigManager implements ConfigurationBackendListener {
         try (ServerSocket socket = new ServerSocket(0)) {
             int port = socket.getLocalPort();
             setServerPort(port);
+            // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Selected random available port: " + port);
             return port;
         }

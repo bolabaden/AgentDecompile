@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -44,25 +27,32 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import agentdecompile.plugin.ConfigManager;
 import ghidra.framework.Application;
 import ghidra.util.Msg;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.Content;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
-import agentdecompile.plugin.ConfigManager;
 
 /**
  * Logger for MCP tool requests and responses.
  * Writes JSON Lines format to a separate log file (agentdecompile-tools.log) for debugging.
- *
+ * <p>
  * Log format:
  * - REQUEST: {"timestamp":"...", "type":"REQUEST", "tool":"...", "requestId":"...", "params":{...}}
  * - RESPONSE: {"timestamp":"...", "type":"RESPONSE", "tool":"...", "requestId":"...", "durationMs":..., "isError":..., "content":{...}}
- *
  * NOTE: Content is decoded JSON (not escaped string) for easy parsing/grepping.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.framework.Application} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html">Application API</a>.
+ * MCP: {@link io.modelcontextprotocol.spec.McpSchema.CallToolResult} -
+ * <a href="https://modelcontextprotocol.io/">MCP spec</a>.
+ * </p>
  */
 public class AgentDecompileToolLogger {
 
@@ -107,7 +97,8 @@ public class AgentDecompileToolLogger {
             entry.put("params", params != null ? params : Map.of());
 
             writeLogEntry(JSON.writeValueAsString(entry));
-        } catch (Exception e) {
+        } catch (JsonProcessingException e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to log request: " + e.getMessage());
         }
     }
@@ -144,6 +135,7 @@ public class AgentDecompileToolLogger {
 
             writeLogEntry(JSON.writeValueAsString(entry));
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to log response: " + e.getMessage());
         }
     }
@@ -173,6 +165,7 @@ public class AgentDecompileToolLogger {
 
             writeLogEntry(JSON.writeValueAsString(entry));
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to log error response: " + e.getMessage());
         }
     }
@@ -215,6 +208,7 @@ public class AgentDecompileToolLogger {
 
             writeLogEntry(JSON.writeValueAsString(entry));
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to log HTTP request: " + e.getMessage());
         }
     }
@@ -257,6 +251,7 @@ public class AgentDecompileToolLogger {
 
             writeLogEntry(JSON.writeValueAsString(entry));
         } catch (Exception e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to log HTTP response: " + e.getMessage());
         }
     }
@@ -293,6 +288,7 @@ public class AgentDecompileToolLogger {
             }
 
             // Create log directory in Ghidra user settings
+            // Ghidra API: Application.getUserSettingsDirectory() - https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html#getUserSettingsDirectory()
             File userSettingsDir = Application.getUserSettingsDirectory();
             File agentdecompileDir = new File(userSettingsDir, "agentdecompile");
             if (!agentdecompileDir.exists()) {
@@ -302,8 +298,10 @@ public class AgentDecompileToolLogger {
             logFile = new File(agentdecompileDir, "agentdecompile-tools.log");
             initialized = true;
 
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Tool logger initialized: " + logFile.getAbsolutePath());
         } catch (Exception e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(AgentDecompileToolLogger.class, "Failed to initialize tool logger", e);
         } finally {
             LOCK.unlock();
@@ -331,6 +329,7 @@ public class AgentDecompileToolLogger {
                 writer.println(logLine);
             }
         } catch (IOException e) {
+            // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
             Msg.debug(AgentDecompileToolLogger.class, "Failed to write log entry: " + e.getMessage());
         } finally {
             LOCK.unlock();
@@ -357,6 +356,7 @@ public class AgentDecompileToolLogger {
             File to = new File(logFile.getParent(), logFile.getName() + "." + (i + 1));
             if (from.exists()) {
                 if (!from.renameTo(to)) {
+                    // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                     Msg.warn(AgentDecompileToolLogger.class, "Failed to rotate log file: " + from);
                 }
             }
@@ -365,9 +365,11 @@ public class AgentDecompileToolLogger {
         // Rotate current log
         File rotation1 = new File(logFile.getParent(), logFile.getName() + ".1");
         if (!logFile.renameTo(rotation1)) {
+            // Ghidra API: Msg.warn(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
             Msg.warn(AgentDecompileToolLogger.class, "Failed to rotate current log file: " + logFile);
         }
 
+        // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(AgentDecompileToolLogger.class, "Rotated log files");
     }
 

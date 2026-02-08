@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.xrefs;
 
@@ -78,10 +61,17 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
  * Tool provider for cross-reference operations. Provides a unified tool to
  * retrieve references to and from addresses or symbols with optional
  * decompilation context snippets.
- *
+ * <p>
  * NOTE: For thunk chain resolution, this provider delegates to
  * ImportExportToolProvider to benefit from upstream updates to disabled tool
  * handlers.
+ * </p>
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.symbol.ReferenceManager}, {@link ghidra.program.model.symbol.Reference} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html">ReferenceManager API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html">DecompInterface API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class CrossReferencesToolProvider extends AbstractToolProvider {
 
@@ -285,6 +275,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     result.put("references", new ArrayList<>());
                     result.put("count", 0);
@@ -311,14 +302,18 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         if (limit <= 0) limit = 100;
         if (limit > 1000) limit = 1000;
 
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
         List<Map<String, Object>> references = new ArrayList<>();
 
+        // Ghidra API: Address.isStackAddress(), Address.isRegisterAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#isStackAddress()
         if (!address.isStackAddress() && !address.isRegisterAddress()) {
+            // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
             ReferenceIterator refIter = refManager.getReferencesTo(address);
             List<Map<String, Object>> allRefs = new ArrayList<>();
 
             while (refIter.hasNext()) {
+                // Ghidra API: ReferenceIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceIterator.html#next()
                 Reference ref = refIter.next();
                 allRefs.add(createReferenceInfo(ref, program, false, 2, true));
             }
@@ -353,12 +348,16 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         if (limit <= 0) limit = 100;
         if (limit > 1000) limit = 1000;
 
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
         List<Map<String, Object>> allRefs = new ArrayList<>();
 
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function function = program.getFunctionManager().getFunctionContaining(address);
         if (function != null) {
+            // Ghidra API: Function.getBody(), AddressSetView.getAddresses(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
             for (Address addr : function.getBody().getAddresses(true)) {
+                // Ghidra API: ReferenceManager.getReferencesFrom(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesFrom(ghidra.program.model.address.Address)
                 Reference[] refs = refManager.getReferencesFrom(addr);
                 for (Reference ref : refs) {
                     allRefs.add(createReferenceInfo(ref, program, false, 2, false));
@@ -404,7 +403,9 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         int totalToCount = 0;
         int totalFromCount = 0;
 
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
 
         if (includeTo && !address.isStackAddress() && !address.isRegisterAddress()) {
@@ -434,6 +435,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
                     }
                 }
             } else {
+                // Ghidra API: ReferenceManager.getReferencesFrom(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesFrom(ghidra.program.model.address.Address)
                 Reference[] refs = refManager.getReferencesFrom(address);
                 for (Reference ref : refs) {
                     allRefsFrom.add(createReferenceInfo(ref, program, false, 2, false));
@@ -469,6 +471,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         if (limit > 1000) limit = 1000;
 
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: Function.getEntryPoint(), ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         ReferenceIterator refIter = refManager.getReferencesTo(function.getEntryPoint());
         List<Map<String, Object>> allRefs = new ArrayList<>();
 
@@ -511,19 +514,20 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         ReferenceIterator refIter = refManager.getReferencesTo(targetAddress);
         Set<Function> referencingFunctions = new HashSet<>();
         Map<Function, List<Map<String, Object>>> refDetails = new HashMap<>();
-        // Also store raw addresses for line number lookup
         Map<Function, List<Address>> refAddressesMap = new HashMap<>();
 
         final int MAX_TOTAL_REFERENCERS = 500;
         while (refIter.hasNext() && referencingFunctions.size() < MAX_TOTAL_REFERENCERS) {
             Reference ref = refIter.next();
 
-            // Filter by reference type if requested
+            // Ghidra API: Reference.getReferenceType(), ReferenceType.isFlow() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getReferenceType()
             if (!includeDataRefs && !ref.getReferenceType().isFlow()) {
                 continue;
             }
 
+            // Ghidra API: Reference.getFromAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getFromAddress()
             Address fromAddr = ref.getFromAddress();
+            // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
             Function refFunc = program.getFunctionManager().getFunctionContaining(fromAddr);
             if (refFunc != null) {
                 referencingFunctions.add(refFunc);
@@ -552,10 +556,9 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             ? refList.subList(startIndex, endIndex)
             : List.of();
 
-        // Get program path for tracking
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
 
-        // Decompile each referencing function
         List<Map<String, Object>> decompiledFunctions = new ArrayList<>();
         DecompInterface decompiler = createConfiguredDecompilerForReferences(program);
 
@@ -572,6 +575,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
 
                 DecompilationAttempt attempt = decompileFunctionSafelyForReferences(decompiler, refFunc);
                 if (attempt.success()) {
+                    // Ghidra API: DecompileResults.getDecompiledFunction(), DecompiledFunction.getC() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#getDecompiledFunction()
                     String decompCode = attempt.results().getDecompiledFunction().getC();
                     funcResult.put("decompilation", decompCode);
                     funcResult.put("success", true);
@@ -596,6 +600,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
                 decompiledFunctions.add(funcResult);
             }
         } finally {
+            // Ghidra API: DecompInterface.dispose() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#dispose()
             decompiler.dispose();
         }
 
@@ -642,6 +647,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("searchedImport", target);
         result.put("matchedImports", importInfoList);
@@ -655,15 +661,16 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         if (address == null) {
             return createErrorResult("Could not resolve address or symbol: " + target);
         }
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function function = program.getFunctionManager().getFunctionAt(address);
         if (function == null) {
+            // Ghidra API: FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
             function = program.getFunctionManager().getFunctionContaining(address);
         }
         if (function == null) {
             return createErrorResult("No function found at address: " + AddressUtil.formatAddress(address));
         }
 
-        // Delegate to ImportExportToolProvider to benefit from upstream updates
         List<Map<String, Object>> chain = importExportHelper.buildThunkChain(function);
         Map<String, Object> finalTarget = chain.get(chain.size() - 1);
         boolean isResolved = !Boolean.TRUE.equals(finalTarget.get("isThunk"));
@@ -696,9 +703,9 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
                                                     boolean includeContext, int contextLines,
                                                     boolean isIncoming) {
         Map<String, Object> refInfo = new HashMap<>();
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
 
-        // Basic reference information
         refInfo.put("fromAddress", AddressUtil.formatAddress(ref.getFromAddress()));
         refInfo.put("toAddress", AddressUtil.formatAddress(ref.getToAddress()));
         refInfo.put("referenceType", ref.getReferenceType().toString());
@@ -711,7 +718,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         refInfo.put("isRead", ref.getReferenceType().isRead());
         refInfo.put("isWrite", ref.getReferenceType().isWrite());
 
-        // Add symbol information for both addresses
+        // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
         Symbol fromSymbol = symbolTable.getPrimarySymbol(ref.getFromAddress());
         if (fromSymbol != null) {
             Map<String, Object> fromSymbolInfo = new HashMap<>();
@@ -734,7 +741,6 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             refInfo.put("toSymbol", toSymbolInfo);
         }
 
-        // Add function information and optional decompilation context
         Address contextAddress = isIncoming ? ref.getFromAddress() : ref.getToAddress();
         Function contextFunction = program.getFunctionManager().getFunctionContaining(contextAddress);
 
@@ -775,6 +781,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         decompiler.toggleSyntaxTree(true);
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
             logError("get-references: Failed to initialize decompiler for " + program.getName());
             decompiler.dispose();
@@ -787,6 +794,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             DecompInterface decompiler,
             Function function) {
         TaskMonitor timeoutMonitor = createTimeoutMonitorForReferences();
+        // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
         DecompileResults results = decompiler.decompileFunction(function, 0, timeoutMonitor);
 
         if (timeoutMonitor.isCancelled()) {
@@ -811,18 +819,22 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             return lineNumbers;
         }
 
+        // Ghidra API: DecompileResults.getCCodeMarkup() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#getCCodeMarkup()
         ClangTokenGroup markup = results.getCCodeMarkup();
         if (markup == null) {
             return lineNumbers;
         }
 
         Set<Address> addressSet = new HashSet<>(addresses);
+        // Ghidra API: DecompilerUtils.toLines(ClangTokenGroup) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html#toLines(ghidra.app.decompiler.ClangTokenGroup)
         List<ClangLine> lines = DecompilerUtils.toLines(markup);
 
         for (ClangLine line : lines) {
             for (ClangToken token : line.getAllTokens()) {
+                // Ghidra API: ClangToken.getMinAddress() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangToken.html#getMinAddress()
                 Address tokenAddr = token.getMinAddress();
                 if (tokenAddr != null && addressSet.contains(tokenAddr)) {
+                    // Ghidra API: ClangLine.getLineNumber() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangLine.html#getLineNumber()
                     lineNumbers.add(line.getLineNumber());
                     break; // Only add line once
                 }
@@ -852,6 +864,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
      */
     private List<Function> findImportsByName(Program program, String importName, String libraryName) {
         List<Function> matches = new ArrayList<>();
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getExternalFunctions() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getExternalFunctions()
         FunctionIterator externalFunctions = program.getFunctionManager().getExternalFunctions();
 
         while (externalFunctions.hasNext()) {
@@ -862,6 +875,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             }
 
             if (libraryName != null && !libraryName.isEmpty()) {
+                // Ghidra API: Function.getExternalLocation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getExternalLocation()
                 ExternalLocation extLoc = func.getExternalLocation();
                 if (extLoc == null || !extLoc.getLibraryName().equalsIgnoreCase(libraryName)) {
                     continue;
@@ -884,8 +898,9 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
 
         while (allFunctions.hasNext()) {
             Function func = allFunctions.next();
+            // Ghidra API: Function.isThunk(), getThunkedFunction(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#isThunk()
             if (func.isThunk()) {
-                Function target = func.getThunkedFunction(true); // Resolve fully
+                Function target = func.getThunkedFunction(true);
                 if (target != null && target.isExternal()) {
                     thunkMap.computeIfAbsent(target, k -> new ArrayList<>()).add(func);
                 }
@@ -912,7 +927,6 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         for (Function importFunc : matchingImports) {
             if (references.size() >= maxResults) break;
 
-            // Collect all addresses to check: the import and its thunks
             List<AddressWithThunkInfo> targets = new ArrayList<>();
 
             Address importAddr = importFunc.getEntryPoint();
@@ -944,7 +958,6 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
 
                     Map<String, Object> refInfo = createReferenceInfo(ref, program, false, 2, true);
 
-                    // Add import-specific information
                     refInfo.put("importName", importFunc.getName());
                     ExternalLocation extLoc = importFunc.getExternalLocation();
                     if (extLoc != null) {
@@ -979,6 +992,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
         ExternalLocation extLoc = importFunc.getExternalLocation();
         if (extLoc != null) {
             info.put("library", extLoc.getLibraryName());
+            // Ghidra API: ExternalLocation.getOriginalImportedName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ExternalLocation.html#getOriginalImportedName()
             String originalName = extLoc.getOriginalImportedName();
             if (originalName != null && !originalName.equals(importFunc.getName())) {
                 info.put("originalName", originalName);
@@ -992,6 +1006,7 @@ public class CrossReferencesToolProvider extends AbstractToolProvider {
             }
         }
 
+        // Ghidra API: Function.getSignature(), FunctionSignature.getPrototypeString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getSignature()
         if (importFunc.getSignature() != null) {
             info.put("signature", importFunc.getSignature().getPrototypeString());
         }

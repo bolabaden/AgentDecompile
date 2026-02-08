@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.getfunction;
 
@@ -81,6 +64,13 @@ import agentdecompile.tools.ProgramValidationException;
 /**
  * Tool provider for get-function.
  * Provides function details in various formats: decompiled code, assembly, function information, or internal calls.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Function}, {@link ghidra.app.decompiler.DecompInterface} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html">Function API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html">DecompInterface API</a>,
+ * {@link ghidra.util.UndefinedFunction} for addresses without defined functions.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class GetFunctionToolProvider extends AbstractToolProvider {
 
@@ -226,6 +216,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 // Intelligent bookmarking: check if function entry point should be bookmarked
                 double bookmarkPercentile = agentdecompile.util.EnvConfigUtil.getDoubleDefault("auto_bookmark_percentile",
                     agentdecompile.util.IntelligentBookmarkUtil.getDefaultPercentile());
+                // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                 agentdecompile.util.IntelligentBookmarkUtil.checkAndBookmarkIfFrequent(program, function.getEntryPoint(), bookmarkPercentile);
 
                 return switch (view) {
@@ -243,6 +234,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     return createJsonResult(result);
                 }
@@ -265,6 +257,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             }
             // Try undefined function
             TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(10, TimeUnit.SECONDS);
+            // Ghidra API: UndefinedFunction.findFunction(Program, Address, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/util/UndefinedFunction.html#findFunction(ghidra.program.model.listing.Program,ghidra.program.model.address.Address,ghidra.util.task.TaskMonitor)
             Function undefinedFunction = UndefinedFunction.findFunction(program, address, monitor);
             if (undefinedFunction != null) {
                 return undefinedFunction;
@@ -272,10 +265,14 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         }
 
         // Try as function name
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager functionManager = program.getFunctionManager();
+        // Ghidra API: FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
         FunctionIterator functions = functionManager.getFunctions(true);
         while (functions.hasNext()) {
+            // Ghidra API: FunctionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionIterator.html#next()
             Function f = functions.next();
+            // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
             if (f.getName().equals(identifier) || f.getName().equalsIgnoreCase(identifier)) {
                 return f;
             }
@@ -294,8 +291,11 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         boolean includeReferenceContext = getOptionalBoolean(request, "includeReferenceContext", true);
 
         Map<String, Object> resultData = new HashMap<>();
+        // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
         resultData.put("function", function.getName());
+        // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         resultData.put("address", AddressUtil.formatAddress(function.getEntryPoint()));
+        // Ghidra API: Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
         resultData.put("programName", program.getName());
 
         DecompInterface decompiler = createConfiguredDecompiler(program);
@@ -307,20 +307,25 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
 
         try {
             TaskMonitor monitor = createTimeoutMonitor();
+            // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
             DecompileResults decompileResults = decompiler.decompileFunction(function, 0, monitor);
 
+            // Ghidra API: TaskMonitor.isCancelled() - https://ghidra.re/ghidra_docs/api/ghidra/util/task/TaskMonitor.html#isCancelled()
             if (monitor.isCancelled()) {
                 return createErrorResult("Decompilation timed out after " + getTimeoutSeconds() + " seconds");
             }
 
+            // Ghidra API: DecompileResults.decompileCompleted(), getErrorMessage() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#decompileCompleted()
             if (!decompileResults.decompileCompleted()) {
                 return createErrorResult("Decompilation failed: " + decompileResults.getErrorMessage());
             }
 
+            // Ghidra API: DecompileResults.getDecompiledFunction(), getCCodeMarkup() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#getDecompiledFunction()
             DecompiledFunction decompiledFunction = decompileResults.getDecompiledFunction();
             ClangTokenGroup markup = decompileResults.getCCodeMarkup();
 
             // Get synchronized decompilation with optional comments and incoming references
+            // Ghidra API: DecompiledFunction.getC() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompiledFunction.html#getC()
             Map<String, Object> syncedContent = getSynchronizedContent(program, markup, decompiledFunction.getC(),
                 offset, limit, false, includeComments, includeIncomingReferences, includeReferenceContext, function);
 
@@ -334,11 +339,13 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             }
 
             // Get additional details
+            // Ghidra API: DecompiledFunction.getSignature() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompiledFunction.html#getSignature()
             resultData.put("decompSignature", decompiledFunction.getSignature());
 
             // Add callers/callees if requested
             if (includeCallers) {
                 List<Function> callers = new ArrayList<>();
+                // Ghidra API: Function.getCallingFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingFunctions(ghidra.util.task.TaskMonitor)
                 for (Function caller : function.getCallingFunctions(monitor)) {
                     callers.add(caller);
                 }
@@ -354,6 +361,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
 
             if (includeCallees) {
                 List<Function> callees = new ArrayList<>();
+                // Ghidra API: Function.getCalledFunctions(TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCalledFunctions(ghidra.util.task.TaskMonitor)
                 for (Function callee : function.getCalledFunctions(monitor)) {
                     callees.add(callee);
                 }
@@ -372,22 +380,29 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             logError("Error during decompilation", e);
             return createErrorResult("Exception during decompilation: " + e.getMessage());
         } finally {
+            // Ghidra API: DecompInterface.dispose() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#dispose()
             decompiler.dispose();
         }
     }
 
     private McpSchema.CallToolResult handleDisassembleView(Program program, Function function) {
         List<Map<String, Object>> instructions = new ArrayList<>();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
+        // Ghidra API: Listing.getInstructions(AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(ghidra.program.model.address.AddressSetView,boolean)
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         for (Instruction instr : listing.getInstructions(function.getBody(), true)) {
             Map<String, Object> instrData = new HashMap<>();
+            // Ghidra API: Instruction.getMinAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getMinAddress()
             Address addr = instr.getMinAddress();
             instrData.put("address", AddressUtil.formatAddress(addr));
             instrData.put("instruction", instr.toString());
 
+            // Ghidra API: Listing.getCodeUnitAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getCodeUnitAt(ghidra.program.model.address.Address)
             CodeUnit codeUnit = listing.getCodeUnitAt(addr);
             if (codeUnit != null) {
+                // Ghidra API: CodeUnit.getComment(CommentType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html#getComment(ghidra.program.model.listing.CommentType)
                 String comment = codeUnit.getComment(CommentType.EOL);
                 if (comment == null || comment.isEmpty()) {
                     comment = codeUnit.getComment(CommentType.PRE);
@@ -411,16 +426,20 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         Map<String, Object> info = new HashMap<>();
         info.put("name", function.getName());
         info.put("address", AddressUtil.formatAddress(function.getEntryPoint()));
+        // Ghidra API: Function.getReturnType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getReturnType()
         info.put("returnType", function.getReturnType().toString());
+        // Ghidra API: Function.getCallingConventionName(), isExternal(), isThunk() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getCallingConventionName()
         info.put("callingConvention", function.getCallingConventionName());
         info.put("isExternal", function.isExternal());
         info.put("isThunk", function.isThunk());
 
         // Parameters
         List<Map<String, Object>> parameters = new ArrayList<>();
+        // Ghidra API: Function.getParameterCount(), getParameter(int) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getParameterCount()
         for (int i = 0; i < function.getParameterCount(); i++) {
             Parameter param = function.getParameter(i);
             Map<String, Object> paramInfo = new HashMap<>();
+            // Ghidra API: Parameter.getName(), getDataType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Parameter.html#getName()
             paramInfo.put("name", param.getName());
             paramInfo.put("dataType", param.getDataType().toString());
             paramInfo.put("ordinal", i);
@@ -430,6 +449,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
 
         // Local variables
         List<Map<String, Object>> locals = new ArrayList<>();
+        // Ghidra API: Function.getLocalVariables() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getLocalVariables()
         for (Variable local : function.getLocalVariables()) {
             Map<String, Object> localInfo = new HashMap<>();
             localInfo.put("name", local.getName());
@@ -439,9 +459,11 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         info.put("localVariables", locals);
 
         // Function body info
+        // Ghidra API: Function.getBody() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
         var body = function.getBody();
         if (body != null && body.getMaxAddress() != null) {
             info.put("startAddress", AddressUtil.formatAddress(function.getEntryPoint()));
+            // Ghidra API: AddressSetView.getMaxAddress(), getNumAddresses() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSetView.html#getMaxAddress()
             info.put("endAddress", AddressUtil.formatAddress(body.getMaxAddress()));
             info.put("sizeInBytes", body.getNumAddresses());
         }
@@ -454,8 +476,10 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         Listing listing = program.getListing();
 
         for (Instruction instr : listing.getInstructions(function.getBody(), true)) {
+            // Ghidra API: Instruction.getFlows() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getFlows()
             Address[] flowDestinations = instr.getFlows();
             for (Address dest : flowDestinations) {
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 Function calledFunc = program.getFunctionManager().getFunctionAt(dest);
                 if (calledFunc != null) {
                     Map<String, Object> callInfo = new HashMap<>();
@@ -482,10 +506,12 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
 
     private DecompInterface createConfiguredDecompiler(Program program) {
         DecompInterface decompiler = new DecompInterface();
+        // Ghidra API: DecompInterface.toggleCCode(boolean), toggleSyntaxTree(boolean), setSimplificationStyle(String) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
             logError("Failed to initialize decompiler for " + program.getName());
             decompiler.dispose();
@@ -535,8 +561,10 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             if (includeIncomingReferences) {
                 int maxIncomingRefs = 10;
                 int totalRefCount = 0;
+                // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
                 var refIterator = program.getReferenceManager().getReferencesTo(function.getEntryPoint());
                 while (refIterator.hasNext()) {
+                    // Ghidra API: ReferenceIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceIterator.html#next()
                     refIterator.next();
                     totalRefCount++;
                 }
@@ -597,9 +625,12 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             Listing listing = program.getListing();
             var body = function.getBody();
 
+            // Ghidra API: Listing.getCodeUnits(AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getCodeUnits(ghidra.program.model.address.AddressSetView,boolean)
             CodeUnitIterator codeUnits = listing.getCodeUnits(body, true);
             while (codeUnits.hasNext()) {
+                // Ghidra API: CodeUnitIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnitIterator.html#next()
                 CodeUnit cu = codeUnits.next();
+                // Ghidra API: CodeUnit.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html#getAddress()
                 Address addr = cu.getAddress();
 
                 // Check all comment types
@@ -619,6 +650,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
      */
     private void addCommentIfExists(List<Map<String, Object>> comments, CodeUnit cu,
             CommentType commentType, String typeString, Address address) {
+        // Ghidra API: CodeUnit.getComment(CommentType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html#getComment(ghidra.program.model.listing.CommentType)
         String comment = cu.getComment(commentType);
         if (comment != null && !comment.isEmpty()) {
             Map<String, Object> commentInfo = new HashMap<>();
@@ -741,6 +773,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 for (String path : programPaths) {
                     try {
                         Program p = agentdecompile.util.ProgramLookupUtil.getValidatedProgram(path);
+                        // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
                         if (p != null && !p.isClosed()) {
                             programs.add(p);
                         }
@@ -765,7 +798,9 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             
             for (Program program : programs) {
                 // Track initial function count for signature scanning
+                // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 FunctionManager funcManager = program.getFunctionManager();
+                // Ghidra API: FunctionManager.getFunctionCount() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionCount()
                 int initialFunctionCount = funcManager.getFunctionCount();
                 
                 // Run signature scanning to discover undefined functions
@@ -774,15 +809,16 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 // Get final function count
                 int finalFunctionCount = funcManager.getFunctionCount();
                 int functionsDiscovered = finalFunctionCount - initialFunctionCount;
-                
+
                 // Collect all functions
                 List<Map<String, Object>> functions = new ArrayList<>();
                 FunctionIterator funcIter = funcManager.getFunctions(true);
                 TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(300, TimeUnit.SECONDS);
-                
+
                 while (funcIter.hasNext() && !monitor.isCancelled()) {
                     Function function = funcIter.next();
-                    
+
+                    // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
                     if (filterDefaultNames && agentdecompile.util.SymbolUtil.isDefaultSymbolName(function.getName())) {
                         continue;
                     }
@@ -799,6 +835,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 actions.put("finalFunctionCount", finalFunctionCount);
                 
                 Map<String, Object> programResult = new HashMap<>();
+                // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 programResult.put("programPath", program.getDomainFile().getPathname());
                 programResult.put("totalFunctions", functions.size());
                 programResult.put("functions", functions);
@@ -832,17 +869,18 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
         info.put("name", function.getName());
         info.put("address", AddressUtil.formatAddress(function.getEntryPoint()));
         info.put("returnType", function.getReturnType().toString());
+        // Ghidra API: Function.getSignature() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getSignature()
         info.put("signature", function.getSignature().toString());
         info.put("callingConvention", function.getCallingConventionName());
         info.put("isExternal", function.isExternal());
         info.put("isThunk", function.isThunk());
-        
+
         var body = function.getBody();
         if (body != null && body.getMaxAddress() != null) {
             info.put("endAddress", AddressUtil.formatAddress(body.getMaxAddress()));
             info.put("sizeInBytes", body.getNumAddresses());
         }
-        
+
         // Parameters
         List<Map<String, Object>> parameters = new ArrayList<>();
         for (int i = 0; i < function.getParameterCount(); i++) {
@@ -877,7 +915,9 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                 while (refsTo.hasNext() && !monitor.isCancelled()) {
                     if (++refCount % 1000 == 0 && monitor.isCancelled()) break;
                     var ref = refsTo.next();
+                    // Ghidra API: Reference.getReferenceType(), ReferenceType.isCall() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getReferenceType()
                     if (ref.getReferenceType().isCall()) {
+                        // Ghidra API: Reference.getFromAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getFromAddress()
                         Function caller = program.getFunctionManager().getFunctionContaining(ref.getFromAddress());
                         if (caller != null) {
                             callerAddresses.add(caller.getEntryPoint());
@@ -885,14 +925,16 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                     }
                 }
                 callerCount = monitor.isCancelled() ? -1 : callerAddresses.size();
-                
+
                 if (!monitor.isCancelled()) {
                     Set<Address> calleeAddresses = new HashSet<>();
                     for (Instruction instr : program.getListing().getInstructions(body, true)) {
                         if (monitor.isCancelled()) break;
+                        // Ghidra API: Instruction.getReferencesFrom() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getReferencesFrom()
                         Reference[] refsFrom = instr.getReferencesFrom();
                         for (Reference ref : refsFrom) {
                             if (ref.getReferenceType().isCall()) {
+                                // Ghidra API: Reference.getToAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getToAddress()
                                 Function callee = program.getFunctionManager().getFunctionAt(ref.getToAddress());
                                 if (callee == null) {
                                     callee = program.getFunctionManager().getFunctionContaining(ref.getToAddress());
@@ -927,17 +969,15 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
             FunctionManager funcManager = program.getFunctionManager();
             Listing listing = program.getListing();
             TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(60, TimeUnit.SECONDS);
-            
-            // Find undefined functions (addresses that are called but don't have functions)
+
             Set<Address> calledAddresses = new HashSet<>();
             FunctionIterator funcIter = funcManager.getFunctions(true);
-            
-            // Collect all call targets
+
             while (funcIter.hasNext() && !monitor.isCancelled()) {
                 Function func = funcIter.next();
                 AddressSetView body = func.getBody();
                 if (body == null) continue;
-                
+
                 for (Instruction instr : listing.getInstructions(body, true)) {
                     if (monitor.isCancelled()) break;
                     Reference[] refs = instr.getReferencesFrom();
@@ -946,7 +986,6 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                             Address targetAddr = ref.getToAddress();
                             Function targetFunc = funcManager.getFunctionAt(targetAddr);
                             if (targetFunc == null) {
-                                // Check if it's valid code
                                 CodeUnit cu = listing.getCodeUnitAt(targetAddr);
                                 if (cu != null && cu instanceof Instruction) {
                                     calledAddresses.add(targetAddr);
@@ -956,14 +995,15 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                     }
                 }
             }
-            
-            // Try to create functions at undefined call targets
+
+            // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int txId = program.startTransaction("Signature Scanning - Create Functions");
             try {
                 for (Address addr : calledAddresses) {
                     if (monitor.isCancelled()) break;
                     if (funcManager.getFunctionAt(addr) == null) {
                         try {
+                            // Ghidra API: FunctionManager.createFunction(String, Address, AddressSetView, SourceType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#createFunction(java.lang.String,ghidra.program.model.address.Address,ghidra.program.model.address.AddressSetView,ghidra.program.model.symbol.SourceType)
                             Function newFunc = funcManager.createFunction(null, addr, null, ghidra.program.model.symbol.SourceType.ANALYSIS);
                             if (newFunc != null) {
                                 functionsCreated++;
@@ -977,6 +1017,7 @@ public class GetFunctionToolProvider extends AbstractToolProvider {
                         }
                     }
                 }
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(txId, true);
             } catch (Exception e) {
                 program.endTransaction(txId, false);

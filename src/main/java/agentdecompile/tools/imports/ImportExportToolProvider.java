@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /**
@@ -80,6 +63,12 @@ import agentdecompile.util.AddressUtil;
  * so {@code getExternalEntryPointIterator()} correctly returns all PE exports.</p>
  *
  * DISABLED: This provider is not registered. Tools were merged into SymbolToolProvider.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.symbol.SymbolTable#getExternalEntryPointIterator()},
+ * {@link ghidra.program.model.symbol.ExternalLocation} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html">SymbolTable API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ImportExportToolProvider extends AbstractToolProvider {
 
@@ -126,10 +115,12 @@ public class ImportExportToolProvider extends AbstractToolProvider {
      */
     public List<Map<String, Object>> collectImports(Program program, String libraryFilter) {
         List<Map<String, Object>> imports = new ArrayList<>();
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getExternalFunctions() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionIterator externalFunctions = program.getFunctionManager().getExternalFunctions();
 
         while (externalFunctions.hasNext()) {
             Function func = externalFunctions.next();
+            // Ghidra API: Function.getExternalLocation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getExternalLocation()
             ExternalLocation extLoc = func.getExternalLocation();
             String library = extLoc != null ? extLoc.getLibraryName() : "<unknown>";
 
@@ -188,9 +179,11 @@ public class ImportExportToolProvider extends AbstractToolProvider {
      */
     public List<Map<String, Object>> collectExports(Program program) {
         List<Map<String, Object>> exports = new ArrayList<>();
+        // Ghidra API: Program.getSymbolTable(), getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
         FunctionManager funcManager = program.getFunctionManager();
 
+        // Ghidra API: SymbolTable.getExternalEntryPointIterator() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getExternalEntryPointIterator()
         AddressIterator entryPoints = symbolTable.getExternalEntryPointIterator();
         while (entryPoints.hasNext()) {
             Address addr = entryPoints.next();
@@ -198,6 +191,7 @@ public class ImportExportToolProvider extends AbstractToolProvider {
             Map<String, Object> info = new HashMap<>();
             info.put("address", AddressUtil.formatAddress(addr));
 
+            // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
             Symbol symbol = symbolTable.getPrimarySymbol(addr);
             if (symbol != null) {
                 info.put("name", symbol.getName());
@@ -424,6 +418,7 @@ public class ImportExportToolProvider extends AbstractToolProvider {
         Program program = getProgramFromArgs(request);
         Address address = getAddressFromArgs(request, program, "address");
 
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionAt(Address), getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function function = program.getFunctionManager().getFunctionAt(address);
         if (function == null) {
             function = program.getFunctionManager().getFunctionContaining(address);

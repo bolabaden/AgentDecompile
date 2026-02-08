@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools;
 
@@ -69,6 +52,16 @@ import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
 /**
  * Base implementation of the ToolProvider interface.
  * Provides common functionality for all tool providers.
+ * <p>
+ * MCP Java SDK references:
+ * <ul>
+ *   <li>{@link io.modelcontextprotocol.server.McpSyncServer} - <a href="https://github.com/modelcontextprotocol/java-sdk">MCP Java SDK</a></li>
+ *   <li>{@link io.modelcontextprotocol.spec.McpSchema} - Tool, CallToolRequest, CallToolResult, JsonSchema</li>
+ *   <li>MCP Server docs: <a href="https://modelcontextprotocol.info/docs/sdk/java/mcp-server/">MCP Java Server</a></li>
+ * </ul>
+ * Ghidra API: {@link ghidra.program.model.listing.Program}, {@link ghidra.program.model.listing.Function},
+ * {@link ghidra.program.model.symbol.SymbolTable} - <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API</a>
+ * </p>
  */
 public abstract class AbstractToolProvider implements ToolProvider {
     protected static final ObjectMapper JSON = new ObjectMapper();
@@ -203,7 +196,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
                 // Log request
                 AgentDecompileToolLogger.logRequest(tool.name(), requestId, request.arguments());
 
-                // Log to Ghidra's application log for correlation
+                // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                 Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool call: %s",
                     requestId, tool.name()));
 
@@ -215,7 +208,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
                     AgentDecompileToolLogger.logResponse(tool.name(), requestId, durationMs,
                         result != null && result.isError(), result);
 
-                    // Log completion to Ghidra's application log
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool completed: %s (%dms)",
                         requestId, tool.name(), durationMs));
 
@@ -223,12 +216,14 @@ public abstract class AbstractToolProvider implements ToolProvider {
                 } catch (IllegalArgumentException | ProgramValidationException e) {
                     long durationMs = System.currentTimeMillis() - startTime;
                     AgentDecompileToolLogger.logError(tool.name(), requestId, durationMs, e.getMessage());
+                    // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                     Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool error: %s - %s (%dms)",
                         requestId, tool.name(), e.getMessage(), durationMs));
                     return createErrorResult(e.getMessage());
                 } catch (Exception e) {
                     long durationMs = System.currentTimeMillis() - startTime;
                     AgentDecompileToolLogger.logError(tool.name(), requestId, durationMs, e.getMessage());
+                    // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
                     Msg.error(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool failed: %s (%dms)",
                         requestId, tool.name(), durationMs), e);
                     return createErrorResult("Tool execution failed: " + e.getMessage());
@@ -249,6 +244,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
      * @param message The message to log
      */
     protected void logError(String message) {
+        // Ghidra API: Msg.error(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object)
         Msg.error(this, message);
     }
 
@@ -258,6 +254,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
      * @param e The exception that caused the error
      */
     protected void logError(String message, Exception e) {
+        // Ghidra API: Msg.error(Object, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
         Msg.error(this, message, e);
     }
 
@@ -266,6 +263,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
      * @param message The message to log
      */
     protected void logInfo(String message) {
+        // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
         Msg.info(this, message);
     }
 
@@ -759,16 +757,87 @@ public abstract class AbstractToolProvider implements ToolProvider {
 
     /**
      * Get a validated program from MCP arguments. Handles parameter extraction and validation in one call.
-     * If programPath is not provided, attempts to use the current program from GUI (like GhidraMCP).
+     * If programPath is not provided, attempts to find the most likely intended program.
+     * <p>
+     * Smart resolution logic:
+     * 1. If path provided, use it.
+     * 2. If path missing:
+     *    a. If GUI active, use it.
+     *    b. If multiple programs open, check 'address'/'addressOrSymbol'/'function' args to find a match.
+     *    c. If still ambiguous, return the first available program (best effort).
+     * 
      * @param args The arguments map from MCP tool call
      * @return A valid Program object
      * @throws IllegalArgumentException if programPath parameter is missing and no current program is available
      * @throws ProgramValidationException if the program is not found, invalid, or in an invalid state
      */
     protected Program getProgramFromArgs(Map<String, Object> args) throws IllegalArgumentException, ProgramValidationException {
-        // Try to get programPath, but don't throw if it's missing - we'll try current program instead
+        // Try to get programPath
         String programPath = getOptionalString(args, "programPath", null);
-        return getValidatedProgram(programPath);
+        
+        // Use resolvePrograms to get candidates
+        List<Program> candidates = ProgramLookupUtil.resolvePrograms(programPath);
+        
+        if (candidates.isEmpty()) {
+            throw new ProgramValidationException("No programs are available in the current project");
+        }
+        
+        // If only one candidate, use it
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        
+        // Multiple candidates found and no specific path provided.
+        // Try to disambiguate based on address/symbol arguments
+        String addrStr = getOptionalString(args, "address", null);
+        if (addrStr == null) addrStr = getOptionalString(args, "addressOrSymbol", null);
+        if (addrStr == null) addrStr = getOptionalString(args, "function", null);
+        
+        if (addrStr != null) {
+            for (Program p : candidates) {
+                // Check if this program can resolve the address/symbol
+                if (AddressUtil.resolveAddressOrSymbol(p, addrStr) != null) {
+                    Msg.info(AbstractToolProvider.class, "Disambiguated program '" + p.getName() + "' containing symbol/address: " + addrStr);
+                    return p;
+                }
+            }
+        }
+        
+        // If still ambiguous, return the first one (best effort)
+        Program first = candidates.get(0);
+        Msg.info(AbstractToolProvider.class, "Multiple programs matched, auto-selecting first: " + first.getName());
+        return first;
+    }
+
+    /**
+     * Get all validated programs from MCP arguments.
+     * Used for tools that can operate on multiple programs (e.g. search).
+     * 
+     * @param request The CallToolRequest from MCP tool call
+     * @return List of valid Program objects (never empty)
+     * @throws ProgramValidationException if no programs found
+     */
+    protected List<Program> getProgramsFromArgs(CallToolRequest request) throws ProgramValidationException {
+        return getProgramsFromArgs(request.arguments());
+    }
+
+    /**
+     * Get all validated programs from MCP arguments.
+     * Used for tools that can operate on multiple programs (e.g. search).
+     * 
+     * @param args The arguments map from MCP tool call
+     * @return List of valid Program objects (never empty)
+     * @throws ProgramValidationException if no programs found
+     */
+    protected List<Program> getProgramsFromArgs(Map<String, Object> args) throws ProgramValidationException {
+        String programPath = getOptionalString(args, "programPath", null);
+        List<Program> programs = ProgramLookupUtil.resolvePrograms(programPath);
+        
+        if (programs.isEmpty()) {
+            throw new ProgramValidationException("No programs are available in the current project");
+        }
+        
+        return programs;
     }
 
     /**
@@ -779,33 +848,11 @@ public abstract class AbstractToolProvider implements ToolProvider {
      */
     protected Program tryGetProgramSafely(Map<String, Object> args) {
         try {
-            // Try to get programPath from args
-            String programPath = getOptionalString(args, "programPath", null);
-            if (programPath != null && !programPath.trim().isEmpty()) {
-                try {
-                    return getValidatedProgram(programPath);
-                } catch (ProgramValidationException e) {
-                    // Program path invalid, try other methods
-                    return null;
-                } catch (Exception e) {
-                    // Ignore all exceptions - return null if we can't get a program
-                    return null;
-                }
-            }
-            // Try current program from GUI
-            Program currentProgram = ProgramLookupUtil.getCurrentProgramFromGUI();
-            if (currentProgram != null && !currentProgram.isClosed()) {
-                return currentProgram;
-            }
-            // Try any open program
-            List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
-            if (!openPrograms.isEmpty()) {
-                return openPrograms.get(0);
-            }
+            return getProgramFromArgs(args);
         } catch (Exception e) {
             // Ignore all exceptions - return null if we can't get a program
+            return null;
         }
-        return null;
     }
 
 
@@ -921,23 +968,27 @@ public abstract class AbstractToolProvider implements ToolProvider {
 
         // If not found by address, try by function name
         if (function == null) {
+            // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
             FunctionManager functionManager = program.getFunctionManager();
 
-            // First try an exact match
+            // Ghidra API: FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
             FunctionIterator functions = functionManager.getFunctions(true);
             while (functions.hasNext()) {
+                // Ghidra API: FunctionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionIterator.html#next()
                 Function f = functions.next();
+                // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                 if (f.getName().equals(functionNameOrAddress)) {
                     function = f;
                     break;
                 }
             }
 
-            // If no exact match, try case-insensitive
             if (function == null) {
+                // Ghidra API: FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
                 functions = functionManager.getFunctions(true);
                 while (functions.hasNext()) {
                     Function f = functions.next();
+                    // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                     if (f.getName().equalsIgnoreCase(functionNameOrAddress)) {
                         function = f;
                         break;
@@ -978,15 +1029,16 @@ public abstract class AbstractToolProvider implements ToolProvider {
             throw new IllegalArgumentException("No " + paramName + " provided");
         }
 
-        // Find the symbol
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getLabelOrFunctionSymbols(String, AddressSetView) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getLabelOrFunctionSymbols(java.lang.String,ghidra.program.model.address.AddressSetView)
         List<Symbol> symbols = symbolTable.getLabelOrFunctionSymbols(symbolName, null);
 
         if (symbols.isEmpty()) {
             throw new IllegalArgumentException("Symbol not found: " + symbolName);
         }
 
-        // Use the first matching symbol's address
+        // Ghidra API: Symbol.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getAddress()
         Symbol symbol = symbols.get(0);
         return symbol.getAddress();
     }
@@ -1016,56 +1068,60 @@ public abstract class AbstractToolProvider implements ToolProvider {
      * @return true if the program was saved successfully, false otherwise
      */
     protected boolean autoSaveProgram(Program program, String operationDescription) {
+        // Ghidra API: Program.isClosed() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#isClosed()
         if (program == null || program.isClosed()) {
             return false;
         }
 
         try {
+            // Ghidra API: Program.getDomainFile() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile()
             DomainFile domainFile = program.getDomainFile();
 
-            // Skip save for read-only programs (common in test environments or versioned files that aren't checked out)
+            // Ghidra API: DomainFile.isReadOnly() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isReadOnly()
             if (domainFile.isReadOnly()) {
+                // Ghidra API: DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 logInfo("Skipping auto-save for read-only program: " + domainFile.getPathname());
                 return false;
             }
 
-            // Check if program has unsaved changes before attempting save
+            // Ghidra API: DomainFile.isChanged() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isChanged()
             if (!domainFile.isChanged()) {
-                // No changes to save
                 return false;
             }
 
+            // Ghidra API: DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
             String programPath = domainFile.getPathname();
             String saveMessage = "Auto-save: " + operationDescription;
 
-            // Save the program first (required before version control operations)
+            // Ghidra API: Program.save(String, TaskMonitor) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#save(java.lang.String,ghidra.util.task.TaskMonitor)
             program.save(saveMessage, TaskMonitor.DUMMY);
-            program.flushEvents(); // Ensure SAVED event is processed
+            // Ghidra API: Program.flushEvents() (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#flushEvents()
+            program.flushEvents();
 
             logInfo("Auto-saved program: " + programPath + " (" + operationDescription + ")");
 
             // For version-controlled programs, also check in changes automatically
-            // This ensures full persistence even if the MCP server crashes
+            // Ghidra API: DomainFile.isVersioned() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#isVersioned()
+            // Ghidra API: DomainFile.canCheckin() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#canCheckin()
             if (domainFile.isVersioned() && domainFile.canCheckin()) {
                 try {
-                    // Release program from cache before version control operations
-                    // Version control requires no active consumers on the domain file
                     boolean wasCached = AgentDecompileProgramManager.releaseProgramFromCache(program);
                     if (wasCached) {
+                        // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                         Msg.debug(this, "Released program from cache for auto-checkin: " + programPath);
                     }
 
-                    // Check in with keepCheckedOut=true so user can continue making changes
-                    // Use a descriptive commit message
                     String checkinMessage = saveMessage + "\n💜🐉✨ (AgentDecompile auto-persist)";
                     DefaultCheckinHandler checkinHandler = new DefaultCheckinHandler(
                             checkinMessage, true, false);
+                    // Ghidra API: DomainFile.checkin(CheckinHandler, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#checkin(ghidra.framework.model.CheckinHandler,ghidra.util.task.TaskMonitor)
                     domainFile.checkin(checkinHandler, TaskMonitor.DUMMY);
 
                     // Re-open program to cache if it was cached
                     if (wasCached) {
                         Program reopenedProgram = AgentDecompileProgramManager.reopenProgramToCache(programPath);
                         if (reopenedProgram != null) {
+                            // Ghidra API: Msg.debug(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
                             Msg.debug(this, "Re-opened program to cache after auto-checkin: " + programPath);
                         }
                     }

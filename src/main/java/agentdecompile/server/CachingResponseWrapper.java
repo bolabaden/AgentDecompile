@@ -18,8 +18,10 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * HttpServletResponse wrapper that captures the response body for logging.
- * This allows the response to be written normally while also capturing
- * a copy for logging purposes.
+ * Response is written normally while a copy is captured for logging.
+ * <p>
+ * Jakarta Servlet API: {@link jakarta.servlet.http.HttpServletResponseWrapper}.
+ * </p>
  */
 public class CachingResponseWrapper extends HttpServletResponseWrapper {
 

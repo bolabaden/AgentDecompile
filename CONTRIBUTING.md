@@ -14,7 +14,7 @@ Thank you for your interest in improving AgentDecompile! We want to make this th
 
 -   **Code Style**: We follow standard Java conventions.
 -   **Documentation**: Please update docs if you change functionality.
--   **License**: By contributing, you agree that your contributions will be licensed under the project's Business Source License 1.1.
+-   **License**: By contributing, you agree that your contributions will be licensed under the project's GNU Affero General Public License v3.0 (AGPL-3.0).
 
 ## Feedback
 

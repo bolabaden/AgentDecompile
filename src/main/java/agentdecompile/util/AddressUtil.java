@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -48,6 +31,16 @@ import java.util.List;
 /**
  * Utility functions for working with Ghidra addresses.
  * Provides consistent address formatting across all AgentDecompile tools.
+ * <p>
+ * Ghidra API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.address.Address} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html">Address API</a></li>
+ *   <li>{@link ghidra.program.model.address.AddressSpace} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSpace.html">AddressSpace API</a></li>
+ *   <li>{@link ghidra.program.model.listing.Program} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html">Program API</a></li>
+ *   <li>{@link ghidra.program.model.symbol.SymbolTable} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html">SymbolTable API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class AddressUtil {
 
@@ -55,15 +48,16 @@ public class AddressUtil {
      * Format an address for JSON output with consistent "0x" prefix.
      * This is the standard format used across all AgentDecompile tool providers.
      *
-     * @param address The Ghidra address to format
+     * @param address The Ghidra address to format (see {@link Address#toString(String)})
      * @return A hex string representation with "0x" prefix
+     * @see <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html">Address API</a>
      */
     public static String formatAddress(Address address) {
         if (address == null) {
             return null;
         }
         // Format the address with a consistent "0x" prefix
-        // address with a 0x prefix.
+        // Ghidra API: Address.toString(String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/Address.html#toString(java.lang.String)
         return address.toString("0x");
     }
 
@@ -71,9 +65,10 @@ public class AddressUtil {
      * Parse an address string that may or may not have a "0x" prefix.
      * This handles user input that might come in either format.
      *
-     * @param program The Ghidra program to get the address space from
+     * @param program The Ghidra program (provides {@link Program#getAddressFactory()} for address creation)
      * @param addressString The address string to parse (with or without "0x")
      * @return The parsed Address object, or null if parsing fails
+     * @see <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSpace.html#getAddress(long)">AddressSpace.getAddress</a>
      */
     public static Address parseAddress(Program program, String addressString) {
         if (addressString == null || addressString.trim().isEmpty()) {
@@ -87,7 +82,9 @@ public class AddressUtil {
         }
 
         try {
+            // Ghidra API: Program.getAddressFactory(), AddressFactory.getDefaultAddressSpace() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getAddressFactory()
             AddressSpace defaultSpace = program.getAddressFactory().getDefaultAddressSpace();
+            // Ghidra API: AddressSpace.getAddress(long) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/address/AddressSpace.html#getAddress(long)
             return defaultSpace.getAddress(Long.parseUnsignedLong(cleanAddress, 16));
         } catch (NumberFormatException e) {
             return null;
@@ -122,11 +119,13 @@ public class AddressUtil {
         String input = addressOrSymbol.trim();
 
         // First, try to find it as a symbol
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getLabelOrFunctionSymbols(String, AddressSetView) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getLabelOrFunctionSymbols(java.lang.String,ghidra.program.model.address.AddressSetView)
         List<Symbol> symbols = symbolTable.getLabelOrFunctionSymbols(input, null);
 
         if (!symbols.isEmpty()) {
-            // Return the address of the first matching symbol
+            // Ghidra API: Symbol.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getAddress()
             return symbols.get(0).getAddress();
         }
 
@@ -146,6 +145,7 @@ public class AddressUtil {
             return null;
         }
 
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         return program.getFunctionManager().getFunctionContaining(address);
     }
 
@@ -161,15 +161,16 @@ public class AddressUtil {
             return null;
         }
 
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
-        // First check if there's data exactly at this address
+        // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data data = listing.getDataAt(address);
         if (data != null) {
             return data;
         }
 
-        // If not, check if this address is within a larger data structure
+        // Ghidra API: Listing.getDataContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataContaining(ghidra.program.model.address.Address)
         return listing.getDataContaining(address);
     }
 
@@ -216,18 +217,19 @@ public class AddressUtil {
             return false;
         }
 
-        // Check if there's already a defined function containing this address
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         if (program.getFunctionManager().getFunctionContaining(address) != null) {
             return false;
         }
 
-        // Check if it's in executable memory
+        // Ghidra API: Program.getMemory(), Memory.getBlock(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getMemory()
         MemoryBlock block = program.getMemory().getBlock(address);
+        // Ghidra API: MemoryBlock.isExecute() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/mem/MemoryBlock.html#isExecute()
         if (block == null || !block.isExecute()) {
             return false;
         }
 
-        // Check if there's an instruction at the address
+        // Ghidra API: Program.getListing(), Listing.getInstructionAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructionAt(ghidra.program.model.address.Address)
         Instruction instr = program.getListing().getInstructionAt(address);
         return instr != null;
     }

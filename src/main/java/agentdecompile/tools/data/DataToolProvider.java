@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.data;
 
@@ -66,6 +49,12 @@ import agentdecompile.util.DataTypeParserUtil;
  *
  * Helper methods are kept accessible (protected) so they can be reused by other tools
  * and benefit from upstream updates to the disabled tool handlers.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Listing}, {@link ghidra.program.model.listing.Data} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html">Listing API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html">SymbolTable API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class DataToolProvider extends AbstractToolProvider {
     /**
@@ -431,19 +420,24 @@ public class DataToolProvider extends AbstractToolProvider {
             }
 
             // Start a transaction to apply the data type
+            // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionID = program.startTransaction("Apply Data Type");
             boolean success = false;
 
             try {
                 // Get the listing and apply the data type at the symbol's address
+                // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
                 Listing listing = program.getListing();
 
                 // Clear any existing data at the address
+                // Ghidra API: Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                 if (listing.getDataAt(targetAddress) != null) {
+                    // Ghidra API: Listing.clearCodeUnits(Address, Address, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#clearCodeUnits(ghidra.program.model.address.Address,ghidra.program.model.address.Address,boolean)
                     listing.clearCodeUnits(targetAddress, targetAddress.add(dataType.getLength() - 1), false);
                 }
 
                 // Create the data at the address with the specified data type
+                // Ghidra API: Listing.createData(Address, DataType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#createData(ghidra.program.model.address.Address,ghidra.program.model.data.DataType)
                 Data createdData = listing.createData(targetAddress, dataType);
 
                 if (createdData == null) {
@@ -463,6 +457,7 @@ public class DataToolProvider extends AbstractToolProvider {
                 return createJsonResult(resultData);
             } finally {
                 // End transaction
+                // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionID, success);
             }
         } catch (Exception e) {
@@ -488,14 +483,17 @@ public class DataToolProvider extends AbstractToolProvider {
         }
 
         // Start a transaction to create the label
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int transactionID = program.startTransaction("Create Label");
         boolean success = false;
 
         try {
             // Get the symbol table
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
 
             // Create the label
+            // Ghidra API: SymbolTable.createLabel(Address, String, Namespace, SourceType), Program.getGlobalNamespace() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#createLabel(ghidra.program.model.address.Address,java.lang.String,ghidra.program.model.symbol.Namespace,ghidra.program.model.symbol.SourceType)
             Symbol symbol = symbolTable.createLabel(address, labelName,
                 program.getGlobalNamespace(), ghidra.program.model.symbol.SourceType.USER_DEFINED);
 
@@ -504,6 +502,7 @@ public class DataToolProvider extends AbstractToolProvider {
             }
 
             // Set the label as primary if requested
+            // Ghidra API: Symbol.isPrimary(), Symbol.setPrimary() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#isPrimary()
             if (setAsPrimary && !symbol.isPrimary()) {
                 symbol.setPrimary();
             }
@@ -515,6 +514,7 @@ public class DataToolProvider extends AbstractToolProvider {
             resultData.put("success", true);
             resultData.put("labelName", labelName);
             resultData.put("address", AddressUtil.formatAddress(address));
+            // Ghidra API: Symbol.isPrimary() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#isPrimary()
             resultData.put("isPrimary", symbol.isPrimary());
 
             return createJsonResult(resultData);
@@ -522,6 +522,7 @@ public class DataToolProvider extends AbstractToolProvider {
             return createErrorResult("Error creating label: " + e.getMessage());
         } finally {
             // End transaction
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(transactionID, success);
         }
     }

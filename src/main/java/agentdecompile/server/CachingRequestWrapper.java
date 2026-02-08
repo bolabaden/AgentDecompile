@@ -20,8 +20,10 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * HttpServletRequest wrapper that caches the request body for logging.
- * This allows the request body to be read multiple times - once for logging
- * and once for the actual servlet processing.
+ * Allows the request body to be read multiple times (logging and servlet processing).
+ * <p>
+ * Jakarta Servlet API: {@link jakarta.servlet.http.HttpServletRequestWrapper}.
+ * </p>
  */
 public class CachingRequestWrapper extends HttpServletRequestWrapper {
 

@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.symbols;
 
@@ -69,9 +52,19 @@ import ghidra.util.exception.InvalidInputException;
 
 /**
  * Tool provider for symbol-related operations.
- *
+ * <p>
  * NOTE: For imports/exports collection, this provider delegates to ImportExportToolProvider
  * methods to benefit from upstream updates to disabled tool handlers.
+ * </p>
+ * <p>
+ * Ghidra API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.symbol.SymbolTable} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html">SymbolTable API</a></li>
+ *   <li>{@link ghidra.program.model.symbol.Symbol} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html">Symbol API</a></li>
+ *   <li>{@link ghidra.app.util.demangler.DemanglerUtil} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/util/demangler/DemanglerUtil.html">DemanglerUtil API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class SymbolToolProvider extends AbstractToolProvider {
     // Helper instance to access ImportExportToolProvider methods
@@ -185,11 +178,14 @@ public class SymbolToolProvider extends AbstractToolProvider {
         if (limit > 1000) limit = 1000;
 
         Set<String> classNames = new HashSet<>();
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getAllSymbols(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getAllSymbols(boolean)
         SymbolIterator symbolIterator = symbolTable.getAllSymbols(true);
 
         while (symbolIterator.hasNext()) {
             Symbol symbol = symbolIterator.next();
+            // Ghidra API: Symbol.getSymbolType(), getParentNamespace() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getSymbolType()
             if (symbol.getSymbolType() == SymbolType.CLASS) {
                 Namespace ns = symbol.getParentNamespace();
                 if (ns != null && !ns.isGlobal()) {
@@ -221,11 +217,14 @@ public class SymbolToolProvider extends AbstractToolProvider {
         if (limit > 1000) limit = 1000;
 
         Set<String> namespaceNames = new HashSet<>();
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getAllSymbols(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getAllSymbols(boolean)
         SymbolIterator symbolIterator = symbolTable.getAllSymbols(true);
 
         while (symbolIterator.hasNext()) {
             Symbol symbol = symbolIterator.next();
+            // Ghidra API: Symbol.getParentNamespace(), getSymbolType() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getParentNamespace()
             Namespace ns = symbol.getParentNamespace();
             if (ns != null && !ns.isGlobal() && symbol.getSymbolType() != SymbolType.CLASS) {
                 namespaceNames.add(ns.getName(true));
@@ -262,6 +261,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> paginated = importExportHelper.paginate(allImports, startIndex, maxResults);
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("totalCount", allImports.size());
         result.put("startIndex", startIndex);
@@ -292,6 +292,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> paginated = importExportHelper.paginate(allExports, startIndex, maxResults);
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         result.put("programPath", program.getDomainFile().getPathname());
         result.put("totalCount", allExports.size());
         result.put("startIndex", startIndex);
@@ -332,11 +333,14 @@ public class SymbolToolProvider extends AbstractToolProvider {
             return createErrorResult("labelName is required for mode='create_label'");
         }
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int transactionID = program.startTransaction("Create Label");
         boolean success = false;
 
         try {
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
+            // Ghidra API: SymbolTable.createLabel(Address, String, Namespace, SourceType), Program.getGlobalNamespace() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#createLabel(ghidra.program.model.address.Address,java.lang.String,ghidra.program.model.symbol.Namespace,ghidra.program.model.symbol.SourceType)
             Symbol symbol = symbolTable.createLabel(address, labelName,
                 program.getGlobalNamespace(), ghidra.program.model.symbol.SourceType.USER_DEFINED);
 
@@ -350,6 +354,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
             resultData.put("success", true);
             resultData.put("labelName", labelName);
             resultData.put("address", AddressUtil.formatAddress(address));
+            // Ghidra API: Symbol.isPrimary() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#isPrimary()
             resultData.put("isPrimary", symbol.isPrimary());
 
             autoSaveProgram(program, "Create label");
@@ -357,6 +362,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         } catch (Exception e) {
             return createErrorResult("Error creating label: " + e.getMessage());
         } finally {
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(transactionID, success);
         }
     }
@@ -371,11 +377,13 @@ public class SymbolToolProvider extends AbstractToolProvider {
 
         boolean autoLabel = agentdecompile.util.EnvConfigUtil.getBooleanDefault("auto_label", true);
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int txId = program.startTransaction("Batch create labels");
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
 
         try {
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
             for (int i = 0; i < addressList.size(); i++) {
                 try {
@@ -401,6 +409,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
+                    // Ghidra API: SymbolTable.createLabel(Address, String, Namespace, SourceType), Program.getGlobalNamespace() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#createLabel(ghidra.program.model.address.Address,java.lang.String,ghidra.program.model.symbol.Namespace,ghidra.program.model.symbol.SourceType)
                     Symbol symbol = symbolTable.createLabel(address, labelName,
                         program.getGlobalNamespace(), ghidra.program.model.symbol.SourceType.USER_DEFINED);
 
@@ -430,6 +439,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                 "errors", errors.isEmpty() ? List.of() : errors
             ));
         } finally {
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(txId, true);
         }
     }
@@ -451,12 +461,15 @@ public class SymbolToolProvider extends AbstractToolProvider {
         boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
 
         List<Map<String, Object>> symbolData = new ArrayList<>();
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getAllSymbols(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getAllSymbols(boolean)
         SymbolIterator symbolIterator = symbolTable.getAllSymbols(true);
 
         AtomicInteger currentIndex = new AtomicInteger(0);
 
         symbolIterator.forEach(symbol -> {
+            // Ghidra API: Symbol.isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#isExternal()
             if (!includeExternal && symbol.isExternal()) {
                 return;
             }
@@ -497,7 +510,9 @@ public class SymbolToolProvider extends AbstractToolProvider {
         boolean includeExternal = getOptionalBoolean(request, "includeExternal", false);
         boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
 
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
+        // Ghidra API: SymbolTable.getAllSymbols(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getAllSymbols(boolean)
         SymbolIterator symbolIterator = symbolTable.getAllSymbols(true);
 
         AtomicInteger count = new AtomicInteger(0);
@@ -550,15 +565,19 @@ public class SymbolToolProvider extends AbstractToolProvider {
             return createErrorResult("newName is required for mode='rename_data'");
         }
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int transactionID = program.startTransaction("Rename Data");
         boolean success = false;
 
         try {
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
+            // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
             Symbol primarySymbol = symbolTable.getPrimarySymbol(address);
 
             if (primarySymbol == null) {
                 // Try to get data at address
+                // Ghidra API: Program.getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                 Data data = program.getListing().getDataAt(address);
                 if (data == null) {
                     return createErrorResult("No symbol or data found at address: " + AddressUtil.formatAddress(address));
@@ -570,6 +589,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
                 }
             }
 
+            // Ghidra API: Symbol.getName(), setName(String, SourceType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
             String oldName = primarySymbol.getName();
             primarySymbol.setName(newName, ghidra.program.model.symbol.SourceType.USER_DEFINED);
             success = true;
@@ -585,6 +605,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         } catch (DuplicateNameException | InvalidInputException e) {
             return createErrorResult("Error renaming data: " + e.getMessage());
         } finally {
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(transactionID, success);
         }
     }
@@ -599,11 +620,13 @@ public class SymbolToolProvider extends AbstractToolProvider {
 
         boolean autoLabel = agentdecompile.util.EnvConfigUtil.getBooleanDefault("auto_label", true);
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int txId = program.startTransaction("Batch rename data");
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
 
         try {
+            // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
             SymbolTable symbolTable = program.getSymbolTable();
             for (int i = 0; i < addressList.size(); i++) {
                 try {
@@ -614,8 +637,10 @@ public class SymbolToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
+                    // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
                     Symbol primarySymbol = symbolTable.getPrimarySymbol(address);
                     if (primarySymbol == null) {
+                        // Ghidra API: Program.getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
                         Data data = program.getListing().getDataAt(address);
                         if (data == null) {
                             errors.add(Map.of("index", i, "address", addressStr, "error", "No symbol or data found"));
@@ -643,7 +668,9 @@ public class SymbolToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
+                    // Ghidra API: Symbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
                     String oldName = primarySymbol.getName();
+                    // Ghidra API: Symbol.setName(String, SourceType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#setName(java.lang.String,ghidra.program.model.symbol.SourceType)
                     primarySymbol.setName(newName, ghidra.program.model.symbol.SourceType.USER_DEFINED);
 
                     results.add(Map.of(
@@ -688,6 +715,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
      */
     private Map<String, Object> createSymbolInfo(Symbol symbol) {
         Map<String, Object> symbolInfo = new HashMap<>();
+        // Ghidra API: Symbol.getName(), getAddress(), getParentNamespace(), getID(), getSymbolType(), isPrimary(), isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html
         symbolInfo.put("name", symbol.getName());
         symbolInfo.put("address", AddressUtil.formatAddress(symbol.getAddress()));
         symbolInfo.put("namespace", symbol.getParentNamespace().getName());
@@ -714,19 +742,25 @@ public class SymbolToolProvider extends AbstractToolProvider {
             return createErrorResult("address is required for mode='demangle' when demangle_all=false");
         }
 
+        // Ghidra API: Program.getSymbolTable() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
         SymbolTable symbolTable = program.getSymbolTable();
         List<Map<String, Object>> results = new ArrayList<>();
 
+        // Ghidra API: Program.startTransaction(String) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
         int txId = program.startTransaction("Demangle symbols");
         try {
             if (demangleAll) {
+                // Ghidra API: SymbolTable.getAllSymbols(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getAllSymbols(boolean)
                 SymbolIterator symbols = symbolTable.getAllSymbols(false);
                 while (symbols.hasNext()) {
                     Symbol symbol = symbols.next();
+                    // Ghidra API: Symbol.getSource() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getSource()
                     if (symbol.getSource() == ghidra.program.model.symbol.SourceType.IMPORTED) {
+                        // Ghidra API: Symbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
                         String mangled = symbol.getName();
                         String demangled = demangleSymbol(program, mangled);
                         if (demangled != null && !demangled.equals(mangled)) {
+                            // Ghidra API: Symbol.setName(String, SourceType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#setName(java.lang.String,ghidra.program.model.symbol.SourceType)
                             symbol.setName(demangled, ghidra.program.model.symbol.SourceType.USER_DEFINED);
                             results.add(Map.of(
                                 "address", AddressUtil.formatAddress(symbol.getAddress()),
@@ -742,14 +776,17 @@ public class SymbolToolProvider extends AbstractToolProvider {
                     return createErrorResult("Could not resolve address: " + addressStr);
                 }
 
+                // Ghidra API: SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html#getPrimarySymbol(ghidra.program.model.address.Address)
                 Symbol symbol = symbolTable.getPrimarySymbol(address);
                 if (symbol == null) {
                     return createErrorResult("No symbol found at address: " + AddressUtil.formatAddress(address));
                 }
 
+                // Ghidra API: Symbol.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#getName()
                 String mangled = symbol.getName();
                 String demangled = demangleSymbol(program, mangled);
                 if (demangled != null && !demangled.equals(mangled)) {
+                    // Ghidra API: Symbol.setName(String, SourceType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Symbol.html#setName(java.lang.String,ghidra.program.model.symbol.SourceType)
                     symbol.setName(demangled, ghidra.program.model.symbol.SourceType.USER_DEFINED);
                     results.add(Map.of(
                         "address", AddressUtil.formatAddress(address),
@@ -774,6 +811,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
         } catch (DuplicateNameException | InvalidInputException e) {
             return createErrorResult("Demangle failed: " + e.getMessage());
         } finally {
+            // Ghidra API: Program.endTransaction(int, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
             program.endTransaction(txId, true);
         }
     }
@@ -783,6 +821,7 @@ public class SymbolToolProvider extends AbstractToolProvider {
      */
     private String autoLabelSymbol(Program program, Address address) {
         // Check if it's a function
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function function = program.getFunctionManager().getFunctionContaining(address);
         if (function != null) {
             List<Map<String, Object>> suggestions = agentdecompile.util.SmartSuggestionsUtil.suggestFunctionNames(program, function);
@@ -792,8 +831,10 @@ public class SymbolToolProvider extends AbstractToolProvider {
         }
 
         // Check for data/string at address
+        // Ghidra API: Program.getListing(), Listing.getDataAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDataAt(ghidra.program.model.address.Address)
         Data data = program.getListing().getDataAt(address);
         if (data != null && data.hasStringValue()) {
+            // Ghidra API: Data.getDefaultValueRepresentation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Data.html#getDefaultValueRepresentation()
             String str = data.getDefaultValueRepresentation();
             if (str != null && str.length() > 0 && str.length() < 50) {
                 return "str_" + str.replaceAll("[^a-zA-Z0-9_]", "_").substring(0, Math.min(30, str.length()));

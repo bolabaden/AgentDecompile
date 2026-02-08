@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -61,6 +44,13 @@ import agentdecompile.plugin.ConfigManager;
  * Utility class for working with decompilation context and cross references.
  * Provides methods to map addresses to decompilation line numbers and extract
  * code context around specific lines.
+ * <p>
+ * Ghidra API: {@link ghidra.app.decompiler.DecompInterface}, {@link ghidra.app.decompiler.DecompileResults},
+ * {@link ghidra.app.decompiler.component.DecompilerUtils} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/package-summary.html">ghidra.app.decompiler</a>,
+ * {@link ghidra.program.model.symbol.Reference} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html">Reference API</a>.
+ * </p>
  */
 public class DecompilationContextUtil {
 
@@ -78,11 +68,16 @@ public class DecompilationContextUtil {
         }
 
         // Initialize decompiler
+        // Ghidra API: DecompInterface.<init>() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html
         DecompInterface decompiler = new DecompInterface();
+        // Ghidra API: DecompInterface.toggleCCode(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#toggleCCode(boolean)
         decompiler.toggleCCode(true);
+        // Ghidra API: DecompInterface.toggleSyntaxTree(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#toggleSyntaxTree(boolean)
         decompiler.toggleSyntaxTree(true);
+        // Ghidra API: DecompInterface.setSimplificationStyle(String) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#setSimplificationStyle(java.lang.String)
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
             return -1;
         }
@@ -90,34 +85,45 @@ public class DecompilationContextUtil {
         try {
             // Decompile the function with timeout
             int timeoutSeconds = AgentDecompileInternalServiceRegistry.getService(ConfigManager.class).getDecompilerTimeoutSeconds();
+            // Ghidra API: TimeoutTaskMonitor.timeoutIn(long, TimeUnit) - https://ghidra.re/ghidra_docs/api/ghidra/util/task/TimeoutTaskMonitor.html#timeoutIn(long,java.util.concurrent.TimeUnit)
             TaskMonitor timeoutMonitor = TimeoutTaskMonitor.timeoutIn(timeoutSeconds, TimeUnit.SECONDS);
+            // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
             DecompileResults decompileResults = decompiler.decompileFunction(function, 0, timeoutMonitor);
+            // Ghidra API: TaskMonitor.isCancelled() - https://ghidra.re/ghidra_docs/api/ghidra/util/task/TaskMonitor.html#isCancelled()
             if (timeoutMonitor.isCancelled()) {
+                // Ghidra API: Msg.error(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object)
                 Msg.error(DecompilationContextUtil.class, "Decompilation timed out for address " + address + " after " + timeoutSeconds + " seconds");
                 return -1;
             }
+            // Ghidra API: DecompileResults.decompileCompleted() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#decompileCompleted()
             if (!decompileResults.decompileCompleted()) {
                 return -1;
             }
 
             // Get the markup for line mapping
+            // Ghidra API: DecompileResults.getCCodeMarkup() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#getCCodeMarkup()
             ClangTokenGroup markup = decompileResults.getCCodeMarkup();
+            // Ghidra API: DecompilerUtils.toLines(ClangTokenGroup) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html#toLines(ghidra.app.decompiler.ClangTokenGroup)
             List<ClangLine> clangLines = DecompilerUtils.toLines(markup);
 
             // Find the line containing this address
             for (ClangLine clangLine : clangLines) {
                 List<ClangToken> tokens = clangLine.getAllTokens();
                 for (ClangToken token : tokens) {
+                    // Ghidra API: ClangToken.getMinAddress() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangToken.html#getMinAddress()
                     Address tokenAddr = token.getMinAddress();
                     if (tokenAddr != null && tokenAddr.equals(address)) {
+                        // Ghidra API: ClangLine.getLineNumber() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangLine.html#getLineNumber()
                         return clangLine.getLineNumber();
                     }
                 }
 
                 // If no exact match, check if address is within the range of this line
                 if (!tokens.isEmpty()) {
+                    // Ghidra API: DecompilerUtils.getClosestAddress(Program, ClangNode) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/component/DecompilerUtils.html#getClosestAddress(ghidra.program.model.listing.Program,ghidra.app.decompiler.ClangNode)
                     Address closestAddr = DecompilerUtils.getClosestAddress(program, tokens.get(0));
                     if (closestAddr != null && closestAddr.equals(address)) {
+                        // Ghidra API: ClangLine.getLineNumber() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/ClangLine.html#getLineNumber()
                         return clangLine.getLineNumber();
                     }
                 }
@@ -125,9 +131,11 @@ public class DecompilationContextUtil {
 
             return -1;
         } catch (Exception e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(DecompilationContextUtil.class, "Error getting line number for address " + address, e);
             return -1;
         } finally {
+            // Ghidra API: DecompInterface.dispose() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#dispose()
             decompiler.dispose();
         }
     }
@@ -147,11 +155,16 @@ public class DecompilationContextUtil {
         }
 
         // Initialize decompiler
+        // Ghidra API: DecompInterface.<init>() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html
         DecompInterface decompiler = new DecompInterface();
+        // Ghidra API: DecompInterface.toggleCCode(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#toggleCCode(boolean)
         decompiler.toggleCCode(true);
+        // Ghidra API: DecompInterface.toggleSyntaxTree(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#toggleSyntaxTree(boolean)
         decompiler.toggleSyntaxTree(true);
+        // Ghidra API: DecompInterface.setSimplificationStyle(String) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#setSimplificationStyle(java.lang.String)
         decompiler.setSimplificationStyle("decompile");
 
+        // Ghidra API: DecompInterface.openProgram(Program) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#openProgram(ghidra.program.model.listing.Program)
         if (!decompiler.openProgram(program)) {
             return null;
         }
@@ -159,18 +172,25 @@ public class DecompilationContextUtil {
         try {
             // Decompile the function with timeout
             int timeoutSeconds = AgentDecompileInternalServiceRegistry.getService(ConfigManager.class).getDecompilerTimeoutSeconds();
+            // Ghidra API: TimeoutTaskMonitor.timeoutIn(long, TimeUnit) - https://ghidra.re/ghidra_docs/api/ghidra/util/task/TimeoutTaskMonitor.html#timeoutIn(long,java.util.concurrent.TimeUnit)
             TaskMonitor timeoutMonitor = TimeoutTaskMonitor.timeoutIn(timeoutSeconds, TimeUnit.SECONDS);
+            // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
             DecompileResults decompileResults = decompiler.decompileFunction(function, 0, timeoutMonitor);
+            // Ghidra API: TaskMonitor.isCancelled() - https://ghidra.re/ghidra_docs/api/ghidra/util/task/TaskMonitor.html#isCancelled()
             if (timeoutMonitor.isCancelled()) {
+                // Ghidra API: Msg.error(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object)
                 Msg.error(DecompilationContextUtil.class, "Decompilation timed out while getting context after " + timeoutSeconds + " seconds");
                 return null;
             }
+            // Ghidra API: DecompileResults.decompileCompleted() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#decompileCompleted()
             if (!decompileResults.decompileCompleted()) {
                 return null;
             }
 
             // Get the decompiled code
+            // Ghidra API: DecompileResults.getDecompiledFunction() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompileResults.html#getDecompiledFunction()
             DecompiledFunction decompiledFunction = decompileResults.getDecompiledFunction();
+            // Ghidra API: DecompiledFunction.getC() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompiledFunction.html#getC()
             String decompCode = decompiledFunction.getC();
             String[] lines = decompCode.split("\n");
 
@@ -189,9 +209,11 @@ public class DecompilationContextUtil {
 
             return context.toString();
         } catch (Exception e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(DecompilationContextUtil.class, "Error getting decompilation context", e);
             return null;
         } finally {
+            // Ghidra API: DecompInterface.dispose() - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#dispose()
             decompiler.dispose();
         }
     }
@@ -228,10 +250,12 @@ public class DecompilationContextUtil {
 
         try {
             // Get references to this function's entry point
+            // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager(), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
             ReferenceIterator incomingRefs = program.getReferenceManager().getReferencesTo(targetFunction.getEntryPoint());
 
             // Count total references first for logging (quick iteration)
             int totalRefs = 0;
+            // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager(), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
             var countIterator = program.getReferenceManager().getReferencesTo(targetFunction.getEntryPoint());
             while (countIterator.hasNext()) {
                 countIterator.next();
@@ -255,6 +279,7 @@ public class DecompilationContextUtil {
 
                 Reference ref = incomingRefs.next();
                 Address fromAddress = ref.getFromAddress();
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 Function fromFunction = program.getFunctionManager().getFunctionContaining(fromAddress);
                 processed++;
 
@@ -264,6 +289,7 @@ public class DecompilationContextUtil {
 
                 // Add symbol name if available
                 if (fromAddress != null) {
+                    // Ghidra API: Program.getSymbolTable(), SymbolTable.getPrimarySymbol(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getSymbolTable()
                     Symbol fromSymbol = program.getSymbolTable().getPrimarySymbol(fromAddress);
                     if (fromSymbol != null) {
                         refInfo.put("fromSymbol", fromSymbol.getName());
@@ -305,6 +331,7 @@ public class DecompilationContextUtil {
                     processed, contextFetched, enhancedRefs.size()));
 
         } catch (Exception e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(DecompilationContextUtil.class, "Error getting enhanced incoming references", e);
         }
 
@@ -329,11 +356,13 @@ public class DecompilationContextUtil {
 
         try {
             // Get references to this address
+            // Ghidra API: Program.getReferenceManager(), ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
             ReferenceIterator refs = program.getReferenceManager().getReferencesTo(targetAddress);
 
             while (refs.hasNext()) {
                 Reference ref = refs.next();
                 Address fromAddress = ref.getFromAddress();
+                // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
                 Function fromFunction = program.getFunctionManager().getFunctionContaining(fromAddress);
 
                 Map<String, Object> refInfo = new HashMap<>();
@@ -345,6 +374,7 @@ public class DecompilationContextUtil {
                 refInfo.put("sourceType", ref.getSource().toString());
 
                 if (fromFunction != null) {
+                    // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
                     refInfo.put("fromFunction", fromFunction.getName());
 
                     // Get line number in the source function
@@ -365,6 +395,7 @@ public class DecompilationContextUtil {
                 enhancedRefs.add(refInfo);
             }
         } catch (Exception e) {
+            // Ghidra API: Msg.error(Class, String, Throwable) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#error(java.lang.Object,java.lang.Object,java.lang.Throwable)
             Msg.error(DecompilationContextUtil.class, "Error getting enhanced references to address", e);
         }
 

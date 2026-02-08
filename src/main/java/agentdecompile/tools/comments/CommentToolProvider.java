@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.comments;
 
@@ -76,6 +59,15 @@ import io.modelcontextprotocol.spec.McpSchema;
 /**
  * Tool provider for comment-related operations.
  * Provides tools to set, get, remove, and search comments in programs.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Listing} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html">Listing API</a>,
+ * {@link ghidra.program.model.listing.CommentType} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CommentType.html">CommentType API</a>,
+ * {@link ghidra.program.model.listing.CodeUnit} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html">CodeUnit API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class CommentToolProvider extends AbstractToolProvider {
 
@@ -165,8 +157,20 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         registerTool(tool, (exchange, request) -> {
             try {
-                Program program = getProgramFromArgs(request);
                 String action = getString(request, "action");
+
+                // For search actions, we support multiple programs
+                if ("search".equals(action) || "search_decomp".equals(action)) {
+                    List<Program> programs = getProgramsFromArgs(request);
+                    if ("search".equals(action)) {
+                        return handleSearchCommentsMulti(programs, request);
+                    } else {
+                        return handleSearchDecompilationMulti(programs, request, exchange);
+                    }
+                }
+
+                // For other actions, resolve to a single program (using smart resolution)
+                Program program = getProgramFromArgs(request);
 
                 switch (action) {
                     case "set":
@@ -175,10 +179,6 @@ public class CommentToolProvider extends AbstractToolProvider {
                         return handleGetComments(program, request);
                     case "remove":
                         return handleRemoveComment(program, request);
-                    case "search":
-                        return handleSearchComments(program, request);
-                    case "search_decomp":
-                        return handleSearchDecompilation(program, request, exchange);
                     default:
                         return createErrorResult("Invalid action: " + action + ". Valid actions are: set, get, remove, search, search_decomp");
                 }
@@ -216,6 +216,65 @@ public class CommentToolProvider extends AbstractToolProvider {
         });
     }
 
+    private McpSchema.CallToolResult handleSearchCommentsMulti(List<Program> programs, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
+        List<Map<String, Object>> allResults = new ArrayList<>();
+        int maxResults = getOptionalInt(request, "maxResults", 100);
+        
+        for (Program program : programs) {
+            if (allResults.size() >= maxResults) break;
+            
+            // Re-use existing search logic but collect results
+            List<Map<String, Object>> progResults = searchCommentsInProgram(program, request, maxResults - allResults.size());
+            
+            // Add program name to results
+            String programName = program.getDomainFile().getPathname();
+            for (Map<String, Object> result : progResults) {
+                result.put("program", programName);
+                allResults.add(result);
+            }
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("searchText", getString(request, "searchText"));
+        result.put("caseSensitive", getOptionalBoolean(request, "caseSensitive", false));
+        result.put("results", allResults);
+        result.put("count", allResults.size());
+        result.put("maxResults", maxResults);
+        result.put("programsSearched", programs.stream().map(p -> p.getDomainFile().getPathname()).toList());
+        
+        return createJsonResult(result);
+    }
+
+    private McpSchema.CallToolResult handleSearchDecompilationMulti(List<Program> programs,
+            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
+            io.modelcontextprotocol.server.McpSyncServerExchange exchange) {
+            
+        List<Map<String, Object>> allResults = new ArrayList<>();
+        int maxResults = getOptionalInt(request, "maxResults", 50);
+        
+        for (Program program : programs) {
+            if (allResults.size() >= maxResults) break;
+            
+            List<Map<String, Object>> progResults = searchDecompilationInProgram(program, request, maxResults - allResults.size());
+            
+            String programName = program.getDomainFile().getPathname();
+            for (Map<String, Object> result : progResults) {
+                result.put("program", programName);
+                allResults.add(result);
+            }
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("pattern", getString(request, "pattern"));
+        result.put("caseSensitive", getOptionalBoolean(request, "caseSensitive", false));
+        result.put("results", allResults);
+        result.put("resultsCount", allResults.size());
+        result.put("maxResults", maxResults);
+        result.put("programsSearched", programs.stream().map(p -> p.getDomainFile().getPathname()).toList());
+        
+        return createJsonResult(result);
+    }
+
     // ========================================================================
     // Helper Methods for Decompilation Comments
     // ========================================================================
@@ -250,14 +309,17 @@ public class CommentToolProvider extends AbstractToolProvider {
             TimeUnit.SECONDS);
 
         try {
+            // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
             DecompileResults results = decompiler.decompileFunction(function, 0, monitor);
             if (monitor.isCancelled()) {
+                // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                 String msg = "Decompilation timed out for function " + function.getName() +
                     " after " + config.getDecompilerTimeoutSeconds() + " seconds";
                 return DecompilationAttempt.failure(msg);
             }
 
             if (!results.decompileCompleted()) {
+                // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                 String msg = "Decompilation failed for function " + function.getName() +
                     ": " + results.getErrorMessage();
                 return DecompilationAttempt.failure(msg);
@@ -265,6 +327,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
             return DecompilationAttempt.success(results);
         } catch (Exception e) {
+            // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
             String msg = "Exception during decompilation of " + function.getName() + ": " + e.getMessage();
             logError(toolName + ": " + msg, e);
             return DecompilationAttempt.failure(msg);
@@ -374,9 +437,12 @@ public class CommentToolProvider extends AbstractToolProvider {
         }
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Set Comment");
             try {
+                // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
                 Listing listing = program.getListing();
+                // Ghidra API: Listing.setComment(Address, CommentType, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#setComment(ghidra.program.model.address.Address,ghidra.program.model.listing.CommentType,java.lang.String)
                 listing.setComment(address, commentType, comment);
 
                 Map<String, Object> result = new HashMap<>();
@@ -385,6 +451,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                 result.put("commentType", commentTypeStr);
                 result.put("comment", comment);
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Set comment");
                 return createJsonResult(result);
@@ -423,9 +490,11 @@ public class CommentToolProvider extends AbstractToolProvider {
             List<Map<String, Object>> commentsArray) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Batch Set Comments");
             try {
                 for (int i = 0; i < commentsArray.size(); i++) {
@@ -476,6 +545,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                     }
 
                     // Set the comment
+                    // Ghidra API: Listing.setComment(Address, CommentType, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#setComment(ghidra.program.model.address.Address,ghidra.program.model.listing.CommentType,java.lang.String)
                     listing.setComment(address, commentType, comment);
 
                     // Record success
@@ -487,6 +557,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                     results.add(result);
                 }
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Batch set comments");
 
@@ -503,6 +574,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
                 return createJsonResult(response);
             } catch (Exception e) {
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, false);
                 throw e;
             }
@@ -546,6 +618,7 @@ public class CommentToolProvider extends AbstractToolProvider {
             if (funcAddr == null) {
                 return createErrorResult("Could not resolve function address or symbol: " + functionStr);
             }
+            // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionContaining(ghidra.program.model.address.Address)
             function = program.getFunctionManager().getFunctionContaining(funcAddr);
             if (function == null) {
                 if (AddressUtil.isUndefinedFunctionAddress(program, functionStr)) {
@@ -562,6 +635,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         // Validate that the decompilation has been read for this function first
         String programPath = getString(request, "programPath");
+        // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
         String functionKey = programPath + ":" + AddressUtil.formatAddress(function.getEntryPoint());
 
         // If decompilation hasn't been read yet, we'll decompile it in this method anyway,
@@ -601,19 +675,24 @@ public class CommentToolProvider extends AbstractToolProvider {
             }
 
             // Set the comment
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Set Decompilation Comment");
             try {
+                // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
                 Listing listing = program.getListing();
+                // Ghidra API: Listing.setComment(Address, CommentType, String) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#setComment(ghidra.program.model.address.Address,ghidra.program.model.listing.CommentType,java.lang.String)
                 listing.setComment(targetAddress, commentType, comment);
 
                 Map<String, Object> result = new HashMap<>();
                 result.put("success", true);
+                // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                 result.put("functionName", function.getName());
                 result.put("lineNumber", lineNumber);
                 result.put("address", AddressUtil.formatAddress(targetAddress));
                 result.put("commentType", commentTypeStr);
                 result.put("comment", comment);
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Set decompilation comment");
                 return createJsonResult(result);
@@ -686,14 +765,18 @@ public class CommentToolProvider extends AbstractToolProvider {
         }
 
         List<Map<String, Object>> comments = new ArrayList<>();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
+        // Ghidra API: Listing.getCodeUnits(AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getCodeUnits(ghidra.program.model.address.AddressSetView,boolean)
         CodeUnitIterator codeUnits = listing.getCodeUnits(addresses, true);
         while (codeUnits.hasNext()) {
             CodeUnit codeUnit = codeUnits.next();
+            // Ghidra API: CodeUnit.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html#getAddress()
             Address addr = codeUnit.getAddress();
 
             for (CommentType type : types) {
+                // Ghidra API: CodeUnit.getComment(CommentType) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/CodeUnit.html#getComment(ghidra.program.model.listing.CommentType)
                 String comment = codeUnit.getComment(type);
                 if (comment != null && !comment.isEmpty()) {
                     Map<String, Object> commentInfo = new HashMap<>();
@@ -742,9 +825,12 @@ public class CommentToolProvider extends AbstractToolProvider {
         }
 
         try {
+            // Ghidra API: Program.startTransaction(String) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#startTransaction(java.lang.String)
             int transactionId = program.startTransaction("Remove Comment");
             try {
+                // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
                 Listing listing = program.getListing();
+                // Ghidra API: Listing.setComment(Address, CommentType, String) — null to remove - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#setComment(ghidra.program.model.address.Address,ghidra.program.model.listing.CommentType,java.lang.String)
                 listing.setComment(address, commentType, null);
 
                 Map<String, Object> result = new HashMap<>();
@@ -752,6 +838,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                 result.put("address", AddressUtil.formatAddress(address));
                 result.put("commentType", commentTypeStr);
 
+                // Ghidra API: Program.endTransaction(int, boolean) (DomainObject) - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#endTransaction(int,boolean)
                 program.endTransaction(transactionId, true);
                 autoSaveProgram(program, "Remove comment");
                 return createJsonResult(result);
@@ -765,13 +852,13 @@ public class CommentToolProvider extends AbstractToolProvider {
         }
     }
 
-    private McpSchema.CallToolResult handleSearchComments(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
+    private List<Map<String, Object>> searchCommentsInProgram(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request, int limit) {
         String searchText = getOptionalString(request, "searchText", null);
         if (searchText == null) {
             searchText = getOptionalString(request, "searchText", null);
         }
         if (searchText == null) {
-            return createErrorResult("searchText is required for action='search'");
+            throw new IllegalArgumentException("searchText is required for action='search'");
         }
 
         boolean caseSensitive = getOptionalBoolean(request, "caseSensitive", false);
@@ -779,16 +866,15 @@ public class CommentToolProvider extends AbstractToolProvider {
         String commentTypesStr = getOptionalString(request, "commentTypes", null);
         List<String> commentTypesList = getOptionalStringList(request.arguments(), "commentTypes", null);
 
-        int maxResults = getOptionalInt(request, "maxResults",
-            getOptionalInt(request, "maxResults", 100));
-
+        // maxResults is handled by the caller via 'limit', but we read it here to parse types
+        
         List<CommentType> types = new ArrayList<>();
         if (commentTypesStr != null && !commentTypesStr.isEmpty()) {
             String[] typeStrs = commentTypesStr.split(",");
             for (String typeStr : typeStrs) {
                 CommentType type = COMMENT_TYPES.get(typeStr.trim().toLowerCase());
                 if (type == null) {
-                    return createErrorResult("Invalid comment type: " + typeStr);
+                    throw new IllegalArgumentException("Invalid comment type: " + typeStr);
                 }
                 types.add(type);
             }
@@ -796,7 +882,7 @@ public class CommentToolProvider extends AbstractToolProvider {
             for (String typeStr : commentTypesList) {
                 CommentType type = COMMENT_TYPES.get(typeStr.toLowerCase());
                 if (type == null) {
-                    return createErrorResult("Invalid comment type: " + typeStr);
+                    throw new IllegalArgumentException("Invalid comment type: " + typeStr);
                 }
                 types.add(type);
             }
@@ -806,18 +892,21 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         String searchLower = caseSensitive ? searchText : searchText.toLowerCase();
         List<Map<String, Object>> results = new ArrayList<>();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
 
         for (CommentType type : types) {
-            if (results.size() >= maxResults) break;
+            if (results.size() >= limit) break;
 
+            // Ghidra API: Listing.getCommentAddressIterator(CommentType, AddressSetView, boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getCommentAddressIterator(ghidra.program.model.listing.CommentType,ghidra.program.model.address.AddressSetView,boolean)
             AddressIterator commentAddrs = listing.getCommentAddressIterator(
                 type, program.getMemory(), true);
 
             while (commentAddrs.hasNext()) {
-                if (results.size() >= maxResults) break;
+                if (results.size() >= limit) break;
 
                 Address addr = commentAddrs.next();
+                // Ghidra API: Listing.getComment(CommentType, Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getComment(ghidra.program.model.listing.CommentType,ghidra.program.model.address.Address)
                 String comment = listing.getComment(type, addr);
 
                 if (comment != null) {
@@ -828,6 +917,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                         result.put("commentType", getCommentTypeName(type));
                         result.put("comment", comment);
 
+                        // Ghidra API: Listing.getCodeUnitAt(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getCodeUnitAt(ghidra.program.model.address.Address)
                         CodeUnit cu = listing.getCodeUnitAt(addr);
                         if (cu != null) {
                             result.put("codeUnit", cu.toString());
@@ -839,36 +929,39 @@ public class CommentToolProvider extends AbstractToolProvider {
             }
         }
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("searchText", searchText);
-        result.put("caseSensitive", caseSensitive);
-        result.put("results", results);
-        result.put("count", results.size());
-        result.put("maxResults", maxResults);
-        return createJsonResult(result);
+        return results;
     }
 
-    private McpSchema.CallToolResult handleSearchDecompilation(Program program,
+    /**
+     * @deprecated Use searchCommentsInProgram instead
+     */
+    private McpSchema.CallToolResult handleSearchComments(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
+         // This method is kept if needed but we switched to multi-program search
+         return createErrorResult("Deprecated internal method called");
+    }
+
+    private List<Map<String, Object>> searchDecompilationInProgram(Program program,
             io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
-            io.modelcontextprotocol.server.McpSyncServerExchange exchange) {
+            int limit) {
         String pattern = getOptionalString(request, "pattern", null);
         if (pattern == null) {
-            return createErrorResult("pattern is required for action='search_decomp'");
+            throw new IllegalArgumentException("pattern is required for action='search_decomp'");
         }
 
         boolean caseSensitive = getOptionalBoolean(request, "caseSensitive", false);
-        int maxResults = getOptionalInt(request, "maxResults", 50);
         boolean overrideMaxFunctionsLimit = getOptionalBoolean(request, "overrideMaxFunctionsLimit", false);
 
         if (pattern.trim().isEmpty()) {
-            return createErrorResult("Search pattern cannot be empty");
+            throw new IllegalArgumentException("Search pattern cannot be empty");
         }
 
         ConfigManager config = AgentDecompileInternalServiceRegistry.getService(ConfigManager.class);
         int maxFunctions = config.getMaxDecompilerSearchFunctions();
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager functionManager = program.getFunctionManager();
+        // Ghidra API: FunctionManager.getFunctionCount() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctionCount()
         if (functionManager.getFunctionCount() > maxFunctions && !overrideMaxFunctionsLimit) {
-            return createErrorResult("Program has " + functionManager.getFunctionCount() +
+            throw new IllegalArgumentException("Program " + program.getName() + " has " + functionManager.getFunctionCount() +
                 " functions, which exceeds the maximum limit of " + maxFunctions +
                 ". Use 'override_max_functions_limit' to bypass this check.");
         }
@@ -879,18 +972,20 @@ public class CommentToolProvider extends AbstractToolProvider {
 
             DecompInterface decompiler = createConfiguredDecompilerForComments(program, "manage-comments-search_decomp");
             if (decompiler == null) {
-                return createErrorResult("Failed to initialize decompiler");
+                 throw new RuntimeException("Failed to initialize decompiler");
             }
 
             List<Map<String, Object>> searchResults = new ArrayList<>();
             try {
+                // Ghidra API: FunctionManager.getFunctions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/FunctionManager.html#getFunctions(boolean)
                 FunctionIterator functions = functionManager.getFunctions(true);
                 while (functions.hasNext()) {
-                    if (searchResults.size() >= maxResults) {
+                    if (searchResults.size() >= limit) {
                         break;
                     }
                     Function function = functions.next();
 
+                    // Ghidra API: Function.isExternal() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#isExternal()
                     if (function.isExternal()) {
                         continue;
                     }
@@ -899,6 +994,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                         TaskMonitor monitor = TimeoutTaskMonitor.timeoutIn(
                             config.getDecompilerTimeoutSeconds(),
                             TimeUnit.SECONDS);
+                        // Ghidra API: DecompInterface.decompileFunction(Function, int, TaskMonitor) - https://ghidra.re/ghidra_docs/api/ghidra/app/decompiler/DecompInterface.html#decompileFunction(ghidra.program.model.listing.Function,int,ghidra.util.task.TaskMonitor)
                         DecompileResults decompileResults = decompiler.decompileFunction(function, 0, monitor);
 
                         if (monitor.isCancelled()) {
@@ -911,7 +1007,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                             String[] lines = decompCode.split("\n");
 
                             for (int i = 0; i < lines.length; i++) {
-                                if (searchResults.size() >= maxResults) {
+                                if (searchResults.size() >= limit) {
                                     break;
                                 }
                                 String line = lines[i];
@@ -919,6 +1015,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
                                 if (matcher.find()) {
                                     Map<String, Object> result = new HashMap<>();
+                                    // Ghidra API: Function.getName() (Namespace), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                                     result.put("functionName", function.getName());
                                     result.put("functionAddress", AddressUtil.formatAddress(function.getEntryPoint()));
                                     result.put("lineNumber", i + 1);
@@ -938,19 +1035,22 @@ public class CommentToolProvider extends AbstractToolProvider {
                 decompiler.dispose();
             }
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("pattern", pattern);
-            result.put("caseSensitive", caseSensitive);
-            result.put("results", searchResults);
-            result.put("resultsCount", searchResults.size());
-            result.put("maxResults", maxResults);
-            return createJsonResult(result);
+            return searchResults;
         } catch (PatternSyntaxException e) {
-            return createErrorResult("Invalid regex pattern: " + e.getMessage());
+            throw new IllegalArgumentException("Invalid regex pattern: " + e.getMessage());
         } catch (Exception e) {
             logError("Error during decompilation search", e);
-            return createErrorResult("Search failed: " + e.getMessage());
+            throw new RuntimeException("Search failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * @deprecated Use searchDecompilationInProgram instead
+     */
+    private McpSchema.CallToolResult handleSearchDecompilation(Program program,
+            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
+            io.modelcontextprotocol.server.McpSyncServerExchange exchange) {
+        return createErrorResult("Deprecated internal method called");
     }
 
     /**

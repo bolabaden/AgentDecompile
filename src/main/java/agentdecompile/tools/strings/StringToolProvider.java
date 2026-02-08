@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.tools.strings;
 
@@ -65,6 +48,13 @@ import agentdecompile.util.ToolLogCollector;
 
 /**
  * Tool provider for string-related operations.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Data}, {@link ghidra.program.model.listing.DataIterator},
+ * {@link ghidra.program.model.symbol.ReferenceManager} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html">Listing API</a>,
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html">ReferenceManager API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class StringToolProvider extends AbstractToolProvider {
     /**
@@ -209,8 +199,10 @@ public class StringToolProvider extends AbstractToolProvider {
 
     private McpSchema.CallToolResult handleStringsCount(Program program) {
         int count = 0;
+        // Ghidra API: Program.getListing(), Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
         DataIterator dataIterator = program.getListing().getDefinedData(true);
         for (Data data : dataIterator) {
+            // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
             if (data.getValue() instanceof String) {
                 count++;
             }
@@ -233,6 +225,7 @@ public class StringToolProvider extends AbstractToolProvider {
 
         try {
             List<Map<String, Object>> stringData = new ArrayList<>();
+            // Ghidra API: Program.getListing(), Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
             DataIterator dataIterator = program.getListing().getDefinedData(true);
             int currentIndex = 0;
             int iterationCount = 0;
@@ -241,16 +234,19 @@ public class StringToolProvider extends AbstractToolProvider {
             for (Data data : dataIterator) {
                 iterationCount++;
                 if (iterationCount > MAX_ITERATIONS) {
+                    // Ghidra API: Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getName()
                     String logMsg = String.format(
                         "String iteration limit reached (%d iterations) for program %s. " +
                         "Only %d strings found before limit.",
                         MAX_ITERATIONS, program.getName(), stringData.size()
                     );
+                    // Ghidra API: Msg.warn(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#warn(java.lang.Object,java.lang.Object)
                     Msg.warn(this, logMsg);
                     logCollector.addLog("WARN", logMsg);
                     break;
                 }
 
+                // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
                 if (!(data.getValue() instanceof String)) {
                     continue;
                 }
@@ -323,11 +319,13 @@ public class StringToolProvider extends AbstractToolProvider {
         }
 
         List<Map<String, Object>> matchingStrings = new ArrayList<>();
+        // Ghidra API: Program.getListing(), Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
         DataIterator dataIterator = program.getListing().getDefinedData(true);
         int matchesFound = 0;
         boolean searchComplete = true;
 
         for (Data data : dataIterator) {
+            // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
             if (!(data.getValue() instanceof String)) {
                 continue;
             }
@@ -377,13 +375,16 @@ public class StringToolProvider extends AbstractToolProvider {
             return createErrorResult("searchString cannot be empty when mode='similarity'");
         }
 
+        // Ghidra API: Program.getListing(), Listing.getDefinedData(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing(), https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getDefinedData(boolean)
         DataIterator dataIterator = program.getListing().getDefinedData(true);
         List<Map<String, Object>> allStringData = new ArrayList<>();
 
         for (Data data : dataIterator) {
+            // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
             if (data.getValue() instanceof String) {
                 Map<String, Object> stringInfo = getStringInfo(data);
                 if (stringInfo != null) {
+                    // Ghidra API: Data.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getAddress()
                     stringInfo.put(TEMP_ADDRESS_KEY, data.getAddress());
                     allStringData.add(stringInfo);
                 }
@@ -445,6 +446,7 @@ public class StringToolProvider extends AbstractToolProvider {
      * @return Map of string properties or null if not a string
      */
     private Map<String, Object> getStringInfo(Data data, Program program, boolean includeReferencingFunctions) {
+        // Ghidra API: Data.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getValue()
         if (!(data.getValue() instanceof String)) {
             return null;
         }
@@ -452,12 +454,14 @@ public class StringToolProvider extends AbstractToolProvider {
         String stringValue = (String) data.getValue();
 
         Map<String, Object> stringInfo = new HashMap<>();
+        // Ghidra API: Data.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getAddress()
         stringInfo.put("address", AddressUtil.formatAddress(data.getAddress()));
         stringInfo.put("content", stringValue);
         stringInfo.put("length", stringValue.length());
 
         // Get the raw bytes
         try {
+            // Ghidra API: Data.getBytes() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getBytes()
             byte[] bytes = data.getBytes();
             if (bytes != null) {
                 // Convert bytes to hex string
@@ -473,7 +477,9 @@ public class StringToolProvider extends AbstractToolProvider {
         }
 
         // Add the data type and representation
+        // Ghidra API: Data.getDataType(), DataType.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getDataType()
         stringInfo.put("dataType", data.getDataType().getName());
+        // Ghidra API: Data.getDefaultValueRepresentation() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/Data.html#getDefaultValueRepresentation()
         stringInfo.put("representation", data.getDefaultValueRepresentation());
 
         // Add referencing functions if requested
@@ -496,19 +502,26 @@ public class StringToolProvider extends AbstractToolProvider {
         List<Map<String, String>> functions = new ArrayList<>();
         Set<String> seenFunctions = new HashSet<>();
 
+        // Ghidra API: Program.getReferenceManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getReferenceManager()
         ReferenceManager refManager = program.getReferenceManager();
+        // Ghidra API: Program.getFunctionManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         FunctionManager funcManager = program.getFunctionManager();
+        // Ghidra API: ReferenceManager.getReferencesTo(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceManager.html#getReferencesTo(ghidra.program.model.address.Address)
         ReferenceIterator refIter = refManager.getReferencesTo(address);
 
         while (refIter.hasNext() && functions.size() < MAX_REFERENCING_FUNCTIONS) {
+            // Ghidra API: ReferenceIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/ReferenceIterator.html#next()
             Reference ref = refIter.next();
+            // Ghidra API: Reference.getFromAddress(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Reference.html#getFromAddress()
             Function func = funcManager.getFunctionContaining(ref.getFromAddress());
 
             if (func != null) {
+                // Ghidra API: Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getEntryPoint()
                 String funcKey = func.getEntryPoint().toString();
                 if (!seenFunctions.contains(funcKey)) {
                     seenFunctions.add(funcKey);
                     Map<String, String> funcInfo = new HashMap<>();
+                    // Ghidra API: Function.getName() (Namespace) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/Namespace.html#getName()
                     funcInfo.put("name", func.getName());
                     funcInfo.put("address", AddressUtil.formatAddress(func.getEntryPoint()));
                     functions.add(funcInfo);

@@ -28,6 +28,15 @@ import agentdecompile.util.AddressUtil;
  * Tool provider for searching and analyzing constant values in a program.
  * Provides tools for finding specific constants, constants in ranges,
  * and identifying commonly used constants.
+ * <p>
+ * Ghidra API: {@link ghidra.program.model.listing.Instruction} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html">Instruction API</a>,
+ * {@link ghidra.program.model.scalar.Scalar} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/scalar/Scalar.html">Scalar API</a>,
+ * {@link ghidra.program.model.listing.Listing} -
+ * <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html">Listing API</a>.
+ * See <a href="https://ghidra.re/ghidra_docs/api/">Ghidra API Overview</a>.
+ * </p>
  */
 public class ConstantSearchToolProvider extends AbstractToolProvider {
 
@@ -158,6 +167,7 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
                     Map<String, Object> errorInfo = createIncorrectArgsErrorMap();
                     Map<String, Object> result = new HashMap<>();
                     result.put("error", errorInfo.get("error"));
+                    // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                     result.put("programPath", program.getDomainFile().getPathname());
                     result.put("constants", new ArrayList<>());
                     return createJsonResult(result);
@@ -179,22 +189,28 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
     private McpSchema.CallToolResult findConstantUses(Program program, long targetValue, int maxResults) {
         maxResults = clampMaxResults(maxResults);
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
         List<Map<String, Object>> results = new ArrayList<>();
         int instructionCount = 0;
 
         try {
+            // Ghidra API: Listing.getInstructions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(boolean)
             InstructionIterator instructions = listing.getInstructions(true);
             while (instructions.hasNext() && results.size() < maxResults) {
                 monitor.checkCancelled();
                 if (++instructionCount > MAX_INSTRUCTIONS) {
                     break;
                 }
+                // Ghidra API: InstructionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/InstructionIterator.html#next()
                 Instruction instr = instructions.next();
 
+                // Ghidra API: Instruction.getNumOperands() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getNumOperands()
                 for (int i = 0; i < instr.getNumOperands(); i++) {
+                    // Ghidra API: Instruction.getScalar(int) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getScalar(int)
                     Scalar scalar = instr.getScalar(i);
                     if (scalar != null) {
+                        // Ghidra API: Scalar.getUnsignedValue(), getSignedValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/scalar/Scalar.html#getUnsignedValue()
                         long unsignedValue = scalar.getUnsignedValue();
                         long signedValue = scalar.getSignedValue();
 
@@ -214,6 +230,7 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
         }
 
         Map<String, Object> response = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         response.put("programPath", program.getDomainFile().getPathname());
         response.put("searchedValue", formatValue(targetValue));
         response.put("resultCount", results.size());
@@ -231,18 +248,21 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
 
         maxResults = clampMaxResults(maxResults);
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
         List<Map<String, Object>> results = new ArrayList<>();
         Map<Long, Integer> valueFrequency = new HashMap<>();
         int instructionCount = 0;
 
         try {
+            // Ghidra API: Listing.getInstructions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(boolean)
             InstructionIterator instructions = listing.getInstructions(true);
             while (instructions.hasNext() && results.size() < maxResults) {
                 monitor.checkCancelled();
                 if (++instructionCount > MAX_INSTRUCTIONS) {
                     break;
                 }
+                // Ghidra API: InstructionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/InstructionIterator.html#next()
                 Instruction instr = instructions.next();
 
                 for (int i = 0; i < instr.getNumOperands(); i++) {
@@ -287,6 +307,7 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
             .collect(Collectors.toList());
 
         Map<String, Object> response = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         response.put("programPath", program.getDomainFile().getPathname());
         response.put("range", Map.of(
             "min", formatValue(minValue),
@@ -309,17 +330,20 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
 
         topN = clampMaxResults(topN);
         TaskMonitor monitor = createTimeoutMonitor();
+        // Ghidra API: Program.getListing() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getListing()
         Listing listing = program.getListing();
         Map<Long, ConstantInfo> constantMap = new HashMap<>();
         int instructionCount = 0;
 
         try {
+            // Ghidra API: Listing.getInstructions(boolean) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Listing.html#getInstructions(boolean)
             InstructionIterator instructions = listing.getInstructions(true);
             while (instructions.hasNext()) {
                 monitor.checkCancelled();
                 if (++instructionCount > MAX_INSTRUCTIONS) {
                     break;
                 }
+                // Ghidra API: InstructionIterator.next() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/InstructionIterator.html#next()
                 Instruction instr = instructions.next();
 
                 for (int i = 0; i < instr.getNumOperands(); i++) {
@@ -345,6 +369,7 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
                         // Use unsigned value for tracking (consistent with other tools)
                         ConstantInfo info = constantMap.computeIfAbsent(unsignedValue,
                             k -> new ConstantInfo(unsignedValue));
+                        // Ghidra API: Instruction.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getAddress()
                         info.addOccurrence(instr.getAddress(), program);
                     }
                 }
@@ -374,6 +399,7 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
             .collect(Collectors.toList());
 
         Map<String, Object> response = new HashMap<>();
+        // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         response.put("programPath", program.getDomainFile().getPathname());
         response.put("totalUniqueConstants", constantMap.size());
         response.put("returned", topConstants.size());
@@ -395,16 +421,20 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
             int operandIndex, long value) {
 
         Map<String, Object> result = new HashMap<>();
+        // Ghidra API: Instruction.getAddress() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getAddress()
         Address addr = instr.getAddress();
         result.put("address", AddressUtil.formatAddress(addr));
+        // Ghidra API: Instruction.getMnemonicString(), toString() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Instruction.html#getMnemonicString()
         result.put("mnemonic", instr.getMnemonicString());
         result.put("operandIndex", operandIndex);
         result.put("instruction", instr.toString());
         result.put("value", formatValue(value));
 
         // Add function context if available
+        // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
         Function func = program.getFunctionManager().getFunctionContaining(addr);
         if (func != null) {
+            // Ghidra API: Function.getName(), Function.getEntryPoint() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
             result.put("function", func.getName());
             result.put("functionAddress", AddressUtil.formatAddress(func.getEntryPoint()));
         }
@@ -555,8 +585,10 @@ public class ConstantSearchToolProvider extends AbstractToolProvider {
             if (locations.size() < MAX_SAMPLE_LOCATIONS) {
                 locations.add(AddressUtil.formatAddress(addr));
             }
+            // Ghidra API: Program.getFunctionManager(), FunctionManager.getFunctionContaining(Address) - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getFunctionManager()
             Function func = program.getFunctionManager().getFunctionContaining(addr);
             if (func != null) {
+                // Ghidra API: Function.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getName()
                 functions.add(func.getName());
             }
         }

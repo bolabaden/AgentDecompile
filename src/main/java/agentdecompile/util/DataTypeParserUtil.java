@@ -1,35 +1,18 @@
 /* ###
  * IP: AgentDecompile
  *
- * Licensed under the Business Source License 1.1 (the "License");
- * you may not use this file except in compliance with the License.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- * Licensor: bolabaden
- * Software: AgentDecompile
- * Change Date: 2030-01-01
- * Change License: Apache License, Version 2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * Under this License, you are granted the right to copy, modify,
- * create derivative works, redistribute, and make non‑production
- * use of the Licensed Work. The Licensor may provide an Additional
- * Use Grant permitting limited production use.
- *
- * On the Change Date, the Licensed Work will be made available
- * under the Change License identified above.
- *
- * The License Grant does not permit any use of the Licensed Work
- * beyond what is expressly allowed.
- *
- * If you violate any term of this License, your rights under it
- * terminate immediately.
- *
- * THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE
- * USE OR OTHER DEALINGS IN THE LICENSED WORK.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 package agentdecompile.util;
 
@@ -49,6 +32,15 @@ import agentdecompile.plugin.AgentDecompileProgramManager;
 /**
  * Utility class for parsing data types from strings.
  * Used by various tools that need to convert string representations to Ghidra data types.
+ * <p>
+ * Ghidra Data Type API references:
+ * <ul>
+ *   <li>{@link ghidra.program.model.data.DataTypeManager} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html">DataTypeManager API</a></li>
+ *   <li>{@link ghidra.program.model.data.DataType} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html">DataType API</a></li>
+ *   <li>{@link ghidra.util.data.DataTypeParser} - <a href="https://ghidra.re/ghidra_docs/api/ghidra/util/data/DataTypeParser.html">DataTypeParser API</a></li>
+ * </ul>
+ * See <a href="https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/package-summary.html">ghidra.program.model.data package</a>.
+ * </p>
  */
 public class DataTypeParserUtil {
 
@@ -72,7 +64,9 @@ public class DataTypeParserUtil {
         if (programPath != null && !programPath.isEmpty()) {
             Program targetProgram = AgentDecompileProgramManager.getProgramByPath(programPath);
             if (targetProgram != null) {
+                // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
                 DataTypeManager dtm = targetProgram.getDataTypeManager();
+                // Ghidra API: DataTypeManager.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getName()
                 if (dtm.getName().equals(name)) {
                     return dtm;
                 }
@@ -82,7 +76,9 @@ public class DataTypeParserUtil {
         // Then check all open programs (program-specific data types)
         List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
         for (Program program : openPrograms) {
+            // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
             DataTypeManager dtm = program.getDataTypeManager();
+            // Ghidra API: DataTypeManager.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getName()
             if (dtm.getName().equals(name)) {
                 return dtm;
             }
@@ -91,10 +87,13 @@ public class DataTypeParserUtil {
         // Then check standalone data type managers (loaded/associated archives)
         agentdecompile.plugin.AgentDecompilePlugin plugin = AgentDecompileInternalServiceRegistry.getService(agentdecompile.plugin.AgentDecompilePlugin.class);
         if (plugin != null) {
+            // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
             DataTypeArchiveService archiveService = plugin.getTool().getService(DataTypeArchiveService.class);
             if (archiveService != null) {
+                // Ghidra API: DataTypeArchiveService.getDataTypeManagers() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/DataTypeArchiveService.html#getDataTypeManagers()
                 DataTypeManager[] managers = archiveService.getDataTypeManagers();
                 for (DataTypeManager dtm : managers) {
+                    // Ghidra API: DataTypeManager.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getName()
                     if (dtm.getName().equals(name)) {
                         return dtm;
                     }
@@ -102,8 +101,9 @@ public class DataTypeParserUtil {
             }
         }
 
-        // Finally check built-in data type manager (fallback)
+        // Ghidra API: BuiltInDataTypeManager.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/BuiltInDataTypeManager.html#getDataTypeManager()
         DataTypeManager builtInDTM = BuiltInDataTypeManager.getDataTypeManager();
+        // Ghidra API: DataTypeManager.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getName()
         if (builtInDTM.getName().equals(name)) {
             return builtInDTM;
         }
@@ -136,10 +136,11 @@ public class DataTypeParserUtil {
         // Search for the data type
         for (DataTypeManager dtm : managersToSearch) {
             try {
-                // Use Ghidra's DataTypeParser to parse the string
+                // Ghidra API: DataTypeParser.<init>(DataTypeManager, DataTypeManager, DataTypeManager, AllowedDataTypes) - https://ghidra.re/ghidra_docs/api/ghidra/util/data/DataTypeParser.html
                 ghidra.util.data.DataTypeParser parser = new ghidra.util.data.DataTypeParser(
                     dtm, dtm, null, ghidra.util.data.DataTypeParser.AllowedDataTypes.ALL);
 
+                // Ghidra API: DataTypeParser.parse(String) - https://ghidra.re/ghidra_docs/api/ghidra/util/data/DataTypeParser.html#parse(java.lang.String)
                 DataType dt = parser.parse(dataTypeString);
                 if (dt != null) {
                     return dt;
@@ -179,10 +180,11 @@ public class DataTypeParserUtil {
 
         for (DataTypeManager dtm : managersToSearch) {
             try {
-                // Use Ghidra's DataTypeParser to parse the string
+                // Ghidra API: DataTypeParser.<init>(DataTypeManager, DataTypeManager, DataTypeManager, AllowedDataTypes) - https://ghidra.re/ghidra_docs/api/ghidra/util/data/DataTypeParser.html
                 ghidra.util.data.DataTypeParser parser = new ghidra.util.data.DataTypeParser(
                     dtm, dtm, null, ghidra.util.data.DataTypeParser.AllowedDataTypes.ALL);
 
+                // Ghidra API: DataTypeParser.parse(String) - https://ghidra.re/ghidra_docs/api/ghidra/util/data/DataTypeParser.html#parse(java.lang.String)
                 DataType dt = parser.parse(dataTypeString);
                 if (dt != null) {
                     foundDataType = dt;
@@ -203,6 +205,7 @@ public class DataTypeParserUtil {
         // as it can contain circular references and recursive structures that would
         // cause serialization issues. Instead, we only include metadata about the data type.
         Map<String, Object> dataTypeInfo = createDataTypeInfo(foundDataType);
+        // Ghidra API: DataTypeManager.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataTypeManager.html#getName()
         dataTypeInfo.put("archiveName", foundManager.getName());
         dataTypeInfo.put("requestedString", dataTypeString);
 
@@ -227,35 +230,37 @@ public class DataTypeParserUtil {
             }
             // If looking for a specific archive but not found, still include built-in types as fallback
             if (managersToSearch.isEmpty()) {
+                // Ghidra API: BuiltInDataTypeManager.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/BuiltInDataTypeManager.html#getDataTypeManager()
                 managersToSearch.add(BuiltInDataTypeManager.getDataTypeManager());
             }
         } else {
-            // Always add built-in data type manager first - it contains basic types like int, char, etc.
+            // Ghidra API: BuiltInDataTypeManager.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/BuiltInDataTypeManager.html#getDataTypeManager()
             managersToSearch.add(BuiltInDataTypeManager.getDataTypeManager());
-            
+
             // Add the specified program's data type manager first
             Program targetProgram = AgentDecompileProgramManager.getProgramByPath(programPath);
             if (targetProgram != null) {
+                // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
                 managersToSearch.add(targetProgram.getDataTypeManager());
             }
-            
+
             // Add other open program data type managers
             List<Program> openPrograms = AgentDecompileProgramManager.getOpenPrograms();
             for (Program program : openPrograms) {
-                // Skip if this is the target program (already added)
+                // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
                 if (targetProgram != null && program.getDomainFile().getPathname().equals(targetProgram.getDomainFile().getPathname())) {
                     continue;
                 }
+                // Ghidra API: Program.getDataTypeManager() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getDataTypeManager()
                 managersToSearch.add(program.getDataTypeManager());
             }
 
-            // Try to add standalone data type managers if AgentDecompilePlugin is available
-            // This is optional - if not available, we can still work with built-in and program types
             agentdecompile.plugin.AgentDecompilePlugin plugin = AgentDecompileInternalServiceRegistry.getService(agentdecompile.plugin.AgentDecompilePlugin.class);
             if (plugin != null) {
+                // Ghidra API: PluginTool.getService(Class) - https://ghidra.re/ghidra_docs/api/ghidra/framework/plugintool/PluginTool.html#getService(java.lang.Class)
                 DataTypeArchiveService archiveService = plugin.getTool().getService(DataTypeArchiveService.class);
                 if (archiveService != null) {
-                    // Add standalone data type managers
+                    // Ghidra API: DataTypeArchiveService.getDataTypeManagers() - https://ghidra.re/ghidra_docs/api/ghidra/app/services/DataTypeArchiveService.html#getDataTypeManagers()
                     Collections.addAll(managersToSearch, archiveService.getDataTypeManagers());
                 }
             }
@@ -271,16 +276,23 @@ public class DataTypeParserUtil {
      */
     public static Map<String, Object> createDataTypeInfo(DataType dt) {
         Map<String, Object> info = new HashMap<>();
+        // Ghidra API: DataType.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getName()
         info.put("name", dt.getName());
+        // Ghidra API: DataType.getDisplayName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getDisplayName()
         info.put("displayName", dt.getDisplayName());
+        // Ghidra API: DataType.getCategoryPath(), CategoryPath.getPath() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getCategoryPath()
         info.put("categoryPath", dt.getCategoryPath().getPath());
+        // Ghidra API: DataType.getDescription() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getDescription()
         info.put("description", dt.getDescription());
+        // Ghidra API: DataType.getUniversalID(), UniversalID.getValue() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getUniversalID()
         info.put("id", dt.getUniversalID() != null ? dt.getUniversalID().getValue() : null);
+        // Ghidra API: DataType.getLength() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getLength()
         info.put("size", dt.getLength());
+        // Ghidra API: DataType.getAlignment() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getAlignment()
         info.put("alignment", dt.getAlignment());
         info.put("dataTypeName", dt.getClass().getSimpleName());
 
-        // Check if data type is part of the built-in types
+        // Ghidra API: DataType.getDataTypeManager(), getSourceArchive(), SourceArchive.getName() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/data/DataType.html#getSourceArchive()
         if (dt.getDataTypeManager() != null) {
             info.put("sourceArchiveName", dt.getSourceArchive() != null ?
                 dt.getSourceArchive().getName() : "Local");
