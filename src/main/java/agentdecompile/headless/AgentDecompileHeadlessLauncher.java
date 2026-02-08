@@ -39,6 +39,7 @@ import ghidra.util.Msg;
 import agentdecompile.plugin.ConfigManager;
 import agentdecompile.server.McpServerManager;
 import agentdecompile.util.ProjectUtil;
+import agentdecompile.util.SharedProjectEnvConfig;
 import utility.application.ApplicationLayout;
 
 /**
@@ -209,6 +210,11 @@ public class AgentDecompileHeadlessLauncher {
             int randomPort = configManager.setRandomAvailablePort();
             // Ghidra API: Msg.info(Object, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#info(java.lang.Object,java.lang.Object)
             Msg.info(this, "Using random port: " + randomPort);
+        }
+
+        // Configure shared-project authentication from environment before opening any project
+        if (SharedProjectEnvConfig.hasAuthFromEnv()) {
+            SharedProjectEnvConfig.applySharedProjectAuthFromEnv(this);
         }
 
         // Create/open persistent project if location and name specified

@@ -89,6 +89,7 @@ import agentdecompile.util.SchemaUtil;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 import agentdecompile.util.ToolLogCollector;
 import agentdecompile.util.ProjectUtil;
+import agentdecompile.util.SharedProjectEnvConfig;
 import agentdecompile.util.AddressUtil;
 
 /**
@@ -2181,6 +2182,11 @@ public class ProjectToolProvider extends AbstractToolProvider {
                     (forceIgnoreLockEnv.equalsIgnoreCase("true") || forceIgnoreLockEnv.equalsIgnoreCase("1"));
             boolean forceIgnoreLock = getOptionalBoolean(request, "forceIgnoreLock", forceIgnoreLockDefault);
 
+            // Apply shared-project authentication from environment if set (so shared .gpr can connect)
+            if (SharedProjectEnvConfig.hasAuthFromEnv()) {
+                SharedProjectEnvConfig.applySharedProjectAuthFromEnv(this);
+            }
+
             // Get server credentials from parameters or environment variables
             String[] credentials = getServerCredentials(request);
             String serverUsername = credentials[0];
@@ -2369,6 +2375,10 @@ public class ProjectToolProvider extends AbstractToolProvider {
                 }
                 if (serverPort != null) {
                     result.put("providedServerPort", serverPort);
+                }
+                String repoName = SharedProjectEnvConfig.getRepositoryName();
+                if (repoName != null) {
+                    result.put("providedServerRepository", repoName);
                 }
             }
 

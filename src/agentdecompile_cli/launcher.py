@@ -132,10 +132,20 @@ class AgentDecompileLauncher:
                 "AGENT_DECOMPILE_API_KEY": os.getenv("AGENT_DECOMPILE_API_KEY", ""),
                 "AGENT_DECOMPILE_FORCE_IGNORE_LOCK": os.getenv("AGENT_DECOMPILE_FORCE_IGNORE_LOCK", ""),
                 "AGENT_DECOMPILE_PROJECT_PATH": os.getenv("AGENT_DECOMPILE_PROJECT_PATH", ""),
+                # Shared project / Ghidra Server (auth applied automatically at startup)
                 "AGENT_DECOMPILE_SERVER_USERNAME": os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", ""),
                 "AGENT_DECOMPILE_SERVER_PASSWORD": os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", ""),
                 "AGENT_DECOMPILE_SERVER_HOST": os.getenv("AGENT_DECOMPILE_SERVER_HOST", ""),
                 "AGENT_DECOMPILE_SERVER_PORT": os.getenv("AGENT_DECOMPILE_SERVER_PORT", ""),
+                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", ""
+                ),
+                "AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH": os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH", ""
+                ),
+                "AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT": os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT", ""
+                ),
             }
             # Environment variables are automatically available to Java via System.getenv()
             # since they're set in the Python process environment before Java code runs
