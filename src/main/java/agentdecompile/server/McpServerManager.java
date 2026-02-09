@@ -24,8 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
@@ -298,6 +300,37 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         // This is the canonical solution for long-running embedded Jetty servers
         // See: https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html
         httpServer = new Server(jettyThreadPool);
+
+        // CRITICAL: Install a global error handler that prevents unhandled exceptions from
+        // crashing connections. Without this, a single tool failure under heavy concurrent
+        // load can cascade into HTTP 500 errors that break the entire MCP session.
+        // The error handler catches exceptions at the Jetty level and returns structured
+        // error responses instead of letting Jetty's default error handling crash the connection.
+        httpServer.setErrorHandler(new ErrorHandler() {
+            @Override
+            public void handle(String target, Request baseRequest, 
+                    jakarta.servlet.http.HttpServletRequest request,
+                    jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+                // Log the error but don't let it crash the connection
+                int statusCode = response.getStatus();
+                Msg.warn(McpServerManager.this, String.format(
+                    "HTTP error %d for %s %s - returning error response to prevent connection breakage",
+                    statusCode, request.getMethod(), request.getRequestURI()));
+
+                // Set response headers to keep the connection alive even after an error
+                response.setHeader("Connection", "keep-alive");
+                response.setContentType("application/json");
+                
+                // Return a structured JSON error instead of letting Jetty render an HTML error page
+                // This helps the MCP client handle the error gracefully
+                String errorJson = String.format(
+                    "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":%d,\"message\":\"Server error: %s\"},\"id\":null}",
+                    -32603, "Internal server error (HTTP " + statusCode + "). The server is under heavy load. Please retry.");
+                response.getWriter().write(errorJson);
+                response.getWriter().flush();
+                baseRequest.setHandled(true);
+            }
+        });
 
         // CRITICAL: Configure HttpConfiguration with explicit idle timeout
         // Without explicit HttpConfiguration, Jetty may use default HTTP idle timeout
