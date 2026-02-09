@@ -25,3 +25,4 @@ gradle/wrapper/
 .env
 .pytest_cache/
 .pytest_ghidra/
+.pytest_cache/
