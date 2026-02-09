@@ -251,6 +251,15 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         ServletContextHandler servletContextHandler = new ServletContextHandler(ServletContextHandler.SESSIONS);
         servletContextHandler.setContextPath("/");
 
+        // CRITICAL: Add the global exception-catching filter FIRST in the chain.
+        // This catches any unhandled exceptions from downstream filters, tool execution,
+        // or the MCP transport layer and converts them to structured JSON error responses
+        // instead of letting Jetty render HTML error pages or close connections.
+        // Without this, a single tool failure under heavy concurrent load can cascade
+        // into HTTP 500 errors that permanently break the MCP session.
+        FilterHolder exceptionFilter = new FilterHolder(new GlobalExceptionFilter());
+        servletContextHandler.addFilter(exceptionFilter, "/*", EnumSet.of(DispatcherType.REQUEST));
+
         // Add API key authentication filter if enabled
         if (configManager.isApiKeyEnabled()) {
             FilterHolder filterHolder = new FilterHolder(new ApiKeyAuthFilter(configManager));
@@ -263,15 +272,15 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         FilterHolder loggingFilter = new FilterHolder(new RequestLoggingFilter(configManager));
         servletContextHandler.addFilter(loggingFilter, "/*", EnumSet.of(DispatcherType.REQUEST));
 
-        ServletHolder servletHolder = new ServletHolder(currentTransportProvider);
-        servletHolder.setAsyncSupported(true);
-        servletContextHandler.addServlet(servletHolder, "/*");
-
         // Add HTTP keep-alive filter to prevent connection drops
         // This ensures connections stay alive for long-running MCP sessions
         // The filter explicitly sets Connection: keep-alive headers
         FilterHolder keepAliveFilterHolder = new FilterHolder(new KeepAliveFilter());
         servletContextHandler.addFilter(keepAliveFilterHolder, "/*", EnumSet.of(DispatcherType.REQUEST));
+
+        ServletHolder servletHolder = new ServletHolder(currentTransportProvider);
+        servletHolder.setAsyncSupported(true);
+        servletContextHandler.addServlet(servletHolder, "/*");
 
         // Create explicit thread pool with configuration for long-running headless server
         // CRITICAL: Without an explicit thread pool, Jetty uses a default QueuedThreadPool
@@ -298,14 +307,6 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         // This is the canonical solution for long-running embedded Jetty servers
         // See: https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html
         httpServer = new Server(jettyThreadPool);
-
-        // CRITICAL: Add a global exception-catching filter as the FIRST filter in the chain.
-        // This catches any unhandled exceptions from tool execution or the MCP transport layer
-        // and converts them to structured JSON error responses instead of letting Jetty render
-        // HTML error pages or close connections. Without this, a single tool failure under
-        // heavy concurrent load can cascade into HTTP 500 errors that break the entire MCP session.
-        FilterHolder exceptionFilter = new FilterHolder(new GlobalExceptionFilter());
-        servletContextHandler.addFilter(exceptionFilter, "/*", EnumSet.of(DispatcherType.REQUEST));
 
         // CRITICAL: Configure HttpConfiguration with explicit idle timeout
         // Without explicit HttpConfiguration, Jetty may use default HTTP idle timeout
