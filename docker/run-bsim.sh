@@ -3,6 +3,8 @@
 # BSimControlLaunchable "start" handles initdb + pg_ctl start + lsh extension.
 # make-postgres.sh installs to Ghidra/Features/BSim/build/os/<OSDIR>/postgresql (see make-postgres.sh).
 set -euo pipefail
+# BSim PostgreSQL is linked against LibreSSL (libssl.so.60, libcrypto.so.57); use libs copied from build stage
+export LD_LIBRARY_PATH="/opt/bsim-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
 MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
 VMARG_LIST="${AGENT_DECOMPILE_VMARG_LIST:=${VMARG_LIST:=-Djava.awt.headless=true}}"

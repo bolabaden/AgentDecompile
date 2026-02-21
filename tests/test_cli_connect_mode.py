@@ -3,23 +3,24 @@ from __future__ import annotations
 import builtins
 import sys
 
-from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge, _normalize_backend_url
+from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge
+from agentdecompile_cli.utils import normalize_backend_url
 
 
 def test_normalize_backend_url_from_host_port():
-    assert _normalize_backend_url("localhost:8080") == "http://localhost:8080/mcp/message"
+    assert normalize_backend_url("localhost:8080") == "http://localhost:8080/mcp/message"
 
 
 def test_normalize_backend_url_preserves_explicit_endpoint():
     assert (
-        _normalize_backend_url("https://example.com/mcp/message")
+        normalize_backend_url("https://example.com/mcp/message")
         == "https://example.com/mcp/message"
     )
 
 
 def test_normalize_backend_url_appends_endpoint_to_custom_path():
     assert (
-        _normalize_backend_url("https://example.com/base")
+        normalize_backend_url("https://example.com/base")
         == "https://example.com/base/mcp/message"
     )
 
@@ -48,7 +49,7 @@ def test_connect_mode_main_does_not_import_pyghidra(monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["mcp-agentdecompile", "--mcp-server-url", "http://localhost:8080"],
+        ["mcp-agentdecompile", "--server-url", "http://localhost:8080"],
     )
 
     real_import = builtins.__import__

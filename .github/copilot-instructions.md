@@ -2,7 +2,7 @@
 
 **What this is:** AgentDecompile is a Ghidra extension that runs an MCP (Model Context Protocol) server so AI clients can talk to Ghidra—decompile, list symbols, read memory, open projects, etc. It turns Ghidra into an MCP backend that LLMs call via tools. Built for Java 21 and Ghidra 12.0+. The MCP server is always Java (Jetty); transport is streamable HTTP at `POST /mcp/message` (no SSE).
 
-**How it runs:** (1) **GUI** – Plugin inside Ghidra; one MCP server; clients hit `http://localhost:8080/mcp/message` (or configured host/port). (2) **CLI local** – Python (`mcp-agentdecompile`) starts PyGhidra/JVM, launches the Java MCP server, then bridges stdio to it so MCP clients see stdio. (3) **CLI connect** – Python does not start JVM; it connects to an existing server via `--mcp-server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL` (e.g. Docker or GUI). Full usage, env vars, and Docker: [README.md](README.md). Deep architecture, MCP protocol, adding tools, auth, locking: [CONTRIBUTING.md](CONTRIBUTING.md). Build and code structure: [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md).
+**How it runs:** (1) **GUI** – Plugin inside Ghidra; one MCP server; clients hit `http://localhost:8080/mcp/message` (or configured host/port). (2) **CLI local** – Python (`mcp-agentdecompile`) starts PyGhidra/JVM, launches the Java MCP server, then bridges stdio to it so MCP clients see stdio. (3) **CLI connect** – Python does not start JVM; it connects to an existing server via `--server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL` (e.g. Docker or GUI). Full usage, env vars, and Docker: [README.md](README.md). Deep architecture, MCP protocol, adding tools, auth, locking: [CONTRIBUTING.md](CONTRIBUTING.md). Build and code structure: [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md).
 
 **Where things are:**
 
@@ -16,7 +16,7 @@
   - `ui/` – GUI components.
 
 - **Python CLI** – `src/agentdecompile_cli/`
-  - `__main__.py` – Entry point `mcp-agentdecompile`; parses args (e.g. `--mcp-server-url`), either connect mode or local spawn (PyGhidra + launcher + bridge).
+  - `__main__.py` – Entry point `mcp-agentdecompile`; parses args (e.g. `--server-url`), either connect mode or local spawn (PyGhidra + launcher + bridge).
   - `stdio_bridge.py` – Stdio ↔ HTTP bridge; connects to Java MCP server, proxies list_tools/call_tool/list_resources/read_resource/list_prompts; retries, timeouts, optional API key header.
   - `launcher.py` – Wraps Java AgentDecompileHeadlessLauncher (via PyGhidra); project init, start server.
   - `project_manager.py` – Ghidra project lifecycle (create/open/import).

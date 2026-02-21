@@ -55,6 +55,13 @@ Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 
 [project.scripts]
 mcp-agentdecompile = "agentdecompile_cli.__main__:main"
+mcp_agentdecompile = "agentdecompile_cli.__main__:main"
+agentdecompile-mcp = "agentdecompile_cli.__main__:main"
+agentdecompile_mcp = "agentdecompile_cli.__main__:main"
+cli-agentdecompile = "agentdecompile_cli.__main__:main"
+cli_agentdecompile = "agentdecompile_cli.__main__:main"
+agentdecompile-cli = "agentdecompile_cli.__main__:main"
+agentdecompile_cli = "agentdecompile_cli.__main__:main"
 
 [project.optional-dependencies]
 local = [

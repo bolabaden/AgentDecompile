@@ -12,7 +12,7 @@
 - **Connect mode**:
   - Python does not start PyGhidra/JVM.
   - Python strictly connects to an existing Java-hosted MCP server.
-  - Enable with `--mcp-server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL`.
+  - Enable with `--server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL`.
 
 ## Important terminology
 
@@ -28,7 +28,7 @@ These are separate layers and must not be conflated.
 ## Connect mode examples
 
 ```bash
-uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile --mcp-server-url http://localhost:8080
+uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile --server-url http://localhost:8080
 ```
 
 ```bash
@@ -40,7 +40,7 @@ If an API key is enabled on the server:
 
 ```bash
 export AGENT_DECOMPILE_API_KEY=your-key
-uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile --mcp-server-url http://localhost:8080
+uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile --server-url http://localhost:8080
 ```
 
 ## Path behavior in connect mode
