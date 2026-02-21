@@ -56,7 +56,8 @@ env:
   IMAGE_NAME: agentdecompile
   DOCKERFILE_PATH: "./Dockerfile"
   BUILD_CONTEXT: "."
-  PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
+  # openjdk21 not available for armv7 on Alpine 3.20
+  PLATFORMS: "linux/amd64,linux/arm64"
   # Optional: GitHub API URL for "latest" release (tag_name parsed). Empty = use only git tag on tag push.
   VERSION_TAG_UPSTREAM_API: "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest"
 
