@@ -33,8 +33,8 @@ ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
 RUN --mount=type=cache,target=/var/cache/apk \
-    set -e; \
-    run() { "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    set -eux; \
+    run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
     run apk update; \
@@ -120,10 +120,10 @@ ARG PGID=1001
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# run(): POSIX sh helper; on failure echo exact command and exit for diagnosable build output
+# run(): POSIX sh helper; echo STEP before running, on failure echo FAILED and exact command
 RUN --mount=type=cache,target=/var/cache/apk \
-    set -e; \
-    run() { "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    set -eux; \
+    run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
     run apk update; \
