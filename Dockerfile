@@ -32,13 +32,14 @@ ENV PUID=${PUID}
 ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
+# Use dl.alpinelinux.org to avoid "No such file or directory" under QEMU; install packages then create user/group
 RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
-    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
-    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
+    run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
+        shadow \
         openjdk21 \
         bash \
         gcompat \
@@ -55,6 +56,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         libressl-dev \
         powershell \
     ; \
+    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
     run update-ms-fonts; \
     run fc-cache -f
 
@@ -120,14 +123,14 @@ ARG PGID=1001
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# run(): POSIX sh helper; echo STEP before running, on failure echo FAILED and exact command
+# Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
 RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
-    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
-    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
+    run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
+        shadow \
         openjdk21 \
         bash \
         gcompat \
@@ -136,7 +139,9 @@ RUN --mount=type=cache,target=/var/cache/apk \
         xhost \
         musl-locales \
     ; \
-    ( [ "$(uname -m)" = "x86_64" ] && run apk add --no-cache musl-locales-lang || true )
+    ( [ "$(uname -m)" = "x86_64" ] && run apk add --no-cache musl-locales-lang || true ); \
+    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
 WORKDIR /ghidra
 COPY --from=build /ghidra /ghidra
