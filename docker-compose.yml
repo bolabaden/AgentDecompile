@@ -39,7 +39,7 @@ services:
       # --- API key auth (MCP server) ---
       # Usage: src/main/java/agentdecompile/plugin/ConfigManager.java (env override), src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (applyHeadlessServerEnvOverrides), src/agentdecompile_cli/__main__.py (connect mode)
       AGENT_DECOMPILE_API_KEY: "${AGENT_DECOMPILE_API_KEY:-}"
-      AGENT_DECOMPILE_API_KEY_ENABLED: "${AGENT_DECOMPILE_API_KEY_ENABLED:-true}"
+      AGENT_DECOMPILE_API_KEY_ENABLED: "${AGENT_DECOMPILE_API_KEY_ENABLED:-false}"
 
       # --- Config file (optional .properties; if set, launcher uses file instead of env overrides) ---
       # Usage: docker/entrypoint.sh, src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (constructor/main)

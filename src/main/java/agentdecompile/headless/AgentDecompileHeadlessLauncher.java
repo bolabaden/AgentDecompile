@@ -36,6 +36,7 @@ import agentdecompile.util.HeadlessProjectHolder;
 import agentdecompile.util.ProjectUtil;
 import agentdecompile.util.SharedProjectEnvConfig;
 import ghidra.GhidraApplicationLayout;
+import ghidra.GhidraLaunchable;
 import ghidra.base.project.GhidraProject;
 import ghidra.framework.Application;
 import ghidra.framework.ApplicationConfiguration;
@@ -79,7 +80,7 @@ import utility.application.ApplicationLayout;
  * <a href="https://ghidra.re/ghidra_docs/api/ghidra/pyghidra/package-summary.html">ghidra.pyghidra</a>.
  * </p>
  */
-public class AgentDecompileHeadlessLauncher {
+public class AgentDecompileHeadlessLauncher implements GhidraLaunchable {
 
     private static final String LOCK_ENV_VAR = "AGENT_DECOMPILE_FORCE_IGNORE_LOCK";
     private static final List<String> LOCK_FILE_SUFFIXES = List.of(".lock", ".lock~", ".~lock");
@@ -636,6 +637,20 @@ public class AgentDecompileHeadlessLauncher {
     }
 
     /**
+     * Entry point when launched via Ghidra's {@code launch.sh} / {@link ghidra.GhidraLauncher}.
+     * GhidraLauncher sets up the module classpath (including extensions) and passes the
+     * {@link ApplicationLayout}. We initialise the Ghidra Application ourselves since
+     * GhidraLauncher does not do so for us.
+     */
+    @Override
+    public void launch(GhidraApplicationLayout layout, String[] args) throws Exception {
+        if (!Application.isInitialized()) {
+            Application.initializeApplication(layout, new HeadlessGhidraApplicationConfiguration());
+        }
+        main(args);
+    }
+
+    /**
      * Main method for standalone execution
      * <p>
      * Example usage:
@@ -671,9 +686,9 @@ public class AgentDecompileHeadlessLauncher {
                 System.err.println("Invalid project path: " + projectPathValue + " (dir: " + projectDir + ", name: " + projectName + "). Please set AGENT_DECOMPILE_PROJECT_PATH to a valid project path.");
                 System.exit(1);
             }
-            launcher = new AgentDecompileHeadlessLauncher(configFile, false, false, projectDir, projectName);
+            launcher = new AgentDecompileHeadlessLauncher(configFile, true, false, projectDir, projectName);
         } else {
-            launcher = new AgentDecompileHeadlessLauncher(configFile, false, false);
+            launcher = new AgentDecompileHeadlessLauncher(configFile, true, false);
         }
 
         try {
