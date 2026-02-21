@@ -3,6 +3,69 @@ revision = 3
 requires-python = ">=3.10"
 
 [[package]]
+name = "agentdecompile"
+source = { editable = "." }
+dependencies = [
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "mcp" },
+    { name = "pyghidra" },
+]
+
+[package.optional-dependencies]
+local = [
+    { name = "pyghidra" },
+]
+test = [
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "mcp" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-sugar" },
+    { name = "pytest-timeout" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "mcp" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-sugar" },
+    { name = "pytest-timeout" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.0,<1.0" },
+    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27.0,<1.0" },
+    { name = "httpx-sse", specifier = ">=0.4.0" },
+    { name = "httpx-sse", marker = "extra == 'test'", specifier = ">=0.4.0" },
+    { name = "mcp" },
+    { name = "mcp", marker = "extra == 'test'" },
+    { name = "pyghidra", specifier = ">=3.0.0" },
+    { name = "pyghidra", marker = "extra == 'local'", specifier = ">=3.0.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
+    { name = "pytest-sugar", marker = "extra == 'test'", specifier = ">=0.9.0" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.0.0" },
+]
+provides-extras = ["local", "test"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27.0,<1.0" },
+    { name = "httpx-sse", specifier = ">=0.4.0" },
+    { name = "mcp" },
+    { name = "pytest", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.21.0" },
+    { name = "pytest-sugar", specifier = ">=0.9.0" },
+    { name = "pytest-timeout", specifier = ">=2.0.0" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -700,65 +763,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl", hash = "sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231", size = 26766, upload-time = "2025-10-13T15:30:47.625Z" },
-]
-
-[[package]]
-name = "agentdecompile"
-source = { editable = "." }
-dependencies = [
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "mcp" },
-    { name = "pyghidra" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "mcp" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-sugar" },
-    { name = "pytest-timeout" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "mcp" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-sugar" },
-    { name = "pytest-timeout" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27.0,<1.0" },
-    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27.0,<1.0" },
-    { name = "httpx-sse", specifier = ">=0.4.0" },
-    { name = "httpx-sse", marker = "extra == 'test'", specifier = ">=0.4.0" },
-    { name = "mcp" },
-    { name = "mcp", marker = "extra == 'test'" },
-    { name = "pyghidra", specifier = ">=3.0.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
-    { name = "pytest-sugar", marker = "extra == 'test'", specifier = ">=0.9.0" },
-    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.0.0" },
-]
-provides-extras = ["test"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.27.0,<1.0" },
-    { name = "httpx-sse", specifier = ">=0.4.0" },
-    { name = "mcp" },
-    { name = "pytest", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.21.0" },
-    { name = "pytest-sugar", specifier = ">=0.9.0" },
-    { name = "pytest-timeout", specifier = ">=2.0.0" },
 ]
 
 [[package]]

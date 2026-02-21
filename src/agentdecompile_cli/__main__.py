@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -21,9 +22,9 @@ from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
 # Apply MCP SDK fix before any ClientSession use (list() snapshot for _response_streams iteration)
 _apply_mcp_session_fix()
 
-from agentdecompile_cli.launcher import AgentDecompileLauncher
-from agentdecompile_cli.project_manager import ProjectManager
-from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge
+from agentdecompile_cli.launcher import AgentDecompileLauncher  # noqa: E402
+from agentdecompile_cli.project_manager import ProjectManager  # noqa: E402
+from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge  # noqa: E402
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -251,21 +252,24 @@ class AgentDecompileCLI:
 
     def __init__(
         self,
-        launcher: AgentDecompileLauncher,
-        project_manager: ProjectManager,
-        server_port: int,
+        launcher: AgentDecompileLauncher | None,
+        project_manager: ProjectManager | None,
+        backend: int | str,
+        api_key: str | None = None,
     ):
         """
         Initialize AgentDecompile CLI with pre-initialized components.
 
         Args:
-            launcher: Pre-initialized AgentDecompile server launcher
-            project_manager: Pre-initialized project manager
-            server_port: Port number where AgentDecompile server is running
+            launcher: Pre-initialized AgentDecompile server launcher (local mode)
+            project_manager: Pre-initialized project manager (local mode)
+            backend: Backend port (int) or URL (str)
+            api_key: Optional API key sent as X-API-Key in connect mode
         """
-        self.launcher: AgentDecompileLauncher = launcher
-        self.project_manager: ProjectManager = project_manager
-        self.server_port: int = server_port
+        self.launcher: AgentDecompileLauncher | None = launcher
+        self.project_manager: ProjectManager | None = project_manager
+        self.backend: int | str = backend
+        self.api_key: str | None = api_key
         self.bridge: AgentDecompileStdioBridge | None = None
         self.cleanup_done: bool = False
 
@@ -331,8 +335,11 @@ class AgentDecompileCLI:
             self.setup_signal_handlers()
 
             # Start stdio bridge
-            sys.stderr.write(f"Starting stdio bridge on port {self.server_port}...\n")
-            self.bridge = AgentDecompileStdioBridge(self.server_port)
+            if isinstance(self.backend, int):
+                sys.stderr.write(f"Starting stdio bridge on local backend port {self.backend}...\n")
+            else:
+                sys.stderr.write(f"Starting stdio bridge to remote backend {self.backend}...\n")
+            self.bridge = AgentDecompileStdioBridge(self.backend, api_key=self.api_key)
 
             # Run the bridge (this blocks until stopped)
             await self.bridge.run()
@@ -374,6 +381,24 @@ def main():
         required=False,
     )
     parser.add_argument(
+        "--mcp-server-url",
+        type=str,
+        help="Connect to an existing AgentDecompile MCP server (http(s)://host:port[/mcp/message])",
+        required=False,
+    )
+    parser.add_argument(
+        "--server-url",
+        type=str,
+        help=argparse.SUPPRESS,  # Deprecated alias for --mcp-server-url
+        required=False,
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        help="Optional MCP API key sent as X-API-Key",
+        required=False,
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -389,10 +414,37 @@ def main():
 
     args = parser.parse_args()
 
+    cli_server_url = args.mcp_server_url or args.server_url
+    env_server_url = (
+        os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL")
+        or os.getenv("AGENT_DECOMPILE_SERVER_URL")
+    )
+    backend_url: str | None = cli_server_url or env_server_url
+    api_key: str | None = args.api_key or os.getenv("AGENT_DECOMPILE_API_KEY")
+
     # Validate config file if provided
     if args.config and not args.config.exists():
         sys.stderr.write(f"Error: Configuration file not found: {args.config}\n")
         sys.exit(1)
+
+    # Connect mode: strictly bridge to existing Java-hosted MCP server.
+    if backend_url:
+        if args.config:
+            sys.stderr.write(
+                "Note: --config is ignored when connecting to an existing MCP server.\n"
+            )
+        cli = AgentDecompileCLI(
+            launcher=None,
+            project_manager=None,
+            backend=backend_url,
+            api_key=api_key,
+        )
+        try:
+            asyncio.run(cli.run())
+        except KeyboardInterrupt:
+            sys.stderr.write("\nShutdown complete\n")
+            sys.exit(0)
+        return
 
     # =========================================================================
     # BLOCKING INITIALIZATION (before async event loop)
@@ -424,7 +476,17 @@ def main():
         # Initialize PyGhidra (blocking, 3-5 seconds)
         # Any stdout writes from PyGhidra will be caught by the filter and sent to stderr
         sys.stderr.write("Initializing PyGhidra...\n")
-        import pyghidra
+        try:
+            import pyghidra
+        except ImportError:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            sys.stderr.write(
+                "PyGhidra is not installed for local spawn mode.\n"
+                "Install with the local extra (e.g. `pip install \"agentdecompile[local]\"`) "
+                "or connect to an existing server using --mcp-server-url.\n"
+            )
+            sys.exit(1)
 
         pyghidra.start(verbose=args.verbose)
 
@@ -462,7 +524,10 @@ def main():
     # =========================================================================
     # Create CLI with pre-initialized components
     cli = AgentDecompileCLI(
-        launcher=launcher, project_manager=project_manager, server_port=port
+        launcher=launcher,
+        project_manager=project_manager,
+        backend=port,
+        api_key=None,
     )
 
     # Run async event loop (stdio bridge starts immediately)

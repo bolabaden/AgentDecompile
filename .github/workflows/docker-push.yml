@@ -1,0 +1,176 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+# ------------------------------------------------------------------------------
+# Docker multi-platform build and push to GHCR + Docker Hub
+# ------------------------------------------------------------------------------
+#
+# REUSEABLE INSTRUCTIONS:
+#
+#   1. Edit the "Configuration" env block below (same file, same spot):
+#      - IMAGE_NAME          : Docker image name (e.g. myapp). Used as ghcr.io/<owner>/<IMAGE_NAME>, docker.io/<owner>/<IMAGE_NAME>.
+#      - DOCKERFILE_PATH     : Path to Dockerfile (default ./Dockerfile).
+#      - BUILD_CONTEXT       : Build context (default .).
+#      - PLATFORMS           : Comma-separated list (default linux/amd64,linux/arm64,linux/arm/v7).
+#      - VERSION_TAG_UPSTREAM_API : (Optional) On tag push, prepend a version from this GitHub API URL.
+#                                  Example: https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest
+#                                  Tag format becomes (upstream_version)_(git_tag_stripped), e.g. 12.0.3_1.2.0.
+#                                  Leave empty to use only the git tag as image tag (e.g. v1.2.0 → 1.2.0).
+#
+#   2. Tag behavior:
+#      - Custom (resolve step): branch → branch name; tag → (upstream version)_(git tag) if VERSION_TAG_UPSTREAM_API set, else git tag with "v" stripped.
+#      - metadata-action adds (per run): semver ({{version}}, latest), ref (branch, pr), raw "dev" on default branch; plus OCI labels (source, revision, etc.).
+#
+#   3. Secrets (Settings → Secrets and variables → Actions):
+#      - GHCR: uses GITHUB_TOKEN (automatic) or GITHUB_PERSONAL_ACCESS_TOKEN.
+#      - Docker Hub: set one of DOCKERHUB_TOKEN, DOCKER_ACCESS_TOKEN, DOCKER_HUB_TOKEN, or DOCKER_TOKEN to push to docker.io.
+#      - Optional: DOCKER_USERNAME (defaults to github.repository_owner).
+#
+#   4. Registries: Pushes to ghcr.io/<repository_owner>/<IMAGE_NAME> and (if Docker secrets set) docker.io/<DOCKER_USERNAME>/<IMAGE_NAME>.
+#      Push only runs on `push`; pull_request runs the build but does not push.
+#
+# ------------------------------------------------------------------------------
+
+name: "Docker Build and Push"
+run-name: ${{ github.actor }} – build and push Docker image
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+on:
+  push:
+    branches: ["*"]
+    tags: ["*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+# ------------------------------------------------------------------------------
+# Configuration – change these for your repo
+# ------------------------------------------------------------------------------
+env:
+  IMAGE_NAME: agentdecompile
+  DOCKERFILE_PATH: "./Dockerfile"
+  BUILD_CONTEXT: "."
+  PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
+  # Optional: GitHub API URL for "latest" release (tag_name parsed). Empty = use only git tag on tag push.
+  VERSION_TAG_UPSTREAM_API: "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest"
+
+jobs:
+  build-push:
+    name: "Build and Push"
+    # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+    if: ${{ success() || failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v6
+      # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+        if: ${{ success() || failure() }}
+        with:
+          fetch-depth: 0
+
+      - name: "Resolve image tag and optional upstream version"
+        id: resolve
+        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+        if: ${{ success() || failure() }}
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          VERSION_TAG_UPSTREAM_API: ${{ env.VERSION_TAG_UPSTREAM_API }}
+        run: |
+          echo "GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_ENV
+          echo "DOCKERHUB_IMAGE=docker.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_ENV
+
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            GIT_TAG="${{ github.ref_name }}"
+            GIT_TAG_STRIPPED="${GIT_TAG#v}"
+
+            if [[ -n "${VERSION_TAG_UPSTREAM_API}" ]]; then
+              UPSTREAM_JSON=$(curl -sSL -H 'Accept: application/vnd.github+json' "${VERSION_TAG_UPSTREAM_API}")
+              UPSTREAM_TAG=$(echo "$UPSTREAM_JSON" | jq -r '.tag_name')
+              # Heuristic: strip common prefixes/suffixes (e.g. Ghidra_12.0.3_build -> 12.0.3)
+              UPSTREAM_VERSION="${UPSTREAM_TAG#Ghidra_}"
+              UPSTREAM_VERSION="${UPSTREAM_VERSION%_build}"
+              echo "IMAGE_TAG=${UPSTREAM_VERSION}_${GIT_TAG_STRIPPED}" >> $GITHUB_OUTPUT
+              echo "GHIDRA_VERSION=${UPSTREAM_VERSION}" >> $GITHUB_OUTPUT
+            else
+              echo "IMAGE_TAG=${GIT_TAG_STRIPPED}" >> $GITHUB_OUTPUT
+              echo "GHIDRA_VERSION=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "IMAGE_TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "GHIDRA_VERSION=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: "Set Docker token variables"
+        id: set-tokens
+        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+        if: ${{ success() || failure() }}
+        run: |
+          echo "GITHUB_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN || secrets.GITHUB_PERSONAL_ACCESS_TOKEN || '' }}" >> $GITHUB_ENV
+          echo "DOCKER_TOKEN=${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_ACCESS_TOKEN || secrets.DOCKER_HUB_TOKEN || secrets.DOCKER_TOKEN || '' }}" >> $GITHUB_ENV
+          echo "DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME || github.repository_owner }}" >> $GITHUB_ENV
+          if [[ -n "${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_ACCESS_TOKEN || secrets.DOCKER_HUB_TOKEN || secrets.DOCKER_TOKEN || '' }}" ]]; then
+            echo "DOCKERHUB_AUTH=true" >> $GITHUB_ENV
+          else
+            echo "DOCKERHUB_AUTH=false" >> $GITHUB_ENV
+          fi
+
+      - name: "Log in to GitHub Container Registry"
+        uses: docker/login-action@v3
+        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+        if: ${{ success() || failure() }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ env.GITHUB_AUTH_TOKEN }}
+
+      - name: "Log in to Docker Hub (if secrets present)"
+        if: env.DOCKERHUB_AUTH == 'true' && ${{ success() || failure() }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_TOKEN }}
+
+      - name: "Extract Docker metadata"
+        id: meta
+        # Semver tags + OCI labels; runs alongside custom resolve tag (upstream_version_gittag).
+        if: ${{ success() || failure() }}
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern=latest
+            type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=ref,event=branch,prefix=
+            type=ref,event=pr
+
+      - name: "Build and push Docker image"
+        uses: docker/build-push-action@v6
+        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
+        if: ${{ success() || failure() }}
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            GHIDRA_VERSION=${{ steps.resolve.outputs.GHIDRA_VERSION }}
+          # Custom tag (upstream_version_gittag or branch) plus metadata-action semver/ref tags
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}
+            ${{ env.DOCKERHUB_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: ${{ github.event_name == 'push' }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

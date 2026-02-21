@@ -279,39 +279,39 @@ afterEvaluate {
 
 			// Slim extension: exclude repo/CI/docs/tests (keep only README, LICENSE, extension essentials)
 			exclude '.github/**'
-			exclude '.pytest_ghidra/**'
 			exclude 'docs/**'
 			exclude 'tests/**'
 			exclude 'vendor/**'
 			exclude 'src/**'
 
-			// Root files not required by the extension at runtime
+			// Gradle wrapper (project uses system gradle; per .gitignore)
+			exclude 'gradlew'
+			exclude 'gradlew.bat'
+			exclude 'gradle/wrapper/**'
+			exclude '.gradletasknamecache'
+			exclude 'gradle-app.setting'
+
+			// Root files not required by the extension at runtime (aligned with .gitignore)
+			exclude '.cursorrules'
+			exclude '.dockerignore'
 			exclude '.env.example'
 			exclude '.gitignore'
 			exclude '.gitattributes'
 			exclude '.markdownlint.json'
 			exclude 'AGENTS.md'
-			exclude 'ARCHITECTURE.md'
 			exclude 'build-and-install.ps1'
 			exclude 'build.gradle'
 			exclude 'CLAUDE.md'
 			exclude 'CONTRIBUTING.md'
 			exclude 'debug_apikey.java'
 			exclude 'debug_test.java'
-			exclude 'DEVELOPER.md'
-			exclude 'DEVELOPMENT.md'
+			exclude 'docker-compose.yml'
+			exclude 'Dockerfile'
+			exclude 'docker/**'
 			exclude 'gradle.properties'
-			exclude 'IMPLEMENTATION_SUMMARY.md'
-			exclude 'INTERNALS.md'
-			exclude 'maintenance.ipynb'
-			exclude 'maintenance_ops.ipynb'
-			exclude 'MCP_PROTOCOL.md'
-			exclude 'new_tool_list.md'
-			exclude 'OPTIMIZATION_SUMMARY.md'
-			exclude 'PERFORMANCE_IMPROVEMENTS.md'
 			exclude 'pyproject.toml'
-			exclude 'REBRANDING_SUMMARY.md'
 			exclude 'run-all-tests.ps1'
+			exclude 'TOOLS_LIST.md'
 			exclude 'uv.lock'
 		}
 	}

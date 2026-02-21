@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -712,9 +713,13 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
                 // Batch mode: multiple function identifiers
                 if (functionIdentifierBatch != null && !functionIdentifierBatch.isEmpty()) {
+                    logMatchFunctionProgress("entry: batch match mode, source=" + sourceProgram.getDomainFile().getPathname()
+                            + ", identifiers=" + functionIdentifierBatch.size() + ", targets=" + targets.size());
                     return handleBatchMatchFunction(sourceProgram, request, functionIdentifierBatch);
                 }
 
+                logMatchFunctionProgress("entry: batch propagate mode, source=" + sourceProgram.getDomainFile().getPathname()
+                        + ", targets=" + targets.size() + ", functionIdentifier=" + (functionIdentifier != null ? functionIdentifier : "all"));
                 double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.60);
                 if (minSimilarity < 0.0 || minSimilarity > 1.0) {
                     return createErrorResult("minSimilarity must be between 0.0 and 1.0");
@@ -760,7 +765,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
             double minSimilarity, int maxInstructions, boolean propagateNames, boolean propagateTags,
             boolean propagateComments, boolean filterDefaultNames, String filterByTag,
             int maxFunctions, int batchSize, String functionIdentifier) {
+        long phaseStart = System.currentTimeMillis();
+        logMatchFunctionProgress("batch propagate starting: source=" + sourceProgram.getDomainFile().getPathname() + ", targets=" + targets.size());
+        logMatchFunctionProgress("params: maxInstructions=" + maxInstructions + ", minSimilarity=" + minSimilarity
+                + ", batchSize=" + batchSize + ", maxFunctions=" + maxFunctions + ", filterByTag=" + filterByTag
+                + ", filterDefaultNames=" + filterDefaultNames);
 
+        long collectStart = System.currentTimeMillis();
+        logMatchFunctionProgress("collecting source functions (iterator + filters)");
         List<Function> sourceFunctions = new ArrayList<>();
         FunctionIterator it = sourceProgram.getFunctionManager().getFunctions(true);
         Function targetFunction = null;
@@ -813,18 +825,29 @@ public class FunctionToolProvider extends AbstractToolProvider {
             }
             sourceFunctions.add(f);
             if (maxFunctions > 0 && sourceFunctions.size() >= maxFunctions) {
+                logMatchFunctionProgress("hit maxFunctions=" + maxFunctions + "; stopping source collection");
                 break;
             }
         }
+        logMatchFunctionProgress("collected " + sourceFunctions.size() + " source functions", collectStart);
 
+        long profilesStart = System.currentTimeMillis();
+        logMatchFunctionProgress("building source profiles for " + sourceFunctions.size() + " functions");
         Map<Function, FunctionFingerprintUtil.FunctionProfile> sourceProfiles = new HashMap<>();
+        final int profileProgressInterval = Math.max(1, sourceFunctions.size() / 20);
+        int profileCount = 0;
         for (Function sourceFunc : sourceFunctions) {
             FunctionFingerprintUtil.FunctionProfile profile
                     = FunctionFingerprintUtil.buildFunctionProfile(sourceProgram, sourceFunc, maxInstructions);
             if (profile != null) {
                 sourceProfiles.put(sourceFunc, profile);
+                profileCount++;
+                if (profileCount % profileProgressInterval == 0 || profileCount == sourceFunctions.size()) {
+                    logMatchFunctionProgress("source profiles: " + profileCount + "/" + sourceFunctions.size() + " built");
+                }
             }
         }
+        logMatchFunctionProgress("built " + sourceProfiles.size() + " source profiles", profilesStart);
 
         Map<String, Object> result = new HashMap<>();
         result.put("sourceProgramPath", sourceProgram.getDomainFile().getPathname());
@@ -839,14 +862,20 @@ public class FunctionToolProvider extends AbstractToolProvider {
         int totalAmbiguous = 0;
         int totalNoMatch = 0;
 
+        logMatchFunctionProgress("starting per-target loop: " + targets.size() + " targets, " + sourceFunctions.size() + " source functions each");
         for (Program target : targets) {
             String targetPath = target.getDomainFile().getPathname();
+            long targetPhaseStart = System.currentTimeMillis();
+            logMatchFunctionProgress("target " + targetPath + ": starting (source functions=" + sourceFunctions.size() + ")");
             Map<String, Object> targetResult = new HashMap<>();
             targetResult.put("programPath", targetPath);
             targetResult.put("programName", target.getName());
 
+            long indexStart = System.currentTimeMillis();
+            logMatchFunctionProgress("target " + targetPath + ": building enhanced index");
             FunctionFingerprintUtil.EnhancedProgramIndex targetIndex
                     = FunctionFingerprintUtil.buildEnhancedIndex(target, maxInstructions);
+            logMatchFunctionProgress("target " + targetPath + ": index built", indexStart);
 
             List<Map<String, Object>> propagated = new ArrayList<>();
             List<Map<String, Object>> ambiguous = new ArrayList<>();
@@ -861,10 +890,12 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 int noMatchCount = 0;
 
                 Map<Address, FunctionFingerprintUtil.FunctionProfile> confirmedMatches = new HashMap<>();
+                long propagateLoopStart = System.currentTimeMillis();
 
                 for (Function sourceFunc : sourceFunctions) {
                     processed++;
                     if (processed % batchSize == 0) {
+                        logMatchFunctionProgress("target " + targetPath + ": processed " + processed + "/" + sourceFunctions.size() + " (matched=" + matched + ", propagated=" + propagatedCount + ")", propagateLoopStart);
                         target.endTransaction(txId, true);
                         txId = target.startTransaction("Batch Propagate Function Names (continued)");
                         autoSaveProgram(target, "Batch propagate progress");
@@ -963,12 +994,17 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     }
                 }
 
+                logMatchFunctionProgress("target " + targetPath + ": main propagate loop done (processed=" + processed + ", propagated=" + propagatedCount + ")", propagateLoopStart);
+
                 // Call graph propagation: use confirmed matches as anchors
                 int graphPropagated = 0;
                 if (!confirmedMatches.isEmpty()) {
+                    long graphStart = System.currentTimeMillis();
+                    logMatchFunctionProgress("target " + targetPath + ": call graph propagation (anchors=" + confirmedMatches.size() + ")");
                     Map<Address, FunctionFingerprintUtil.ScoredMatch> extraMatches =
                             FunctionFingerprintUtil.propagateCallGraph(
                                     confirmedMatches, sourceProgram, targetIndex, minSimilarity);
+                    logMatchFunctionProgress("target " + targetPath + ": call graph returned " + extraMatches.size() + " extra matches", graphStart);
                     for (Map.Entry<Address, FunctionFingerprintUtil.ScoredMatch> extra : extraMatches.entrySet()) {
                         Function srcFunc = sourceProgram.getFunctionManager().getFunctionAt(extra.getKey());
                         if (srcFunc == null || srcFunc.isExternal()) {
@@ -1011,6 +1047,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     }
                 }
 
+                logMatchFunctionProgress("target " + targetPath + ": done (processed=" + processed + ", propagated=" + propagatedCount + ", graphPropagated=" + graphPropagated + ")", targetPhaseStart);
                 target.endTransaction(txId, true);
                 autoSaveProgram(target, "Batch propagate function names");
                 invalidateFunctionCaches(targetPath);
@@ -1035,6 +1072,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 target.endTransaction(txId, false);
                 targetResult.put("error", e.getMessage());
                 logError("Error processing target program " + targetPath, e);
+                logMatchFunctionProgress("target " + targetPath + ": failed after " + (System.currentTimeMillis() - targetPhaseStart) + " ms: " + e.getMessage());
             }
 
             perTargetResults.add(targetResult);
@@ -1051,7 +1089,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
         result.put("targetResults", perTargetResults);
         result.put("success", true);
 
+        logMatchFunctionProgress("batch propagate complete: totalProcessed=" + totalProcessed + ", totalPropagated=" + totalPropagated + ", targets=" + perTargetResults.size(), phaseStart);
         return createJsonResult(result);
+    }
+
+    /** Log progress for match-function with timestamp so timeout failures show last activity. */
+    private void logMatchFunctionProgress(String message) {
+        logInfo("[match-function] " + Instant.now() + " - " + message);
+    }
+
+    /** Log progress with elapsed milliseconds since startMs (for pinpointing slow phases). */
+    private void logMatchFunctionProgress(String message, long startMs) {
+        long elapsed = System.currentTimeMillis() - startMs;
+        logInfo("[match-function] " + Instant.now() + " - " + message + " (took " + elapsed + " ms)");
     }
 
     /**
@@ -1060,6 +1110,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
      * → multi-feature fuzzy → structural scan → call graph propagation.
      */
     private McpSchema.CallToolResult handleBatchMatchFunction(Program sourceProgram, CallToolRequest request, List<?> functionIdentifiers) {
+        long phaseStart = System.currentTimeMillis();
+        logMatchFunctionProgress("batch match starting: " + functionIdentifiers.size() + " function identifiers");
         int maxInstructions = getOptionalInt(request, "maxInstructions", FunctionFingerprintUtil.DEFAULT_MAX_INSTRUCTIONS);
         double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.60);
         boolean propagateNames = getOptionalBoolean(request, "propagateNames", true);
@@ -1069,29 +1121,41 @@ public class FunctionToolProvider extends AbstractToolProvider {
         if (batchSize <= 0) {
             batchSize = 100;
         }
+        logMatchFunctionProgress("params: maxInstructions=" + maxInstructions + ", minSimilarity=" + minSimilarity
+                + ", batchSize=" + batchSize + ", propagateNames=" + propagateNames + ", propagateTags=" + propagateTags + ", propagateComments=" + propagateComments);
 
         List<Object> targetPathsRaw = getParameterAsList(request.arguments(), "targetProgramPaths");
         List<String> targetProgramPaths = targetPathsRaw.isEmpty() ? null
                 : targetPathsRaw.stream().map(Object::toString).toList();
+        long resolveTargetStart = System.currentTimeMillis();
         List<Program> targetPrograms = resolveTargetProgramsForMatching(targetProgramPaths, sourceProgram);
         if (targetPrograms.isEmpty()) {
             return createErrorResult("No target programs available for matching");
         }
+        logMatchFunctionProgress("resolveTargetProgramsForMatching returned " + targetPrograms.size() + " targets", resolveTargetStart);
 
+        logMatchFunctionProgress("building sourceByName map (all functions by name)");
+        long sourceByNameStart = System.currentTimeMillis();
         Map<String, Function> sourceByName = new HashMap<>();
         FunctionIterator allSourceFunctions = sourceProgram.getFunctionManager().getFunctions(true);
+        int sourceByNameCount = 0;
         while (allSourceFunctions.hasNext()) {
             Function f = allSourceFunctions.next();
             if (f != null) {
                 sourceByName.putIfAbsent(f.getName(), f);
+                sourceByNameCount++;
             }
         }
+        logMatchFunctionProgress("sourceByName built: " + sourceByName.size() + " unique names from " + sourceByNameCount + " functions", sourceByNameStart);
 
         record SourceResolved(int index, String identifier, Function function,
                               FunctionFingerprintUtil.FunctionProfile profile) {}
 
         List<SourceResolved> resolved = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
+        long resolveLoopStart = System.currentTimeMillis();
+        final int totalIds = functionIdentifiers.size();
+        final int progressInterval = Math.max(1, totalIds / 20); // log ~20 times over the loop
 
         for (int i = 0; i < functionIdentifiers.size(); i++) {
             String identifier = functionIdentifiers.get(i) == null ? "" : functionIdentifiers.get(i).toString();
@@ -1125,10 +1189,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 }
 
                 resolved.add(new SourceResolved(i, identifier, sourceFunction, profile));
+                if ((resolved.size() % progressInterval == 0) || (resolved.size() == totalIds)) {
+                    logMatchFunctionProgress("resolve+profile progress: " + resolved.size() + "/" + totalIds + " resolved (errors so far: " + errors.size() + ")");
+                }
             } catch (Exception e) {
                 errors.add(Map.of("index", i, "identifier", identifier, "error", String.valueOf(e.getMessage())));
             }
         }
+        logMatchFunctionProgress("resolved " + resolved.size() + " source functions, " + errors.size() + " errors", resolveLoopStart);
 
         List<Map<String, Object>> results = new ArrayList<>();
         for (SourceResolved src : resolved) {
@@ -1141,8 +1209,12 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 continue;
             }
             String targetPath = target.getDomainFile().getPathname();
+            long indexStart = System.currentTimeMillis();
+            logMatchFunctionProgress("building enhanced index for target: " + targetPath);
             targetIndexes.put(targetPath, FunctionFingerprintUtil.buildEnhancedIndex(target, maxInstructions));
+            logMatchFunctionProgress("built index for " + targetPath, indexStart);
         }
+        logMatchFunctionProgress("all " + targetIndexes.size() + " target indexes ready; starting match+propagate phase");
 
         record MatchEval(SourceResolved src, List<FunctionFingerprintUtil.ScoredMatch> matches) {}
         record PerTargetResult(String targetPath, int processed, int matched, int propagated,
@@ -1154,15 +1226,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 .filter(target -> target != null && !target.isClosed() && !target.equals(sourceProgram))
                 .map(target -> {
                     String targetPath = target.getDomainFile().getPathname();
+                    long targetPhaseStart = System.currentTimeMillis();
+                    logMatchFunctionProgress("target " + targetPath + ": starting (will run findBestMatches for " + resolved.size() + " source functions)");
                     FunctionFingerprintUtil.EnhancedProgramIndex targetIndex = targetIndexes.get(targetPath);
                     if (targetIndex == null) {
                         return null;
                     }
 
+                    long findBestStart = System.currentTimeMillis();
                     List<MatchEval> matchEvals = resolved.parallelStream().map(src ->
                         new MatchEval(src, FunctionFingerprintUtil.findBestMatches(
                                 src.profile(), targetIndex, minSim, 10))
                     ).toList();
+                    logMatchFunctionProgress("target " + targetPath + ": findBestMatches for " + resolved.size() + " sources completed", findBestStart);
 
                     int processed = 0;
                     int matched = 0;
@@ -1178,6 +1254,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                             SourceResolved src = eval.src();
                             processed++;
                             if (processed % batch == 0) {
+                                logMatchFunctionProgress("target " + targetPath + ": processed " + processed + "/" + matchEvals.size() + " functions");
                                 target.endTransaction(txId, true);
                                 txId = target.startTransaction("match-function batch (continued)");
                                 autoSaveProgram(target, "match-function batch progress");
@@ -1235,9 +1312,12 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         // BinDiff-style call graph propagation: use confirmed matches as anchors
                         int graphPropagated = 0;
                         if (!confirmedMatches.isEmpty()) {
+                            long graphStart = System.currentTimeMillis();
+                            logMatchFunctionProgress("target " + targetPath + ": call graph propagation (anchors=" + confirmedMatches.size() + ")");
                             Map<Address, FunctionFingerprintUtil.ScoredMatch> extraMatches =
                                     FunctionFingerprintUtil.propagateCallGraph(
                                             confirmedMatches, sourceProgram, targetIndex, minSim);
+                            logMatchFunctionProgress("target " + targetPath + ": call graph returned " + extraMatches.size() + " extra matches", graphStart);
                             for (Map.Entry<Address, FunctionFingerprintUtil.ScoredMatch> extra : extraMatches.entrySet()) {
                                 Function srcFunc = sourceProgram.getFunctionManager().getFunctionAt(extra.getKey());
                                 if (srcFunc == null || srcFunc.isExternal()) {
@@ -1272,6 +1352,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                             }
                         }
 
+                        logMatchFunctionProgress("target " + targetPath + ": done (processed=" + processed + ", matched=" + matched + ", propagated=" + propagated + ", graphPropagated=" + graphPropagated + ", ambiguous=" + ambiguous + ", noMatch=" + noMatch + ")", targetPhaseStart);
                         target.endTransaction(txId, true);
                         autoSaveProgram(target, "match-function batch");
                         invalidateFunctionCaches(targetPath);
@@ -1280,12 +1361,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     } catch (Exception e) {
                         target.endTransaction(txId, false);
                         logError("Error processing batch match for target " + targetPath, e);
+                        logMatchFunctionProgress("target " + targetPath + ": failed after " + (System.currentTimeMillis() - targetPhaseStart) + " ms: " + e.getMessage());
                         return new PerTargetResult(targetPath, 0, 0, 0, 0, 0, 0, String.valueOf(e.getMessage()));
                     }
                 })
                 .filter(java.util.Objects::nonNull)
                 .toList();
 
+        logMatchFunctionProgress("all targets completed; aggregating " + perTargetResults.size() + " results");
         List<Map<String, Object>> targetResults = new ArrayList<>();
         int totalProcessed = 0;
         int totalMatched = 0;
@@ -1340,6 +1423,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
             result.put("errors", errors);
         }
 
+        logMatchFunctionProgress("batch match complete: totalProcessed=" + totalProcessed + ", totalPropagated=" + totalPropagated + ", totalGraphPropagated=" + totalGraphPropagated + ", targets=" + targetResults.size(), phaseStart);
         return createJsonResult(result);
     }
 

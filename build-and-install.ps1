@@ -532,21 +532,23 @@ try {
     exit 1
 }
 
-# Find the latest zip file in dist directory
+# Find the latest zip file in build/dist (Ghidra buildExtension output) or dist
 Write-Host ""
-Write-Host "Looking for extension zip file in dist directory..." -ForegroundColor Cyan
+Write-Host "Looking for extension zip file in build/dist or dist..." -ForegroundColor Cyan
+$buildDistDir = Join-Path $ProjectDir "build" | Join-Path -ChildPath "dist"
 $distDir = Join-Path $ProjectDir "dist"
-if (-not (Test-Path -Path $distDir -PathType Container)) {
-    Write-Host "Error: dist directory not found: $distDir" -ForegroundColor Red
-    exit 1
+$zipFile = $null
+foreach ($dir in @($buildDistDir, $distDir)) {
+    if (Test-Path -Path $dir -PathType Container) {
+        $zipFile = Get-ChildItem -Path $dir -Filter "*agentdecompile.zip" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($zipFile) { break }
+    }
 }
 
-$zipFile = Get-ChildItem -Path $distDir -Filter "*agentdecompile.zip" |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
 if (-not $zipFile) {
-    Write-Host "Error: No extension zip file found in dist directory" -ForegroundColor Red
+    Write-Host "Error: No extension zip file found in build/dist or dist directory" -ForegroundColor Red
     exit 1
 }
 

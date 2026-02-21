@@ -18,12 +18,40 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 
 ## Directory Structure
 
+```
+src/
+├── agentdecompile_cli/          # Python CLI (stdio bridge)
+│   ├── __init__.py              # Package init, version
+│   ├── __main__.py              # Entry point: mcp-agentdecompile command
+│   ├── launcher.py              # Wraps Java AgentDecompileHeadlessLauncher
+│   ├── stdio_bridge.py          # MCP stdio ↔ HTTP bridge (753 lines)
+│   ├── project_manager.py      # Ghidra project lifecycle
+│   ├── mcp_session_patch.py    # Patches MCP SDK RuntimeError bug
+│   └── _version.py              # Version from git tags (setuptools_scm)
+├── main/java/agentdecompile/    # Java extension
+│   ├── server/                  # MCP server (McpServerManager, filters)
+│   ├── headless/                # Headless launcher, JavaOutputRedirect
+│   ├── tools/                   # MCP tool providers (17 tools)
+│   ├── resources/               # MCP resource providers
+│   ├── plugin/                  # Ghidra plugin integration
+│   ├── util/                    # AddressUtil, ProgramLookupUtil, etc.
+│   └── ui/                      # GUI components
+├── test/                        # Java unit tests (no Ghidra env)
+└── test.slow/                   # Java integration tests (GUI required)
+```
+
 | Directory | Purpose | Documentation |
 |-----------|---------|---------------|
 | `main/java/agentdecompile/` | Java extension code | See package-level CLAUDE.md files |
 | `test/` | Java unit tests (no Ghidra env) | Fast tests for utilities/logic |
 | `test.slow/` | Java integration tests (GUI required) | [test.slow/CLAUDE.md](test.slow/CLAUDE.md) |
 | `agentdecompile_cli/` | Python CLI for stdio transport | Python package for `mcp-agentdecompile` |
+
+### Python entry point and connection flow
+
+- **Entry point:** `mcp-agentdecompile` → `agentdecompile_cli.__main__:main` (see `pyproject.toml`).
+- **Startup (blocking, before asyncio):** Install stdout/stderr filters, initialize PyGhidra, redirect Java System.out/System.err, create ProjectManager (ephemeral temp project unless `AGENT_DECOMPILE_PROJECT_PATH`), create AgentDecompileLauncher, `launcher.start()` → Java MCP server starts.
+- **Async:** `AgentDecompileStdioBridge(port)` runs MCP server over stdio, connects to `http://localhost:{port}/mcp/message`, proxies list_tools, call_tool, list_resources, read_resource, list_prompts to the Java backend.
 
 ## Testing Guidelines
 

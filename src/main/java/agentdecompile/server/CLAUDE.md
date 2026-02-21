@@ -30,11 +30,11 @@ The `agentdecompile.server` package contains the core MCP (Model Context Protoco
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Jetty HTTP Server                           │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │              ApiKeyAuthFilter (optional)                    ││
-│  └─────────────────────────────────────────────────────────────┘│
+│  Filter order: GlobalExceptionFilter → ApiKeyAuthFilter (opt.)   │
+│  → RequestLoggingFilter → KeepAliveFilter → MCP transport        │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │     HttpServletStreamableServerTransportProvider            ││
+│  │     (POST /mcp/message, streamable HTTP)                    ││
 │  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -383,7 +383,7 @@ ConfigManager configManager = AgentDecompileInternalServiceRegistry.getService(C
 ```java
 private static final String MCP_MSG_ENDPOINT = "/mcp/message";
 private static final String MCP_SERVER_NAME = "AgentDecompile";
-private static final String MCP_SERVER_VERSION = "1.0.0";
+private static final String MCP_SERVER_VERSION = "<semver version>";
 private static final String API_KEY_HEADER = "X-API-Key";
 
 // Timeouts and intervals

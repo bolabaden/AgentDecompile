@@ -57,6 +57,10 @@ Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 mcp-agentdecompile = "agentdecompile_cli.__main__:main"
 
 [project.optional-dependencies]
+local = [
+    "pyghidra>=3.0.0",
+]
+
 test = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
