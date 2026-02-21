@@ -17,7 +17,9 @@ ARG GHIDRA_VERSION=
 ENV GHIDRA_VERSION=${GHIDRA_VERSION}
 
 ARG GHIDRA_OWNER=NationalSecurityAgency
+ENV GHIDRA_OWNER=${GHIDRA_OWNER}
 ARG GHIDRA_REPO=ghidra
+ENV GHIDRA_REPO=${GHIDRA_REPO}
 ENV GHIDRA_GITHUB_API=https://api.github.com/repos/${GHIDRA_OWNER}/${GHIDRA_REPO}
 
 ARG GHIDRA_USER=ghidra
@@ -52,6 +54,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         linux-headers \
         libressl-dev \
         powershell \
+    ; \
     run update-ms-fonts; \
     run fc-cache -f
 
