@@ -153,6 +153,10 @@ jobs:
             type=ref,event=branch,prefix=
             type=ref,event=pr
 
+      - name: "Set up Docker Buildx"
+        if: ${{ success() || failure() }}
+        uses: docker/setup-buildx-action@v3
+
       - name: "Build and push Docker image"
         uses: docker/build-push-action@v6
         # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
