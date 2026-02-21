@@ -35,7 +35,7 @@ ENV PGID=${PGID}
 # Use dl.alpinelinux.org to avoid "No such file or directory" under QEMU; install packages then create user/group
 RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
-    run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
@@ -126,7 +126,7 @@ ENV PGID=${PGID}
 # Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
 RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
-    run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
