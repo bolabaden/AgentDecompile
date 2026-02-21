@@ -33,7 +33,7 @@ ENV PGID=${PGID}
 RUN --mount=type=cache,target=/var/cache/apk \
     addgroup -g ${PGID} -S ${GHIDRA_GROUP} \
     && adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP} \
-    && apk update \
+    && (apk update || apk update) \
     && apk add --no-cache \
         openjdk21 \
         bash \
@@ -110,7 +110,7 @@ ARG PGID=1001
 RUN --mount=type=cache,target=/var/cache/apk \
     addgroup -g ${PGID} -S ${GHIDRA_GROUP} \
     && adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP} \
-    && apk update \
+    && (apk update || apk update) \
     && apk add --no-cache \
         openjdk21 \
         bash \
