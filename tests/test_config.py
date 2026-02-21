@@ -7,8 +7,15 @@ Verifies that:
 - Invalid configs are handled gracefully
 """
 
+import sys
+
 import pytest
 from pathlib import Path
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="PyGhidra JVM crashes on Windows (JPype access violation)",
+)
 
 
 class TestConfigurationLoading:

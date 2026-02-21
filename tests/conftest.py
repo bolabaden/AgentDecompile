@@ -58,7 +58,18 @@ def ghidra_initialized():
 
     Yields:
         None (side effect: PyGhidra initialized)
+
+    Note: Skipped on Windows due to known JPype/PyGhidra JVM access
+    violation crash when starting the JVM in the test process.
     """
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip(
+            "PyGhidra JVM crashes on Windows (JPype access violation). "
+            "Use mcp_stdio_client for tests that run Ghidra in a subprocess."
+        )
+
     import pyghidra
 
     print("\n[Fixture] Initializing PyGhidra (one-time setup)...")
