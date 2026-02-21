@@ -21,8 +21,10 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import ghidra.program.model.address.Address;
@@ -55,6 +57,9 @@ public final class FunctionFingerprintUtil {
     public static final int DEFAULT_MAX_INSTRUCTIONS = 64;
 
     private static final int MAX_CANDIDATES_RETURNED = 25;
+    private static final int FUZZY_SHORTLIST_FACTOR = 24;
+    private static final int FUZZY_SHORTLIST_MIN = 64;
+    private static final int FUZZY_SHORTLIST_MAX = 384;
 
     private static final Map<String, CachedProgramIndex> INDEX_CACHE = new ConcurrentHashMap<>();
 
@@ -78,6 +83,41 @@ public final class FunctionFingerprintUtil {
          */
         public record Scored(Candidate candidate, double similarityScore) {}
     }
+
+    /**
+     * An immutable snapshot index for a specific program and {@code maxInstructions}.
+     * <p>
+     * This is intentionally NOT tied to {@link Program#getModificationNumber()} because
+     * many matching workflows (e.g. propagating names/tags/comments) modify program metadata
+     * without changing the underlying instructions. Using a snapshot avoids repeated
+     * full-program re-indexing inside a single match/propagation run.
+     * </p>
+     *
+     * @param programPath Program pathname used for candidates
+     * @param maxInstructions Instruction sampling size
+     * @param byFingerprint Exact-match index (fingerprint -> candidates)
+     * @param signatures Precomputed canonical signatures for fuzzy matching
+     * @param tokenToSignatureIndexes Inverted index for token-to-candidate lookup
+     */
+    public record ProgramIndex(
+            String programPath,
+            int maxInstructions,
+            Map<String, List<Candidate>> byFingerprint,
+            List<SignatureEntry> signatures,
+            Map<Integer, List<Integer>> tokenToSignatureIndexes
+    ) {}
+
+    /**
+     * Signature entry used for fuzzy matching.
+     *
+     * @param candidate function descriptor
+     * @param signature canonical signature string
+     * @param bodySize function body size (addresses)
+     * @param instructionCount number of instructions included in the signature
+     * @param uniqueTokenCount number of unique hashed instruction tokens/shingles
+     */
+    public record SignatureEntry(Candidate candidate, String signature, long bodySize, int instructionCount,
+            int uniqueTokenCount) {}
 
     private record CachedProgramIndex(long programModificationNumber, int maxInstructions,
                                       Map<String, List<Candidate>> byFingerprint) {}
@@ -118,7 +158,24 @@ public final class FunctionFingerprintUtil {
             if (canonical == null || canonical.isEmpty()) {
                 return null;
             }
-            return sha256Hex(canonical);
+            return computeFingerprintFromCanonicalSignature(canonical);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Compute the fingerprint hash for an already-computed canonical signature.
+     *
+     * @param canonicalSignature canonical signature string (see {@link #computeCanonicalSignature(Program, Function, int)})
+     * @return fingerprint string (hex), or null if hashing fails
+     */
+    public static String computeFingerprintFromCanonicalSignature(String canonicalSignature) {
+        if (canonicalSignature == null || canonicalSignature.isEmpty()) {
+            return null;
+        }
+        try {
+            return sha256Hex(canonicalSignature);
         } catch (Exception e) {
             return null;
         }
@@ -148,13 +205,234 @@ public final class FunctionFingerprintUtil {
     }
 
     /**
+     * Build a snapshot index for a program in a single pass.
+     * <p>
+     * This computes canonical signatures once per function and derives both:
+     * - exact fingerprints (SHA-256 of signature) and
+     * - signature entries for fuzzy matching.
+     * </p>
+     */
+    public static ProgramIndex buildProgramIndex(Program program, int maxInstructions) {
+        if (program == null) {
+            return new ProgramIndex("", maxInstructions, Map.of(), List.of(), Map.of());
+        }
+
+        String programPath = program.getDomainFile().getPathname();
+        Map<String, List<Candidate>> byFingerprint = new HashMap<>();
+        List<SignatureEntry> signatures = new ArrayList<>();
+        Map<Integer, List<Integer>> tokenToSignatureIndexes = new HashMap<>();
+
+        FunctionIterator it = program.getFunctionManager().getFunctions(true);
+        while (it.hasNext()) {
+            Function f = it.next();
+            if (f == null || f.isExternal()) {
+                continue;
+            }
+
+            String sig;
+            try {
+                sig = buildCanonicalSignature(program, f, maxInstructions);
+            } catch (Exception e) {
+                continue;
+            }
+            if (sig == null || sig.isEmpty()) {
+                continue;
+            }
+
+            String fp = computeFingerprintFromCanonicalSignature(sig);
+            if (fp == null || fp.isEmpty()) {
+                continue;
+            }
+
+            Candidate cand = new Candidate(programPath, f.getName(), f.getEntryPoint());
+            byFingerprint.computeIfAbsent(fp, k -> new ArrayList<>()).add(cand);
+
+            long bodySize = extractLongField(sig, "B=");
+            int instructionCount = extractIntField(sig, "C=");
+            int[] tokenHashes = buildUniqueInstructionTokenHashes(sig);
+            int signatureIndex = signatures.size();
+            signatures.add(new SignatureEntry(cand, sig, bodySize, instructionCount, tokenHashes.length));
+            for (int tokenHash : tokenHashes) {
+                tokenToSignatureIndexes.computeIfAbsent(tokenHash, k -> new ArrayList<>()).add(signatureIndex);
+            }
+        }
+
+        for (Map.Entry<String, List<Candidate>> e : byFingerprint.entrySet()) {
+            e.getValue().sort((a, b) -> a.entryPoint().compareTo(b.entryPoint()));
+        }
+        Map<Integer, List<Integer>> immutableTokenIndex = new HashMap<>();
+        for (Map.Entry<Integer, List<Integer>> entry : tokenToSignatureIndexes.entrySet()) {
+            immutableTokenIndex.put(entry.getKey(), Collections.unmodifiableList(entry.getValue()));
+        }
+
+        return new ProgramIndex(
+                programPath,
+                maxInstructions,
+                Collections.unmodifiableMap(byFingerprint),
+                Collections.unmodifiableList(signatures),
+                Collections.unmodifiableMap(immutableTokenIndex)
+        );
+    }
+
+    /**
+     * Find matches in a prebuilt {@link ProgramIndex} without consulting global caches.
+     */
+    public static List<Candidate> findMatches(ProgramIndex index, String fingerprint) {
+        if (index == null || fingerprint == null || fingerprint.isEmpty()) {
+            return List.of();
+        }
+        List<Candidate> matches = index.byFingerprint().get(fingerprint);
+        if (matches == null || matches.isEmpty()) {
+            return List.of();
+        }
+        if (matches.size() <= MAX_CANDIDATES_RETURNED) {
+            return matches;
+        }
+        return matches.subList(0, MAX_CANDIDATES_RETURNED);
+    }
+
+    /**
+     * Find fuzzy matches using a prebuilt {@link ProgramIndex} without consulting global caches.
+     */
+    public static List<Candidate.Scored> findFuzzyMatches(String sourceCanonicalSignature,
+            ProgramIndex targetIndex, double minSimilarity, int maxResults) {
+        if (sourceCanonicalSignature == null || sourceCanonicalSignature.isEmpty() || targetIndex == null) {
+            return List.of();
+        }
+
+        long sourceBodySize = extractLongField(sourceCanonicalSignature, "B=");
+        int sourceInstructionCount = extractIntField(sourceCanonicalSignature, "C=");
+
+        List<Candidate.Scored> scored = new ArrayList<>();
+        Candidate.Scored perfectMatch = null;
+
+        double sizeTolerance = 0.5; // Allow 50% size difference
+        long minSize = (long) (sourceBodySize * (1.0 - sizeTolerance));
+        long maxSize = (long) (sourceBodySize * (1.0 + sizeTolerance));
+        int minInstrCount = Math.max(1, (int) (sourceInstructionCount * (1.0 - sizeTolerance)));
+        int maxInstrCount = (int) (sourceInstructionCount * (1.0 + sizeTolerance)) + 1;
+
+        int[] sourceTokenHashes = buildUniqueInstructionTokenHashes(sourceCanonicalSignature);
+        List<Integer> candidateIndexes = shortlistCandidateIndexes(sourceTokenHashes, targetIndex, minSimilarity, maxResults);
+        boolean useShortlist = !candidateIndexes.isEmpty();
+
+        Iterable<SignatureEntry> candidates = useShortlist
+                ? candidateIndexes.stream().map(i -> targetIndex.signatures().get(i)).toList()
+                : targetIndex.signatures();
+
+        for (SignatureEntry entry : candidates) {
+            if (sourceBodySize > 0 && entry.bodySize() > 0) {
+                if (entry.bodySize() < minSize || entry.bodySize() > maxSize) {
+                    continue;
+                }
+            }
+            if (sourceInstructionCount > 0 && entry.instructionCount() > 0) {
+                if (entry.instructionCount() < minInstrCount || entry.instructionCount() > maxInstrCount) {
+                    continue;
+                }
+            }
+
+            String targetSig = entry.signature();
+            if (targetSig == null || targetSig.isEmpty()) {
+                continue;
+            }
+
+            if (sourceCanonicalSignature.equals(targetSig)) {
+                perfectMatch = new Candidate.Scored(entry.candidate(), 1.0);
+                break;
+            }
+
+            int lenDiff = Math.abs(sourceCanonicalSignature.length() - targetSig.length());
+            int maxLen = Math.max(sourceCanonicalSignature.length(), targetSig.length());
+            if (maxLen > 0) {
+                double lengthSimilarity = 1.0 - ((double) lenDiff / maxLen);
+                if (lengthSimilarity < minSimilarity * 0.7) {
+                    continue;
+                }
+            }
+
+            double similarity = computeSignatureSimilarity(sourceCanonicalSignature, targetSig);
+            if (similarity >= minSimilarity) {
+                scored.add(new Candidate.Scored(entry.candidate(), similarity));
+            }
+        }
+
+        if (perfectMatch != null) {
+            return List.of(perfectMatch);
+        }
+
+        scored.sort((a, b) -> {
+            int cmp = Double.compare(b.similarityScore(), a.similarityScore());
+            if (cmp != 0) {
+                return cmp;
+            }
+            return a.candidate().entryPoint().compareTo(b.candidate().entryPoint());
+        });
+
+        if (scored.size() <= maxResults) {
+            return scored;
+        }
+        return scored.subList(0, maxResults);
+    }
+
+    private static List<Integer> shortlistCandidateIndexes(int[] sourceTokenHashes, ProgramIndex targetIndex,
+            double minSimilarity, int maxResults) {
+        if (sourceTokenHashes.length == 0 || targetIndex.tokenToSignatureIndexes().isEmpty()
+                || targetIndex.signatures().isEmpty()) {
+            return List.of();
+        }
+
+        Map<Integer, Integer> overlapCounts = new HashMap<>();
+        for (int tokenHash : sourceTokenHashes) {
+            List<Integer> postings = targetIndex.tokenToSignatureIndexes().get(tokenHash);
+            if (postings == null || postings.isEmpty()) {
+                continue;
+            }
+            for (Integer idx : postings) {
+                overlapCounts.merge(idx, 1, Integer::sum);
+            }
+        }
+        if (overlapCounts.isEmpty()) {
+            return List.of();
+        }
+
+        int requested = Math.max(FUZZY_SHORTLIST_MIN, maxResults * FUZZY_SHORTLIST_FACTOR);
+        requested = Math.min(requested, FUZZY_SHORTLIST_MAX);
+        requested = Math.min(requested, targetIndex.signatures().size());
+
+        int minOverlap = Math.max(1, (int) Math.floor(sourceTokenHashes.length * Math.max(0.08, minSimilarity * 0.2)));
+
+        List<Map.Entry<Integer, Integer>> ranked = new ArrayList<>(overlapCounts.entrySet());
+        ranked.sort((a, b) -> {
+            int cmp = Integer.compare(b.getValue(), a.getValue());
+            if (cmp != 0) {
+                return cmp;
+            }
+            return Integer.compare(a.getKey(), b.getKey());
+        });
+
+        List<Integer> shortlist = new ArrayList<>(Math.min(requested, ranked.size()));
+        for (Map.Entry<Integer, Integer> entry : ranked) {
+            if (entry.getValue() < minOverlap && shortlist.size() >= requested / 2) {
+                break;
+            }
+            shortlist.add(entry.getKey());
+            if (shortlist.size() >= requested) {
+                break;
+            }
+        }
+
+        return shortlist;
+    }
+
+    /**
      * Get (or build) a fingerprint index for a program.
      *
      * @param program Program to index
      * @param maxInstructions Instruction sampling size
      * @return cached index
      */
-    public static CachedProgramIndex getOrBuildIndex(Program program, int maxInstructions) {
+    private static CachedProgramIndex getOrBuildIndex(Program program, int maxInstructions) {
         // Ghidra API: Program.getDomainFile(), DomainFile.getPathname() - https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainObject.html#getDomainFile(), https://ghidra.re/ghidra_docs/api/ghidra/framework/model/DomainFile.html#getPathname()
         String programPath = program.getDomainFile().getPathname();
         // Ghidra API: Program.getModificationNumber() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Program.html#getModificationNumber()
@@ -209,7 +487,7 @@ public final class FunctionFingerprintUtil {
             // Ghidra API: Function.getBody(), AddressSetView.getNumAddresses() - https://ghidra.re/ghidra_docs/api/ghidra/program/model/listing/Function.html#getBody()
             bodySize = function.getBody().getNumAddresses();
         } catch (Exception e) {
-            bodySize = 0;
+            // Keep default (0) on error
         }
 
         // Add coarse metadata (helps reduce collisions for tiny stubs)
@@ -517,6 +795,90 @@ public final class FunctionFingerprintUtil {
 
         int distance = levenshteinDistance(sig1, sig2);
         return 1.0 - ((double) distance / maxLen);
+    }
+
+    private static int extractIntField(String sig, String prefix) {
+        if (sig == null || sig.isEmpty() || prefix == null || prefix.isEmpty()) {
+            return 0;
+        }
+        int idx = sig.indexOf(prefix);
+        if (idx < 0) {
+            return 0;
+        }
+        int endIdx = sig.indexOf(';', idx);
+        if (endIdx <= idx) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(sig.substring(idx + prefix.length(), endIdx));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static long extractLongField(String sig, String prefix) {
+        if (sig == null || sig.isEmpty() || prefix == null || prefix.isEmpty()) {
+            return 0;
+        }
+        int idx = sig.indexOf(prefix);
+        if (idx < 0) {
+            return 0;
+        }
+        int endIdx = sig.indexOf(';', idx);
+        if (endIdx <= idx) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(sig.substring(idx + prefix.length(), endIdx));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static int[] buildUniqueInstructionTokenHashes(String canonicalSignature) {
+        if (canonicalSignature == null || canonicalSignature.isEmpty()) {
+            return new int[0];
+        }
+
+        Set<Integer> tokenHashes = new HashSet<>();
+        List<String> instructionUnits = extractInstructionUnits(canonicalSignature);
+        String prev = null;
+        for (String unit : instructionUnits) {
+            if (unit == null || unit.isEmpty()) {
+                continue;
+            }
+            tokenHashes.add(unit.hashCode());
+            if (prev != null) {
+                tokenHashes.add((prev + ">" + unit).hashCode());
+            }
+            prev = unit;
+        }
+
+        int[] hashes = new int[tokenHashes.size()];
+        int i = 0;
+        for (Integer hash : tokenHashes) {
+            hashes[i++] = hash;
+        }
+        return hashes;
+    }
+
+    private static List<String> extractInstructionUnits(String canonicalSignature) {
+        List<String> units = new ArrayList<>();
+        int start = 0;
+        while (start < canonicalSignature.length()) {
+            int end = canonicalSignature.indexOf(';', start);
+            if (end < 0) {
+                break;
+            }
+            if (end > start) {
+                String segment = canonicalSignature.substring(start, end);
+                if (!segment.startsWith("B=") && !segment.startsWith("N=") && !segment.startsWith("C=")) {
+                    units.add(segment);
+                }
+            }
+            start = end + 1;
+        }
+        return units;
     }
 
     /**
