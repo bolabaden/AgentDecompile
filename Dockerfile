@@ -163,6 +163,8 @@ ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
 # Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
+# BSim PostgreSQL is built against LibreSSL in build stage; runtime needs libressl for libssl.so.60/libcrypto.so.57
+#( grep -qE '^[^#].*community' /etc/apk/repositories ) || echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
 RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
     run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
@@ -177,12 +179,13 @@ RUN --mount=type=cache,target=/var/cache/apk \
         openssh-client \
         xhost \
         musl-locales \
+        musl-locales-lang \
         supervisor \
         netcat-openbsd \
         readline \
         zlib \
+        libressl \
     ; \
-    run apk add --no-cache musl-locales-lang || true; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
