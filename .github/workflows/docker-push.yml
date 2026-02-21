@@ -10,6 +10,7 @@
 #      - DOCKERFILE_PATH     : Path to Dockerfile (default ./Dockerfile).
 #      - BUILD_CONTEXT       : Build context (default .).
 #      - PLATFORMS           : Matrix in strategy (linux/amd64, linux/arm64, linux/arm/v7). Each platform builds independently (fail-fast: false).
+#                              arm64 uses native runner (ubuntu-24.04-arm) for public repos; amd64 uses ubuntu-latest.
 #      - VERSION_TAG_UPSTREAM_API : (Optional) On tag push, prepend a version from this GitHub API URL.
 #                                  Example: https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest
 #                                  Tag format becomes (upstream_version)_(git_tag_stripped), e.g. 12.0.3_1.2.0.
@@ -105,16 +106,20 @@ jobs:
 
   build-push:
     name: "Build ${{ matrix.arch }}"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
+          # amd64: standard x64 runner
           - platform: linux/amd64
             arch: amd64
+            runner: ubuntu-latest
+          # arm64: native arm64 runner (no QEMU); free for public repos
           - platform: linux/arm64
             arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v6

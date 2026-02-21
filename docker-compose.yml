@@ -1,23 +1,101 @@
+# AgentDecompile AIO: Ghidra server + BSim server + AgentDecompile MCP in one container.
+# All env vars and volumes below are used by Dockerfile/entrypoint or the app; relpaths point to usage.
+# Ghidra server/BSim volume conventions: https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
+
 services:
   agentdecompile-mcp:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: .  # or specify a specific branch/tag/commit/repo: https://github.com/bolabaden/agentdecompile.git#master
       args:
-        # Optional: pin Ghidra version (e.g. 12.0.3); omit to use latest from GitHub
+        # Optional: pin Ghidra release (e.g. 12.0.3); omit for latest. Used in Dockerfile layer 3.
         - GHIDRA_VERSION=${GHIDRA_VERSION:-}
-    image: agentdecompile-mcp:latest
-    container_name: agentdecompile-mcp
+        # Build-time only; runtime user in container (default 1001). Dockerfile RUN adduser.
+        - PUID=${PUID:-1001}
+        - PGID=${PGID:-1001}
+    image: docker.io/bolabaden/agentdecompile:latest
+    container_name: agentdecompile
     ports:
-      - "8080:8080"
+      # BSim PostgreSQL server (entrypoint starts BSim; port from GHIDRA_BSIM_PORT)
+      - "${GHIDRA_BSIM_PORT:-5432}:${GHIDRA_BSIM_PORT:-5432}"
+      # AgentDecompile MCP HTTP server (host/port → src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java applyHeadlessServerEnvOverrides)
+      - "${AGENT_DECOMPILE_PORT:-8080}:${AGENT_DECOMPILE_PORT:-8080}"
+      # Ghidra server (NSA Ghidra docker README: 13100-13102)
+      - "${GHIDRA_SERVER_PORT1:-13100}:${GHIDRA_SERVER_PORT1:-13100}"
+      - "${GHIDRA_SERVER_PORT2:-13101}:${GHIDRA_SERVER_PORT2:-13101}"
+      - "${GHIDRA_SERVER_PORT3:-13102}:${GHIDRA_SERVER_PORT3:-13102}"
     environment:
-      AGENT_DECOMPILE_HOST: "0.0.0.0"
-      AGENT_DECOMPILE_PORT: "8080"
-      AGENT_DECOMPILE_PROJECT_DIR: "/projects"
-      AGENT_DECOMPILE_PROJECT_NAME: "agentdecompile"
-      # Optional: AGENT_DECOMPILE_API_KEY
-      # Optional: AGENT_DECOMPILE_CONFIG_FILE=/projects/agentdecompile.properties
+      # --- MCP server bind (used by entrypoint and Java launcher) ---
+      # Usage: src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (applyHeadlessServerEnvOverrides)
+      AGENT_DECOMPILE_HOST: "${AGENT_DECOMPILE_HOST:-0.0.0.0}"
+      AGENT_DECOMPILE_PORT: "${AGENT_DECOMPILE_PORT:-8080}"
+
+      # --- Project: path to .gpr file or project dir (persistent project for headless) ---
+      # Usage: src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (main), src/main/java/agentdecompile/util/SharedProjectEnvConfig.java (getProjectPath), src/agentdecompile_cli/launcher.py
+      AGENT_DECOMPILE_PROJECT_PATH: "${AGENT_DECOMPILE_PROJECT_PATH:-/projects/agentdecompile.gpr}"
+      # Project directory and name (entrypoint only; launcher uses AGENT_DECOMPILE_PROJECT_PATH for Java). Usage: docker/entrypoint.sh
+      AGENT_DECOMPILE_PROJECT_DIR: "${AGENT_DECOMPILE_PROJECT_DIR:-/projects}"
+      AGENT_DECOMPILE_PROJECT_NAME: "${AGENT_DECOMPILE_PROJECT_NAME:-agentdecompile}"
+
+      # --- API key auth (MCP server) ---
+      # Usage: src/main/java/agentdecompile/plugin/ConfigManager.java (env override), src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (applyHeadlessServerEnvOverrides), src/agentdecompile_cli/__main__.py (connect mode)
+      AGENT_DECOMPILE_API_KEY: "${AGENT_DECOMPILE_API_KEY:-}"
+      AGENT_DECOMPILE_API_KEY_ENABLED: "${AGENT_DECOMPILE_API_KEY_ENABLED:-true}"
+
+      # --- Config file (optional .properties; if set, launcher uses file instead of env overrides) ---
+      # Usage: docker/entrypoint.sh, src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java (constructor/main)
+      AGENT_DECOMPILE_CONFIG_FILE: "${AGENT_DECOMPILE_CONFIG_FILE:-}"
+
+      # --- JVM / launch (entrypoint: MAXMEM and VMARG_LIST passed to launch.sh for BSim + AgentDecompile) ---
+      # Usage: docker/entrypoint.sh
+      MAXMEM: "${MAXMEM:-2G}"
+      VMARG_LIST: "${VMARG_LIST:--Djava.awt.headless=true}"
+      AGENT_DECOMPILE_MAXMEM: "${AGENT_DECOMPILE_MAXMEM:-}"
+      AGENT_DECOMPILE_VMARG_LIST: "${AGENT_DECOMPILE_VMARG_LIST:-}"
+
+      # --- Ghidra Server (shared repositories): auth and connection refs for open tool / shared projects ---
+      # Usage: src/main/java/agentdecompile/util/SharedProjectEnvConfig.java, src/main/java/agentdecompile/tools/project/ProjectToolProvider.java
+      AGENT_DECOMPILE_SERVER_USERNAME: "${AGENT_DECOMPILE_SERVER_USERNAME:-}"
+      AGENT_DECOMPILE_SERVER_PASSWORD: "${AGENT_DECOMPILE_SERVER_PASSWORD:-}"
+      AGENT_DECOMPILE_SERVER_HOST: "${AGENT_DECOMPILE_SERVER_HOST:-}"
+      AGENT_DECOMPILE_SERVER_PORT: "${AGENT_DECOMPILE_SERVER_PORT:-}"
+      AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: "${AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY:-}"
+      AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH: "${AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH:-}"
+      AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT: "${AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT:-}"
+
+      # --- BSim / Ghidra server paths and ports (entrypoint) ---
+      # Usage: docker/entrypoint.sh (BSim datadir/port; Ghidra repos dir)
+      GHIDRA_BSIM_PORT: "${GHIDRA_BSIM_PORT:-5432}"
+      GHIDRA_BSIM_DATADIR: "${GHIDRA_BSIM_DATADIR:-/ghidra/bsim_datadir}"
+      BSIM_DATADIR: "${BSIM_DATADIR:-}"
+      GHIDRA_REPOS_DIR: "${GHIDRA_REPOS_DIR:-/ghidra/repositories}"
+      GHIDRA_HOME: "${GHIDRA_HOME:-/ghidra}"
+
+      # --- Project lock workaround (risky; can cause data corruption if multiple writers) ---
+      # Usage: src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java, src/main/java/agentdecompile/tools/project/ProjectToolProvider.java, src/main/java/agentdecompile/util/ProjectUtil.java, src/agentdecompile_cli/project_manager.py
+      AGENT_DECOMPILE_FORCE_IGNORE_LOCK: "${AGENT_DECOMPILE_FORCE_IGNORE_LOCK:-false}"
+
+      # --- Intelligent defaults (no tool params): auto-label, auto-tag, auto-bookmark ---
+      # Usage: src/main/java/agentdecompile/util/EnvConfigUtil.java (AGENT_DECOMPILE_<name> pattern), README.md
+      AGENT_DECOMPILE_AUTO_LABEL: "${AGENT_DECOMPILE_AUTO_LABEL:-true}"
+      AGENT_DECOMPILE_AUTO_TAG: "${AGENT_DECOMPILE_AUTO_TAG:-true}"
+      AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE: "${AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE:-97.0}"
+
+      # --- CLI connect-mode / tool timeout (Python CLI only when connecting to this server) ---
+      # AGENT_DECOMPILE_MCP_SERVER_URL: used by CLI to skip local JVM. README.md.
+      # AGENT_DECOMPILE_TOOL_CALL_TIMEOUT: usage src/agentdecompile_cli/stdio_bridge.py
+      AGENT_DECOMPILE_TOOL_CALL_TIMEOUT: "${AGENT_DECOMPILE_TOOL_CALL_TIMEOUT:-}"
     volumes:
+      # Scratch / work dir. Usage: docker/entrypoint.sh (mkdir), optional for tools.
       - ./work:/work
+      # AgentDecompile project dir; must contain project (e.g. agentdecompile.gpr or PROJECT_NAME subdir).
+      # Launcher uses AGENT_DECOMPILE_PROJECT_PATH (e.g. /projects/agentdecompile.gpr). Usage: src/main/java/agentdecompile/headless/AgentDecompileHeadlessLauncher.java, docker/entrypoint.sh PROJECT_DIR.
       - ./projects:/projects
+      # Ghidra server repository root (NSA Ghidra: volume to /ghidra/repositories). Server stores shared repos here.
+      # https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
+      - ./ghidra_repositories:/ghidra/repositories
+      # BSim PostgreSQL data directory (NSA Ghidra: volume to /ghidra/bsim_datadir).
+      # https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
+      - ./bsim_datadir:/ghidra/bsim_datadir
+      # Optional: Ghidra server config (NSA Ghidra: server.conf at /ghidra/server/server.conf). Uncomment to use.
+      # - ./server.conf:/ghidra/server/server.conf
     restart: unless-stopped
