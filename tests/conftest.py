@@ -14,9 +14,28 @@ Fixture Scopes:
 
 from __future__ import annotations
 
+# Apply MCP SDK fix before any mcp import (list() for _response_streams iteration).
+# Required for test process ClientSession; subprocess applies it via __main__.
+from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+
+_apply_mcp_session_fix()
+
 import os
 import subprocess
 from pathlib import Path
+
+# Set GHIDRA_INSTALL_DIR from gradle.properties if not set (enables local test runs)
+if not os.environ.get("GHIDRA_INSTALL_DIR"):
+    _repo_root = Path(__file__).resolve().parent.parent
+    _gradle_props = _repo_root / "gradle.properties"
+    if _gradle_props.exists():
+        for _gp_line in _gradle_props.read_text(encoding="utf-8").splitlines():
+            _gp_line = _gp_line.strip()
+            if _gp_line.startswith("GHIDRA_INSTALL_DIR=") and "=" in _gp_line:
+                _gid = _gp_line.split("=", 1)[1].strip()
+                if _gid and Path(_gid).exists():
+                    os.environ["GHIDRA_INSTALL_DIR"] = _gid
+                    break
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator
 
 import pytest
