@@ -338,16 +338,7 @@ class AgentDecompileStdioBridge:
             except asyncio.TimeoutError:
                 last_error = asyncio.TimeoutError(f"{operation_name} timed out")
                 await self._record_failure()
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = 1.0 * (2 ** attempt)
-                    sys.stderr.write(
-                        f"WARNING: {operation_name} timed out, "
-                        f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{self.MAX_RETRIES})\n"
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    raise
+                raise
             except (BrokenResourceError, ClosedResourceError) as e:
                 last_error = e
                 await self._record_failure()
@@ -447,7 +438,7 @@ class AgentDecompileStdioBridge:
             async def _call_tool_operation():
                 return await asyncio.wait_for(
                     self.backend_session.call_tool(name, arguments),  # type: ignore
-                    timeout=120.0,  # 2 minutes for tool execution
+                    timeout=300.0,  # 5 minutes for tool execution
                 )
 
             try:
@@ -462,7 +453,7 @@ class AgentDecompileStdioBridge:
                     ]
                 return result.content
             except asyncio.TimeoutError:
-                error_msg = f"Tool '{name}' timed out after 2 minutes"
+                error_msg = f"Tool '{name}' timed out after 5 minutes"
                 sys.stderr.write(f"ERROR: {error_msg}\n")
                 return [TextContent(type="text", text=f"Error: {error_msg}. Please retry with a simpler query.")]
             except Exception as e:
