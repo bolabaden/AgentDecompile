@@ -715,7 +715,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     return handleBatchMatchFunction(sourceProgram, request, functionIdentifierBatch);
                 }
 
-                double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.85);
+                double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.60);
                 if (minSimilarity < 0.0 || minSimilarity > 1.0) {
                     return createErrorResult("minSimilarity must be between 0.0 and 1.0");
                 }
@@ -723,7 +723,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 int maxInstructions = getOptionalInt(request, "maxInstructions", FunctionFingerprintUtil.DEFAULT_MAX_INSTRUCTIONS);
                 boolean propagateNames = getOptionalBoolean(request, "propagateNames", true);
                 boolean propagateTags = getOptionalBoolean(request, "propagateTags", true);
-                boolean propagateComments = getOptionalBoolean(request, "propagateComments", false);
+                boolean propagateComments = getOptionalBoolean(request, "propagateComments", true);
                 boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
                 String filterByTag = getOptionalString(request, "filterByTag", null);
                 int maxFunctions = getOptionalInt(request, "maxFunctions", 0);
@@ -761,10 +761,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
             boolean propagateComments, boolean filterDefaultNames, String filterByTag,
             int maxFunctions, int batchSize, String functionIdentifier) {
 
-        // Collect source functions to propagate
         List<Function> sourceFunctions = new ArrayList<>();
         FunctionIterator it = sourceProgram.getFunctionManager().getFunctions(true);
-        // If functionIdentifier is provided, resolve that specific function first
         Function targetFunction = null;
         if (functionIdentifier != null && !functionIdentifier.isEmpty()) {
             try {
@@ -789,23 +787,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
             if (f == null || f.isExternal()) {
                 continue;
             }
-
-            // Filter to specific function if functionIdentifier provided
             if (functionIdentifier != null && !functionIdentifier.isEmpty()) {
                 if (!f.equals(targetFunction)) {
                     continue;
                 }
             }
-
-            // Filter by default names
+            if (FunctionFingerprintUtil.isDegenerateFunction(f)) {
+                continue;
+            }
             if (filterDefaultNames && SymbolUtil.isDefaultSymbolName(f.getName())) {
                 continue;
             }
-
-            // Filter by tag
             if (filterByTag != null && !filterByTag.isEmpty()) {
                 boolean hasTag = false;
-                // Check if function has the tag by name
                 Set<FunctionTag> functionTags = f.getTags();
                 for (FunctionTag tag : functionTags) {
                     if (tag.getName().equals(filterByTag)) {
@@ -817,16 +811,25 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     continue;
                 }
             }
-
             sourceFunctions.add(f);
             if (maxFunctions > 0 && sourceFunctions.size() >= maxFunctions) {
                 break;
             }
         }
 
+        Map<Function, FunctionFingerprintUtil.FunctionProfile> sourceProfiles = new HashMap<>();
+        for (Function sourceFunc : sourceFunctions) {
+            FunctionFingerprintUtil.FunctionProfile profile
+                    = FunctionFingerprintUtil.buildFunctionProfile(sourceProgram, sourceFunc, maxInstructions);
+            if (profile != null) {
+                sourceProfiles.put(sourceFunc, profile);
+            }
+        }
+
         Map<String, Object> result = new HashMap<>();
         result.put("sourceProgramPath", sourceProgram.getDomainFile().getPathname());
         result.put("sourceFunctionsCount", sourceFunctions.size());
+        result.put("sourceProfiledCount", sourceProfiles.size());
         result.put("targetProgramsCount", targets.size());
         result.put("minSimilarity", minSimilarity);
         List<Map<String, Object>> perTargetResults = new ArrayList<>();
@@ -836,33 +839,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
         int totalAmbiguous = 0;
         int totalNoMatch = 0;
 
-        // Precompute canonical signatures and fingerprints once for source functions.
-        // This avoids recomputing them per-target (and keeps matching stable even if targets are modified).
-        Map<Function, String> sourceCanonicalSignatures = new HashMap<>();
-        Map<Function, String> sourceFingerprints = new HashMap<>();
-        for (Function sourceFunc : sourceFunctions) {
-            String sig = FunctionFingerprintUtil.computeCanonicalSignature(sourceProgram, sourceFunc, maxInstructions);
-            if (sig == null || sig.isEmpty()) {
-                continue;
-            }
-            sourceCanonicalSignatures.put(sourceFunc, sig);
-            String fp = FunctionFingerprintUtil.computeFingerprintFromCanonicalSignature(sig);
-            if (fp != null && !fp.isEmpty()) {
-                sourceFingerprints.put(sourceFunc, fp);
-            }
-        }
-
         for (Program target : targets) {
             String targetPath = target.getDomainFile().getPathname();
-
             Map<String, Object> targetResult = new HashMap<>();
             targetResult.put("programPath", targetPath);
             targetResult.put("programName", target.getName());
 
-            // Build a snapshot index once per target program. This avoids repeated full re-indexing
-            // when we modify metadata (names/tags/comments) during propagation.
-            FunctionFingerprintUtil.ProgramIndex targetIndex
-                    = FunctionFingerprintUtil.buildProgramIndex(target, maxInstructions);
+            FunctionFingerprintUtil.EnhancedProgramIndex targetIndex
+                    = FunctionFingerprintUtil.buildEnhancedIndex(target, maxInstructions);
 
             List<Map<String, Object>> propagated = new ArrayList<>();
             List<Map<String, Object>> ambiguous = new ArrayList<>();
@@ -876,6 +860,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 int ambiguousCount = 0;
                 int noMatchCount = 0;
 
+                Map<Address, FunctionFingerprintUtil.FunctionProfile> confirmedMatches = new HashMap<>();
+
                 for (Function sourceFunc : sourceFunctions) {
                     processed++;
                     if (processed % batchSize == 0) {
@@ -884,31 +870,18 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         autoSaveProgram(target, "Batch propagate progress");
                     }
 
-                    // Fast path: Try exact fingerprint matching first.
-                    String fingerprint = sourceFingerprints.get(sourceFunc);
-                    List<FunctionFingerprintUtil.Candidate.Scored> matches = new ArrayList<>();
-
-                    if (fingerprint != null) {
-                        List<FunctionFingerprintUtil.Candidate> exactMatches
-                                = FunctionFingerprintUtil.findMatches(targetIndex, fingerprint);
-                        // Convert exact matches to scored candidates (similarity = 1.0)
-                        for (FunctionFingerprintUtil.Candidate candidate : exactMatches) {
-                            matches.add(new FunctionFingerprintUtil.Candidate.Scored(candidate, 1.0));
-                        }
+                    FunctionFingerprintUtil.FunctionProfile sourceProfile = sourceProfiles.get(sourceFunc);
+                    if (sourceProfile == null) {
+                        noMatchCount++;
+                        continue;
                     }
 
-                    // Fall back to fuzzy matching only if no exact match found
-                    // Exact matches are perfect (similarity = 1.0), so no need for fuzzy matching
-                    if (matches.isEmpty()) {
-                        String sourceSig = sourceCanonicalSignatures.get(sourceFunc);
-                        List<FunctionFingerprintUtil.Candidate.Scored> fuzzyMatches
-                                = FunctionFingerprintUtil.findFuzzyMatches(sourceSig, targetIndex, minSimilarity, 5);
-                        matches.addAll(fuzzyMatches);
-                    }
+                    List<FunctionFingerprintUtil.ScoredMatch> matches
+                            = FunctionFingerprintUtil.findBestMatches(sourceProfile, targetIndex, minSimilarity, 10);
 
                     if (matches.isEmpty()) {
                         noMatchCount++;
-                        if (noMatchCount <= 10) { // Only report first 10 for brevity
+                        if (noMatch.size() < 10) {
                             noMatch.add(Map.of(
                                     "sourceFunction", sourceFunc.getName(),
                                     "sourceAddress", AddressUtil.formatAddress(sourceFunc.getEntryPoint())
@@ -919,19 +892,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
                     matched++;
 
-                    // Check if unambiguous (single best match with clear winner)
-                    FunctionFingerprintUtil.Candidate.Scored best = matches.get(0);
+                    FunctionFingerprintUtil.ScoredMatch best = matches.get(0);
                     boolean isUnambiguous = matches.size() == 1
-                            || (matches.size() > 1 && best.similarityScore() - matches.get(1).similarityScore() > 0.05);
+                            || (matches.size() > 1 && best.score() - matches.get(1).score() > 0.05);
 
                     if (!isUnambiguous) {
                         ambiguousCount++;
                         List<Map<String, Object>> candidates = new ArrayList<>();
-                        for (FunctionFingerprintUtil.Candidate.Scored scored : matches) {
+                        for (FunctionFingerprintUtil.ScoredMatch scored : matches) {
                             candidates.add(Map.of(
                                     "function", scored.candidate().functionName(),
                                     "address", AddressUtil.formatAddress(scored.candidate().entryPoint()),
-                                    "similarity", String.format("%.2f", scored.similarityScore())
+                                    "similarity", String.format("%.2f", scored.score()),
+                                    "strategy", scored.strategy()
                             ));
                         }
                         ambiguous.add(Map.of(
@@ -942,7 +915,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
-                    // Apply propagation
                     Function targetFunc = target.getFunctionManager().getFunctionAt(best.candidate().entryPoint());
                     if (targetFunc == null) {
                         targetFunc = target.getFunctionManager().getFunctionContaining(best.candidate().entryPoint());
@@ -951,35 +923,27 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
-                    {
-                        try {
-                            if (propagateNames && !sourceFunc.getName().equals(targetFunc.getName())) {
-                                String oldName = targetFunc.getName();
-                                targetFunc.setName(sourceFunc.getName(), SourceType.USER_DEFINED);
-                                logInfo("Propagated name: " + oldName + " -> " + sourceFunc.getName() + " at "
-                                        + AddressUtil.formatAddress(targetFunc.getEntryPoint()));
-                            }
-
-                            if (propagateTags) {
-                                // Get source function tags
-                                Set<FunctionTag> sourceTags = sourceFunc.getTags();
-                                for (FunctionTag sourceTag : sourceTags) {
-                                    // Add tag to target function (creates tag if it doesn't exist)
-                                    targetFunc.addTag(sourceTag.getName());
-                                }
-                            }
-
-                            if (propagateComments) {
-                                // Propagate function comment if exists
-                                String comment = sourceFunc.getComment();
-                                if (comment != null && !comment.isEmpty()) {
-                                    targetFunc.setComment(comment);
-                                }
-                            }
-                        } catch (DuplicateNameException | InvalidInputException e) {
-                            logError("Error propagating function " + sourceFunc.getName(), e);
-                            continue;
+                    try {
+                        if (propagateNames && !sourceFunc.getName().equals(targetFunc.getName())) {
+                            String oldName = targetFunc.getName();
+                            targetFunc.setName(sourceFunc.getName(), SourceType.USER_DEFINED);
+                            logInfo("Propagated name: " + oldName + " -> " + sourceFunc.getName() + " at "
+                                    + AddressUtil.formatAddress(targetFunc.getEntryPoint()));
                         }
+                        if (propagateTags) {
+                            for (FunctionTag sourceTag : sourceFunc.getTags()) {
+                                targetFunc.addTag(sourceTag.getName());
+                            }
+                        }
+                        if (propagateComments) {
+                            String comment = sourceFunc.getComment();
+                            if (comment != null && !comment.isEmpty()) {
+                                targetFunc.setComment(comment);
+                            }
+                        }
+                    } catch (DuplicateNameException | InvalidInputException e) {
+                        logError("Error propagating function " + sourceFunc.getName(), e);
+                        continue;
                     }
 
                     propagatedCount++;
@@ -988,8 +952,63 @@ public class FunctionToolProvider extends AbstractToolProvider {
                             "sourceAddress", AddressUtil.formatAddress(sourceFunc.getEntryPoint()),
                             "targetFunction", targetFunc.getName(),
                             "targetAddress", AddressUtil.formatAddress(targetFunc.getEntryPoint()),
-                            "similarity", String.format("%.2f", best.similarityScore())
+                            "similarity", String.format("%.2f", best.score()),
+                            "strategy", best.strategy()
                     ));
+
+                    FunctionFingerprintUtil.FunctionProfile targetProfile =
+                            targetIndex.byEntryPoint().get(best.candidate().entryPoint());
+                    if (targetProfile != null) {
+                        confirmedMatches.put(sourceFunc.getEntryPoint(), targetProfile);
+                    }
+                }
+
+                // Call graph propagation: use confirmed matches as anchors
+                int graphPropagated = 0;
+                if (!confirmedMatches.isEmpty()) {
+                    Map<Address, FunctionFingerprintUtil.ScoredMatch> extraMatches =
+                            FunctionFingerprintUtil.propagateCallGraph(
+                                    confirmedMatches, sourceProgram, targetIndex, minSimilarity);
+                    for (Map.Entry<Address, FunctionFingerprintUtil.ScoredMatch> extra : extraMatches.entrySet()) {
+                        Function srcFunc = sourceProgram.getFunctionManager().getFunctionAt(extra.getKey());
+                        if (srcFunc == null || srcFunc.isExternal()) {
+                            continue;
+                        }
+                        FunctionFingerprintUtil.ScoredMatch match = extra.getValue();
+                        Function tgtFunc = target.getFunctionManager().getFunctionAt(
+                                match.candidate().entryPoint());
+                        if (tgtFunc == null) {
+                            continue;
+                        }
+                        try {
+                            if (propagateNames && !srcFunc.getName().equals(tgtFunc.getName())
+                                    && !SymbolUtil.isDefaultSymbolName(srcFunc.getName())) {
+                                tgtFunc.setName(srcFunc.getName(), SourceType.USER_DEFINED);
+                                graphPropagated++;
+                            }
+                            if (propagateTags) {
+                                for (FunctionTag tag : srcFunc.getTags()) {
+                                    tgtFunc.addTag(tag.getName());
+                                }
+                            }
+                            if (propagateComments) {
+                                String comment = srcFunc.getComment();
+                                if (comment != null && !comment.isEmpty()) {
+                                    tgtFunc.setComment(comment);
+                                }
+                            }
+                            propagated.add(Map.of(
+                                    "sourceFunction", srcFunc.getName(),
+                                    "sourceAddress", AddressUtil.formatAddress(srcFunc.getEntryPoint()),
+                                    "targetFunction", tgtFunc.getName(),
+                                    "targetAddress", AddressUtil.formatAddress(tgtFunc.getEntryPoint()),
+                                    "similarity", String.format("%.2f", match.score()),
+                                    "strategy", match.strategy()
+                            ));
+                        } catch (DuplicateNameException | InvalidInputException e) {
+                            logError("Error propagating (graph) " + srcFunc.getName(), e);
+                        }
+                    }
                 }
 
                 target.endTransaction(txId, true);
@@ -999,11 +1018,12 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 targetResult.put("processed", processed);
                 targetResult.put("matched", matched);
                 targetResult.put("propagated", propagatedCount);
+                targetResult.put("graphPropagated", graphPropagated);
                 targetResult.put("ambiguous", ambiguousCount);
                 targetResult.put("noMatch", noMatchCount);
-                targetResult.put("propagatedDetails", propagated.subList(0, Math.min(propagated.size(), 100))); // Limit details
+                targetResult.put("propagatedDetails", propagated.subList(0, Math.min(propagated.size(), 100)));
                 targetResult.put("ambiguousDetails", ambiguous.subList(0, Math.min(ambiguous.size(), 50)));
-                targetResult.put("noMatchSample", noMatch); // First 10 only
+                targetResult.put("noMatchSample", noMatch);
 
                 totalProcessed += processed;
                 totalMatched += matched;
@@ -1020,14 +1040,14 @@ public class FunctionToolProvider extends AbstractToolProvider {
             perTargetResults.add(targetResult);
         }
 
-        result.put("summary", Map.of(
-                "totalProcessed", totalProcessed,
-                "totalMatched", totalMatched,
-                "totalPropagated", totalPropagated,
-                "totalAmbiguous", totalAmbiguous,
-                "totalNoMatch", totalNoMatch,
-                "successRate", totalProcessed > 0 ? String.format("%.1f%%", (100.0 * totalPropagated / totalProcessed)) : "0%"
-        ));
+        Map<String, Object> summaryMap = new HashMap<>();
+        summaryMap.put("totalProcessed", totalProcessed);
+        summaryMap.put("totalMatched", totalMatched);
+        summaryMap.put("totalPropagated", totalPropagated);
+        summaryMap.put("totalAmbiguous", totalAmbiguous);
+        summaryMap.put("totalNoMatch", totalNoMatch);
+        summaryMap.put("successRate", totalProcessed > 0 ? String.format("%.1f%%", (100.0 * totalPropagated / totalProcessed)) : "0%");
+        result.put("summary", summaryMap);
         result.put("targetResults", perTargetResults);
         result.put("success", true);
 
@@ -1035,15 +1055,16 @@ public class FunctionToolProvider extends AbstractToolProvider {
     }
 
     /**
-     * Handle batch matching of multiple functions
+     * Handle batch matching of multiple functions using multi-strategy enhanced matching.
+     * Strategies (in order): exact fingerprint → callee-set → string-refs → constant-set
+     * → multi-feature fuzzy → structural scan → call graph propagation.
      */
     private McpSchema.CallToolResult handleBatchMatchFunction(Program sourceProgram, CallToolRequest request, List<?> functionIdentifiers) {
-        // Parameters (same defaults as single-match)
         int maxInstructions = getOptionalInt(request, "maxInstructions", FunctionFingerprintUtil.DEFAULT_MAX_INSTRUCTIONS);
-        double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.85);
+        double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.60);
         boolean propagateNames = getOptionalBoolean(request, "propagateNames", true);
         boolean propagateTags = getOptionalBoolean(request, "propagateTags", true);
-        boolean propagateComments = getOptionalBoolean(request, "propagateComments", false);
+        boolean propagateComments = getOptionalBoolean(request, "propagateComments", true);
         int batchSize = getOptionalInt(request, "batchSize", 100);
         if (batchSize <= 0) {
             batchSize = 100;
@@ -1057,7 +1078,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
             return createErrorResult("No target programs available for matching");
         }
 
-        // Build a name -> function map once for faster fallback resolution
         Map<String, Function> sourceByName = new HashMap<>();
         FunctionIterator allSourceFunctions = sourceProgram.getFunctionManager().getFunctions(true);
         while (allSourceFunctions.hasNext()) {
@@ -1067,9 +1087,8 @@ public class FunctionToolProvider extends AbstractToolProvider {
             }
         }
 
-        record SourceResolved(int index, String identifier, Function function, String canonicalSig, String fingerprint) {
-
-        }
+        record SourceResolved(int index, String identifier, Function function,
+                              FunctionFingerprintUtil.FunctionProfile profile) {}
 
         List<SourceResolved> resolved = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
@@ -1088,176 +1107,222 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 if (sourceFunction == null) {
                     sourceFunction = sourceByName.get(identifier);
                 }
-
                 if (sourceFunction == null || sourceFunction.isExternal()) {
                     errors.add(Map.of("index", i, "identifier", identifier, "error", "Function not found"));
                     continue;
                 }
-
-                String sig = FunctionFingerprintUtil.computeCanonicalSignature(sourceProgram, sourceFunction, maxInstructions);
-                if (sig == null || sig.isEmpty()) {
-                    errors.add(Map.of("index", i, "identifier", identifier, "error", "Failed to compute canonical signature"));
-                    continue;
-                }
-                String fp = FunctionFingerprintUtil.computeFingerprintFromCanonicalSignature(sig);
-                if (fp == null || fp.isEmpty()) {
-                    errors.add(Map.of("index", i, "identifier", identifier, "error", "Failed to compute fingerprint"));
+                if (FunctionFingerprintUtil.isDegenerateFunction(sourceFunction)) {
+                    errors.add(Map.of("index", i, "identifier", identifier, "error",
+                            "Skipped degenerate function (thunk)"));
                     continue;
                 }
 
-                resolved.add(new SourceResolved(i, identifier, sourceFunction, sig, fp));
+                FunctionFingerprintUtil.FunctionProfile profile
+                        = FunctionFingerprintUtil.buildFunctionProfile(sourceProgram, sourceFunction, maxInstructions);
+                if (profile == null) {
+                    errors.add(Map.of("index", i, "identifier", identifier, "error", "Failed to build function profile"));
+                    continue;
+                }
+
+                resolved.add(new SourceResolved(i, identifier, sourceFunction, profile));
             } catch (Exception e) {
                 errors.add(Map.of("index", i, "identifier", identifier, "error", String.valueOf(e.getMessage())));
             }
         }
 
-        // Backwards-compatible per-item results (previous implementation returned only per-item statuses).
         List<Map<String, Object>> results = new ArrayList<>();
         for (SourceResolved src : resolved) {
-            results.add(Map.of(
-                    "index", src.index(),
-                    "identifier", src.identifier(),
-                    "result", "Processed"
-            ));
+            results.add(Map.of("index", src.index(), "identifier", src.identifier(), "result", "Processed"));
         }
 
-        // Build snapshot indexes once per target program (do NOT re-index on metadata edits)
-        Map<String, FunctionFingerprintUtil.ProgramIndex> targetIndexes = new HashMap<>();
+        Map<String, FunctionFingerprintUtil.EnhancedProgramIndex> targetIndexes = new HashMap<>();
         for (Program target : targetPrograms) {
             if (target == null || target.isClosed() || target.equals(sourceProgram)) {
                 continue;
             }
             String targetPath = target.getDomainFile().getPathname();
-            targetIndexes.put(targetPath, FunctionFingerprintUtil.buildProgramIndex(target, maxInstructions));
+            targetIndexes.put(targetPath, FunctionFingerprintUtil.buildEnhancedIndex(target, maxInstructions));
         }
+
+        record MatchEval(SourceResolved src, List<FunctionFingerprintUtil.ScoredMatch> matches) {}
+        record PerTargetResult(String targetPath, int processed, int matched, int propagated,
+                               int graphPropagated, int ambiguous, int noMatch, String error) {}
+
+        final int batch = batchSize;
+        final double minSim = minSimilarity;
+        List<PerTargetResult> perTargetResults = targetPrograms.parallelStream()
+                .filter(target -> target != null && !target.isClosed() && !target.equals(sourceProgram))
+                .map(target -> {
+                    String targetPath = target.getDomainFile().getPathname();
+                    FunctionFingerprintUtil.EnhancedProgramIndex targetIndex = targetIndexes.get(targetPath);
+                    if (targetIndex == null) {
+                        return null;
+                    }
+
+                    List<MatchEval> matchEvals = resolved.parallelStream().map(src ->
+                        new MatchEval(src, FunctionFingerprintUtil.findBestMatches(
+                                src.profile(), targetIndex, minSim, 10))
+                    ).toList();
+
+                    int processed = 0;
+                    int matched = 0;
+                    int propagated = 0;
+                    int ambiguous = 0;
+                    int noMatch = 0;
+
+                    Map<Address, FunctionFingerprintUtil.FunctionProfile> confirmedMatches = new HashMap<>();
+
+                    int txId = target.startTransaction("match-function batch");
+                    try {
+                        for (MatchEval eval : matchEvals) {
+                            SourceResolved src = eval.src();
+                            processed++;
+                            if (processed % batch == 0) {
+                                target.endTransaction(txId, true);
+                                txId = target.startTransaction("match-function batch (continued)");
+                                autoSaveProgram(target, "match-function batch progress");
+                            }
+                            List<FunctionFingerprintUtil.ScoredMatch> matches = eval.matches();
+                            if (matches.isEmpty()) {
+                                noMatch++;
+                                continue;
+                            }
+                            matched++;
+
+                            FunctionFingerprintUtil.ScoredMatch best = matches.get(0);
+                            boolean isUnambiguous = matches.size() == 1
+                                    || (matches.size() > 1 && best.score() - matches.get(1).score() > 0.05);
+                            if (!isUnambiguous) {
+                                ambiguous++;
+                                continue;
+                            }
+
+                            Function targetFunc = target.getFunctionManager().getFunctionAt(best.candidate().entryPoint());
+                            if (targetFunc == null) {
+                                targetFunc = target.getFunctionManager().getFunctionContaining(best.candidate().entryPoint());
+                            }
+                            if (targetFunc == null) {
+                                continue;
+                            }
+
+                            try {
+                                if (propagateNames && !src.function().getName().equals(targetFunc.getName())) {
+                                    targetFunc.setName(src.function().getName(), SourceType.USER_DEFINED);
+                                }
+                                if (propagateTags) {
+                                    for (FunctionTag tag : src.function().getTags()) {
+                                        targetFunc.addTag(tag.getName());
+                                    }
+                                }
+                                if (propagateComments) {
+                                    String comment = src.function().getComment();
+                                    if (comment != null && !comment.isEmpty()) {
+                                        targetFunc.setComment(comment);
+                                    }
+                                }
+                                propagated++;
+
+                                FunctionFingerprintUtil.FunctionProfile targetProfile =
+                                        targetIndex.byEntryPoint().get(best.candidate().entryPoint());
+                                if (targetProfile != null) {
+                                    confirmedMatches.put(src.function().getEntryPoint(), targetProfile);
+                                }
+                            } catch (DuplicateNameException | InvalidInputException e) {
+                                logError("Error propagating " + src.function().getName() + " to " + targetPath, e);
+                            }
+                        }
+
+                        // BinDiff-style call graph propagation: use confirmed matches as anchors
+                        int graphPropagated = 0;
+                        if (!confirmedMatches.isEmpty()) {
+                            Map<Address, FunctionFingerprintUtil.ScoredMatch> extraMatches =
+                                    FunctionFingerprintUtil.propagateCallGraph(
+                                            confirmedMatches, sourceProgram, targetIndex, minSim);
+                            for (Map.Entry<Address, FunctionFingerprintUtil.ScoredMatch> extra : extraMatches.entrySet()) {
+                                Function srcFunc = sourceProgram.getFunctionManager().getFunctionAt(extra.getKey());
+                                if (srcFunc == null || srcFunc.isExternal()) {
+                                    continue;
+                                }
+                                FunctionFingerprintUtil.ScoredMatch match = extra.getValue();
+                                Function tgtFunc = target.getFunctionManager().getFunctionAt(
+                                        match.candidate().entryPoint());
+                                if (tgtFunc == null) {
+                                    continue;
+                                }
+                                try {
+                                    if (propagateNames && !srcFunc.getName().equals(tgtFunc.getName())
+                                            && !SymbolUtil.isDefaultSymbolName(srcFunc.getName())) {
+                                        tgtFunc.setName(srcFunc.getName(), SourceType.USER_DEFINED);
+                                        graphPropagated++;
+                                    }
+                                    if (propagateTags) {
+                                        for (FunctionTag tag : srcFunc.getTags()) {
+                                            tgtFunc.addTag(tag.getName());
+                                        }
+                                    }
+                                    if (propagateComments) {
+                                        String comment = srcFunc.getComment();
+                                        if (comment != null && !comment.isEmpty()) {
+                                            tgtFunc.setComment(comment);
+                                        }
+                                    }
+                                } catch (DuplicateNameException | InvalidInputException e) {
+                                    logError("Error propagating (graph) " + srcFunc.getName() + " to " + targetPath, e);
+                                }
+                            }
+                        }
+
+                        target.endTransaction(txId, true);
+                        autoSaveProgram(target, "match-function batch");
+                        invalidateFunctionCaches(targetPath);
+                        return new PerTargetResult(targetPath, processed, matched, propagated,
+                                graphPropagated, ambiguous, noMatch, null);
+                    } catch (Exception e) {
+                        target.endTransaction(txId, false);
+                        logError("Error processing batch match for target " + targetPath, e);
+                        return new PerTargetResult(targetPath, 0, 0, 0, 0, 0, 0, String.valueOf(e.getMessage()));
+                    }
+                })
+                .filter(java.util.Objects::nonNull)
+                .toList();
 
         List<Map<String, Object>> targetResults = new ArrayList<>();
         int totalProcessed = 0;
         int totalMatched = 0;
         int totalPropagated = 0;
+        int totalGraphPropagated = 0;
         int totalAmbiguous = 0;
         int totalNoMatch = 0;
 
-        for (Program target : targetPrograms) {
-            if (target == null || target.isClosed() || target.equals(sourceProgram)) {
-                continue;
+        for (PerTargetResult ptr : perTargetResults) {
+            if (ptr.error() != null) {
+                targetResults.add(Map.of("programPath", ptr.targetPath(), "error", ptr.error()));
+            } else {
+                Map<String, Object> trMap = new HashMap<>();
+                trMap.put("programPath", ptr.targetPath());
+                trMap.put("processed", ptr.processed());
+                trMap.put("matched", ptr.matched());
+                trMap.put("propagated", ptr.propagated());
+                trMap.put("graphPropagated", ptr.graphPropagated());
+                trMap.put("ambiguous", ptr.ambiguous());
+                trMap.put("noMatch", ptr.noMatch());
+                targetResults.add(trMap);
+                totalProcessed += ptr.processed();
+                totalMatched += ptr.matched();
+                totalPropagated += ptr.propagated();
+                totalGraphPropagated += ptr.graphPropagated();
+                totalAmbiguous += ptr.ambiguous();
+                totalNoMatch += ptr.noMatch();
             }
-
-            String targetPath = target.getDomainFile().getPathname();
-            FunctionFingerprintUtil.ProgramIndex targetIndex = targetIndexes.get(targetPath);
-            if (targetIndex == null) {
-                continue;
-            }
-
-            int processed = 0;
-            int matched = 0;
-            int propagated = 0;
-            int ambiguous = 0;
-            int noMatch = 0;
-
-            record MatchEval(SourceResolved src, List<FunctionFingerprintUtil.Candidate.Scored> matches) {}
-
-            // Match all requested source functions concurrently against this target index.
-            // We keep application of Ghidra mutations sequential/transactional below.
-            List<MatchEval> matchEvals = resolved.parallelStream().map(src -> {
-                List<FunctionFingerprintUtil.Candidate.Scored> matches = new ArrayList<>();
-                List<FunctionFingerprintUtil.Candidate> exact
-                        = FunctionFingerprintUtil.findMatches(targetIndex, src.fingerprint());
-                for (FunctionFingerprintUtil.Candidate c : exact) {
-                    matches.add(new FunctionFingerprintUtil.Candidate.Scored(c, 1.0));
-                }
-                if (matches.isEmpty()) {
-                    matches.addAll(FunctionFingerprintUtil.findFuzzyMatches(
-                            src.canonicalSig(), targetIndex, minSimilarity, 10));
-                }
-                return new MatchEval(src, matches);
-            }).toList();
-
-            int txId = target.startTransaction("match-function batch");
-            try {
-                for (MatchEval eval : matchEvals) {
-                    SourceResolved src = eval.src();
-                    processed++;
-                    if (processed % batchSize == 0) {
-                        target.endTransaction(txId, true);
-                        txId = target.startTransaction("match-function batch (continued)");
-                        autoSaveProgram(target, "match-function batch progress");
-                    }
-                    List<FunctionFingerprintUtil.Candidate.Scored> matches = eval.matches();
-
-                    if (matches.isEmpty()) {
-                        noMatch++;
-                        continue;
-                    }
-
-                    matched++;
-
-                    FunctionFingerprintUtil.Candidate.Scored best = matches.get(0);
-                    boolean isUnambiguous = matches.size() == 1
-                            || (matches.size() > 1 && best.similarityScore() - matches.get(1).similarityScore() > 0.05);
-                    if (!isUnambiguous) {
-                        ambiguous++;
-                        continue;
-                    }
-
-                    Function targetFunc = target.getFunctionManager().getFunctionAt(best.candidate().entryPoint());
-                    if (targetFunc == null) {
-                        targetFunc = target.getFunctionManager().getFunctionContaining(best.candidate().entryPoint());
-                    }
-                    if (targetFunc == null) {
-                        continue;
-                    }
-
-                    try {
-                        if (propagateNames && !src.function().getName().equals(targetFunc.getName())) {
-                            targetFunc.setName(src.function().getName(), SourceType.USER_DEFINED);
-                        }
-                        if (propagateTags) {
-                            for (FunctionTag tag : src.function().getTags()) {
-                                targetFunc.addTag(tag.getName());
-                            }
-                        }
-                        if (propagateComments) {
-                            String comment = src.function().getComment();
-                            if (comment != null && !comment.isEmpty()) {
-                                targetFunc.setComment(comment);
-                            }
-                        }
-                        propagated++;
-                    } catch (DuplicateNameException | InvalidInputException e) {
-                        logError("Error propagating function " + src.function().getName() + " to " + targetPath, e);
-                    }
-                }
-
-                target.endTransaction(txId, true);
-                autoSaveProgram(target, "match-function batch");
-                invalidateFunctionCaches(targetPath);
-
-            } catch (Exception e) {
-                target.endTransaction(txId, false);
-                logError("Error processing batch match for target " + targetPath, e);
-                targetResults.add(Map.of(
-                        "programPath", targetPath,
-                        "error", String.valueOf(e.getMessage())
-                ));
-                continue;
-            }
-
-            totalProcessed += processed;
-            totalMatched += matched;
-            totalPropagated += propagated;
-            totalAmbiguous += ambiguous;
-            totalNoMatch += noMatch;
-
-            targetResults.add(Map.of(
-                    "programPath", targetPath,
-                    "processed", processed,
-                    "matched", matched,
-                    "propagated", propagated,
-                    "ambiguous", ambiguous,
-                    "noMatch", noMatch
-            ));
         }
+
+        Map<String, Object> summaryMap = new HashMap<>();
+        summaryMap.put("totalProcessed", totalProcessed);
+        summaryMap.put("totalMatched", totalMatched);
+        summaryMap.put("totalPropagated", totalPropagated);
+        summaryMap.put("totalGraphPropagated", totalGraphPropagated);
+        summaryMap.put("totalAmbiguous", totalAmbiguous);
+        summaryMap.put("totalNoMatch", totalNoMatch);
 
         Map<String, Object> result = new HashMap<>();
         result.put("batchOperation", true);
@@ -1268,13 +1333,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
         result.put("targetProgramsCount", targetResults.size());
         result.put("minSimilarity", minSimilarity);
         result.put("maxInstructions", maxInstructions);
-        result.put("summary", Map.of(
-                "totalProcessed", totalProcessed,
-                "totalMatched", totalMatched,
-                "totalPropagated", totalPropagated,
-                "totalAmbiguous", totalAmbiguous,
-                "totalNoMatch", totalNoMatch
-        ));
+        result.put("summary", summaryMap);
         result.put("targetResults", targetResults);
         result.put("success", true);
         if (!errors.isEmpty()) {
