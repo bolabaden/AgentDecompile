@@ -31,10 +31,12 @@ ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
 RUN --mount=type=cache,target=/var/cache/apk \
-    addgroup -g ${PGID} -S ${GHIDRA_GROUP} \
-    && adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP} \
-    && (apk update || apk update) \
-    && apk add --no-cache \
+    set -e; \
+    run() { "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
+    run apk update; \
+    run apk add --no-cache \
         openjdk21 \
         bash \
         gcompat \
@@ -50,8 +52,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         linux-headers \
         libressl-dev \
         powershell \
-    && update-ms-fonts \
-    && fc-cache -f
+    run update-ms-fonts; \
+    run fc-cache -f
 
 # --- Layer 3: download Ghidra (cached unless GHIDRA_VERSION/API or above changes) ---
 RUN set -eux; \
@@ -115,11 +117,14 @@ ARG PGID=1001
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
+# run(): POSIX sh helper; on failure echo exact command and exit for diagnosable build output
 RUN --mount=type=cache,target=/var/cache/apk \
-    addgroup -g ${PGID} -S ${GHIDRA_GROUP} \
-    && adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP} \
-    && (apk update || apk update) \
-    && apk add --no-cache \
+    set -e; \
+    run() { "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
+    run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
+    run apk update; \
+    run apk add --no-cache \
         openjdk21 \
         bash \
         gcompat \
@@ -127,7 +132,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         openssh-client \
         xhost \
         musl-locales \
-    && ( [ "$(uname -m)" = "x86_64" ] && apk add --no-cache musl-locales-lang || true )
+    ; \
+    ( [ "$(uname -m)" = "x86_64" ] && run apk add --no-cache musl-locales-lang || true )
 
 WORKDIR /ghidra
 COPY --from=build /ghidra /ghidra
