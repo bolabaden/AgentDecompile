@@ -25,8 +25,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+
 import agentdecompile.plugin.ConfigManager;
 import agentdecompile.tools.AbstractToolProvider;
+import agentdecompile.tools.ProgramValidationException;
 import agentdecompile.util.AddressUtil;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 import agentdecompile.util.DecompilationReadTracker;
@@ -165,23 +168,19 @@ public class CommentToolProvider extends AbstractToolProvider {
                     if ("search".equals(action)) {
                         return handleSearchCommentsMulti(programs, request);
                     } else {
-                        return handleSearchDecompilationMulti(programs, request, exchange);
+                        return handleSearchDecompilationMulti(programs, request);
                     }
                 }
 
                 // For other actions, resolve to a single program (using smart resolution)
                 Program program = getProgramFromArgs(request);
 
-                switch (action) {
-                    case "set":
-                        return handleSetComment(program, request);
-                    case "get":
-                        return handleGetComments(program, request);
-                    case "remove":
-                        return handleRemoveComment(program, request);
-                    default:
-                        return createErrorResult("Invalid action: " + action + ". Valid actions are: set, get, remove, search, search_decomp");
-                }
+                return switch (action) {
+                    case "set" -> handleSetComment(program, request);
+                    case "get" -> handleGetComments(program, request);
+                    case "remove" -> handleRemoveComment(program, request);
+                    default -> createErrorResult("Invalid action: " + action + ". Valid actions are: set, get, remove, search, search_decomp");
+                };
             } catch (IllegalArgumentException e) {
                 // Try to return default response with error message
                 Program program = tryGetProgramSafely(request.arguments());
@@ -197,7 +196,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                             Map<String, Object> data = JSON.readValue(jsonText, Map.class);
                             data.put("error", errorInfo.get("error"));
                             return createJsonResult(data);
-                        } catch (Exception ex) {
+                        } catch (JsonProcessingException ex) {
                             // If we can't modify, return error with default response
                             List<Object> resultData = new ArrayList<>();
                             resultData.add(errorInfo);
@@ -209,7 +208,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                 }
                 // If we can't get a default response, return error with message
                 return createErrorResult(e.getMessage() + " " + createIncorrectArgsErrorMap().get("error"));
-            } catch (Exception e) {
+            } catch (ProgramValidationException e) {
                 logError("Error in manage-comments", e);
                 return createErrorResult("Tool execution failed: " + e.getMessage());
             }
@@ -246,8 +245,7 @@ public class CommentToolProvider extends AbstractToolProvider {
     }
 
     private McpSchema.CallToolResult handleSearchDecompilationMulti(List<Program> programs,
-            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
-            io.modelcontextprotocol.server.McpSyncServerExchange exchange) {
+            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
             
         List<Map<String, Object>> allResults = new ArrayList<>();
         int maxResults = getOptionalInt(request, "maxResults", 50);
@@ -282,7 +280,7 @@ public class CommentToolProvider extends AbstractToolProvider {
     /**
      * Create a configured decompiler instance
      */
-    private DecompInterface createConfiguredDecompilerForComments(Program program, String toolName) {
+    private DecompInterface createConfiguredDecompilerForComments(Program program) {
         DecompInterface decompiler = new DecompInterface();
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
@@ -373,7 +371,7 @@ public class CommentToolProvider extends AbstractToolProvider {
         List<Map<String, Object>> commentsArray = getOptionalCommentsArray(request);
 
         if (commentsArray != null && !commentsArray.isEmpty()) {
-            return handleBatchSetComments(program, request, commentsArray);
+            return handleBatchSetComments(program, commentsArray);
         }
 
         String addressStr = getOptionalString(request, "addressOrSymbol", null);
@@ -486,7 +484,6 @@ public class CommentToolProvider extends AbstractToolProvider {
      * Handle batch setting of multiple comments in a single transaction
      */
     private McpSchema.CallToolResult handleBatchSetComments(Program program,
-            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
             List<Map<String, Object>> commentsArray) {
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> errors = new ArrayList<>();
@@ -602,13 +599,16 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         // Validate comment type (only 'pre' and 'eol' are valid for decompilation comments)
         CommentType commentType;
-        if ("pre".equals(commentTypeStr.toLowerCase())) {
-            commentType = CommentType.PRE;
-        } else if ("eol".equals(commentTypeStr.toLowerCase())) {
-            commentType = CommentType.EOL;
-        } else {
+        if (null == commentTypeStr.toLowerCase()) {
             return createErrorResult("Invalid comment type: " + commentTypeStr +
-                ". Must be 'pre' or 'eol' for decompilation comments.");
+                    ". Must be 'pre' or 'eol' for decompilation comments.");
+        } else switch (commentTypeStr.toLowerCase()) {
+            case "pre" -> commentType = CommentType.PRE;
+            case "eol" -> commentType = CommentType.EOL;
+            default -> {
+                return createErrorResult("Invalid comment type: " + commentTypeStr +
+                        ". Must be 'pre' or 'eol' for decompilation comments.");
+            }
         }
 
         // Get function
@@ -648,7 +648,7 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         // Initialize decompiler
         final String toolName = "manage-comments-set";
-        DecompInterface decompiler = createConfiguredDecompilerForComments(program, toolName);
+        DecompInterface decompiler = createConfiguredDecompilerForComments(program);
         if (decompiler == null) {
             return createErrorResult("Failed to initialize decompiler");
         }
@@ -931,14 +931,9 @@ public class CommentToolProvider extends AbstractToolProvider {
 
         return results;
     }
-
     /**
      * @deprecated Use searchCommentsInProgram instead
      */
-    private McpSchema.CallToolResult handleSearchComments(Program program, io.modelcontextprotocol.spec.McpSchema.CallToolRequest request) {
-         // This method is kept if needed but we switched to multi-program search
-         return createErrorResult("Deprecated internal method called");
-    }
 
     private List<Map<String, Object>> searchDecompilationInProgram(Program program,
             io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
@@ -970,7 +965,7 @@ public class CommentToolProvider extends AbstractToolProvider {
             int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
             Pattern regex = Pattern.compile(pattern, flags);
 
-            DecompInterface decompiler = createConfiguredDecompilerForComments(program, "manage-comments-search_decomp");
+            DecompInterface decompiler = createConfiguredDecompilerForComments(program);
             if (decompiler == null) {
                  throw new RuntimeException("Failed to initialize decompiler");
             }
@@ -1028,7 +1023,7 @@ public class CommentToolProvider extends AbstractToolProvider {
                             }
                         }
                     } catch (Exception e) {
-                        continue;
+                        logError("Error decompiling function", e);
                     }
                 }
             } finally {
@@ -1038,19 +1033,10 @@ public class CommentToolProvider extends AbstractToolProvider {
             return searchResults;
         } catch (PatternSyntaxException e) {
             throw new IllegalArgumentException("Invalid regex pattern: " + e.getMessage());
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             logError("Error during decompilation search", e);
             throw new RuntimeException("Search failed: " + e.getMessage());
         }
-    }
-
-    /**
-     * @deprecated Use searchDecompilationInProgram instead
-     */
-    private McpSchema.CallToolResult handleSearchDecompilation(Program program,
-            io.modelcontextprotocol.spec.McpSchema.CallToolRequest request,
-            io.modelcontextprotocol.server.McpSyncServerExchange exchange) {
-        return createErrorResult("Deprecated internal method called");
     }
 
     /**
