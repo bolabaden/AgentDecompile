@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -67,6 +69,29 @@ public abstract class AbstractToolProvider implements ToolProvider {
     protected static final ObjectMapper JSON = new ObjectMapper();
     protected final McpSyncServer server;
     protected final List<Tool> registeredTools = new ArrayList<>();
+
+    /**
+     * Global concurrency limiter for tool executions.
+     * Limits the number of concurrent tool calls across ALL tool providers to prevent
+     * overwhelming Ghidra's resources (decompiler, program database, etc.).
+     * 
+     * This is critical for stability: Ghidra operations like decompilation, symbol table
+     * lookups, and memory reads are not fully thread-safe when many run concurrently.
+     * Without this limit, a burst of concurrent requests (common with AI clients sending
+     * 10+ parallel tool calls) can cause internal errors, resource exhaustion, and server
+     * crashes (HTTP 500).
+     * 
+     * The limit of 4 concurrent tool calls provides a balance between throughput and stability.
+     * Requests beyond this limit will wait up to TOOL_ACQUIRE_TIMEOUT_SECONDS before timing out.
+     */
+    private static final Semaphore TOOL_CONCURRENCY_LIMITER = new Semaphore(4, true);
+
+    /**
+     * Maximum time (in seconds) to wait for a tool execution slot.
+     * If a tool call cannot acquire a slot within this time, it returns an error
+     * rather than blocking indefinitely.
+     */
+    private static final int TOOL_ACQUIRE_TIMEOUT_SECONDS = 120;
 
     /**
      * Constructor
@@ -187,7 +212,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
      * @param handler The handler function for the tool
      */
     protected void registerTool(Tool tool, java.util.function.BiFunction<io.modelcontextprotocol.server.McpSyncServerExchange, CallToolRequest, McpSchema.CallToolResult> handler) {
-        // Wrap the handler with safe execution and logging
+        // Wrap the handler with safe execution, concurrency limiting, and logging
         java.util.function.BiFunction<io.modelcontextprotocol.server.McpSyncServerExchange, CallToolRequest, McpSchema.CallToolResult> safeHandler =
             (exchange, request) -> {
                 String requestId = AgentDecompileToolLogger.generateRequestId();
@@ -197,10 +222,34 @@ public abstract class AbstractToolProvider implements ToolProvider {
                 AgentDecompileToolLogger.logRequest(tool.name(), requestId, request.arguments());
 
                 // Ghidra API: Msg.debug(Class, String) - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
-                Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool call: %s",
-                    requestId, tool.name()));
+                Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool call: %s (queued, %d/%d slots available)",
+                    requestId, tool.name(), TOOL_CONCURRENCY_LIMITER.availablePermits(), 4));
+
+                // Acquire a concurrency slot - limits concurrent Ghidra operations
+                boolean acquired = false;
+                try {
+                    acquired = TOOL_CONCURRENCY_LIMITER.tryAcquire(TOOL_ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    long durationMs = System.currentTimeMillis() - startTime;
+                    AgentDecompileToolLogger.logError(tool.name(), requestId, durationMs, "Interrupted while waiting for execution slot");
+                    return createErrorResult("Tool execution interrupted while waiting for available slot. The server is under heavy load. Please retry.");
+                }
+
+                if (!acquired) {
+                    long durationMs = System.currentTimeMillis() - startTime;
+                    String timeoutMsg = String.format("Tool '%s' timed out waiting for execution slot after %ds. " +
+                        "The server is processing too many concurrent requests. Please retry in a moment.", 
+                        tool.name(), TOOL_ACQUIRE_TIMEOUT_SECONDS);
+                    AgentDecompileToolLogger.logError(tool.name(), requestId, durationMs, timeoutMsg);
+                    Msg.warn(AbstractToolProvider.class, String.format("[AgentDecompile:%s] %s", requestId, timeoutMsg));
+                    return createErrorResult(timeoutMsg);
+                }
 
                 try {
+                    Msg.debug(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool executing: %s",
+                        requestId, tool.name()));
+
                     McpSchema.CallToolResult result = handler.apply(exchange, request);
 
                     // Log response
@@ -227,6 +276,9 @@ public abstract class AbstractToolProvider implements ToolProvider {
                     Msg.error(AbstractToolProvider.class, String.format("[AgentDecompile:%s] Tool failed: %s (%dms)",
                         requestId, tool.name(), durationMs), e);
                     return createErrorResult("Tool execution failed: " + e.getMessage());
+                } finally {
+                    // Always release the concurrency slot
+                    TOOL_CONCURRENCY_LIMITER.release();
                 }
             };
 
