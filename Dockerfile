@@ -32,8 +32,8 @@ ENV PUID=${PUID}
 ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
-# Use dl.alpinelinux.org to avoid "No such file or directory" under QEMU; install packages then create user/group
-RUN --mount=type=cache,target=/var/cache/apk \
+# No apk cache mount: under QEMU (e.g. linux/arm64 on amd64) it causes "No such file or directory" and exit 4
+RUN \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
@@ -123,8 +123,8 @@ ARG PGID=1001
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
-RUN --mount=type=cache,target=/var/cache/apk \
+# No apk cache mount: under QEMU cross-build it causes apk update to fail with exit 4
+RUN \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
