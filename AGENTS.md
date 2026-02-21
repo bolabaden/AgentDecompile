@@ -27,13 +27,17 @@ gradle
 
 ## Code Structure
 
-- `src/main/java/agentdecompile/` - Main source
-  - `tools/` - The "Skills" given to the AI (Decompiler, Symbol Manager, etc.)
-  - `server/` - The MCP Server implementation
-  - `plugin/` - Ghidra integration logic
-  - `util/` - Helpers for Addresses, Programs, etc.
-- `src/test/` - Unit tests
-- `src/test.slow/` - Integration tests
+- `src/main/java/agentdecompile/` - Main Java source
+  - `server/` - MCP server (McpServerManager, Jetty, filters: GlobalException, ApiKeyAuth, RequestLogging, KeepAlive)
+  - `headless/` - Headless launcher, JavaOutputRedirect, CallbackOutputStream
+  - `tools/` - MCP tool providers (17 tools: decompiler, functions, symbols, memory, project, etc.)
+  - `resources/` - MCP resource providers (ProgramList, StaticAnalysisResults, etc.)
+  - `plugin/` - Ghidra plugin integration (ConfigManager, program lifecycle)
+  - `util/` - AddressUtil, ProgramLookupUtil, DataTypeParserUtil, DebugLogger, etc.
+  - `ui/` - GUI components
+- `src/agentdecompile_cli/` - Python CLI: stdio ↔ HTTP bridge (`mcp-agentdecompile`), launcher, project_manager, stdio_bridge
+- `src/test/` - Unit tests (no Ghidra env)
+- `src/test.slow/` - Integration tests (GUI/headed required)
 
 ---
 

@@ -18,9 +18,12 @@ Stability features:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable
+from urllib.parse import urlparse, urlunparse
 
 try:
     from anyio import BrokenResourceError, ClosedResourceError
@@ -168,6 +171,33 @@ def _is_connection_error(error: Exception) -> bool:
     return False
 
 
+def _normalize_backend_url(value: str) -> str:
+    """Normalize a backend URL or host[:port] into a full MCP endpoint URL."""
+    raw = value.strip()
+    if not raw:
+        raise ValueError("Backend URL cannot be empty")
+
+    # Support bare host[:port] values for convenience.
+    if "://" not in raw:
+        raw = f"http://{raw}"
+
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"Unsupported URL scheme '{parsed.scheme}'. Use http:// or https://."
+        )
+    if not parsed.netloc:
+        raise ValueError("Backend URL must include a host")
+
+    path = parsed.path or ""
+    if not path or path == "/":
+        path = "/mcp/message"
+    elif not path.endswith("/mcp/message"):
+        path = f"{path.rstrip('/')}/mcp/message"
+
+    return urlunparse(parsed._replace(path=path))
+
+
 class AgentDecompileStdioBridge:
     """
     MCP Server that bridges stdio to AgentDecompile's StreamableHTTP endpoint.
@@ -194,34 +224,61 @@ class AgentDecompileStdioBridge:
     CIRCUIT_BREAKER_THRESHOLD = 5
     CIRCUIT_BREAKER_RESET_TIME = 10.0  # seconds
 
-    def __init__(self, port: int):
+    # Timeouts for long-running operations (e.g. match-function across many binaries)
+    CONNECTION_TIMEOUT = 295.0  # for streamable HTTP connection/read
+    TOOL_CALL_TIMEOUT_DEFAULT = 295.0  # 4m55s so we timeout before a 5-minute client and return progress log
+
+    def __init__(self, backend: int | str, api_key: str | None = None):
         """
         Initialize the stdio bridge.
 
         Args:
-            port: AgentDecompile server port to connect to
+            backend: AgentDecompile server port (int) or URL (str) to connect to
+            api_key: Optional API key sent as X-API-Key header
         """
-        self.port = port
-        self.url = f"http://localhost:{port}/mcp/message"
-        self.server = Server("AgentDecompile")
+        if isinstance(backend, int):
+            self.port: int | None = backend
+            self.url: str = f"http://localhost:{backend}/mcp/message"
+        else:
+            self.port = None
+            self.url = _normalize_backend_url(backend)
+
+        self._streamable_http_headers: dict[str, str] | None = None
+        if api_key is not None and api_key.strip():
+            self._streamable_http_headers = {"X-API-Key": api_key}
+
+        self.server: Server = Server("AgentDecompile")
         self.backend_session: ClientSession | None = None
-        self._connection_context = None  # Store the connection context for reconnection
-        self._current_json_stream = None  # Store current JsonEnvelopeStream for cleanup
-        self._connection_params = {
+        self._connection_context: Any | None = None  # Store the connection context for reconnection
+        self._current_json_stream: JsonEnvelopeStream | None = None  # Store current JsonEnvelopeStream for cleanup
+        self._connection_params: dict[str, float] = {
             "timeout": 120.0,  # 2 minutes for connect/overall
             "read_timeout": 60.0,  # 1 minute for read operations
         }
 
         # Concurrency limiter - prevents overwhelming the backend
-        self._request_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_REQUESTS)
+        self._request_semaphore: asyncio.Semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_REQUESTS)
 
         # Circuit breaker state
-        self._consecutive_failures = 0
-        self._circuit_open_until = 0.0
-        self._circuit_lock = asyncio.Lock()
+        self._consecutive_failures: int = 0
+        self._circuit_open_until: float = 0.0
+        self._circuit_lock: asyncio.Lock = asyncio.Lock()
 
         # Register handlers
         self._register_handlers()
+
+    def _get_call_timeout(self) -> float:
+        """Return tool call timeout in seconds (from env or default).
+        Set AGENT_DECOMPILE_TOOL_CALL_TIMEOUT (seconds) to override the default (4m55s; beats 5m client limits).
+        If you see 'timed out after 5 minutes', the limit may be from the client (e.g. Cursor);
+        set this env var to match (e.g. 300) or increase the client's tool-call timeout."""
+        raw = os.environ.get("AGENT_DECOMPILE_TOOL_CALL_TIMEOUT", "")
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        return self.TOOL_CALL_TIMEOUT_DEFAULT
 
     async def _check_circuit_breaker(self) -> bool:
         """Check if the circuit breaker allows requests.
@@ -249,9 +306,7 @@ class AgentDecompileStdioBridge:
         """Record a successful operation - resets the circuit breaker."""
         async with self._circuit_lock:
             if self._consecutive_failures > 0:
-                sys.stderr.write(
-                    f"Backend recovered after {self._consecutive_failures} consecutive failures.\n"
-                )
+                sys.stderr.write(f"Backend recovered after {self._consecutive_failures} consecutive failures.\n")
             self._consecutive_failures = 0
 
     async def _record_failure(self):
@@ -299,7 +354,7 @@ class AgentDecompileStdioBridge:
             # Circuit is open - wait for reset time then try
             await asyncio.sleep(self.CIRCUIT_BREAKER_RESET_TIME)
 
-        last_error = None
+        last_error: Exception | None = None
         for attempt in range(self.MAX_RETRIES):
             try:
                 # Acquire concurrency slot
@@ -322,14 +377,10 @@ class AgentDecompileStdioBridge:
                         )
                         await asyncio.sleep(wait_time)
                         if self.backend_session is None:
-                            raise RuntimeError(
-                                "Backend session lost and cannot recover within current connection."
-                            )
+                            raise RuntimeError("Backend session lost and cannot recover within current connection.")
                         continue
                     else:
-                        sys.stderr.write(
-                            f"ERROR: {operation_name} failed after {self.MAX_RETRIES} attempts: {e}\n"
-                        )
+                        sys.stderr.write(f"ERROR: {operation_name} failed after {self.MAX_RETRIES} attempts: {e}\n")
                         raise
                 else:
                     # Non-connection MCP error - don't retry, just raise
@@ -384,7 +435,7 @@ class AgentDecompileStdioBridge:
                 raise
 
         # Should not reach here, but just in case
-        if last_error:
+        if last_error is not None:
             raise last_error
         raise RuntimeError(f"{operation_name} failed after {self.MAX_RETRIES} retries")
 
@@ -435,27 +486,68 @@ class AgentDecompileStdioBridge:
             except RuntimeError as e:
                 return [TextContent(type="text", text=f"Error: Backend connection lost: {e}. The server may need to be restarted.")]
 
-            async def _call_tool_operation():
+            timeout_seconds: float = self._get_call_timeout()
+            progress_log: list[str] = []
+            start_mono: float = time.monotonic()
+
+            async def _tool_operation():
+                session = self.backend_session
+                if session is None:
+                    raise RuntimeError("Backend session not initialized")
+
+                main_task: asyncio.Task[CallToolResult] = asyncio.create_task(session.call_tool(name, arguments))
+
+                async def _heartbeat():
+                    while True:
+                        await asyncio.sleep(15)
+                        if main_task.done():
+                            return
+                        elapsed = time.monotonic() - start_mono
+                        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        progress_log.append(f"[{ts}] Tool '{name}' still running (elapsed {elapsed:.0f}s)")
+
+                heartbeat_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())
+                try:
+                    return await main_task
+                finally:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+
+            async def _run_with_timeout():
                 return await asyncio.wait_for(
-                    self.backend_session.call_tool(name, arguments),  # type: ignore
-                    timeout=300.0,  # 5 minutes for tool execution
+                    _tool_operation(),
+                    timeout=timeout_seconds,
                 )
 
             try:
                 result = await self._call_with_retry(
-                    f"call_tool({name})", _call_tool_operation
+                    f"call_tool({name})",
+                    _run_with_timeout,
                 )
                 if result is None:
                     return [
                         TextContent(
-                            type="text", text=f"Error: Tool '{name}' returned no result"
+                            type="text",
+                            text=f"Error: Tool '{name}' returned no result",
                         )
                     ]
                 return result.content
             except asyncio.TimeoutError:
-                error_msg = f"Tool '{name}' timed out after 5 minutes"
-                sys.stderr.write(f"ERROR: {error_msg}\n")
-                return [TextContent(type="text", text=f"Error: {error_msg}. Please retry with a simpler query.")]
+                elapsed = time.monotonic() - start_mono
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                progress_log.append(f"[{ts}] Tool '{name}' timed out (elapsed {elapsed:.0f}s)")
+                mins = int(timeout_seconds / 60)
+                error_head = f"Tool '{name}' timed out after {mins} minutes."
+                if progress_log:
+                    log_block = "\n".join(progress_log)
+                    error_body = f"{log_block}\n\n{error_head} Last activity above."
+                else:
+                    error_body = f"{error_head} Please retry with fewer items or a simpler query."
+                sys.stderr.write(f"ERROR: {error_head}\n")
+                return [TextContent(type="text", text=f"Error: {error_body}")]
             except Exception as e:
                 error_msg = f"Tool '{name}' failed: {e.__class__.__name__}: {e}"
                 sys.stderr.write(f"ERROR: {error_msg}\n")
@@ -510,7 +602,7 @@ class AgentDecompileStdioBridge:
             async def _read_resource_operation():
                 return await asyncio.wait_for(
                     self.backend_session.read_resource(uri),  # type: ignore
-                    timeout=60.0,
+                    timeout=self._get_call_timeout(),
                 )
 
             try:
@@ -545,7 +637,7 @@ class AgentDecompileStdioBridge:
             async def _list_prompts_operation():
                 return await asyncio.wait_for(
                     self.backend_session.list_prompts(),  # type: ignore
-                    timeout=30.0,
+                    timeout=self._get_call_timeout(),
                 )
 
             try:
@@ -557,9 +649,7 @@ class AgentDecompileStdioBridge:
                 sys.stderr.write("ERROR: list_prompts timed out\n")
                 return []
             except Exception as e:
-                sys.stderr.write(
-                    f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n"
-                )
+                sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
                 return []
 
     async def run(self):
@@ -574,21 +664,27 @@ class AgentDecompileStdioBridge:
         sys.stderr.write(f"Connecting to AgentDecompile backend at {self.url}...\n")
 
         # Increased timeout for long-running operations (Ghidra operations can take time)
-        timeout = 3600.0  # 1 hour for overall timeout (prevents premature disconnection)
+        timeout: float = self.CONNECTION_TIMEOUT
+        sse_read_timeout: float = self.CONNECTION_TIMEOUT  # prevent HTTP read timeout while server is processing
 
-        max_retries = 5
-        retry_delay = 2.0
+        max_retries: int = 5
+        retry_delay: float = 2.0
 
         for attempt in range(max_retries):
             try:
-                async with streamablehttp_client(self.url, timeout=timeout) as (
+                async with streamablehttp_client(
+                    self.url,
+                    headers=self._streamable_http_headers,
+                    timeout=timeout,
+                    sse_read_timeout=sse_read_timeout,
+                ) as (
                     read_stream,
                     write_stream,
                     get_session_id,
                 ):
                     # Wrap read_stream to convert non-JSON messages to valid JSON
                     # This prevents JSON parsing errors while preserving all log messages
-                    json_stream = JsonEnvelopeStream(read_stream)
+                    json_stream: JsonEnvelopeStream = JsonEnvelopeStream(read_stream)
                     self._current_json_stream = json_stream
 
                     # Enter the wrapper's context manager
@@ -601,12 +697,11 @@ class AgentDecompileStdioBridge:
                             self._circuit_open_until = 0.0
 
                             # Initialize backend session with timeout
-                            sys.stderr.write(
-                                "Initializing AgentDecompile backend session...\n"
-                            )
+                            sys.stderr.write("Initializing AgentDecompile backend session...\n")
                             try:
                                 init_result = await asyncio.wait_for(
-                                    session.initialize(), timeout=120.0
+                                    session.initialize(),
+                                    timeout=120.0,
                                 )
                                 sys.stderr.write(
                                     f"Connected to {init_result.serverInfo.name} v{init_result.serverInfo.version}\n"
@@ -660,21 +755,17 @@ class AgentDecompileStdioBridge:
                                                 for exc in exceptions
                                             )
                                             if all_connection:
-                                                sys.stderr.write("Client disconnected (ExceptionGroup)\n")
+                                                sys.stderr.write(f"Client disconnected (ExceptionGroup): {exceptions}\n")
                                                 break
                                     except (AttributeError, TypeError):
                                         pass
                                 # If stdio server fails, check if backend connection is still alive
                                 # and attempt to reconnect if needed
-                                sys.stderr.write(
-                                    f"Stdio server error: {type(stdio_error).__name__}: {stdio_error}\n"
-                                )
+                                sys.stderr.write(f"Stdio server error: {type(stdio_error).__name__}: {stdio_error}\n")
                                 # Check if this is a connection error that warrants retry
                                 if isinstance(stdio_error, (ConnectionError, OSError)):
                                     if attempt < max_retries - 1:
-                                        sys.stderr.write(
-                                            f"Connection error in stdio bridge, retrying... (attempt {attempt + 1}/{max_retries})\n"
-                                        )
+                                        sys.stderr.write(f"Connection error in stdio bridge, retrying... (attempt {attempt + 1}/{max_retries})\n")
                                         await asyncio.sleep(retry_delay)
                                         retry_delay = min(retry_delay * 2, 30.0)
                                         continue
@@ -682,9 +773,7 @@ class AgentDecompileStdioBridge:
                                 raise
 
             except asyncio.TimeoutError as e:
-                sys.stderr.write(
-                    f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}\n"
-                )
+                sys.stderr.write(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}\n")
                 if attempt < max_retries - 1:
                     sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
                     await asyncio.sleep(retry_delay)
@@ -692,9 +781,7 @@ class AgentDecompileStdioBridge:
                     continue
                 raise
             except (ConnectionError, OSError) as e:
-                sys.stderr.write(
-                    f"Connection error (attempt {attempt + 1}/{max_retries}): {e}\n"
-                )
+                sys.stderr.write(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}\n")
                 if attempt < max_retries - 1:
                     sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
                     await asyncio.sleep(retry_delay)
@@ -702,9 +789,7 @@ class AgentDecompileStdioBridge:
                     continue
                 raise
             except (BrokenResourceError, ClosedResourceError) as e:
-                sys.stderr.write(
-                    f"Resource error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}\n"
-                )
+                sys.stderr.write(f"Resource error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}\n")
                 if attempt < max_retries - 1:
                     sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
                     await asyncio.sleep(retry_delay)
@@ -733,7 +818,7 @@ class AgentDecompileStdioBridge:
     def stop(self):
         """Stop the bridge and cleanup resources."""
         # Clean up json stream
-        if self._current_json_stream:
+        if self._current_json_stream is not None:
             try:
                 # Note: aclose is async, but this is called from synchronous cleanup
                 # The async context managers will handle the actual cleanup

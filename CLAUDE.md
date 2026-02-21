@@ -9,7 +9,7 @@ This file provides guidance to Claude, GitHub Copilot, and other AI agents when 
 ## Build and Test Commands
 
 ### Java Extension (Ghidra Plugin)
-`ash
+```bash
 # Set Ghidra installation directory first
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
 
@@ -24,23 +24,32 @@ gradle test --info
 
 # Integration tests (require GUI/headed environment, fork=1)
 gradle integrationTest --info
-`
+```
 
 **Important**: Use gradle directly, NOT gradle wrapper ("./gradlew").
 
 ### Python CLI and Tests
-`ash
+```bash
 # Setup Python environment with uv
 uv sync
 
 # Run all Python tests
 uv run pytest
-`
+```
+
+## Environment Variables and End-User Behavior
+
+End-user configuration is documented in [README.md](README.md). Summary for context when editing code:
+
+- **Connection/project:** `GHIDRA_INSTALL_DIR`, `AGENT_DECOMPILE_PROJECT_PATH`. For shared projects: `AGENT_DECOMPILE_SERVER_USERNAME`, `AGENT_DECOMPILE_SERVER_PASSWORD`, `AGENT_DECOMPILE_SERVER_HOST`, `AGENT_DECOMPILE_SERVER_PORT`.
+- **Intelligent features** (env only, no tool params): `AGENT_DECOMPILE_AUTO_LABEL` (default true), `AGENT_DECOMPILE_AUTO_TAG` (default true), `AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE` (default 97.0, range 95–99). Auto-bookmarking runs from get-functions and manage-comments; auto-tag/label/comment from manage-function, manage-symbols, manage-comments when values are not provided.
+- **Project locking:** `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` or `open` tool `forceIgnoreLock`—risky; deletes lock files. User-facing options and error text are in README.
+- **Structures:** `manage-structures` `add_field` uses `useReplace` default true and optional `preserveSize`; user-facing options and FAQ in README, implementation in CONTRIBUTING.
 
 ## Code Guidelines
 
-- **Package Name**: "agentdecompile" (previously "agentdecompile", being migrated).
-- **Core Logic**: Logic resides in "src/main/java/agentdecompile".
+- **Package Name**: "agentdecompile" (Python package: `agentdecompile_cli`; Java: `agentdecompile`).
+- **Core Logic**: Java in "src/main/java/agentdecompile" (server, headless, tools, resources, plugin, util, ui). Python CLI in "src/agentdecompile_cli" (stdio bridge, launcher, project_manager); entry point `mcp-agentdecompile` proxies stdio to Java MCP server at `http://localhost:{port}/mcp/message`.
 - **Testing**: Use "AddressUtil" for address normalization. Always wrap DB changes in transactions.
 - **License**: Business Source License 1.1.
 

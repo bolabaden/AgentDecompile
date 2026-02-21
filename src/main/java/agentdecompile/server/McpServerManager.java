@@ -93,7 +93,7 @@ import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 public class McpServerManager implements AgentDecompileMcpService, ConfigChangeListener {
     private static final String MCP_MSG_ENDPOINT = "/mcp/message";
     private static final String MCP_SERVER_NAME = "AgentDecompile";
-    private static final String MCP_SERVER_VERSION = "1.0.0";
+    private static final String MCP_SERVER_VERSION = "1.1.0";
 
     private final McpSyncServer server;
     private HttpServletStreamableServerTransportProvider currentTransportProvider;

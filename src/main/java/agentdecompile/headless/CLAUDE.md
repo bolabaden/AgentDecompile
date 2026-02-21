@@ -231,20 +231,17 @@ java -cp ghidra.jar:agentdecompile.jar agentdecompile.headless.AgentDecompileHea
 
 ### Lifecycle Flow
 
-1. `mcp-agentdecompile` CLI entry point (`src/agentdecompile_cli/__main__.py`)
-2. PyGhidra initialization (**BEFORE** asyncio)
-3. `AgentDecompileLauncher.start()` creates Java `AgentDecompileHeadlessLauncher`
-4. Ephemeral project created in `tempfile.mkdtemp(prefix="agentdecompile_project_")`
-5. Server starts on random port
-6. `StdioBridge` proxies stdio to HTTP MCP protocol
-7. On exit: project temp dir cleaned up via `shutil.rmtree()`
+1. **Entry point:** `mcp-agentdecompile` → `agentdecompile_cli.__main__:main` (pyproject.toml).
+2. **Pre-asyncio (blocking):** Stdout/stderr filters (JSON-RPC only on stdout), PyGhidra init, Java System.out/System.err redirect via `JavaOutputRedirect`, create `ProjectManager` (ephemeral temp project unless `AGENT_DECOMPILE_PROJECT_PATH` is set), create `AgentDecompileLauncher`, `launcher.start()` → Java `AgentDecompileHeadlessLauncher` starts MCP server.
+3. **Async:** `AgentDecompileStdioBridge(port)` connects to `http://localhost:{port}/mcp/message`, runs MCP server over stdio, proxies list_tools, call_tool, list_resources, read_resource, list_prompts to Java.
+4. On exit: temp project cleaned up if ephemeral.
 
 ### Key Design Points
 
-- PyGhidra init is **blocking** (BEFORE `asyncio.run()`)
-- Projects are ephemeral temp directories
-- Random ports avoid conflicts with GUI/other instances
-- Clean project cleanup on stop
+- PyGhidra init is **blocking** and must run BEFORE `asyncio.run()`.
+- **Project:** Ephemeral temp directory by default; set `AGENT_DECOMPILE_PROJECT_PATH` for a persistent project.
+- Random port avoids conflicts with GUI or other instances.
+- Bridge uses long timeouts (1 hour), concurrency limiting, retry, and circuit breaker (see `stdio_bridge.py`).
 
 ## Troubleshooting
 

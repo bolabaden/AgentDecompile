@@ -282,3 +282,7 @@ gradle/wrapper/
 .history/
 .env
 vendor/
+
+
+# Git (reduces context; not in .gitignore but standard for Docker)
+.git

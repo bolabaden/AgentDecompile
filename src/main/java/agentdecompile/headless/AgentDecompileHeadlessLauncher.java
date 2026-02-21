@@ -222,6 +222,8 @@ public class AgentDecompileHeadlessLauncher {
             configManager.setRandomAvailablePort();
         }
 
+        applyHeadlessServerEnvOverrides();
+
         // Configure shared-project authentication from environment before opening any project
         if (SharedProjectEnvConfig.hasAuthFromEnv()) {
             SharedProjectEnvConfig.applySharedProjectAuthFromEnv(this);
@@ -299,8 +301,56 @@ public class AgentDecompileHeadlessLauncher {
         serverManager.startServer();
 
         int port = serverManager.getServerPort();
+        String host = configManager.getServerHost();
         String projectSummary = (projectName != null) ? "project=" + projectName : "no project";
-        Msg.info(this, "AgentDecompile headless: " + projectSummary + ", port=" + port);
+        Msg.info(this, "AgentDecompile headless: " + projectSummary + ", listening=" + host + ":" + port);
+    }
+
+    private void applyHeadlessServerEnvOverrides() {
+        if (configFile != null || configManager == null) {
+            // Explicit config file takes precedence over environment overrides.
+            return;
+        }
+
+        String host = trimEnv("AGENT_DECOMPILE_HOST");
+        if (host != null) {
+            configManager.setServerHost(host);
+        }
+
+        String portValue = trimEnv("AGENT_DECOMPILE_PORT");
+        if (portValue != null) {
+            try {
+                int parsedPort = Integer.parseInt(portValue);
+                if (parsedPort > 0) {
+                    configManager.setServerPort(parsedPort);
+                } else {
+                    Msg.warn(this, "Ignoring AGENT_DECOMPILE_PORT <= 0: " + portValue);
+                }
+            } catch (NumberFormatException e) {
+                Msg.warn(this, "Ignoring invalid AGENT_DECOMPILE_PORT: " + portValue);
+            }
+        }
+
+        String apiKey = trimEnv("AGENT_DECOMPILE_API_KEY");
+        String apiKeyEnabled = trimEnv("AGENT_DECOMPILE_API_KEY_ENABLED");
+        if (apiKey != null) {
+            configManager.setApiKey(apiKey);
+            configManager.setApiKeyEnabled(true);
+        } else if (apiKeyEnabled != null) {
+            boolean enabled = "true".equalsIgnoreCase(apiKeyEnabled)
+                    || "1".equals(apiKeyEnabled)
+                    || "yes".equalsIgnoreCase(apiKeyEnabled);
+            configManager.setApiKeyEnabled(enabled);
+        }
+    }
+
+    private static String trimEnv(String name) {
+        String value = System.getenv(name);
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**
@@ -607,15 +657,32 @@ public class AgentDecompileHeadlessLauncher {
             }
         }
 
+        // Optional persistent project settings for server deployments.
+        String projectDirValue = trimEnv("AGENT_DECOMPILE_PROJECT_DIR");
+        String projectNameValue = trimEnv("AGENT_DECOMPILE_PROJECT_NAME");
+
         // Create and start launcher
-        AgentDecompileHeadlessLauncher launcher = new AgentDecompileHeadlessLauncher(configFile);
+        AgentDecompileHeadlessLauncher launcher;
+        if (projectDirValue != null && projectNameValue != null) {
+            launcher = new AgentDecompileHeadlessLauncher(
+                    configFile,
+                    false,
+                    new File(projectDirValue),
+                    projectNameValue);
+        } else {
+            launcher = new AgentDecompileHeadlessLauncher(configFile);
+        }
 
         try {
             launcher.start();
 
             // Wait for server to be ready
             if (launcher.waitForServer(30000)) {
-                System.out.println("AgentDecompile MCP server ready on port " + launcher.getPort());
+                String host = launcher.getConfigManager() != null
+                        ? launcher.getConfigManager().getServerHost()
+                        : "127.0.0.1";
+                System.out.println("AgentDecompile MCP server listening on "
+                        + host + ":" + launcher.getPort());
                 System.out.println("Press Ctrl+C to stop");
 
                 // Add shutdown hook for clean exit

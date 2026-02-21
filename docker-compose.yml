@@ -1,0 +1,23 @@
+services:
+  agentdecompile-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Optional: pin Ghidra version (e.g. 12.0.3); omit to use latest from GitHub
+        - GHIDRA_VERSION=${GHIDRA_VERSION:-}
+    image: agentdecompile-mcp:latest
+    container_name: agentdecompile-mcp
+    ports:
+      - "8080:8080"
+    environment:
+      AGENT_DECOMPILE_HOST: "0.0.0.0"
+      AGENT_DECOMPILE_PORT: "8080"
+      AGENT_DECOMPILE_PROJECT_DIR: "/projects"
+      AGENT_DECOMPILE_PROJECT_NAME: "agentdecompile"
+      # Optional: AGENT_DECOMPILE_API_KEY
+      # Optional: AGENT_DECOMPILE_CONFIG_FILE=/projects/agentdecompile.properties
+    volumes:
+      - ./work:/work
+      - ./projects:/projects
+    restart: unless-stopped
