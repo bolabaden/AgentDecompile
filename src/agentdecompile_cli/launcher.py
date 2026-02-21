@@ -8,8 +8,48 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, overload
+
+from agentdecompile_cli.project_manager import ProjectManager
+
+if TYPE_CHECKING:
+
+    class AgentDecompileHeadlessLauncher:
+        @overload
+        def __init__(
+            self,
+            configFile: File | None = None,
+            autoInitializeGhidra: bool = True,
+            useRandomPort: bool = True,
+            projectLocation: File | None = None,
+            projectName: str | None = None,
+        ) -> None: ...
+        @overload
+        def __init__(
+            self,
+            configFile: File | None = None,
+            useRandomPort: bool = True,
+            projectLocation: File | None = None,
+            projectName: str | None = None,
+        ) -> None: ...
+        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+        def start(self) -> None: ...
+        def stop(self) -> None: ...
+        def isRunning(self) -> bool: ...
+        def waitForServer(self, timeoutMs: int) -> bool: ...
+        def getPort(self) -> int | None: ...
+
+    class File:
+        def __init__(self, path: str): ...
+
+
+def _get_headless_launcher():
+    """Lazy import of AgentDecompile headless launcher (requires PyGhidra to be started)."""
+    from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingImports]
+    from java.io import File  # pyright: ignore[reportMissingImports]
+    return AgentDecompileHeadlessLauncher, File
 
 
 def _log_config_block(projects_dir: Path, project_name: str) -> None:
@@ -25,9 +65,7 @@ def _log_config_block(projects_dir: Path, project_name: str) -> None:
     port = os.getenv("AGENT_DECOMPILE_SERVER_PORT")
     repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
     if host or port or repo:
-        lines.append(
-            f"  server: host={host or '(not set)'}, port={port or '(not set)'}, repository={repo or '(not set)'}"
-        )
+        lines.append(f"  server: host={host or '(not set)'}, port={port or '(not set)'}, repository={repo or '(not set)'}")
     if os.getenv("AGENT_DECOMPILE_SERVER_USERNAME"):
         lines.append("  AGENT_DECOMPILE_SERVER_USERNAME: (set)")
     if os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD"):
@@ -36,11 +74,6 @@ def _log_config_block(projects_dir: Path, project_name: str) -> None:
     if ghidra_dir:
         lines.append(f"  GHIDRA_INSTALL_DIR: {ghidra_dir}")
     sys.stderr.write("\n".join(lines) + "\n")
-
-if TYPE_CHECKING:
-    from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        AgentDecompileHeadlessLauncher,
-    )
 
 
 class AgentDecompileLauncher:
@@ -84,18 +117,6 @@ class AgentDecompileLauncher:
             RuntimeError: If server fails to start
         """
         try:
-            # Import AgentDecompile launcher (PyGhidra already initialized by CLI)
-            import tempfile
-
-            from java.io import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-                File,
-            )
-            from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-                AgentDecompileHeadlessLauncher,
-            )
-
-            from .project_manager import ProjectManager
-
             # Check for AGENT_DECOMPILE_PROJECT_PATH environment variable
             project_gpr_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH")
 
@@ -105,24 +126,18 @@ class AgentDecompileLauncher:
 
                 # Validate it's a .gpr file
                 if not project_gpr.suffix.lower() == ".gpr":
-                    raise ValueError(
-                        f"AGENT_DECOMPILE_PROJECT_PATH must point to a .gpr file, got: {project_gpr_path}"
-                    )
+                    raise ValueError(f"AGENT_DECOMPILE_PROJECT_PATH must point to a .gpr file, got: {project_gpr_path}")
 
                 # Validate the file exists
                 if not project_gpr.exists():
-                    raise FileNotFoundError(
-                        f"Project file specified in AGENT_DECOMPILE_PROJECT_PATH does not exist: {project_gpr_path}"
-                    )
+                    raise FileNotFoundError(f"Project file specified in AGENT_DECOMPILE_PROJECT_PATH does not exist: {project_gpr_path}")
 
                 # Extract project directory and name (same logic as open tool for projects)
                 project_dir = project_gpr.parent
                 project_name = project_gpr.stem  # Gets filename without extension
 
                 if not project_name:
-                    raise ValueError(
-                        f"Invalid project name extracted from path: {project_gpr_path}"
-                    )
+                    raise ValueError(f"Invalid project name extracted from path: {project_gpr_path}")
 
                 # Store the user project path (so we don't clean it up)
                 self.user_project_path = project_gpr
@@ -141,6 +156,9 @@ class AgentDecompileLauncher:
 
             # Log configuration once in a readable block (no password value)
             _log_config_block(projects_dir, project_name)
+
+            # Lazy import: agentdecompile requires PyGhidra to be started (done in __main__)
+            AgentDecompileHeadlessLauncher, File = _get_headless_launcher()
 
             # Convert to Java File objects
             java_project_location = File(str(projects_dir))
@@ -175,7 +193,7 @@ class AgentDecompileLauncher:
                 raise RuntimeError("Server failed to start within timeout")
 
         except Exception as e:
-            sys.stderr.write(f"Error starting AgentDecompile server: {e}\n")
+            sys.stderr.write(f"Error starting AgentDecompile server: {e.__class__.__name__}: {e}\n")
             import traceback
 
             traceback.print_exc(file=sys.stderr)
@@ -198,32 +216,34 @@ class AgentDecompileLauncher:
         --------
             True if server is running
         """
-        if self.java_launcher:
+        if self.java_launcher is not None:
             return self.java_launcher.isRunning()
         return False
 
     def stop(self):
         """Stop the AgentDecompile server and cleanup."""
-        if self.java_launcher:
+        if self.java_launcher is not None:
             sys.stderr.write("Stopping AgentDecompile server...\n")
             try:
                 self.java_launcher.stop()
             except Exception as e:
-                sys.stderr.write(f"Error stopping server: {e}\n")
+                sys.stderr.write(f"Error stopping server: {e.__class__.__name__}: {e}\n")
             finally:
                 self.java_launcher = None
                 self.port = None
 
         # Clean up temporary project directory (only if using temp project, not user project)
-        if self.temp_project_dir and self.temp_project_dir.exists():
+        if (
+            self.temp_project_dir is not None
+            and self.temp_project_dir.exists()
+            and self.temp_project_dir.is_dir()
+        ):
             try:
                 import shutil
 
                 shutil.rmtree(self.temp_project_dir)
-                sys.stderr.write(
-                    f"Cleaned up temporary project directory: {self.temp_project_dir}\n"
-                )
+                sys.stderr.write(f"Cleaned up temporary project directory: {self.temp_project_dir}\n")
             except Exception as e:
-                sys.stderr.write(f"Error cleaning up temporary directory: {e}\n")
+                sys.stderr.write(f"Error cleaning up temporary directory: {e.__class__.__name__}: {e}\n")
             finally:
                 self.temp_project_dir = None

@@ -611,22 +611,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 "description", "Path in the Ghidra Project to the source program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser."
         ));
         Map<String, Object> functionIdentifierProperty = new HashMap<>();
-        functionIdentifierProperty.put("type", "string");
         functionIdentifierProperty.put("description", "Function name or address to match. Can be a single string or an array of strings for batch operations. If omitted, matches and transfers all functions from the source program.");
-        Map<String, Object> functionIdentifierArraySchema = new HashMap<>();
-        functionIdentifierArraySchema.put("type", "array");
-        functionIdentifierArraySchema.put("items", Map.of("type", "string"));
-        functionIdentifierArraySchema.put("description", "Array of function names or addresses for batch matching");
         functionIdentifierProperty.put("oneOf", List.of(
-                Map.of("type", "string"),
-                functionIdentifierArraySchema
+                Map.of("type", "string", "description", "Single function name or address"),
+                Map.of("type", "array", "items", Map.of("type", "string"), "description", "Array of function names or addresses for batch matching")
         ));
         properties.put("functionIdentifier", functionIdentifierProperty);
-        properties.put("targetProgramPaths", Map.of(
-                "type", "array",
-                "description", "List of programPath values to search/transfer to. If omitted, searches/transfers to all open programs except source.",
-                "items", Map.of("type", "string")
+        Map<String, Object> targetProgramPathsProperty = new HashMap<>();
+        targetProgramPathsProperty.put("description", "Program path(s) to search/transfer to. Can be a single string or an array of strings. If omitted, searches/transfers to all open programs except source.");
+        targetProgramPathsProperty.put("oneOf", List.of(
+                Map.of("type", "string", "description", "Single target program path"),
+                Map.of("type", "array", "items", Map.of("type", "string"), "description", "Array of target program paths")
         ));
+        properties.put("targetProgramPaths", targetProgramPathsProperty);
         properties.put("maxInstructions", Map.of(
                 "type", "integer",
                 "description", "Number of instructions to fingerprint/compare (default: 64; higher improves uniqueness/accuracy but costs more).",
@@ -661,11 +658,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 "type", "string",
                 "description", "Only process functions with this tag in source program (optional)"
         ));
-        properties.put("dryRun", Map.of(
-                "type", "boolean",
-                "description", "Preview what would be transferred without making changes (default: false)",
-                "default", false
-        ));
         properties.put("maxFunctions", Map.of(
                 "type", "integer",
                 "description", "Maximum number of functions to process (for testing/debugging, 0 = unlimited, default: 0)",
@@ -693,11 +685,32 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     return createErrorResult("Source program not found or closed");
                 }
 
-                String functionIdentifier = getOptionalString(request, "functionIdentifier", null);
-                List<String> targetProgramPaths = getOptionalStringList(request.arguments(), "targetProgramPaths", null);
-                List<Program> targets = resolveTargetProgramsForMatching(targetProgramPaths);
+                // Support functionIdentifier as string or array - use getParameterAsList for flexible parsing
+                List<Object> functionIdentifierList = getParameterAsList(request.arguments(), "functionIdentifier");
+                String functionIdentifier = null;
+                List<?> functionIdentifierBatch = null;
+                if (!functionIdentifierList.isEmpty()) {
+                    if (functionIdentifierList.size() > 1 || functionIdentifierList.get(0) instanceof List) {
+                        functionIdentifierBatch = functionIdentifierList.size() > 1
+                                ? functionIdentifierList
+                                : (List<?>) functionIdentifierList.get(0);
+                    } else {
+                        functionIdentifier = functionIdentifierList.get(0).toString();
+                    }
+                }
+
+                // Support targetProgramPaths as string or array - getParameterAsList wraps single value in list
+                List<Object> targetPathsRaw = getParameterAsList(request.arguments(), "targetProgramPaths");
+                List<String> targetProgramPaths = targetPathsRaw.isEmpty() ? null
+                        : targetPathsRaw.stream().map(Object::toString).toList();
+                List<Program> targets = resolveTargetProgramsForMatching(targetProgramPaths, sourceProgram);
                 if (targets.isEmpty()) {
                     return createErrorResult("No target programs found. Open target programs first or specify targetProgramPaths.");
+                }
+
+                // Batch mode: multiple function identifiers
+                if (functionIdentifierBatch != null && !functionIdentifierBatch.isEmpty()) {
+                    return handleBatchMatchFunction(sourceProgram, request, functionIdentifierBatch);
                 }
 
                 double minSimilarity = getOptionalDouble(request, "minSimilarity", 0.85);
@@ -711,7 +724,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 boolean propagateComments = getOptionalBoolean(request, "propagateComments", false);
                 boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
                 String filterByTag = getOptionalString(request, "filterByTag", null);
-                boolean dryRun = getOptionalBoolean(request, "dryRun", false);
                 int maxFunctions = getOptionalInt(request, "maxFunctions", 0);
                 int batchSize = getOptionalInt(request, "batchSize", 100);
                 if (batchSize <= 0) {
@@ -719,10 +731,9 @@ public class FunctionToolProvider extends AbstractToolProvider {
                 }
 
                 // If functionIdentifier is provided, add it as a filter
-                // We'll pass it to the handler which will filter to just that function
                 return handleBatchPropagateFunctionNames(sourceProgram, targets, minSimilarity, maxInstructions,
                         propagateNames, propagateTags, propagateComments, filterDefaultNames, filterByTag,
-                        dryRun, maxFunctions, batchSize, functionIdentifier);
+                        maxFunctions, batchSize, functionIdentifier);
 
             } catch (IllegalArgumentException e) {
                 // Try to return default response with error message
@@ -746,7 +757,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
     private McpSchema.CallToolResult handleBatchPropagateFunctionNames(Program sourceProgram, List<Program> targets,
             double minSimilarity, int maxInstructions, boolean propagateNames, boolean propagateTags,
             boolean propagateComments, boolean filterDefaultNames, String filterByTag,
-            boolean dryRun, int maxFunctions, int batchSize, String functionIdentifier) {
+            int maxFunctions, int batchSize, String functionIdentifier) {
 
         // Collect source functions to propagate
         List<Function> sourceFunctions = new ArrayList<>();
@@ -816,8 +827,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
         result.put("sourceFunctionsCount", sourceFunctions.size());
         result.put("targetProgramsCount", targets.size());
         result.put("minSimilarity", minSimilarity);
-        result.put("dryRun", dryRun);
-
         List<Map<String, Object>> perTargetResults = new ArrayList<>();
         int totalProcessed = 0;
         int totalMatched = 0;
@@ -827,9 +836,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
         for (Program target : targets) {
             String targetPath = target.getDomainFile().getPathname();
-            if (targetPath.equals(sourceProgram.getDomainFile().getPathname())) {
-                continue;
-            }
 
             Map<String, Object> targetResult = new HashMap<>();
             targetResult.put("programPath", targetPath);
@@ -849,7 +855,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
 
                 for (Function sourceFunc : sourceFunctions) {
                     processed++;
-                    if (processed % batchSize == 0 && !dryRun) {
+                    if (processed % batchSize == 0) {
                         target.endTransaction(txId, true);
                         txId = target.startTransaction("Batch Propagate Function Names (continued)");
                         autoSaveProgram(target, "Batch propagate progress");
@@ -923,7 +929,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         continue;
                     }
 
-                    if (!dryRun) {
+                    {
                         try {
                             if (propagateNames && !sourceFunc.getName().equals(targetFunc.getName())) {
                                 String oldName = targetFunc.getName();
@@ -964,13 +970,9 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     ));
                 }
 
-                if (!dryRun) {
-                    target.endTransaction(txId, true);
-                    autoSaveProgram(target, "Batch propagate function names");
-                    invalidateFunctionCaches(targetPath);
-                } else {
-                    target.endTransaction(txId, false);
-                }
+                target.endTransaction(txId, true);
+                autoSaveProgram(target, "Batch propagate function names");
+                invalidateFunctionCaches(targetPath);
 
                 targetResult.put("processed", processed);
                 targetResult.put("matched", matched);
@@ -1084,28 +1086,22 @@ public class FunctionToolProvider extends AbstractToolProvider {
         boolean propagateTags = getOptionalBoolean(request, "propagateTags", true);
         boolean propagateComments = getOptionalBoolean(request, "propagateComments", false);
         boolean filterDefaultNames = getOptionalBoolean(request, "filterDefaultNames", true);
-        boolean dryRun = getOptionalBoolean(request, "dryRun", false);
         int maxFunctions = getOptionalInt(request, "maxFunctions", 0);
         int batchSize = getOptionalInt(request, "batchSize", 100);
-        
-        @SuppressWarnings("unchecked")
-        List<String> targetProgramPaths = (List<String>) getParameterValue(request.arguments(), "targetProgramPaths");
-        if (targetProgramPaths != null && targetProgramPaths instanceof List == false) {
-            targetProgramPaths = null;
-        }
-        
-        List<Program> targetPrograms = resolveTargetProgramsForMatching(targetProgramPaths);
-        targetPrograms = targetPrograms.stream()
-                .filter(p -> !p.equals(sourceProgram))
-                .toList();
-        
+
+        List<Object> targetPathsRaw = getParameterAsList(request.arguments(), "targetProgramPaths");
+        List<String> targetProgramPaths = targetPathsRaw.isEmpty() ? null
+                : targetPathsRaw.stream().map(Object::toString).toList();
+
+        List<Program> targetPrograms = resolveTargetProgramsForMatching(targetProgramPaths, sourceProgram);
+
         if (targetPrograms.isEmpty()) {
             return createErrorResult("No target programs available for matching");
         }
         
         // Perform matching with existing logic (simplified extraction)
         return performFunctionMatching(sourceProgram, sourceFunction, targetPrograms, maxInstructions, 
-                minSimilarity, propagateNames, propagateTags, propagateComments, filterDefaultNames, dryRun);
+                minSimilarity, propagateNames, propagateTags, propagateComments, filterDefaultNames);
     }
     
     /**
@@ -1114,7 +1110,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
     @SuppressWarnings("unused")
     private McpSchema.CallToolResult performFunctionMatching(Program sourceProgram, Function sourceFunction,
             List<Program> targetPrograms, int maxInstructions, double minSimilarity, boolean propagateNames,
-            boolean propagateTags, boolean propagateComments, boolean filterDefaultNames, boolean dryRun) {
+            boolean propagateTags, boolean propagateComments, boolean filterDefaultNames) {
         
         // Compute fingerprint for source function
         String fingerprint = FunctionFingerprintUtil.computeFingerprint(sourceProgram, sourceFunction, maxInstructions);
@@ -1201,7 +1197,7 @@ public class FunctionToolProvider extends AbstractToolProvider {
                     targetFunc = targetProgram.getFunctionManager().getFunctionContaining(best.candidate().entryPoint());
                 }
                 
-                if (targetFunc != null && !dryRun) {
+                if (targetFunc != null) {
                     int txId = targetProgram.startTransaction("Propagate function metadata");
                     try {
                         List<String> propagated = new ArrayList<>();
@@ -1240,13 +1236,6 @@ public class FunctionToolProvider extends AbstractToolProvider {
                         targetResult.put("propagationError", e.getMessage());
                         logError("Error propagating metadata to " + targetPath, e);
                     }
-                } else if (dryRun) {
-                    targetResult.put("dryRun", true);
-                    targetResult.put("wouldPropagate", List.of(
-                        propagateNames ? "name" : null,
-                        propagateTags ? "tags" : null,
-                        propagateComments ? "comments" : null
-                    ).stream().filter(java.util.Objects::nonNull).toList());
                 }
             }
             
@@ -1280,15 +1269,19 @@ public class FunctionToolProvider extends AbstractToolProvider {
         }
     }
 
-    private List<Program> resolveTargetProgramsForMatching(List<String> targetProgramPaths) {
+    private List<Program> resolveTargetProgramsForMatching(List<String> targetProgramPaths, Program excludeSource) {
         if (targetProgramPaths == null || targetProgramPaths.isEmpty()) {
-            return AgentDecompileProgramManager.getOpenPrograms();
+            List<Program> all = AgentDecompileProgramManager.getOpenPrograms();
+            if (excludeSource != null) {
+                all = all.stream().filter(p -> !p.equals(excludeSource)).toList();
+            }
+            return all;
         }
         List<Program> programs = new ArrayList<>();
         for (String path : targetProgramPaths) {
             try {
                 Program p = getValidatedProgram(path);
-                if (p != null && !p.isClosed()) {
+                if (p != null && !p.isClosed() && (excludeSource == null || !p.equals(excludeSource))) {
                     programs.add(p);
                 }
             } catch (ProgramValidationException e) {
@@ -3152,14 +3145,11 @@ public class FunctionToolProvider extends AbstractToolProvider {
         }
 
         List<String> targetPaths = getOptionalStringList(request.arguments(), "propagateProgramPaths", null);
-        List<Program> targets = resolveTargetProgramsForMatching(targetPaths);
+        List<Program> targets = resolveTargetProgramsForMatching(targetPaths, sourceProgram);
 
         List<Map<String, Object>> applied = new ArrayList<>();
         for (Program target : targets) {
             String targetPath = target.getDomainFile().getPathname();
-            if (targetPath.equals(sourceProgram.getDomainFile().getPathname())) {
-                continue;
-            }
 
             List<FunctionFingerprintUtil.Candidate> matches
                     = FunctionFingerprintUtil.findMatches(target, fingerprint, maxInstructions);
@@ -3744,14 +3734,11 @@ public class FunctionToolProvider extends AbstractToolProvider {
         }
 
         List<String> targetPaths = getOptionalStringList(request.arguments(), "propagateProgramPaths", null);
-        List<Program> targets = resolveTargetProgramsForMatching(targetPaths);
+        List<Program> targets = resolveTargetProgramsForMatching(targetPaths, sourceProgram);
 
         List<Map<String, Object>> applied = new ArrayList<>();
         for (Program target : targets) {
             String targetPath = target.getDomainFile().getPathname();
-            if (targetPath.equals(sourceProgram.getDomainFile().getPathname())) {
-                continue;
-            }
 
             List<FunctionFingerprintUtil.Candidate> matches
                     = FunctionFingerprintUtil.findMatches(target, fingerprint, maxInstructions);

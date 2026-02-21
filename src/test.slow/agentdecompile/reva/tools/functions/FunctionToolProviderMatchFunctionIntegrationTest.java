@@ -98,6 +98,29 @@ public class FunctionToolProviderMatchFunctionIntegrationTest extends AgentDecom
     }
 
     @Test
+    public void testMatchFunctionMultipleFunctionIdentifiers() throws Exception {
+        withMcpClient(createMcpTransport(), client -> {
+            client.initialize();
+
+            Map<String, Object> arguments = new HashMap<>();
+            arguments.put("programPath", programPath);
+            arguments.put("functionIdentifier", java.util.Arrays.asList("sourceFunction"));
+            arguments.put("targetProgramPaths", programPath);
+
+            CallToolResult result = client.callTool(new CallToolRequest("match-function", arguments));
+
+            assertNotNull("Result should not be null", result);
+            assertFalse("Should not error when functionIdentifier is array", result.isError());
+            if (!result.isError()) {
+                TextContent content = (TextContent) result.content().get(0);
+                JsonNode json = parseJsonContent(content.text());
+                assertNotNull("Result should have valid JSON structure", json);
+                assertTrue("Should indicate batch operation", json.has("batchOperation"));
+            }
+        });
+    }
+
+    @Test
     public void testMatchFunctionBatchMatching() throws Exception {
         withMcpClient(createMcpTransport(), client -> {
             client.initialize();
@@ -166,19 +189,18 @@ public class FunctionToolProviderMatchFunctionIntegrationTest extends AgentDecom
     }
 
     @Test
-    public void testMatchFunctionDryRunMode() throws Exception {
+    public void testMatchFunctionBasicCall() throws Exception {
         withMcpClient(createMcpTransport(), client -> {
             client.initialize();
 
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("programPath", programPath);
             arguments.put("functionIdentifier", "sourceFunction");
-            arguments.put("dryRun", true);
 
             CallToolResult result = client.callTool(new CallToolRequest("match-function", arguments));
 
             assertNotNull("Result should not be null", result);
-            assertFalse("Dry run should not error", result.isError());
+            assertFalse("Match function should not error", result.isError());
             TextContent content = (TextContent) result.content().get(0);
             JsonNode json = parseJsonContent(content.text());
             assertNotNull("Result should have valid JSON structure", json);
@@ -298,7 +320,6 @@ public class FunctionToolProviderMatchFunctionIntegrationTest extends AgentDecom
             arguments.put("programPath", programPath);
             arguments.put("functionIdentifier", "sourceFunction");
             arguments.put("propagateTags", true);
-            arguments.put("dryRun", false);
 
             CallToolResult result = client.callTool(new CallToolRequest("match-function", arguments));
 

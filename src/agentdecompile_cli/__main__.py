@@ -16,9 +16,14 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
-from .launcher import AgentDecompileLauncher
-from .project_manager import ProjectManager
-from .stdio_bridge import AgentDecompileStdioBridge
+from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+
+# Apply MCP SDK fix before any ClientSession use (list() snapshot for _response_streams iteration)
+_apply_mcp_session_fix()
+
+from agentdecompile_cli.launcher import AgentDecompileLauncher
+from agentdecompile_cli.project_manager import ProjectManager
+from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -33,11 +38,13 @@ def _redirect_java_outputs():
     JSON-RPC log filter without corrupting the MCP stdout stream.
     """
     try:
-        from jpype import JImplements, JOverride  # pyright: ignore[reportMissingImports]
-
         from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
             JavaOutputRedirect,
             StderrWriter,
+        )
+        from jpype import (  # pyright: ignore[reportMissingImports]
+            JImplements,
+            JOverride,
         )
 
         @JImplements(StderrWriter)
@@ -51,9 +58,7 @@ def _redirect_java_outputs():
                     return
                 try:
                     # Java byte is signed (-128..127); normalize to 0..255 for Python bytes
-                    chunk = bytes(
-                        (int(b[i]) & 0xFF for i in range(off, off + len_val))
-                    )
+                    chunk = bytes((int(b[i]) & 0xFF for i in range(off, off + len_val)))
                     sys.stderr.write(chunk.decode("utf-8", errors="replace"))
                     sys.stderr.flush()
                 except Exception:
@@ -214,7 +219,11 @@ class StdoutFilter:
         if self._buffer:
             # Check if remaining buffer is JSON-RPC
             buffer_stripped = self._buffer.lstrip()
-            if buffer_stripped.startswith("{") and '"jsonrpc"' in self._buffer and self._buffer.rstrip().endswith("}"):
+            if (
+                buffer_stripped.startswith("{")
+                and '"jsonrpc"' in self._buffer
+                and self._buffer.rstrip().endswith("}")
+            ):
                 # Complete JSON-RPC message - write to stdout
                 self.real_stdout.write(self._buffer)
                 self.real_stdout.flush()
@@ -338,7 +347,11 @@ class AgentDecompileCLI:
             sys.exit(1)
         finally:
             # Clean up json stream
-            if self.bridge and hasattr(self.bridge, '_current_json_stream') and self.bridge._current_json_stream:
+            if (
+                self.bridge
+                and hasattr(self.bridge, "_current_json_stream")
+                and self.bridge._current_json_stream
+            ):
                 try:
                     # Note: aclose is async, but we can't await here
                     # The async context managers should have handled cleanup already
@@ -423,6 +436,7 @@ def main():
 
         # Force garbage collection to clean up any lingering references
         import gc
+
         gc.collect()
 
         project_manager = ProjectManager()
@@ -447,7 +461,9 @@ def main():
     # ASYNC EXECUTION (stdio bridge only)
     # =========================================================================
     # Create CLI with pre-initialized components
-    cli = AgentDecompileCLI(launcher=launcher, project_manager=project_manager, server_port=port)
+    cli = AgentDecompileCLI(
+        launcher=launcher, project_manager=project_manager, server_port=port
+    )
 
     # Run async event loop (stdio bridge starts immediately)
     try:

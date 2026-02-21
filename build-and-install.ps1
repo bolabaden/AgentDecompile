@@ -242,12 +242,28 @@ function Remove-PathWithOptionalLockKilling {
                 }
             }
 
-            try {
-                Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
-            } catch {
+            # Give Windows time to release file handles after process exit, then retry delete
+            $deleteOk = $false
+            $lastError = $null
+            $attempts = if ($killedAll -and $locking.Count -gt 0) { 3 } else { 1 }
+            foreach ($attempt in 1..$attempts) {
+                if ($attempt -gt 1) {
+                    Start-Sleep -Seconds 3
+                } elseif ($attempt -eq 1 -and $killedAll -and $locking.Count -gt 0) {
+                    Start-Sleep -Seconds 3
+                }
+                try {
+                    Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                    $deleteOk = $true
+                    break
+                } catch {
+                    $lastError = $_.Exception.Message
+                }
+            }
+            if (-not $deleteOk) {
                 $failures += [PSCustomObject]@{
                     Path        = $filePath
-                    Error       = $_.Exception.Message
+                    Error       = $lastError
                     LockingPids = ($locking | ForEach-Object { "$($_.ProcessId) ($($_.Name))" }) -join ", "
                     KillTried   = $true
                     KillOk      = $killedAll

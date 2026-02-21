@@ -24,8 +24,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.shared.message import SessionMessage
 from mcp.shared.exceptions import McpError
+from mcp.shared.message import SessionMessage
 from mcp.types import (
     JSONRPCMessage,
     JSONRPCNotification,
@@ -125,8 +125,8 @@ class AgentDecompileStdioBridge:
         self._connection_context = None  # Store the connection context for reconnection
         self._current_json_stream = None  # Store current JsonEnvelopeStream for cleanup
         self._connection_params = {
-            "timeout": 3600.0,  # 1 hour
-            "read_timeout": 1800.0,  # 30 minutes
+            "timeout": 120.0,  # 2 minutes for connect/overall
+            "read_timeout": 60.0,  # 1 minute for read operations
         }
 
         # Register handlers
@@ -146,7 +146,9 @@ class AgentDecompileStdioBridge:
             raise RuntimeError("Backend session not initialized - connection lost")
         return self.backend_session
 
-    async def _call_with_reconnect(self, operation_name: str, operation, *args, **kwargs):
+    async def _call_with_reconnect(
+        self, operation_name: str, operation, *args, **kwargs
+    ):
         """
         Call a backend operation with automatic retry on "Session terminated" errors.
 
@@ -201,7 +203,11 @@ class AgentDecompileStdioBridge:
                 # Check if it's a connection-related error
                 error_str = str(e).lower()
                 error_type = e.__class__.__name__
-                if "session" in error_str or "connection" in error_str or "ConnectionError" in error_type:
+                if (
+                    "session" in error_str
+                    or "connection" in error_str
+                    or "ConnectionError" in error_type
+                ):
                     if attempt < max_retries - 1:
                         sys.stderr.write(
                             f"WARNING: {operation_name} failed with connection error, "
@@ -228,11 +234,13 @@ class AgentDecompileStdioBridge:
             async def _list_tools_operation():
                 return await asyncio.wait_for(
                     self.backend_session.list_tools(),  # type: ignore
-                    timeout=60.0,  # 1 minute for listing tools
+                    timeout=30.0,
                 )
 
             try:
-                result = await self._call_with_reconnect("list_tools", _list_tools_operation)
+                result = await self._call_with_reconnect(
+                    "list_tools", _list_tools_operation
+                )
                 if result is None:
                     return []
                 return result.tools
@@ -259,10 +267,9 @@ class AgentDecompileStdioBridge:
             await self._ensure_backend_connected()
 
             async def _call_tool_operation():
-                # Add timeout for tool calls (some Ghidra operations can take a long time)
                 return await asyncio.wait_for(
                     self.backend_session.call_tool(name, arguments),  # type: ignore
-                    timeout=300.0,  # 5 minutes for tool execution
+                    timeout=120.0,  # 2 minutes for tool execution
                 )
 
             try:
@@ -270,10 +277,14 @@ class AgentDecompileStdioBridge:
                     f"call_tool({name})", _call_tool_operation
                 )
                 if result is None:
-                    return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")]
+                    return [
+                        TextContent(
+                            type="text", text=f"Error: Tool '{name}' returned no result"
+                        )
+                    ]
                 return result.content
             except asyncio.TimeoutError:
-                error_msg = f"Tool '{name}' timed out after 5 minutes"
+                error_msg = f"Tool '{name}' timed out after 2 minutes"
                 sys.stderr.write(f"ERROR: {error_msg}\n")
                 return [TextContent(type="text", text=f"Error: {error_msg}")]
             except Exception as e:
@@ -292,11 +303,13 @@ class AgentDecompileStdioBridge:
             async def _list_resources_operation():
                 return await asyncio.wait_for(
                     self.backend_session.list_resources(),  # type: ignore
-                    timeout=60.0,  # 1 minute for listing resources
+                    timeout=30.0,
                 )
 
             try:
-                result = await self._call_with_reconnect("list_resources", _list_resources_operation)
+                result = await self._call_with_reconnect(
+                    "list_resources", _list_resources_operation
+                )
                 if result is None:
                     return []
                 return result.resources
@@ -319,11 +332,13 @@ class AgentDecompileStdioBridge:
             async def _read_resource_operation():
                 return await asyncio.wait_for(
                     self.backend_session.read_resource(uri),  # type: ignore
-                    timeout=120.0,  # 2 minutes for reading resources
+                    timeout=60.0,
                 )
 
             try:
-                result = await self._call_with_reconnect("read_resource", _read_resource_operation)
+                result = await self._call_with_reconnect(
+                    "read_resource", _read_resource_operation
+                )
                 if result is None:
                     return ""
                 # Return the first content item's text or blob
@@ -351,11 +366,13 @@ class AgentDecompileStdioBridge:
             async def _list_prompts_operation():
                 return await asyncio.wait_for(
                     self.backend_session.list_prompts(),  # type: ignore
-                    timeout=60.0,  # 1 minute for listing prompts
+                    timeout=30.0,
                 )
 
             try:
-                result = await self._call_with_reconnect("list_prompts", _list_prompts_operation)
+                result = await self._call_with_reconnect(
+                    "list_prompts", _list_prompts_operation
+                )
                 if result is None:
                     return []
                 return result.prompts
@@ -377,22 +394,14 @@ class AgentDecompileStdioBridge:
         """
         sys.stderr.write(f"Connecting to AgentDecompile backend at {self.url}...\n")
 
-        # Increased timeout for long-running operations (Ghidra operations can take time)
-        # Also increased read timeout to handle slow responses
-        # Use very long timeouts to prevent session termination
-        timeout = 3600.0  # 1 hour for overall timeout (prevents premature disconnection)
-        read_timeout = 1800.0  # 30 minutes for read operations (handles long Ghidra operations)
+        timeout = 120.0  # 2 minutes for connect/overall
+        read_timeout = 60.0  # 1 minute for init/read operations
 
         max_retries = 3
         retry_delay = 2.0
 
         for attempt in range(max_retries):
             try:
-                # Connect to AgentDecompile backend with increased timeout
-                # NOTE: streamablehttp_client doesn't expose read_timeout directly,
-                # but we can configure httpx client with custom timeout
-                # The timeout parameter controls both connect and read timeouts
-                # Using a very long timeout prevents "Session terminated" errors
                 async with streamablehttp_client(self.url, timeout=timeout) as (
                     read_stream,
                     write_stream,
@@ -409,7 +418,9 @@ class AgentDecompileStdioBridge:
                             self.backend_session = session
 
                             # Initialize backend session with timeout
-                            sys.stderr.write("Initializing AgentDecompile backend session...\n")
+                            sys.stderr.write(
+                                "Initializing AgentDecompile backend session...\n"
+                            )
                             try:
                                 init_result = await asyncio.wait_for(
                                     session.initialize(), timeout=read_timeout
@@ -419,7 +430,7 @@ class AgentDecompileStdioBridge:
                                 )
                             except asyncio.TimeoutError:
                                 sys.stderr.write(
-                                    f"Timeout initializing backend session (>{read_timeout}s)\n"
+                                    f"Timeout initializing backend session ({read_timeout}s)\n"
                                 )
                                 if attempt < max_retries - 1:
                                     sys.stderr.write(
@@ -440,7 +451,7 @@ class AgentDecompileStdioBridge:
                                     )
                                 # If we get here, the server ran successfully
                                 break
-                            except ClosedResourceError as stdio_error:
+                            except ClosedResourceError:
                                 # Handle closed resource errors gracefully
                                 # This happens when the client disconnects while a response is being sent
                                 # It's a normal shutdown condition, not an error
@@ -449,15 +460,24 @@ class AgentDecompileStdioBridge:
                             except Exception as stdio_error:
                                 # Check if this is an ExceptionGroup containing ClosedResourceError
                                 # ExceptionGroup is available in Python 3.11+
-                                if hasattr(stdio_error, "exceptions") and isinstance(stdio_error, BaseException):
+                                if hasattr(stdio_error, "exceptions") and isinstance(
+                                    stdio_error, BaseException
+                                ):
                                     # This might be an ExceptionGroup (Python 3.11+)
                                     try:
                                         # Check if ExceptionGroup is available and this is one
-                                        if stdio_error.__class__.__name__ == "ExceptionGroup":
+                                        if (
+                                            stdio_error.__class__.__name__
+                                            == "ExceptionGroup"
+                                        ):
                                             exceptions = stdio_error.exceptions  # type: ignore[attr-defined]
-                                            if len(exceptions) == 1 and isinstance(exceptions[0], ClosedResourceError):
+                                            if len(exceptions) == 1 and isinstance(
+                                                exceptions[0], ClosedResourceError
+                                            ):
                                                 # This is a normal client disconnect - exit gracefully
-                                                sys.stderr.write("Client disconnected\n")
+                                                sys.stderr.write(
+                                                    "Client disconnected\n"
+                                                )
                                                 break
                                     except (AttributeError, TypeError):
                                         pass

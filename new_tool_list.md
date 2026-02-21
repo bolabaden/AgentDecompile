@@ -127,8 +127,8 @@
 
 **Parameters:**
 - `programPath` (string, optional): Path in the Ghidra Project to the source program. Optional in GUI mode - if not provided, uses the currently active program in the Code Browser.
-- `functionIdentifier` (string, optional): Function name or address to match. If provided, only matches and transfers metadata for this specific function. If omitted, matches and transfers all functions from the source program.
-- `targetProgramPaths` (array, optional): List of programPath values to search/transfer to. If omitted, searches/transfers to all open programs except source.
+- `functionIdentifier` (string or array, optional): Function name(s) or address(es) to match. Can be a single string or array of strings for batch operations. If provided, only matches and transfers metadata for these functions. If omitted, matches and transfers all functions from the source program.
+- `targetProgramPaths` (string or array, optional): Program path(s) to search/transfer to. Can be a single string or array of strings. If omitted, searches/transfers to all open programs except source.
 - `maxInstructions` (integer, optional): Number of instructions to fingerprint/compare (default: 64; higher improves uniqueness/accuracy but costs more).
 - `minSimilarity` (number, optional): Minimum similarity score (0.0-1.0) required to match and transfer. 0.85 = 85% similar, 0.90 = 90% similar. Higher = more strict matching (default: 0.85)
 - `propagateNames` (boolean, optional): Transfer function names (default: true)
@@ -136,7 +136,6 @@
 - `propagateComments` (boolean, optional): Transfer function comments (default: false)
 - `filterDefaultNames` (boolean, optional): Only process functions that don't have default Ghidra names (FUN_*, etc.) in source (default: true)
 - `filterByTag` (string, optional): Only process functions with this tag in source program
-- `dryRun` (boolean, optional): Preview what would be transferred without making changes (default: false)
 - `maxFunctions` (integer, optional): Maximum number of functions to process (for testing/debugging, 0 = unlimited, default: 0)
 - `batchSize` (integer, optional): Number of functions to process per transaction (default: 100). Larger = faster but less granular progress.
 
