@@ -15,7 +15,7 @@ ARG GHIDRA_INSTALL_DIR="/ghidra"
 ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
 ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
 ENV JAVA_HOME=${JAVA_HOME}
-ARG LD_LIBRARY_PATH="/usr/lib/jvm/java-21-openjdk/lib/:/usr/lib/jvm/java-21-openjdk/lib/server/"
+ARG LD_LIBRARY_PATH="${JAVA_HOME}/lib/:/${JAVA_HOME}/lib/server/"
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
 
 # Optional: GHIDRA_VERSION (e.g. 12.0.3) pins the release; omit to use latest.
@@ -136,6 +136,8 @@ ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
 ENV JAVA_HOME=${JAVA_HOME}
 ARG LD_LIBRARY_PATH="${JAVA_HOME}/lib/:${JAVA_HOME}/lib/server/"
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
+ARG GHIDRA_HOME="/ghidra"
+ENV GHIDRA_HOME=${GHIDRA_HOME}
 ARG GHIDRA_INSTALL_DIR="/ghidra"
 ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
 
