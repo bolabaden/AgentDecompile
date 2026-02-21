@@ -20,6 +20,11 @@ export GHIDRA_BSIM_DATADIR GHIDRA_HOME
 
 mkdir -p "${PROJECT_DIR}" /work "${GHIDRA_BSIM_DATADIR}" "${GHIDRA_REPOS_DIR}"
 
+# Avoid "tail: can't open '.../ghidra_*/application.log': No such file or directory" if any
+# script (e.g. from the Ghidra distro) runs tail -f on that path. Create a stub so tail succeeds.
+mkdir -p /home/ghidra/.config/ghidra/ghidra_headless
+touch /home/ghidra/.config/ghidra/ghidra_headless/application.log
+
 # Canonical log line so logs are recognizable
 echo "[supervisor] AIO starting: ghidra-server (1) -> bsim-server (2) -> agentdecompile-mcp (3); MCP waits for Ghidra then connects."
 
