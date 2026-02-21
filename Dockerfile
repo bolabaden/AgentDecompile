@@ -50,7 +50,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         linux-headers \
         libressl-dev \
         powershell \
-    && update-ms-fonts
+    && update-ms-fonts \
+    && fc-cache -f
 
 # --- Layer 3: download Ghidra (cached unless GHIDRA_VERSION/API or above changes) ---
 RUN set -eux; \
@@ -105,9 +106,13 @@ ARG AGENT_DECOMPILE_PROJECT_NAME=agentdecompile
 ENV AGENT_DECOMPILE_PROJECT_NAME=${AGENT_DECOMPILE_PROJECT_NAME}
 
 ARG GHIDRA_USER=ghidra
+ENV GHIDRA_USER=${GHIDRA_USER}
 ARG GHIDRA_GROUP=ghidra
+ENV GHIDRA_GROUP=${GHIDRA_GROUP}
 ARG PUID=1001
+ENV PUID=${PUID}
 ARG PGID=1001
+ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
 RUN --mount=type=cache,target=/var/cache/apk \
@@ -122,7 +127,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         openssh-client \
         xhost \
         musl-locales \
-        musl-locales-lang
+    && ( [ "$(uname -m)" = "x86_64" ] && apk add --no-cache musl-locales-lang || true )
 
 WORKDIR /ghidra
 COPY --from=build /ghidra /ghidra
