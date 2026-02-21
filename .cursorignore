@@ -1,0 +1,3 @@
+.history/
+.venv/
+.pytest_cache/
