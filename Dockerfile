@@ -76,6 +76,9 @@ RUN set -eux; \
 COPY . /src/agentdecompile
 WORKDIR /src/agentdecompile
 
+# Disable Gradle daemon so native code does not run under QEMU (avoids SIGSEGV on arm64 when host is amd64)
+ENV GRADLE_OPTS="-Dorg.gradle.daemon=false"
+
 # --- Layer 5: build extension (reuses Gradle cache when layer runs again) ---
 RUN --mount=type=cache,target=/root/.gradle \
     pwsh -NoProfile -NonInteractive -Command " \
