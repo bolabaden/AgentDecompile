@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Runs BSim PostgreSQL server via Ghidra's BSimControlLaunchable.
 # BSimControlLaunchable "start" handles initdb + pg_ctl start + lsh extension.
-# Reads env: MAXMEM, VMARG_LIST, GHIDRA_BSIM_DATADIR.
+# make-postgres.sh installs to Ghidra/Features/BSim/build/os/<OSDIR>/postgresql (see make-postgres.sh).
 set -euo pipefail
 GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
 MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
 VMARG_LIST="${AGENT_DECOMPILE_VMARG_LIST:=${VMARG_LIST:=-Djava.awt.headless=true}}"
 GHIDRA_BSIM_DATADIR="${GHIDRA_BSIM_DATADIR:-/ghidra/bsim_datadir}"
+BSIM_ROOT="${GHIDRA_HOME}/Ghidra/Features/BSim"
 
 mkdir -p "${GHIDRA_BSIM_DATADIR}"
 
-# Verify the PostgreSQL binary exists (compiled by make-postgres.sh during build)
-PG_BIN="${GHIDRA_HOME}/Ghidra/Features/BSim/support/postgresql/bin"
-if [ ! -d "${PG_BIN}" ]; then
-  echo "ERROR: PostgreSQL binaries not found at ${PG_BIN}. BSim build may have failed."
+# Path where make-postgres.sh installs PostgreSQL (same logic as make-postgres.sh)
+ARCH="$(uname -m)"
+case "${ARCH}" in
+  x86_64)  OSDIR="linux_x86_64" ;;
+  aarch64) OSDIR="linux_arm_64" ;;
+  *)       OSDIR="linux_${ARCH}" ;;
+esac
+PG_BIN="${BSIM_ROOT}/build/os/${OSDIR}/postgresql/bin"
+if [ ! -d "${PG_BIN}" ] || [ ! -x "${PG_BIN}/postgres" ]; then
+  echo "ERROR: PostgreSQL binaries not found at ${PG_BIN}. Run make-postgres.sh in the image build (BSim layer)."
   exit 1
 fi
 
