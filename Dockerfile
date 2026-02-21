@@ -4,7 +4,7 @@
 #   PowerShell: $Env:DOCKER_BUILDKIT="1"
 #   Cmd:        set DOCKER_BUILDKIT=1
 # Podman on Windows: set the same env var so podman compose build / docker compose build use it.
-FROM alpine:3.20 AS build
+FROM alpine:3 AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
 ENV GHIDRA_HOME=/ghidra
@@ -32,11 +32,11 @@ ENV PUID=${PUID}
 ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
-# No apk cache mount: under QEMU (e.g. linux/arm64 on amd64) it causes "No such file or directory" and exit 4
-RUN \
+# Use dl.alpinelinux.org to avoid "No such file or directory" under QEMU; install packages then create user/group
+RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
-    run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
+    run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
         shadow \
@@ -94,7 +94,7 @@ RUN --mount=type=cache,target=/root/.gradle \
     & ./build-and-install.ps1 -ProjectDir /src/agentdecompile -GhidraInstallDir /ghidra -GradlePath /usr/bin/gradle \
     "
 
-FROM alpine:3.20 AS runtime
+FROM alpine:3 AS runtime
 
 # --- Runtime env/args ---
 ARG JAVA_HOME=/usr/lib/jvm/java-21-openjdk
@@ -123,11 +123,11 @@ ARG PGID=1001
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# No apk cache mount: under QEMU cross-build it causes apk update to fail with exit 4
-RUN \
+# Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
+RUN --mount=type=cache,target=/var/cache/apk \
     set -eux; \
     run() { echo "STEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
-    run sed -i 's/dl-cdn.alpinelinux.org/dl.alpinelinux.org/g' /etc/apk/repositories; \
+    run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
         shadow \
