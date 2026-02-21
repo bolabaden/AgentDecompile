@@ -147,9 +147,9 @@ ARG AGENT_DECOMPILE_PROJECT_PATH="/projects/agentdecompile.gpr"
 ENV AGENT_DECOMPILE_PROJECT_PATH=${AGENT_DECOMPILE_PROJECT_PATH}
 ARG AGENT_DECOMPILE_API_KEY=""
 ENV AGENT_DECOMPILE_API_KEY=${AGENT_DECOMPILE_API_KEY}
-ARG AGENT_DECOMPILE_API_KEY_ENABLED="true"
+ARG AGENT_DECOMPILE_API_KEY_ENABLED="false"
 ENV AGENT_DECOMPILE_API_KEY_ENABLED=${AGENT_DECOMPILE_API_KEY_ENABLED}
-ARG AGENT_DECOMPILE_CONFIG_FILE="/projects/agentdecompile.properties"
+ARG AGENT_DECOMPILE_CONFIG_FILE=""
 ENV AGENT_DECOMPILE_CONFIG_FILE=${AGENT_DECOMPILE_CONFIG_FILE}
 
 ARG GHIDRA_USER="ghidra"
@@ -179,6 +179,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         musl-locales \
         supervisor \
         netcat-openbsd \
+        readline \
+        zlib \
     ; \
     run apk add --no-cache musl-locales-lang || true; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \

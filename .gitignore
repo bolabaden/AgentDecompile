@@ -278,4 +278,4 @@ gradle/wrapper/
 .agentdecompile/
 .history/
 .env
-vendor/
+#vendor/

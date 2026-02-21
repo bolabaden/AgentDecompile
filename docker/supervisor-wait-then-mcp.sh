@@ -36,6 +36,9 @@ if ! wait_for_ghidra "$GHIDRA_SERVER_PORT" 60 2>/dev/null; then
   echo "WARNING: Ghidra server port $GHIDRA_SERVER_PORT not ready after 60s; starting MCP anyway (will retry connect to Ghidra when opening projects)."
 fi
 
+# launch.sh -> ghidra.Ghidra -> GhidraLauncher: sets up classpath (modules+extensions),
+# then calls our GhidraLaunchable.launch() which initialises Ghidra and starts the MCP server.
+# APPNAME ("AgentDecompile") is cosmetic only (macOS dock name).
 if [[ -n "${CONFIG_FILE}" ]]; then
   exec "${GHIDRA_HOME}/support/launch.sh" fg jdk AgentDecompile "${MAXMEM}" "${VMARG_LIST}" \
     agentdecompile.headless.AgentDecompileHeadlessLauncher "${CONFIG_FILE}"
