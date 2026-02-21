@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, Coroutine, TextIO
 
 from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
 
@@ -25,6 +25,18 @@ _apply_mcp_session_fix()
 from agentdecompile_cli.launcher import AgentDecompileLauncher  # noqa: E402
 from agentdecompile_cli.project_manager import ProjectManager  # noqa: E402
 from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge  # noqa: E402
+from agentdecompile_cli.utils import (  # noqa: E402
+    get_server_start_message,
+    handle_command_error,
+    handle_noisy_mcp_errors,
+    resolve_backend_url,
+    run_async,
+    show_connection_error,
+)
+try:
+    from agentdecompile_cli import __version__
+except ImportError:
+    __version__ = "0.0.0.dev0"  # noqa: F811
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -53,7 +65,7 @@ def _redirect_java_outputs():
             """Implements Java StderrWriter interface; writes to Python sys.stderr."""
 
             @JOverride
-            def write(self, b, off, len_val):
+            def write(self, b: bytes, off: int, len_val: int) -> None:
                 # Java byte[] b, int off, int len -> write slice to sys.stderr
                 if b is None or len_val <= 0:
                     return
@@ -299,32 +311,23 @@ class AgentDecompileCLI:
         self.cleanup_done = True
         sys.stderr.write("Cleaning up resources...\n")
 
-        # Stop bridge
-        if self.bridge:
+        if self.bridge is not None:
             try:
                 self.bridge.stop()
-            except Exception as e:
-                sys.stderr.write(
-                    f"Error stopping bridge: {e.__class__.__name__}: {e}\n"
-                )
+            except Exception:
+                pass
 
-        # Clean up project
-        if self.project_manager:
+        if self.project_manager is not None:
             try:
                 self.project_manager.cleanup()
-            except Exception as e:
-                sys.stderr.write(
-                    f"Error cleaning up project: {e.__class__.__name__}: {e}\n"
-                )
+            except Exception:
+                pass
 
-        # Stop server
-        if self.launcher:
+        if self.launcher is not None:
             try:
                 self.launcher.stop()
-            except Exception as e:
-                sys.stderr.write(
-                    f"Error stopping launcher: {e.__class__.__name__}: {e}\n"
-                )
+            except Exception:
+                pass
 
         sys.stderr.write("Cleanup complete\n")
 
@@ -346,12 +349,8 @@ class AgentDecompileCLI:
 
         except KeyboardInterrupt:
             sys.stderr.write("\nInterrupted by user\n")
-        except Exception as e:
-            sys.stderr.write(f"Fatal error: {e.__class__.__name__}: {e}\n")
-            import traceback
-
-            traceback.print_exc(file=sys.stderr)
-            sys.exit(1)
+        except Exception:
+            raise
         finally:
             # Clean up json stream
             if (
@@ -381,16 +380,33 @@ def main():
         required=False,
     )
     parser.add_argument(
-        "--mcp-server-url",
+        "--server-url",
         type=str,
         help="Connect to an existing AgentDecompile MCP server (http(s)://host:port[/mcp/message])",
         required=False,
     )
     parser.add_argument(
-        "--server-url",
+        "--host",
         type=str,
-        help=argparse.SUPPRESS,  # Deprecated alias for --mcp-server-url
-        required=False,
+        default=None,
+        metavar="HOST",
+        help="Server host for connect mode (default: 127.0.0.1 or AGENT_DECOMPILE_SERVER_HOST)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="Server port for connect mode (default: 8080 or AGENT_DECOMPILE_SERVER_PORT)",
+    )
+    parser.add_argument(
+        "-f",
+        "--format",
+        dest="output_format",
+        type=str,
+        choices=["json", "table", "text"],
+        default="text",
+        help="Output format for human-readable messages (default: text)",
     )
     parser.add_argument(
         "--api-key",
@@ -409,17 +425,16 @@ def main():
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 3.0.0",
+        version=f"%(prog)s {__version__}",
     )
 
     args = parser.parse_args()
 
-    cli_server_url = args.mcp_server_url or args.server_url
-    env_server_url = (
-        os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL")
-        or os.getenv("AGENT_DECOMPILE_SERVER_URL")
+    backend_url: str | None = resolve_backend_url(
+        args.server_url,
+        args.host,
+        args.port,
     )
-    backend_url: str | None = cli_server_url or env_server_url
     api_key: str | None = args.api_key or os.getenv("AGENT_DECOMPILE_API_KEY")
 
     # Validate config file if provided
@@ -430,9 +445,7 @@ def main():
     # Connect mode: strictly bridge to existing Java-hosted MCP server.
     if backend_url is not None and backend_url.strip():
         if args.config:
-            sys.stderr.write(
-                "Note: --config is ignored when connecting to an existing MCP server.\n"
-            )
+            sys.stderr.write("Note: --config is ignored when connecting to an existing MCP server.\n")
         cli = AgentDecompileCLI(
             launcher=None,
             project_manager=None,
@@ -440,10 +453,13 @@ def main():
             api_key=api_key,
         )
         try:
-            asyncio.run(cli.run())
+            run_async(cli.run())
         except KeyboardInterrupt:
             sys.stderr.write("\nShutdown complete\n")
             sys.exit(0)
+        except (asyncio.exceptions.CancelledError, Exception) as e:
+            handle_command_error(e)
+            sys.exit(1)
         return
 
     # =========================================================================
@@ -484,7 +500,7 @@ def main():
             sys.stderr.write(
                 "PyGhidra is not installed for local spawn mode.\n"
                 "Install with the local extra (e.g. `pip install \"agentdecompile[local]\"`) "
-                "or connect to an existing server using --mcp-server-url.\n"
+                "or connect to an existing server using --server-url.\n"
             )
             sys.exit(1)
 
@@ -530,12 +546,14 @@ def main():
         api_key=None,
     )
 
-    # Run async event loop (stdio bridge starts immediately)
     try:
-        asyncio.run(cli.run())
+        run_async(cli.run())
     except KeyboardInterrupt:
         sys.stderr.write("\nShutdown complete\n")
         sys.exit(0)
+    except (asyncio.exceptions.CancelledError, Exception) as e:
+        handle_command_error(e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

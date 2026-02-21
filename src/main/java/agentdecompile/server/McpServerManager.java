@@ -251,7 +251,12 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
         ServletContextHandler servletContextHandler = new ServletContextHandler(ServletContextHandler.SESSIONS);
         servletContextHandler.setContextPath("/");
 
-        // CRITICAL: Add the global exception-catching filter FIRST in the chain.
+        // Add default MCP headers first so Accept and mcp-session-id are optional for clients.
+        // The MCP SDK requires these headers; this filter supplies defaults when missing.
+        FilterHolder defaultHeadersFilter = new FilterHolder(new McpDefaultHeadersFilter());
+        servletContextHandler.addFilter(defaultHeadersFilter, "/*", EnumSet.of(DispatcherType.REQUEST));
+
+        // CRITICAL: Add the global exception-catching filter next in the chain.
         // This catches any unhandled exceptions from downstream filters, tool execution,
         // or the MCP transport layer and converts them to structured JSON error responses
         // instead of letting Jetty render HTML error pages or close connections.

@@ -191,6 +191,9 @@ RUN --mount=type=cache,target=/var/cache/apk \
 
 WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
+# BSim PostgreSQL was linked against LibreSSL in build stage; copy exact libs so pg_ctl/initdb find libssl.so.60/libcrypto.so.57
+RUN mkdir -p /opt/bsim-libs
+COPY --from=build /usr/lib/libssl.so* /usr/lib/libcrypto.so* /opt/bsim-libs/
 COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
 COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
 COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/run-bsim.sh ${GHIDRA_HOME}/docker/

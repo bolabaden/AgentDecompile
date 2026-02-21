@@ -70,11 +70,11 @@ AgentDecompile runs as an MCP server so you can connect an AI client (Claude Des
 **CLI (stdio):** Configure your MCP client to use `mcp-agentdecompile` (e.g. `claude mcp add AgentDecompile -- mcp-agentdecompile`).
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Java MCP server, then bridges stdio to it.
-- **Connect mode (no local Java/Ghidra required):** pass `--mcp-server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Java MCP server (headless Docker or GUI-hosted).
+- **Connect mode (no local Java/Ghidra required):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Java MCP server (headless Docker or GUI-hosted).
 
 ### Remote access
 
-AgentDecompile does not include SSH or WebSocket transport. To allow remote MCP access: (1) run a Java-hosted MCP server bound to `0.0.0.0` (GUI options or standalone headless env `AGENT_DECOMPILE_HOST=0.0.0.0`); (2) enable API key authentication and set a key (clients send `X-API-Key`); (3) open the chosen port on the firewall; (4) point clients at `http://{remote_ip}:{port}/mcp/message` or use `--mcp-server-url http://{remote_ip}:{port}` in CLI connect mode.
+AgentDecompile does not include SSH or WebSocket transport. To allow remote MCP access: (1) run a Java-hosted MCP server bound to `0.0.0.0` (GUI options or standalone headless env `AGENT_DECOMPILE_HOST=0.0.0.0`); (2) enable API key authentication and set a key (clients send `X-API-Key`); (3) open the chosen port on the firewall; (4) point clients at `http://{remote_ip}:{port}/mcp/message` or use `--server-url http://{remote_ip}:{port}` in CLI connect mode.
 
 **Note:** `AGENT_DECOMPILE_SERVER_USERNAME` and `AGENT_DECOMPILE_SERVER_PASSWORD` are for **Ghidra Server** (shared project repositories), not for authenticating to the MCP server itself.
 

@@ -6,24 +6,14 @@ Uses the MCP SDK's stdio transport and Pydantic serialization - no manual JSON-R
 
 The bridge acts as a transparent proxy - all tool calls, resources, and prompts are
 forwarded to the Java AgentDecompile backend running on localhost.
-
-Stability features:
-- Concurrency limiting via asyncio.Semaphore to prevent overwhelming the backend
-- Comprehensive error handling for BrokenResourceError, ClosedResourceError, and HTTP errors
-- Automatic reconnection when the backend connection is lost
-- Circuit breaker pattern to prevent cascading failures
-- Graceful degradation: returns empty/error responses instead of crashing
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-import time
-from datetime import datetime, timezone
+from collections import deque
 from typing import TYPE_CHECKING, Any, Iterable
-from urllib.parse import urlparse, urlunparse
 
 try:
     from anyio import BrokenResourceError, ClosedResourceError
@@ -40,13 +30,103 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.shared.exceptions import McpError
 from mcp.shared.message import SessionMessage
 from mcp.types import (
     JSONRPCMessage,
     JSONRPCNotification,
     TextContent,
 )
+
+from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
+
+
+class ClientError(Exception):
+    """Custom exception for client errors."""
+
+    pass
+
+
+class ServerNotRunningError(ClientError):
+    """Raised when the backend is not running or unreachable."""
+
+    pass
+
+
+# Timeout for initial transport connect (separate from long-running operation timeouts)
+CONNECT_TIMEOUT = 5.0
+
+
+def _is_jsonrpc_request(msg: SessionMessage) -> bool:
+    """True if message is a JSON-RPC request (has method and id)."""
+    m = getattr(msg, "message", None)
+    if m is None:
+        return False
+    return getattr(m, "method", None) is not None and getattr(m, "id", None) is not None
+
+
+def _is_jsonrpc_response_with_id_zero(msg: SessionMessage) -> bool:
+    """True if message is a JSON-RPC response (has result or error) with id 0."""
+    m = getattr(msg, "message", None)
+    if m is None:
+        return False
+    mid = getattr(m, "id", None)
+    if mid != 0:
+        return False
+    return getattr(m, "result", None) is not None or getattr(m, "error", None) is not None
+
+
+def _session_message_with_id(msg: SessionMessage, new_id: int | str) -> SessionMessage:
+    """Return a new SessionMessage with the same content but response id set to new_id."""
+    m = msg.message
+    if not hasattr(m, "model_copy"):
+        return msg
+    new_msg = m.model_copy(update={"id": new_id})
+    return SessionMessage(message=new_msg, metadata=msg.metadata)
+
+
+class _IdFixReadStream:
+    """
+    Wraps the stdio read stream and records JSON-RPC request ids so responses
+    with id:0 can be rewritten to match (see _IdFixWriteStream).
+    """
+
+    def __init__(self, read_stream: Any, request_ids: deque[int | str]) -> None:
+        self._read = read_stream
+        self._request_ids = request_ids
+
+    def __aiter__(self) -> Any:
+        return self
+
+    async def __anext__(self) -> SessionMessage | Exception:
+        item = await self._read.__anext__()
+        if isinstance(item, SessionMessage) and _is_jsonrpc_request(item):
+            rid = getattr(item.message, "id", None)
+            if rid is not None:
+                self._request_ids.append(rid)
+        return item
+
+
+class _IdFixWriteStream:
+    """
+    Wraps the stdio write stream and rewrites any JSON-RPC response with id:0
+    to use the corresponding client request id (FIFO), so strict clients like
+    Cursor accept the response instead of "unknown message ID".
+    """
+
+    def __init__(self, write_stream: Any, request_ids: deque[int | str]) -> None:
+        self._write = write_stream
+        self._request_ids = request_ids
+
+    async def send(self, msg: SessionMessage | Exception) -> None:
+        if isinstance(msg, SessionMessage) and _is_jsonrpc_response_with_id_zero(msg):
+            if self._request_ids:
+                new_id = self._request_ids.popleft()
+                msg = _session_message_with_id(msg, new_id)
+        await self._write.send(msg)
+
+    async def aclose(self) -> None:
+        if hasattr(self._write, "aclose"):
+            await self._write.aclose()
 
 if TYPE_CHECKING:
     from mcp.server.lowlevel.helper_types import ReadResourceContents
@@ -119,114 +199,13 @@ class JsonEnvelopeStream:
             await self.original_stream.aclose()
 
 
-def _is_connection_error(error: Exception) -> bool:
-    """Check if an exception indicates a lost or broken connection.
-    
-    This centralizes connection error detection so all handlers behave consistently.
-    Returns True for errors that indicate the backend connection is broken and 
-    may need reconnection.
-    """
-    error_type = type(error).__name__
-    error_str = str(error).lower()
-    
-    # Check by exception type
-    connection_error_types = {
-        "BrokenResourceError",
-        "ClosedResourceError",
-        "BrokenPipeError",
-        "ConnectionError",
-        "ConnectionResetError",
-        "ConnectionRefusedError",
-        "ConnectionAbortedError",
-        "HTTPStatusError",
-    }
-    if error_type in connection_error_types:
-        return True
-    
-    # Check by isinstance for imported types
-    if isinstance(error, (BrokenResourceError, ClosedResourceError)):
-        return True
-    if isinstance(error, (ConnectionError, OSError)):
-        return True
-    
-    # Check by error message content
-    connection_keywords = [
-        "session terminated",
-        "connection closed",
-        "connection lost",
-        "connection refused",
-        "connection reset",
-        "broken pipe",
-        "broken resource",
-        "closed resource",
-        "server error",
-        "500 server error",
-        "502 bad gateway",
-        "503 service unavailable",
-    ]
-    for keyword in connection_keywords:
-        if keyword in error_str:
-            return True
-    
-    return False
-
-
-def _normalize_backend_url(value: str) -> str:
-    """Normalize a backend URL or host[:port] into a full MCP endpoint URL."""
-    raw = value.strip()
-    if not raw:
-        raise ValueError("Backend URL cannot be empty")
-
-    # Support bare host[:port] values for convenience.
-    if "://" not in raw:
-        raw = f"http://{raw}"
-
-    parsed = urlparse(raw)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(
-            f"Unsupported URL scheme '{parsed.scheme}'. Use http:// or https://."
-        )
-    if not parsed.netloc:
-        raise ValueError("Backend URL must include a host")
-
-    path = parsed.path or ""
-    if not path or path == "/":
-        path = "/mcp/message"
-    elif not path.endswith("/mcp/message"):
-        path = f"{path.rstrip('/')}/mcp/message"
-
-    return urlunparse(parsed._replace(path=path))
-
-
 class AgentDecompileStdioBridge:
     """
     MCP Server that bridges stdio to AgentDecompile's StreamableHTTP endpoint.
 
     Acts as a transparent proxy - forwards all MCP requests to the AgentDecompile backend
-    and returns responses. The MCP SDK handles all JSON-RPC serialization.
-    
-    Stability features:
-    - Request concurrency limiting via asyncio.Semaphore
-    - Automatic retry with exponential backoff for transient errors
-    - Circuit breaker to prevent cascading failures
-    - Graceful error responses instead of crashes
+    and returns responses.
     """
-
-    # Maximum number of concurrent requests to send to the backend.
-    # This prevents overwhelming the Java MCP server with too many simultaneous
-    # requests (which causes HTTP 500 errors and connection crashes).
-    MAX_CONCURRENT_REQUESTS = 3
-
-    # Maximum retries for transient connection errors
-    MAX_RETRIES = 3
-
-    # Circuit breaker: max consecutive failures before backing off
-    CIRCUIT_BREAKER_THRESHOLD = 5
-    CIRCUIT_BREAKER_RESET_TIME = 10.0  # seconds
-
-    # Timeouts for long-running operations (e.g. match-function across many binaries)
-    CONNECTION_TIMEOUT = 295.0  # for streamable HTTP connection/read
-    TOOL_CALL_TIMEOUT_DEFAULT = 295.0  # 4m55s so we timeout before a 5-minute client and return progress log
 
     def __init__(self, backend: int | str, api_key: str | None = None):
         """
@@ -241,7 +220,7 @@ class AgentDecompileStdioBridge:
             self.url: str = f"http://localhost:{backend}/mcp/message"
         else:
             self.port = None
-            self.url = _normalize_backend_url(backend)
+            self.url = normalize_backend_url(backend)
 
         self._streamable_http_headers: dict[str, str] | None = None
         if api_key is not None and api_key.strip():
@@ -249,225 +228,30 @@ class AgentDecompileStdioBridge:
 
         self.server: Server = Server("AgentDecompile")
         self.backend_session: ClientSession | None = None
-        self._connection_context: Any | None = None  # Store the connection context for reconnection
-        self._current_json_stream: JsonEnvelopeStream | None = None  # Store current JsonEnvelopeStream for cleanup
-        self._connection_params: dict[str, float] = {
-            "timeout": 120.0,  # 2 minutes for connect/overall
-            "read_timeout": 60.0,  # 1 minute for read operations
-        }
+        self._current_json_stream: JsonEnvelopeStream | None = None
+        self._transport_cm: Any = None
 
-        # Concurrency limiter - prevents overwhelming the backend
-        self._request_semaphore: asyncio.Semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_REQUESTS)
-
-        # Circuit breaker state
-        self._consecutive_failures: int = 0
-        self._circuit_open_until: float = 0.0
-        self._circuit_lock: asyncio.Lock = asyncio.Lock()
-
-        # Register handlers
         self._register_handlers()
 
-    def _get_call_timeout(self) -> float:
-        """Return tool call timeout in seconds (from env or default).
-        Set AGENT_DECOMPILE_TOOL_CALL_TIMEOUT (seconds) to override the default (4m55s; beats 5m client limits).
-        If you see 'timed out after 5 minutes', the limit may be from the client (e.g. Cursor);
-        set this env var to match (e.g. 300) or increase the client's tool-call timeout."""
-        raw = os.environ.get("AGENT_DECOMPILE_TOOL_CALL_TIMEOUT", "")
-        if raw:
-            try:
-                return float(raw)
-            except ValueError:
-                pass
-        return self.TOOL_CALL_TIMEOUT_DEFAULT
-
-    async def _check_circuit_breaker(self) -> bool:
-        """Check if the circuit breaker allows requests.
-        
-        Returns True if requests are allowed, False if the circuit is open (too many failures).
-        When the circuit is open, waits for the reset time before allowing requests again.
-        """
-        async with self._circuit_lock:
-            if self._consecutive_failures >= self.CIRCUIT_BREAKER_THRESHOLD:
-                now = time.monotonic()
-                if now < self._circuit_open_until:
-                    # Circuit is still open - wait a bit
-                    wait_time = self._circuit_open_until - now
-                    sys.stderr.write(
-                        f"Circuit breaker open: {self._consecutive_failures} consecutive failures. "
-                        f"Waiting {wait_time:.1f}s before retry.\n"
-                    )
-                    return False
-                else:
-                    # Reset period expired - allow a probe request
-                    sys.stderr.write("Circuit breaker: attempting recovery probe...\n")
-            return True
-
-    async def _record_success(self):
-        """Record a successful operation - resets the circuit breaker."""
-        async with self._circuit_lock:
-            if self._consecutive_failures > 0:
-                sys.stderr.write(f"Backend recovered after {self._consecutive_failures} consecutive failures.\n")
-            self._consecutive_failures = 0
-
-    async def _record_failure(self):
-        """Record a failed operation - increments the circuit breaker counter."""
-        async with self._circuit_lock:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self.CIRCUIT_BREAKER_THRESHOLD:
-                self._circuit_open_until = time.monotonic() + self.CIRCUIT_BREAKER_RESET_TIME
-                sys.stderr.write(
-                    f"Circuit breaker tripped: {self._consecutive_failures} consecutive failures. "
-                    f"Backing off for {self.CIRCUIT_BREAKER_RESET_TIME}s.\n"
-                )
-
     async def _ensure_backend_connected(self) -> ClientSession:
-        """
-        Ensure backend session is connected.
-
-        Returns:
-            ClientSession: Active backend session
-
-        Raises:
-            RuntimeError: If backend session is not available
-        """
+        """Ensure backend session is connected."""
         if self.backend_session is None:
             raise RuntimeError("Backend session not initialized - connection lost")
         return self.backend_session
-
-    async def _call_with_retry(self, operation_name: str, operation, *args, **kwargs):
-        """
-        Call a backend operation with automatic retry on transient errors.
-        
-        Handles all known connection error types including BrokenResourceError,
-        ClosedResourceError, HTTP errors, and McpError.
-
-        Args:
-            operation_name: Name of the operation for logging
-            operation: Async callable to execute
-            *args, **kwargs: Arguments to pass to operation
-
-        Returns:
-            Result of the operation
-        """
-        # Check circuit breaker first
-        if not await self._check_circuit_breaker():
-            # Circuit is open - wait for reset time then try
-            await asyncio.sleep(self.CIRCUIT_BREAKER_RESET_TIME)
-
-        last_error: Exception | None = None
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                # Acquire concurrency slot
-                async with self._request_semaphore:
-                    result = await operation(*args, **kwargs)
-                
-                # Success - reset circuit breaker
-                await self._record_success()
-                return result
-
-            except McpError as e:
-                last_error = e
-                if _is_connection_error(e):
-                    await self._record_failure()
-                    if attempt < self.MAX_RETRIES - 1:
-                        wait_time = 0.5 * (2 ** attempt)  # Exponential backoff
-                        sys.stderr.write(
-                            f"WARNING: {operation_name} failed with MCP error, "
-                            f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}\n"
-                        )
-                        await asyncio.sleep(wait_time)
-                        if self.backend_session is None:
-                            raise RuntimeError("Backend session lost and cannot recover within current connection.")
-                        continue
-                    else:
-                        sys.stderr.write(f"ERROR: {operation_name} failed after {self.MAX_RETRIES} attempts: {e}\n")
-                        raise
-                else:
-                    # Non-connection MCP error - don't retry, just raise
-                    raise
-
-            except asyncio.TimeoutError:
-                last_error = asyncio.TimeoutError(f"{operation_name} timed out")
-                await self._record_failure()
-                raise
-            except (BrokenResourceError, ClosedResourceError) as e:
-                last_error = e
-                await self._record_failure()
-                error_type = type(e).__name__
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = 0.5 * (2 ** attempt)
-                    sys.stderr.write(
-                        f"WARNING: {operation_name} failed with {error_type}, "
-                        f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{self.MAX_RETRIES})\n"
-                    )
-                    await asyncio.sleep(wait_time)
-                    if self.backend_session is None:
-                        raise RuntimeError(
-                            f"Backend connection broken ({error_type}). "
-                            "Cannot recover within current connection."
-                        )
-                    continue
-                else:
-                    sys.stderr.write(
-                        f"ERROR: {operation_name} permanently failed with {error_type} "
-                        f"after {self.MAX_RETRIES} attempts\n"
-                    )
-                    raise
-
-            except Exception as e:
-                last_error = e
-                if _is_connection_error(e):
-                    await self._record_failure()
-                    if attempt < self.MAX_RETRIES - 1:
-                        wait_time = 0.5 * (2 ** attempt)
-                        sys.stderr.write(
-                            f"WARNING: {operation_name} failed with {type(e).__name__}, "
-                            f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}\n"
-                        )
-                        await asyncio.sleep(wait_time)
-                        if self.backend_session is None:
-                            raise RuntimeError(
-                                f"Backend connection lost ({type(e).__name__}). "
-                                "Cannot recover within current connection."
-                            )
-                        continue
-                # Non-connection error - don't retry
-                raise
-
-        # Should not reach here, but just in case
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError(f"{operation_name} failed after {self.MAX_RETRIES} retries")
 
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
 
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
-            """Forward list_tools request to AgentDecompile backend with retry logic."""
             try:
                 await self._ensure_backend_connected()
+                result = await self.backend_session.list_tools()  # type: ignore
+                return result.tools if result else []
             except RuntimeError:
                 return []
-
-            async def _list_tools_operation():
-                return await asyncio.wait_for(
-                    self.backend_session.list_tools(),  # type: ignore
-                    timeout=30.0,
-                )
-
-            try:
-                result = await self._call_with_retry("list_tools", _list_tools_operation)
-                if result is None:
-                    return []
-                return result.tools
-            except asyncio.TimeoutError:
-                sys.stderr.write("ERROR: list_tools timed out\n")
-                return []
             except Exception as e:
-                sys.stderr.write(
-                    f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n"
-                )
+                sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
                 return []
 
         @self.server.call_tool()
@@ -480,173 +264,61 @@ class AgentDecompileStdioBridge:
             | CombinationContent
             | CallToolResult
         ):
-            """Forward call_tool request to AgentDecompile backend with retry logic."""
             try:
                 await self._ensure_backend_connected()
-            except RuntimeError as e:
-                return [TextContent(type="text", text=f"Error: Backend connection lost: {e}. The server may need to be restarted.")]
-
-            timeout_seconds: float = self._get_call_timeout()
-            progress_log: list[str] = []
-            start_mono: float = time.monotonic()
-
-            async def _tool_operation():
                 session = self.backend_session
                 if session is None:
-                    raise RuntimeError("Backend session not initialized")
-
-                main_task: asyncio.Task[CallToolResult] = asyncio.create_task(session.call_tool(name, arguments))
-
-                async def _heartbeat():
-                    while True:
-                        await asyncio.sleep(15)
-                        if main_task.done():
-                            return
-                        elapsed = time.monotonic() - start_mono
-                        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        progress_log.append(f"[{ts}] Tool '{name}' still running (elapsed {elapsed:.0f}s)")
-
-                heartbeat_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())
-                try:
-                    return await main_task
-                finally:
-                    heartbeat_task.cancel()
-                    try:
-                        await heartbeat_task
-                    except asyncio.CancelledError:
-                        pass
-
-            async def _run_with_timeout():
-                return await asyncio.wait_for(
-                    _tool_operation(),
-                    timeout=timeout_seconds,
-                )
-
-            try:
-                result = await self._call_with_retry(
-                    f"call_tool({name})",
-                    _run_with_timeout,
-                )
+                    return [TextContent(type="text", text="Error: Backend session not initialized")]
+                result = await session.call_tool(name, arguments)
                 if result is None:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=f"Error: Tool '{name}' returned no result",
-                        )
-                    ]
+                    return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")]
                 return result.content
-            except asyncio.TimeoutError:
-                elapsed = time.monotonic() - start_mono
-                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                progress_log.append(f"[{ts}] Tool '{name}' timed out (elapsed {elapsed:.0f}s)")
-                mins = int(timeout_seconds / 60)
-                error_head = f"Tool '{name}' timed out after {mins} minutes."
-                if progress_log:
-                    log_block = "\n".join(progress_log)
-                    error_body = f"{log_block}\n\n{error_head} Last activity above."
-                else:
-                    error_body = f"{error_head} Please retry with fewer items or a simpler query."
-                sys.stderr.write(f"ERROR: {error_head}\n")
-                return [TextContent(type="text", text=f"Error: {error_body}")]
+            except RuntimeError as e:
+                return [TextContent(type="text", text=f"Error: Backend connection lost: {e}")]
             except Exception as e:
-                error_msg = f"Tool '{name}' failed: {e.__class__.__name__}: {e}"
-                sys.stderr.write(f"ERROR: {error_msg}\n")
-                # Return a helpful error message instead of crashing
-                if _is_connection_error(e):
-                    return [TextContent(
-                        type="text",
-                        text=f"Error: {error_msg}. The backend connection was lost. "
-                             "This may be due to server overload from too many concurrent requests. "
-                             "Please wait a moment and retry."
-                    )]
-                return [TextContent(type="text", text=f"Error: {error_msg}")]
+                sys.stderr.write(f"ERROR: call_tool {name} failed: {e.__class__.__name__}: {e}\n")
+                return [TextContent(type="text", text=f"Error: {e.__class__.__name__}: {e}")]
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:
-            """Forward list_resources request to AgentDecompile backend with retry logic."""
             try:
                 await self._ensure_backend_connected()
+                result = await self.backend_session.list_resources()  # type: ignore
+                return result.resources if result else []
             except RuntimeError:
                 return []
-
-            async def _list_resources_operation():
-                return await asyncio.wait_for(
-                    self.backend_session.list_resources(),  # type: ignore
-                    timeout=30.0,
-                )
-
-            try:
-                result = await self._call_with_retry("list_resources", _list_resources_operation)
-                if result is None:
-                    return []
-                return result.resources
-            except asyncio.TimeoutError:
-                sys.stderr.write("ERROR: list_resources timed out\n")
-                return []
             except Exception as e:
-                sys.stderr.write(
-                    f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n"
-                )
+                sys.stderr.write(f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n")
                 return []
 
         @self.server.read_resource()
         async def read_resource(
             uri: AnyUrl,
         ) -> str | bytes | Iterable[ReadResourceContents]:
-            """Forward read_resource request to AgentDecompile backend with retry logic."""
             try:
                 await self._ensure_backend_connected()
+                result = await self.backend_session.read_resource(uri)  # type: ignore
+                if result is None or not result.contents:
+                    return ""
+                content = result.contents[0]
+                if hasattr(content, "text") and content.text:  # pyright: ignore[reportAttributeAccessIssue]
+                    return content.text  # pyright: ignore[reportAttributeAccessIssue]
+                if hasattr(content, "blob") and content.blob:  # pyright: ignore[reportAttributeAccessIssue]
+                    return content.blob  # pyright: ignore[reportAttributeAccessIssue]
+                return ""
             except RuntimeError:
                 return ""
-
-            async def _read_resource_operation():
-                return await asyncio.wait_for(
-                    self.backend_session.read_resource(uri),  # type: ignore
-                    timeout=self._get_call_timeout(),
-                )
-
-            try:
-                result = await self._call_with_retry("read_resource", _read_resource_operation)
-                if result is None:
-                    return ""
-                # Return the first content item's text or blob
-                if result.contents and len(result.contents) > 0:
-                    content = result.contents[0]
-                    if hasattr(content, "text") and content.text:  # pyright: ignore[reportAttributeAccessIssue]
-                        return content.text  # pyright: ignore[reportAttributeAccessIssue]
-                    elif hasattr(content, "blob") and content.blob:  # pyright: ignore[reportAttributeAccessIssue]
-                        return content.blob  # pyright: ignore[reportAttributeAccessIssue]
-                return ""
-            except asyncio.TimeoutError:
-                sys.stderr.write(f"ERROR: read_resource timed out for URI: {uri}\n")
-                return ""
             except Exception as e:
-                sys.stderr.write(
-                    f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n"
-                )
+                sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
                 return ""
 
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:
-            """Forward list_prompts request to AgentDecompile backend with retry logic."""
             try:
                 await self._ensure_backend_connected()
+                result = await self.backend_session.list_prompts()  # type: ignore
+                return result.prompts if result else []
             except RuntimeError:
-                return []
-
-            async def _list_prompts_operation():
-                return await asyncio.wait_for(
-                    self.backend_session.list_prompts(),  # type: ignore
-                    timeout=self._get_call_timeout(),
-                )
-
-            try:
-                result = await self._call_with_retry("list_prompts", _list_prompts_operation)
-                if result is None:
-                    return []
-                return result.prompts
-            except asyncio.TimeoutError:
-                sys.stderr.write("ERROR: list_prompts timed out\n")
                 return []
             except Exception as e:
                 sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
@@ -658,172 +330,107 @@ class AgentDecompileStdioBridge:
 
         Connects to AgentDecompile backend via StreamableHTTP, initializes the session,
         then exposes the MCP server via stdio transport.
-        
-        Features automatic reconnection on connection loss with exponential backoff.
         """
         sys.stderr.write(f"Connecting to AgentDecompile backend at {self.url}...\n")
 
-        # Increased timeout for long-running operations (Ghidra operations can take time)
-        timeout: float = self.CONNECTION_TIMEOUT
-        sse_read_timeout: float = self.CONNECTION_TIMEOUT  # prevent HTTP read timeout while server is processing
-
-        max_retries: int = 5
-        retry_delay: float = 2.0
-
-        for attempt in range(max_retries):
+        if self._streamable_http_headers:
+            transport_gen = streamablehttp_client(self.url, headers=self._streamable_http_headers)
+        else:
+            transport_gen = streamablehttp_client(self.url)
+        try:
+            read_stream, write_stream, get_session_id = await asyncio.wait_for(
+                transport_gen.__aenter__(),
+                timeout=CONNECT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
             try:
-                async with streamablehttp_client(
-                    self.url,
-                    headers=self._streamable_http_headers,
-                    timeout=timeout,
-                    sse_read_timeout=sse_read_timeout,
-                ) as (
-                    read_stream,
-                    write_stream,
-                    get_session_id,
-                ):
-                    # Wrap read_stream to convert non-JSON messages to valid JSON
-                    # This prevents JSON parsing errors while preserving all log messages
-                    json_stream: JsonEnvelopeStream = JsonEnvelopeStream(read_stream)
-                    self._current_json_stream = json_stream
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise ServerNotRunningError(
+                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}"
+            ) from None
+        except (ConnectionError, OSError) as e:
+            try:
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise ServerNotRunningError(
+                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}"
+            ) from e
+        except Exception as e:
+            try:
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            error_msg = str(e)
+            if any(
+                x in error_msg
+                for x in ["ConnectError", "connection", "ConnectionRefused"]
+            ):
+                raise ServerNotRunningError(
+                    f"Cannot connect to AgentDecompile backend at {self.url}\n\n"
+                    f"{get_server_start_message()}"
+                ) from e
+            raise ServerNotRunningError(
+                f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n"
+                f"{get_server_start_message()}"
+            ) from e
 
-                    # Enter the wrapper's context manager
-                    async with json_stream:
-                        async with ClientSession(json_stream, write_stream) as session:  # pyright: ignore[reportArgumentType]
-                            self.backend_session = session
+        self._transport_cm = transport_gen
+        session_cm = None
+        try:
+            json_stream = JsonEnvelopeStream(read_stream)
+            self._current_json_stream = json_stream
 
-                            # Reset circuit breaker on successful connection
-                            self._consecutive_failures = 0
-                            self._circuit_open_until = 0.0
-
-                            # Initialize backend session with timeout
-                            sys.stderr.write("Initializing AgentDecompile backend session...\n")
-                            try:
-                                init_result = await asyncio.wait_for(
-                                    session.initialize(),
-                                    timeout=120.0,
-                                )
-                                sys.stderr.write(
-                                    f"Connected to {init_result.serverInfo.name} v{init_result.serverInfo.version}\n"
-                                )
-                            except asyncio.TimeoutError:
-                                sys.stderr.write(
-                                    "Timeout initializing backend session (>120s)\n"
-                                )
-                                if attempt < max_retries - 1:
-                                    sys.stderr.write(
-                                        f"Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})\n"
-                                    )
-                                    await asyncio.sleep(retry_delay)
-                                    retry_delay = min(retry_delay * 2, 30.0)
-                                    continue
-                                raise
-
-                            # Run MCP server with stdio transport
-                            sys.stderr.write("Bridge ready - stdio transport active\n")
-                            try:
-                                async with stdio_server() as (stdio_read, stdio_write):
-                                    await self.server.run(
-                                        stdio_read,
-                                        stdio_write,
-                                        self.server.create_initialization_options(),
-                                    )
-                                # If we get here, the server ran successfully
-                                break
-                            except ClosedResourceError:
-                                # Handle closed resource errors gracefully
-                                # This happens when the client disconnects while a response is being sent
-                                # It's a normal shutdown condition, not an error
-                                sys.stderr.write("Client disconnected\n")
-                                break
-                            except BrokenResourceError:
-                                # Handle broken resource errors gracefully
-                                # Similar to ClosedResourceError - client disconnected
-                                sys.stderr.write("Client connection broken - disconnecting\n")
-                                break
-                            except Exception as stdio_error:
-                                # Check if this is an ExceptionGroup containing ClosedResourceError or BrokenResourceError
-                                # ExceptionGroup is available in Python 3.11+
-                                if hasattr(stdio_error, "exceptions") and isinstance(stdio_error, BaseException):
-                                    try:
-                                        if stdio_error.__class__.__name__ == "ExceptionGroup":
-                                            exceptions = stdio_error.exceptions  # type: ignore[attr-defined]
-                                            # Check if all exceptions in the group are connection-related
-                                            all_connection = all(
-                                                isinstance(exc, (ClosedResourceError, BrokenResourceError))
-                                                or (_is_connection_error(exc) if isinstance(exc, Exception) else False)
-                                                for exc in exceptions
-                                            )
-                                            if all_connection:
-                                                sys.stderr.write(f"Client disconnected (ExceptionGroup): {exceptions}\n")
-                                                break
-                                    except (AttributeError, TypeError):
-                                        pass
-                                # If stdio server fails, check if backend connection is still alive
-                                # and attempt to reconnect if needed
-                                sys.stderr.write(f"Stdio server error: {type(stdio_error).__name__}: {stdio_error}\n")
-                                # Check if this is a connection error that warrants retry
-                                if isinstance(stdio_error, (ConnectionError, OSError)):
-                                    if attempt < max_retries - 1:
-                                        sys.stderr.write(f"Connection error in stdio bridge, retrying... (attempt {attempt + 1}/{max_retries})\n")
-                                        await asyncio.sleep(retry_delay)
-                                        retry_delay = min(retry_delay * 2, 30.0)
-                                        continue
-                                # For other errors, re-raise to be handled by outer exception handler
-                                raise
-
-            except asyncio.TimeoutError as e:
-                sys.stderr.write(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}\n")
-                if attempt < max_retries - 1:
-                    sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 30.0)
-                    continue
-                raise
-            except (ConnectionError, OSError) as e:
-                sys.stderr.write(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}\n")
-                if attempt < max_retries - 1:
-                    sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 30.0)
-                    continue
-                raise
-            except (BrokenResourceError, ClosedResourceError) as e:
-                sys.stderr.write(f"Resource error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}\n")
-                if attempt < max_retries - 1:
-                    sys.stderr.write(f"Retrying in {retry_delay} seconds...\n")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 30.0)
-                    continue
-                raise
-            except Exception as e:
-                # For other exceptions, log and re-raise immediately
-                sys.stderr.write(f"Bridge error: {e.__class__.__name__}: {e}\n")
-                import traceback
-
-                traceback.print_exc(file=sys.stderr)
-                raise
-            finally:
-                # Clean up backend session and json stream
-                self.backend_session = None
-                if self._current_json_stream:
-                    try:
-                        await self._current_json_stream.aclose()
-                    except Exception:
-                        pass  # Ignore errors during cleanup
-                    self._current_json_stream = None
-                if attempt == max_retries - 1:
-                    sys.stderr.write("Bridge stopped\n")
+            async with json_stream:
+                session_cm = ClientSession(json_stream, write_stream)  # pyright: ignore[reportArgumentType]
+                self.backend_session = await session_cm.__aenter__()
+                sys.stderr.write("Initializing AgentDecompile backend session...\n")
+                init_result = await self.backend_session.initialize()
+                sys.stderr.write(f"Connected to {init_result.serverInfo.name} v{init_result.serverInfo.version}\n")
+                sys.stderr.write("Bridge ready - stdio transport active\n")
+                try:
+                    async with stdio_server() as (stdio_read, stdio_write):
+                        request_ids: deque[int | str] = deque()
+                        read_fix = _IdFixReadStream(stdio_read, request_ids)
+                        write_fix = _IdFixWriteStream(stdio_write, request_ids)
+                        await self.server.run(
+                            read_fix,  # pyright: ignore[reportArgumentType]
+                            write_fix,  # pyright: ignore[reportArgumentType]
+                            self.server.create_initialization_options(),
+                        )
+                except ClosedResourceError:
+                    sys.stderr.write("Client disconnected\n")
+                except BrokenResourceError:
+                    sys.stderr.write("Client connection broken - disconnecting\n")
+                except Exception:
+                    raise
+        finally:
+            self.backend_session = None
+            if session_cm is not None:
+                try:
+                    await session_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            if self._current_json_stream is not None:
+                try:
+                    await self._current_json_stream.aclose()
+                except Exception:
+                    pass
+                self._current_json_stream = None
+            if getattr(self, "_transport_cm", None) is not None:
+                try:
+                    await self._transport_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self._transport_cm = None
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
-        # Clean up json stream
         if self._current_json_stream is not None:
             try:
-                # Note: aclose is async, but this is called from synchronous cleanup
-                # The async context managers will handle the actual cleanup
                 pass
             except Exception:
                 pass
             self._current_json_stream = None
-        pass
