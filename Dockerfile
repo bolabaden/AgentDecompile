@@ -105,7 +105,6 @@ ARG GHIDRA_USER=ghidra
 ARG GHIDRA_GROUP=ghidra
 ARG PUID=1001
 ARG PGID=1001
-USER ${GHIDRA_USER}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
 RUN --mount=type=cache,target=/var/cache/apk \
@@ -130,6 +129,7 @@ RUN chmod +x /ghidra/docker/entrypoint.sh \
     && mkdir -p /work /projects \
     && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} /ghidra /work /projects
 
+USER ${GHIDRA_USER}
 
 EXPOSE ${AGENT_DECOMPILE_PORT}
 
