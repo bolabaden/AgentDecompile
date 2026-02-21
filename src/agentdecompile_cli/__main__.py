@@ -269,7 +269,7 @@ class AgentDecompileCLI:
         self.launcher: AgentDecompileLauncher | None = launcher
         self.project_manager: ProjectManager | None = project_manager
         self.backend: int | str = backend
-        self.api_key: str | None = api_key
+        self.api_key: str | None = api_key if api_key is not None and api_key.strip() else None
         self.bridge: AgentDecompileStdioBridge | None = None
         self.cleanup_done: bool = False
 
@@ -428,7 +428,7 @@ def main():
         sys.exit(1)
 
     # Connect mode: strictly bridge to existing Java-hosted MCP server.
-    if backend_url:
+    if backend_url is not None and backend_url.strip():
         if args.config:
             sys.stderr.write(
                 "Note: --config is ignored when connecting to an existing MCP server.\n"

@@ -89,6 +89,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). |
 | `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. |
 | `AGENT_DECOMPILE_API_KEY` | Optional API key sent as `X-API-Key` by CLI connect mode. |
+| `AGENT_DECOMPILE_API_KEY_ENABLED` | Enable API key authentication for MCP server access (default: `true` when `AGENT_DECOMPILE_API_KEY` is set, `false` otherwise). |
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). |
 | `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). |

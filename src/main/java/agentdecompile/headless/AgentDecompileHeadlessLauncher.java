@@ -30,6 +30,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import agentdecompile.plugin.ConfigManager;
+import agentdecompile.server.McpServerManager;
+import agentdecompile.util.HeadlessProjectHolder;
+import agentdecompile.util.ProjectUtil;
+import agentdecompile.util.SharedProjectEnvConfig;
 import ghidra.GhidraApplicationLayout;
 import ghidra.base.project.GhidraProject;
 import ghidra.framework.Application;
@@ -37,11 +42,6 @@ import ghidra.framework.ApplicationConfiguration;
 import ghidra.framework.HeadlessGhidraApplicationConfiguration;
 import ghidra.framework.model.Project;
 import ghidra.util.Msg;
-import agentdecompile.plugin.ConfigManager;
-import agentdecompile.server.McpServerManager;
-import agentdecompile.util.HeadlessProjectHolder;
-import agentdecompile.util.ProjectUtil;
-import agentdecompile.util.SharedProjectEnvConfig;
 import utility.application.ApplicationLayout;
 
 /**
@@ -346,11 +346,10 @@ public class AgentDecompileHeadlessLauncher {
 
     private static String trimEnv(String name) {
         String value = System.getenv(name);
-        if (value == null) {
+        if (value == null || value.trim().isEmpty()) {
             return null;
         }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        return value.trim();
     }
 
     /**
@@ -658,19 +657,23 @@ public class AgentDecompileHeadlessLauncher {
         }
 
         // Optional persistent project settings for server deployments.
-        String projectDirValue = trimEnv("AGENT_DECOMPILE_PROJECT_DIR");
-        String projectNameValue = trimEnv("AGENT_DECOMPILE_PROJECT_NAME");
+        String projectPathValue = trimEnv("AGENT_DECOMPILE_PROJECT_PATH");
 
         // Create and start launcher
         AgentDecompileHeadlessLauncher launcher;
-        if (projectDirValue != null && projectNameValue != null) {
-            launcher = new AgentDecompileHeadlessLauncher(
-                    configFile,
-                    false,
-                    new File(projectDirValue),
-                    projectNameValue);
+        if (projectPathValue != null) {
+            File projectDir = new File(projectPathValue).getParentFile();
+            String projectName = new File(projectPathValue).getName();
+            if (!projectName.endsWith(".gpr")) {
+                projectName += ".gpr";
+            }
+            if (projectDir == null || projectName == null) {
+                System.err.println("Invalid project path: " + projectPathValue + " (dir: " + projectDir + ", name: " + projectName + "). Please set AGENT_DECOMPILE_PROJECT_PATH to a valid project path.");
+                System.exit(1);
+            }
+            launcher = new AgentDecompileHeadlessLauncher(configFile, false, false, projectDir, projectName);
         } else {
-            launcher = new AgentDecompileHeadlessLauncher(configFile);
+            launcher = new AgentDecompileHeadlessLauncher(configFile, false, false);
         }
 
         try {
