@@ -139,7 +139,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         xhost \
         musl-locales \
     ; \
-    ( [ "$(uname -m)" = "x86_64" ] && run apk add --no-cache musl-locales-lang || true ); \
+    run apk add --no-cache musl-locales-lang || true; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
