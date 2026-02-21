@@ -9,7 +9,7 @@
 #      - IMAGE_NAME          : Docker image name (e.g. myapp). Used as ghcr.io/<owner>/<IMAGE_NAME>, docker.io/<owner>/<IMAGE_NAME>.
 #      - DOCKERFILE_PATH     : Path to Dockerfile (default ./Dockerfile).
 #      - BUILD_CONTEXT       : Build context (default .).
-#      - PLATFORMS           : Comma-separated list (default linux/amd64,linux/arm64,linux/arm/v7).
+#      - PLATFORMS           : Matrix in strategy (linux/amd64, linux/arm64, linux/arm/v7). Each platform builds independently (fail-fast: false).
 #      - VERSION_TAG_UPSTREAM_API : (Optional) On tag push, prepend a version from this GitHub API URL.
 #                                  Example: https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest
 #                                  Tag format becomes (upstream_version)_(git_tag_stripped), e.g. 12.0.3_1.2.0.
@@ -56,35 +56,32 @@ env:
   IMAGE_NAME: agentdecompile
   DOCKERFILE_PATH: "./Dockerfile"
   BUILD_CONTEXT: "."
-  # openjdk21 not available for armv7 on Alpine 3.20
-  PLATFORMS: "linux/amd64,linux/arm64"
   # Optional: GitHub API URL for "latest" release (tag_name parsed). Empty = use only git tag on tag push.
   VERSION_TAG_UPSTREAM_API: "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest"
 
 jobs:
-  build-push:
-    name: "Build and Push"
-    # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-    if: ${{ success() || failure() }}
+  prepare:
+    name: "Prepare"
     runs-on: ubuntu-latest
+    outputs:
+      IMAGE_TAG: ${{ steps.resolve.outputs.IMAGE_TAG }}
+      GHCR_IMAGE: ${{ steps.resolve.outputs.GHCR_IMAGE }}
+      DOCKERHUB_IMAGE: ${{ steps.resolve.outputs.DOCKERHUB_IMAGE }}
+      GHIDRA_VERSION: ${{ steps.resolve.outputs.GHIDRA_VERSION }}
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v6
-      # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         with:
           fetch-depth: 0
 
       - name: "Resolve image tag and optional upstream version"
         id: resolve
-        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
           VERSION_TAG_UPSTREAM_API: ${{ env.VERSION_TAG_UPSTREAM_API }}
         run: |
-          echo "GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_ENV
-          echo "DOCKERHUB_IMAGE=docker.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_ENV
+          echo "GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "DOCKERHUB_IMAGE=docker.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_OUTPUT
 
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             GIT_TAG="${{ github.ref_name }}"
@@ -93,7 +90,6 @@ jobs:
             if [[ -n "${VERSION_TAG_UPSTREAM_API}" ]]; then
               UPSTREAM_JSON=$(curl -sSL -H 'Accept: application/vnd.github+json' "${VERSION_TAG_UPSTREAM_API}")
               UPSTREAM_TAG=$(echo "$UPSTREAM_JSON" | jq -r '.tag_name')
-              # Heuristic: strip common prefixes/suffixes (e.g. Ghidra_12.0.3_build -> 12.0.3)
               UPSTREAM_VERSION="${UPSTREAM_TAG#Ghidra_}"
               UPSTREAM_VERSION="${UPSTREAM_VERSION%_build}"
               echo "IMAGE_TAG=${UPSTREAM_VERSION}_${GIT_TAG_STRIPPED}" >> $GITHUB_OUTPUT
@@ -107,10 +103,36 @@ jobs:
             echo "GHIDRA_VERSION=" >> $GITHUB_OUTPUT
           fi
 
+  build-push:
+    name: "Build ${{ matrix.arch }}"
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+          - platform: linux/arm/v7
+            arch: armv7
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: "Set env and outputs from prepare"
+        id: resolve
+        run: |
+          echo "GHCR_IMAGE=${{ needs.prepare.outputs.GHCR_IMAGE }}" >> $GITHUB_ENV
+          echo "DOCKERHUB_IMAGE=${{ needs.prepare.outputs.DOCKERHUB_IMAGE }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ needs.prepare.outputs.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+          echo "GHIDRA_VERSION=${{ needs.prepare.outputs.GHIDRA_VERSION }}" >> $GITHUB_OUTPUT
+
       - name: "Set Docker token variables"
         id: set-tokens
-        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         run: |
           echo "GITHUB_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN || secrets.GITHUB_PERSONAL_ACCESS_TOKEN || '' }}" >> $GITHUB_ENV
           echo "DOCKER_TOKEN=${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_ACCESS_TOKEN || secrets.DOCKER_HUB_TOKEN || secrets.DOCKER_TOKEN || '' }}" >> $GITHUB_ENV
@@ -123,15 +145,13 @@ jobs:
 
       - name: "Log in to GitHub Container Registry"
         uses: docker/login-action@v3
-        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ env.GITHUB_AUTH_TOKEN }}
 
       - name: "Log in to Docker Hub (if secrets present)"
-        if: env.DOCKERHUB_AUTH == 'true' && ${{ success() || failure() }}
+        if: env.DOCKERHUB_AUTH == 'true'
         uses: docker/login-action@v3
         with:
           registry: docker.io
@@ -140,8 +160,6 @@ jobs:
 
       - name: "Extract Docker metadata"
         id: meta
-        # Semver tags + OCI labels; runs alongside custom resolve tag (upstream_version_gittag).
-        if: ${{ success() || failure() }}
         uses: docker/metadata-action@v5
         with:
           images: |
@@ -155,28 +173,92 @@ jobs:
             type=ref,event=pr
 
       - name: "Set up Docker Buildx"
-        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         uses: docker/setup-buildx-action@v3
 
       - name: "Build and push Docker image"
+        id: build
         uses: docker/build-push-action@v6
-        # This line makes it possible to cancel a workflow in the middle of a step. Otherwise the step needs to complete first.
-        if: ${{ success() || failure() }}
         with:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
-          platforms: ${{ env.PLATFORMS }}
+          platforms: ${{ matrix.platform }}
           build-args: |
             GHIDRA_VERSION=${{ steps.resolve.outputs.GHIDRA_VERSION }}
-          # Custom tag (upstream_version_gittag or branch) plus metadata-action semver/ref tags
           tags: |
-            ${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}
-            ${{ env.DOCKERHUB_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}
-            ${{ steps.meta.outputs.tags }}
+            ${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}-${{ matrix.arch }}
+            ${{ env.DOCKERHUB_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}-${{ matrix.arch }}
+            ${{ env.GHCR_IMAGE }}:latest-${{ matrix.arch }}
+            ${{ env.DOCKERHUB_IMAGE }}:latest-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           push: ${{ github.event_name == 'push' }}
           provenance: false
           sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: "Upload image ref for manifest merge"
+        if: success() && github.event_name == 'push'
+        run: |
+          REF="${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}-${{ matrix.arch }}@${{ steps.build.outputs.digest }}"
+          mkdir -p refs
+          echo "$REF" > "refs/ref-${{ matrix.arch }}.txt"
+
+      - name: "Upload artifact ref-${{ matrix.arch }}"
+        if: success() && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ref-${{ matrix.arch }}
+          path: refs/
+
+  merge-manifests:
+    name: "Merge manifests"
+    runs-on: ubuntu-latest
+    needs: [prepare, build-push]
+    if: always() && github.event_name == 'push' && (needs.build-push.result == 'success' || needs.build-push.result == 'failure')
+    steps:
+      - name: "Set up Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      - name: "Log in to GitHub Container Registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Log in to Docker Hub (if secrets present)"
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' || secrets.DOCKER_ACCESS_TOKEN != '' || secrets.DOCKER_HUB_TOKEN != '' || secrets.DOCKER_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME || github.repository_owner }}
+          password: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_ACCESS_TOKEN || secrets.DOCKER_HUB_TOKEN || secrets.DOCKER_TOKEN }}
+
+      - name: "Download platform refs"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ref-*
+          path: refs-downloaded
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: "Create and push multi-arch manifests"
+        run: |
+          IMAGE_TAG="${{ needs.prepare.outputs.IMAGE_TAG }}"
+          GHCR_IMAGE="${{ needs.prepare.outputs.GHCR_IMAGE }}"
+          DOCKERHUB_IMAGE="${{ needs.prepare.outputs.DOCKERHUB_IMAGE }}"
+          if [[ -z "$IMAGE_TAG" || -z "$GHCR_IMAGE" ]]; then
+            echo "Missing params, skipping manifest merge"
+            exit 0
+          fi
+          REFS=$(cat refs-downloaded/ref-*.txt 2>/dev/null || true)
+          if [[ -z "$REFS" ]]; then
+            echo "No platform refs found (all builds may have failed), skipping manifest merge"
+            exit 0
+          fi
+          REFS_GHCR=$(echo "$REFS" | tr '\n' ' ')
+          REFS_DOCKERHUB=$(echo "$REFS" | sed "s|${GHCR_IMAGE}|${DOCKERHUB_IMAGE}|g" | tr '\n' ' ')
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${IMAGE_TAG}" -t "${GHCR_IMAGE}:latest" $REFS_GHCR
+          if [[ -n "$DOCKERHUB_IMAGE" ]]; then
+            docker buildx imagetools create -t "${DOCKERHUB_IMAGE}:${IMAGE_TAG}" -t "${DOCKERHUB_IMAGE}:latest" $REFS_DOCKERHUB
+          fi
