@@ -55,12 +55,16 @@ RUN --mount=type=cache,target=/var/cache/apk \
         jq \
         python3 \
         py3-pip \
+        python3-dev \
         git \
         fontconfig \
         msttcorefonts-installer \
         linux-headers \
         libressl-dev \
         powershell \
+        g++ \
+        gcc \
+        musl-dev \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
@@ -83,38 +87,16 @@ RUN set -eux; \
     echo "Downloading ${DOWNLOAD_URL}"; \
     curl -sSL -o /tmp/ghidra.zip "${DOWNLOAD_URL}"; \
     unzip -q -d /tmp/ghidra_extract /tmp/ghidra.zip; \
-    mv /tmp/ghidra_extract/ghidra_* /ghidra; \
+    mv /tmp/ghidra_extract/ghidra_* ${GHIDRA_HOME}; \
     rm -f /tmp/ghidra.zip; \
     rm -rf /tmp/ghidra_extract
 
-ARG GHIDRA_BSIM_DATADIR=${GHIDRA_HOME}/bsim_datadir
-ENV GHIDRA_BSIM_DATADIR=${GHIDRA_BSIM_DATADIR}
-
-# --- Layer 3b: BSim (PostgreSQL) + PyGhidra for AIO modes (bsim-server, pyghidra, headless) ---
-# See https://github.com/NationalSecurityAgency/ghidra/tree/main/docker
-RUN --mount=type=cache,target=/var/cache/apk \
-    set -eux; \
-    apk add --no-cache \
-        build-base gcc g++ make libc-dev zlib-dev musl-dev readline-dev \
-        python3-dev py3-pip \
-    ; \
-    POSTGRES_GZ=postgresql-15.13.tar.gz; \
-    BSIM_SUPPORT=${GHIDRA_HOME}/Ghidra/Features/BSim/support; \
-    mkdir -p "${BSIM_SUPPORT}"; \
-    if [ ! -f "${BSIM_SUPPORT}/${POSTGRES_GZ}" ]; then \
-        echo "Downloading PostgreSQL 15.13 for BSim..."; \
-        curl -sSL -o "${BSIM_SUPPORT}/${POSTGRES_GZ}" \
-            "https://ftp.postgresql.org/pub/source/v15.13/${POSTGRES_GZ}"; \
-    fi; \
-    ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
-    python3 -m venv ${GHIDRA_HOME}/venv; \
-    if [ -d ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist ]; then \
-        ${GHIDRA_HOME}/venv/bin/pip install --no-cache-dir --no-index \
-            -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
-    else \
-        ${GHIDRA_HOME}/venv/bin/pip install --no-cache-dir pyghidra; \
-    fi; \
-    mkdir -p ${GHIDRA_HOME}/repositories ${GHIDRA_BSIM_DATADIR}
+# build postgres and install pyghidra
+RUN ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh \
+        && python3 -m venv ${GHIDRA_HOME}/venv \
+        && ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra \
+		&& mkdir ${GHIDRA_HOME}/repositories \
+        && mkdir ${GHIDRA_HOME}/bsim_datadir
 
 # --- Layer 4: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
@@ -126,7 +108,7 @@ ENV GRADLE_OPTS="-Dorg.gradle.daemon=false"
 # --- Layer 5: build extension (reuses Gradle cache when layer runs again) ---
 RUN --mount=type=cache,target=/root/.gradle \
     pwsh -NoProfile -NonInteractive -Command " \
-    & ./build-and-install.ps1 -ProjectDir /src/agentdecompile -GhidraInstallDir /ghidra -GradlePath /usr/bin/gradle \
+    & ./build-and-install.ps1 -ProjectDir /src/agentdecompile -GhidraInstallDir ${GHIDRA_INSTALL_DIR} -GradlePath /usr/bin/gradle \
     "
 
 FROM alpine:latest AS runtime
@@ -145,10 +127,6 @@ ARG AGENT_DECOMPILE_HOST="0.0.0.0"
 ENV AGENT_DECOMPILE_HOST=${AGENT_DECOMPILE_HOST}
 ARG AGENT_DECOMPILE_PROJECT_PATH="/projects/agentdecompile.gpr"
 ENV AGENT_DECOMPILE_PROJECT_PATH=${AGENT_DECOMPILE_PROJECT_PATH}
-ARG AGENT_DECOMPILE_API_KEY=""
-ENV AGENT_DECOMPILE_API_KEY=${AGENT_DECOMPILE_API_KEY}
-ARG AGENT_DECOMPILE_API_KEY_ENABLED="false"
-ENV AGENT_DECOMPILE_API_KEY_ENABLED=${AGENT_DECOMPILE_API_KEY_ENABLED}
 ARG AGENT_DECOMPILE_CONFIG_FILE=""
 ENV AGENT_DECOMPILE_CONFIG_FILE=${AGENT_DECOMPILE_CONFIG_FILE}
 
@@ -220,4 +198,4 @@ ARG GHIDRA_SERVER_PORT3="13102"
 ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
 EXPOSE ${GHIDRA_SERVER_PORT3}
 
-ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "${GHIDRA_HOME}/docker/entrypoint.sh"]
