@@ -1801,13 +1801,6 @@ public class ProjectToolProvider extends AbstractToolProvider {
                     return createErrorResult("Path is required when extensions is not provided");
                 }
 
-                // Validate the file exists
-                File file = new File(path);
-                if (!file.exists()) {
-                    logCollector.stop();
-                    return createErrorResult("File does not exist: " + path);
-                }
-
                 // Detect if this is a project (.gpr) or program file
                 boolean isProject = path.toLowerCase().endsWith(".gpr");
 
@@ -2204,16 +2197,40 @@ public class ProjectToolProvider extends AbstractToolProvider {
             boolean analyzeAfterImport = getOptionalBoolean(request, "analyzeAfterImport", true);
             boolean enableVersionControl = getOptionalBoolean(request, "enableVersionControl", true);
 
-            // Validate file exists
-            File file = new File(path);
-            if (!file.exists()) {
-                return createErrorResult("File does not exist: " + path);
-            }
-
             // Get the active project
             Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
             if (project == null) {
                 return createErrorResult("No active project found. Please open a project first using open with a .gpr file.");
+            }
+
+            // First, try resolving path as an existing program path inside the active project
+            DomainFile existingProgramByPath = project.getProjectData().getFile(path);
+            if (existingProgramByPath != null && "Program".equals(existingProgramByPath.getContentType())) {
+                String programPath = existingProgramByPath.getPathname();
+                Program program = AgentDecompileProgramManager.getProgramByPath(programPath);
+                if (program == null || program.isClosed()) {
+                    return createErrorResult("Failed to open program: " + programPath);
+                }
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("programPath", programPath);
+                result.put("programName", program.getName());
+                result.put("wasImported", false);
+                result.put("isOpen", !program.isClosed());
+                result.put("language", program.getLanguage().getLanguageID().getIdAsString());
+                result.put("compilerSpec", program.getCompilerSpec().getCompilerSpecID().getIdAsString());
+                result.put("sizeBytes", program.getMemory().getSize());
+                result.put("functionCount", program.getFunctionManager().getFunctionCount());
+                result.put("symbolCount", program.getSymbolTable().getNumSymbols());
+                result.put("message", "Program opened successfully: " + programPath);
+                return createJsonResult(result);
+            }
+
+            // Otherwise, treat path as a local filesystem file to import
+            File file = new File(path);
+            if (!file.exists()) {
+                return createErrorResult("File does not exist and no program found at project path: " + path);
             }
 
             // Check if program already exists in project by searching for it
