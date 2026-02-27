@@ -142,8 +142,8 @@ class TestDynamicExecutorResolution:
         executor = DynamicToolExecutor()
         for variant in _tool_variants(tool_name):
             resolved = executor._resolve_tool_name(variant)
-            assert resolved == normalize_identifier(tool_name)
-            assert_string_invariants(resolved, expected=normalize_identifier(tool_name))
+            assert resolved == tool_name
+            assert_string_invariants(normalize_identifier(resolved), expected=normalize_identifier(tool_name))
 
     @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
     def test_parse_arguments_dynamically_accepts_non_alphabet_noise(self, tool_name: str):

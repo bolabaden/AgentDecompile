@@ -592,14 +592,13 @@ class DynamicToolExecutor:
 
         Returns:
         -------
-            Alpha-only lowercase canonical name, or None if no match found.
+            Canonical registry tool name (kebab-case), or None if no match found.
         """
         canonical_input = self._registry.canonicalize_tool_name(tool_name)
 
         for tool_key in self._registry.get_tools():
             if self._registry.canonicalize_tool_name(tool_key) == canonical_input:
-                # Internal representation: alpha-only lowercase.
-                return normalize_identifier(tool_key)
+                return tool_key
 
         return None
 
