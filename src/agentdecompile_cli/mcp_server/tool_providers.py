@@ -349,8 +349,6 @@ class ToolProviderManager:
         advertised_tools: list[types.Tool] = []
         for canonical_name in TOOLS:
             canonical_params = TOOL_PARAMS.get(canonical_name, [])
-            if not canonical_params:
-                continue
 
             normalized_name = n(canonical_name)
             provider_tool = by_norm.get(normalized_name)

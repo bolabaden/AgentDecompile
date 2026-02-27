@@ -35,7 +35,6 @@ import io.modelcontextprotocol.spec.McpSchema.ResourceContents;
 import io.modelcontextprotocol.spec.McpSchema.TextResourceContents;
 import agentdecompile.plugin.AgentDecompileProgramManager;
 import agentdecompile.resources.AbstractResourceProvider;
-import agentdecompile.tools.project.ProjectToolProvider;
 import agentdecompile.util.ProjectUtil;
 import agentdecompile.util.SharedProjectEnvConfig;
 
@@ -100,10 +99,7 @@ public class ProgramListResource extends AbstractResourceProvider {
         // If no project is active, try to open from last 'open' path or env (same behavior as 'open')
         Project project = ProjectUtil.getActiveProjectOrHeadlessFallback();
         if (project == null) {
-            String path = ProjectToolProvider.getLastOpenedProjectPath();
-            if (path == null) {
-                path = SharedProjectEnvConfig.getProjectPath();
-            }
+            String path = SharedProjectEnvConfig.getProjectPath();
             if (path != null) {
                 ProjectUtil.tryOpenProjectFromGprPath(path);
                 project = ProjectUtil.getActiveProjectOrHeadlessFallback();

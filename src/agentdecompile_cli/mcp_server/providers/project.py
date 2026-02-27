@@ -157,13 +157,45 @@ class ProjectToolProvider(ToolProvider):
             if server_port <= 0:
                 server_port = 13100
 
+            auth_provided = bool(server_username and server_password)
+            server_reachable = False
+
             try:
                 with socket.create_connection((server_host, server_port), timeout=5):
-                    pass
+                    server_reachable = True
             except OSError as exc:
-                raise ValueError(f"Ghidra server not reachable at {server_host}:{server_port}: {exc}") from exc
+                return create_success_response(
+                    {
+                        "action": "open",
+                        "mode": "shared-server",
+                        "serverHost": server_host,
+                        "serverPort": server_port,
+                        "serverReachable": False,
+                        "authProvided": auth_provided,
+                        "repository": path if path and "/" not in path else None,
+                        "message": f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
+                    }
+                )
 
-            from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingImports]
+            try:
+                from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingImports]
+            except Exception:
+                return create_success_response(
+                    {
+                        "action": "open",
+                        "mode": "shared-server",
+                        "serverHost": server_host,
+                        "serverPort": server_port,
+                        "serverReachable": server_reachable,
+                        "authProvided": auth_provided,
+                        "repository": path if path and "/" not in path else None,
+                        "availableRepositories": [path] if path and "/" not in path else [],
+                        "programCount": 0,
+                        "programs": [],
+                        "checkedOutProgram": None,
+                        "message": "Connected to shared server endpoint, but local Ghidra runtime is unavailable for repository browsing.",
+                    }
+                )
 
             if server_username and server_password:
                 ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
@@ -281,7 +313,9 @@ class ProjectToolProvider(ToolProvider):
                     "mode": "shared-server",
                     "serverHost": server_host,
                     "serverPort": server_port,
+                    "serverReachable": server_reachable,
                     "serverConnected": bool(server_adapter.isConnected()),
+                    "authProvided": auth_provided,
                     "serverUsername": server_username if server_username else None,
                     "repository": repository_name,
                     "availableRepositories": repository_names,
