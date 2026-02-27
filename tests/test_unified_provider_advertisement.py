@@ -60,7 +60,7 @@ class TestUnifiedProviderAdvertisement:
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
 
-        expected_advertised_names = {to_snake_case(tool_name) for tool_name in TOOLS if TOOL_PARAMS.get(tool_name)}
+        expected_advertised_names = {to_snake_case(tool_name) for tool_name in TOOLS}
         actual_advertised_names = {tool.name for tool in advertised_tools}
 
         assert actual_advertised_names == expected_advertised_names

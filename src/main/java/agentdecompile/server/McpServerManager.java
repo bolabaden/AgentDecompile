@@ -54,24 +54,6 @@ import agentdecompile.resources.impl.StaticAnalysisResultsResource;
 import agentdecompile.resources.impl.ProgramListResource;
 import agentdecompile.services.AgentDecompileMcpService;
 import agentdecompile.tools.ToolProvider;
-import agentdecompile.tools.data.DataToolProvider;
-import agentdecompile.tools.datatypes.DataTypeToolProvider;
-import agentdecompile.tools.decompiler.DecompilerToolProvider;
-import agentdecompile.tools.functions.FunctionToolProvider;
-import agentdecompile.tools.memory.MemoryToolProvider;
-import agentdecompile.tools.project.ProjectToolProvider;
-import agentdecompile.tools.strings.StringToolProvider;
-import agentdecompile.tools.structures.StructureToolProvider;
-import agentdecompile.tools.symbols.SymbolToolProvider;
-import agentdecompile.tools.xrefs.CrossReferencesToolProvider;
-import agentdecompile.tools.comments.CommentToolProvider;
-import agentdecompile.tools.bookmarks.BookmarkToolProvider;
-import agentdecompile.tools.dataflow.DataFlowToolProvider;
-import agentdecompile.tools.callgraph.CallGraphToolProvider;
-import agentdecompile.tools.constants.ConstantSearchToolProvider;
-import agentdecompile.tools.vtable.VtableToolProvider;
-import agentdecompile.tools.getfunction.GetFunctionToolProvider;
-import agentdecompile.tools.imports.ImportExportToolProvider;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 
 /**
@@ -196,26 +178,8 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
      * Initialize and register all tool providers
      */
     private void initializeToolProviders() {
-        // Create tool providers
-        toolProviders.add(new SymbolToolProvider(server));
-        toolProviders.add(new StringToolProvider(server));
-        toolProviders.add(new FunctionToolProvider(server));
-        toolProviders.add(new DataToolProvider(server));
-        toolProviders.add(new DecompilerToolProvider(server));
-        toolProviders.add(new MemoryToolProvider(server));
-        toolProviders.add(new ProjectToolProvider(server, headlessMode));
-        toolProviders.add(new CrossReferencesToolProvider(server));
-        toolProviders.add(new DataTypeToolProvider(server));
-        toolProviders.add(new StructureToolProvider(server));
-        toolProviders.add(new CommentToolProvider(server));
-        toolProviders.add(new BookmarkToolProvider(server));
-        toolProviders.add(new ImportExportToolProvider(server));  // DISABLED: Tools are commented out, kept for upstream compatibility
-        toolProviders.add(new DataFlowToolProvider(server));
-        toolProviders.add(new CallGraphToolProvider(server));
-        toolProviders.add(new ConstantSearchToolProvider(server));
-        toolProviders.add(new VtableToolProvider(server));
-        toolProviders.add(new GetFunctionToolProvider(server));
-        toolProviders.add(new agentdecompile.tools.suggestions.SuggestionToolProvider(server));
+        // Java tool providers are deprecated; Python MCP implementation is authoritative.
+        toolProviders.clear();
 
         // Register all tools with the server
         // NOTE: As of MCP SDK v0.14.0, tool registration is idempotent and replaces duplicates
