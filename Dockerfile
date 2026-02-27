@@ -65,6 +65,10 @@ RUN --mount=type=cache,target=/var/cache/apk \
         g++ \
         gcc \
         musl-dev \
+        bison \
+        flex \
+        make \
+        zlib-dev \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
@@ -97,6 +101,27 @@ RUN ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh \
         && ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra \
 		&& mkdir ${GHIDRA_HOME}/repositories \
         && mkdir ${GHIDRA_HOME}/bsim_datadir
+
+# --- Layer 3b: build native decompiler/sleigh for current platform if missing ---
+# The Ghidra PUBLIC release may not include linux_arm_64 native binaries.
+# Build them from the included source when the platform dir is absent.
+RUN set -eux; \
+    OSDIR="linux_$(uname -m | sed 's/aarch64/arm_64/' | sed 's/x86_64/x86_64/')"; \
+    NATIVE_DIR="${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${OSDIR}"; \
+    if [ -d "${NATIVE_DIR}" ] && [ -f "${NATIVE_DIR}/decompile" ]; then \
+        echo "Native decompiler already exists at ${NATIVE_DIR}, skipping build"; \
+    else \
+        echo "Building native decompiler for ${OSDIR}..."; \
+        cd ${GHIDRA_HOME}/Ghidra/Features/Decompiler/src/decompile/cpp; \
+        mkdir -p ghi_opt sla_opt; \
+        make OSDIR="${OSDIR}" ARCH_TYPE="" ghidra_opt sleigh_opt; \
+        mkdir -p "${NATIVE_DIR}"; \
+        cp ghidra_opt "${NATIVE_DIR}/decompile"; \
+        cp sleigh_opt "${NATIVE_DIR}/sleigh"; \
+        chmod +x "${NATIVE_DIR}/decompile" "${NATIVE_DIR}/sleigh"; \
+        echo "Native binaries installed to ${NATIVE_DIR}"; \
+        make clean; \
+    fi
 
 # --- Layer 4: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
