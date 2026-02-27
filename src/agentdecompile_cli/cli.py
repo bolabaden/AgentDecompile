@@ -2812,11 +2812,17 @@ def delete_cmd(program_path: str) -> None:
 @click.option("--no-analyze", is_flag=True, help="Skip analysis after import")
 @click.pass_context
 def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
+    opts = ctx.ensure_object(dict)
+    host = opts.get("host", "127.0.0.1")
+    is_remote = host not in ("127.0.0.1", "localhost", "::1")
+    # Only resolve path locally when connecting to a local server;
+    # for remote servers the path refers to the remote filesystem.
+    resolved_path = path if is_remote else str(Path(path).resolve())
     _run_async(
         _call(
             ctx,
             "open",
-            path=str(Path(path).resolve()),
+            path=resolved_path,
             analyzeAfterImport=not no_analyze,
         ),
     )
