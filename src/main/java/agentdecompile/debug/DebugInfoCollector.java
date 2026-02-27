@@ -31,7 +31,6 @@ import ghidra.util.extensions.ExtensionUtils;
 import agentdecompile.plugin.ConfigManager;
 import agentdecompile.plugin.AgentDecompileProgramManager;
 import agentdecompile.server.McpServerManager;
-import agentdecompile.tools.ToolProvider;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 
 /**
@@ -152,11 +151,9 @@ public class DebugInfoCollector {
 
             // Get registered tool provider names
             List<String> toolProviderNames = new ArrayList<>();
-            List<ToolProvider> toolProviders = serverManager.getToolProviders();
+            List<String> toolProviders = serverManager.getToolProviders();
             if (toolProviders != null) {
-                for (ToolProvider provider : toolProviders) {
-                    toolProviderNames.add(provider.getClass().getSimpleName());
-                }
+                toolProviderNames.addAll(toolProviders);
             }
             mcpServer.put("toolProviders", toolProviderNames);
 

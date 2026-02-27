@@ -53,7 +53,6 @@ import agentdecompile.resources.ResourceProvider;
 import agentdecompile.resources.impl.StaticAnalysisResultsResource;
 import agentdecompile.resources.impl.ProgramListResource;
 import agentdecompile.services.AgentDecompileMcpService;
-import agentdecompile.tools.ToolProvider;
 import agentdecompile.util.AgentDecompileInternalServiceRegistry;
 
 /**
@@ -84,7 +83,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
     private final ConfigManager configManager;
 
     private final List<ResourceProvider> resourceProviders = new ArrayList<>();
-    private final List<ToolProvider> toolProviders = new ArrayList<>();
+    private final List<String> toolProviders = new ArrayList<>();
     private volatile boolean serverReady = false;
 
     // Multi-tool tracking
@@ -180,12 +179,6 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
     private void initializeToolProviders() {
         // Java tool providers are deprecated; Python MCP implementation is authoritative.
         toolProviders.clear();
-
-        // Register all tools with the server
-        // NOTE: As of MCP SDK v0.14.0, tool registration is idempotent and replaces duplicates
-        for (ToolProvider provider : toolProviders) {
-            provider.registerTools();
-        }
     }
 
     /**
@@ -394,9 +387,6 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             provider.programOpened(program);
         }
 
-        for (ToolProvider provider : toolProviders) {
-            provider.programOpened(program);
-        }
 
         // Ghidra API: Msg.debug(Object, String), PluginTool.getName(), Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
         Msg.debug(this, "Program opened in tool " + tool.getName() + ": " + program.getName());
@@ -425,9 +415,6 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
                 provider.programClosed(program);
             }
 
-            for (ToolProvider provider : toolProviders) {
-                provider.programClosed(program);
-            }
         }
 
         // Ghidra API: Msg.debug(Object, String), PluginTool.getName(), Program.getName() - https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html#debug(java.lang.Object,java.lang.Object)
@@ -616,9 +603,6 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
             provider.cleanup();
         }
 
-        for (ToolProvider provider : toolProviders) {
-            provider.cleanup();
-        }
 
         // Shut down the HTTP server
         if (httpServer != null) {
@@ -650,7 +634,7 @@ public class McpServerManager implements AgentDecompileMcpService, ConfigChangeL
      * Get the list of registered tool providers for debug/diagnostic purposes.
      * @return List of tool providers, or empty list if none registered
      */
-    public List<ToolProvider> getToolProviders() {
+    public List<String> getToolProviders() {
         return new ArrayList<>(toolProviders);
     }
 
