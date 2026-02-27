@@ -198,4 +198,4 @@ ARG GHIDRA_SERVER_PORT3="13102"
 ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
 EXPOSE ${GHIDRA_SERVER_PORT3}
 
-ENTRYPOINT ["/bin/bash", "${GHIDRA_HOME}/docker/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]
