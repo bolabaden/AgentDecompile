@@ -1,4 +1,7 @@
-"""
+"""LEGACY: Content has been merged into bridge.py which is the single source of truth.
+This file is kept for backward-compatibility and will be removed by the project owner.
+Prefer importing from agentdecompile_cli.bridge.
+
 Apply MCP SDK fix for RuntimeError: dictionary changed size during iteration.
 
 The MCP Python SDK's BaseSession._receive_loop iterates over self._response_streams.items()
@@ -13,6 +16,7 @@ No monkeypatching - we edit the installed source once.
 from __future__ import annotations
 
 import importlib.util
+
 from pathlib import Path
 
 

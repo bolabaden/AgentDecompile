@@ -9,6 +9,7 @@
         "vscjava.vscode-maven",
         "vscjava.vscode-java-pack",
         "oracle.oracle-java",
-        "ms-toolsai.jupyter"
+        "ms-toolsai.jupyter",
+        "fill-labs.dependi"
     ]
 }

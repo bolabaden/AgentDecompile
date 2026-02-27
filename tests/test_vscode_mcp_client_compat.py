@@ -1,5 +1,4 @@
-"""
-End-to-end tests for VS Code MCP client compatibility (Issue #249).
+"""End-to-end tests for VS Code MCP client compatibility (Issue #249).
 
 Tests that the AgentDecompile MCP server correctly handles initialize requests from
 VS Code's MCP client, which uses protocol version 2025-11-25 with additional
@@ -23,16 +22,17 @@ The workaround in AgentDecompile configures Jackson ObjectMapper with
 FAIL_ON_UNKNOWN_PROPERTIES=false.
 """
 
-import pytest
-import httpx
+from __future__ import annotations
+
 import json
 
+import httpx
+import pytest
+
+from tests.helpers import assert_bool_invariants, assert_int_invariants, assert_mapping_invariants, assert_string_invariants, assert_text_block_invariants
+
 # Mark all tests in this file
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.asyncio,
-    pytest.mark.timeout(120)
-]
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.timeout(120)]
 
 
 # The exact initialize request from VS Code MCP client (from issue #249 logs)
@@ -45,24 +45,11 @@ VSCODE_INITIALIZE_REQUEST = {
         "capabilities": {
             "roots": {"listChanged": True},
             "sampling": {},
-            "elicitation": {
-                "form": {},
-                "url": {}
-            },
-            "tasks": {
-                "list": {},
-                "cancel": {},
-                "requests": {
-                    "sampling": {"createMessage": {}},
-                    "elicitation": {"create": {}}
-                }
-            }
+            "elicitation": {"form": {}, "url": {}},
+            "tasks": {"list": {}, "cancel": {}, "requests": {"sampling": {"createMessage": {}}, "elicitation": {"create": {}}}},
         },
-        "clientInfo": {
-            "name": "Visual Studio Code",
-            "version": "1.107.1"
-        }
-    }
+        "clientInfo": {"name": "Visual Studio Code", "version": "1.107.1"},
+    },
 }
 
 # The exact headers from VS Code MCP client (from issue #249 logs)
@@ -80,8 +67,7 @@ class TestVSCodeMCPClientCompatibility:
     """Test compatibility with VS Code MCP client's initialize request."""
 
     async def test_accepts_vscode_initialize_request(self, server):
-        """
-        Server should accept VS Code's initialize request with unknown fields.
+        """Server should accept VS Code's initialize request with unknown fields.
 
         This tests the fix for issue #249 where VS Code sends protocol 2025-11-25
         with capability fields like elicitation.form and tasks that the MCP SDK
@@ -93,23 +79,14 @@ class TestVSCodeMCPClientCompatibility:
         url = f"http://localhost:{port}/mcp/message"
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=VSCODE_INITIALIZE_REQUEST,
-                headers=VSCODE_HEADERS,
-                timeout=30.0
-            )
+            response = await client.post(url, json=VSCODE_INITIALIZE_REQUEST, headers=VSCODE_HEADERS, timeout=30.0)
 
             # Should NOT return 400 Bad Request
-            assert response.status_code != 400, (
-                f"Server rejected VS Code initialize request with {response.status_code}: "
-                f"{response.text}"
-            )
+            assert response.status_code != 400, f"Server rejected VS Code initialize request with {response.status_code}: {response.text}"
 
             # Should return 200 OK
-            assert response.status_code == 200, (
-                f"Expected 200 OK, got {response.status_code}: {response.text}"
-            )
+            assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
             # Parse response - may be JSON-RPC response or SSE event
             content_type = response.headers.get("content-type", "")
@@ -119,12 +96,11 @@ class TestVSCodeMCPClientCompatibility:
                 # Should be a valid JSON-RPC response
                 assert "jsonrpc" in result, f"Not a valid JSON-RPC response: {result}"
                 assert result.get("id") == 1, f"Wrong response ID: {result}"
+                assert_mapping_invariants(result)
 
                 # Should have a result (success) not an error
                 if "error" in result:
-                    pytest.fail(
-                        f"Server returned JSON-RPC error: {result['error']}"
-                    )
+                    pytest.fail(f"Server returned JSON-RPC error: {result['error']}")
 
                 assert "result" in result, f"Missing result in response: {result}"
 
@@ -133,6 +109,7 @@ class TestVSCodeMCPClientCompatibility:
                 assert "protocolVersion" in init_result
                 assert "serverInfo" in init_result
                 assert init_result["serverInfo"]["name"] == "AgentDecompile"
+                assert_string_invariants(init_result["serverInfo"]["name"], expected="AgentDecompile")
 
             elif "text/event-stream" in content_type:
                 # SSE response - parse events
@@ -152,10 +129,10 @@ class TestVSCodeMCPClientCompatibility:
                                 break
 
                 assert found_result, f"No valid result in SSE response: {response.text}"
+                assert_bool_invariants(found_result)
 
     async def test_rejects_unknown_fields_error_message(self, server):
-        """
-        Verify the specific error from issue #249 does NOT occur.
+        """Verify the specific error from issue #249 does NOT occur.
 
         Before the fix, the server would return:
         "Unrecognized field \"form\" (class ...Elicitation)"
@@ -164,32 +141,18 @@ class TestVSCodeMCPClientCompatibility:
         url = f"http://localhost:{port}/mcp/message"
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=VSCODE_INITIALIZE_REQUEST,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                },
-                timeout=30.0
-            )
+            response = await client.post(url, json=VSCODE_INITIALIZE_REQUEST, headers={"Content-Type": "application/json", "Accept": "application/json"}, timeout=30.0)
 
             response_text = response.text.lower()
 
             # These error patterns should NOT appear
-            assert "unrecognized field" not in response_text, (
-                f"Server still rejecting unknown fields: {response.text}"
-            )
-            assert "form" not in response_text or response.status_code == 200, (
-                f"Server complaining about 'form' field: {response.text}"
-            )
-            assert "not marked as ignorable" not in response_text, (
-                f"Jackson serialization error: {response.text}"
-            )
+            assert "unrecognized field" not in response_text, f"Server still rejecting unknown fields: {response.text}"
+            assert "form" not in response_text or response.status_code == 200, f"Server complaining about 'form' field: {response.text}"
+            assert "not marked as ignorable" not in response_text, f"Jackson serialization error: {response.text}"
+            assert_text_block_invariants(response_text)
 
     async def test_handles_elicitation_with_subfields(self, server):
-        """
-        Test that elicitation capability with form/url subfields is accepted.
+        """Test that elicitation capability with form/url subfields is accepted.
 
         VS Code's elicitation capability includes nested objects that aren't
         in the MCP SDK schema yet.
@@ -204,35 +167,20 @@ class TestVSCodeMCPClientCompatibility:
             "method": "initialize",
             "params": {
                 "protocolVersion": "2025-06-18",  # Use supported version
-                "capabilities": {
-                    "elicitation": {
-                        "form": {},
-                        "url": {}
-                    }
-                },
-                "clientInfo": {"name": "TestClient", "version": "1.0"}
-            }
+                "capabilities": {"elicitation": {"form": {}, "url": {}}},
+                "clientInfo": {"name": "TestClient", "version": "1.0"},
+            },
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                },
-                timeout=30.0
-            )
+            response = await client.post(url, json=request, headers={"Content-Type": "application/json", "Accept": "text/event-stream, application/json"}, timeout=30.0)
 
             # Should succeed
-            assert response.status_code == 200, (
-                f"Failed with elicitation subfields: {response.text}"
-            )
+            assert response.status_code == 200, f"Failed with elicitation subfields: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
     async def test_handles_tasks_capability(self, server):
-        """
-        Test that tasks capability with nested requests is accepted.
+        """Test that tasks capability with nested requests is accepted.
 
         VS Code includes a tasks capability that isn't in the SDK schema.
         """
@@ -245,39 +193,20 @@ class TestVSCodeMCPClientCompatibility:
             "method": "initialize",
             "params": {
                 "protocolVersion": "2025-06-18",
-                "capabilities": {
-                    "tasks": {
-                        "list": {},
-                        "cancel": {},
-                        "requests": {
-                            "sampling": {"createMessage": {}},
-                            "elicitation": {"create": {}}
-                        }
-                    }
-                },
-                "clientInfo": {"name": "TestClient", "version": "1.0"}
-            }
+                "capabilities": {"tasks": {"list": {}, "cancel": {}, "requests": {"sampling": {"createMessage": {}}, "elicitation": {"create": {}}}}},
+                "clientInfo": {"name": "TestClient", "version": "1.0"},
+            },
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                },
-                timeout=30.0
-            )
+            response = await client.post(url, json=request, headers={"Content-Type": "application/json", "Accept": "text/event-stream, application/json"}, timeout=30.0)
 
             # Should succeed
-            assert response.status_code == 200, (
-                f"Failed with tasks capability: {response.text}"
-            )
+            assert response.status_code == 200, f"Failed with tasks capability: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
     async def test_handles_future_unknown_capabilities(self, server):
-        """
-        Test that completely unknown top-level capabilities are handled.
+        """Test that completely unknown top-level capabilities are handled.
 
         Future MCP protocol versions may add new capability categories.
         The server should gracefully ignore them.
@@ -296,37 +225,25 @@ class TestVSCodeMCPClientCompatibility:
                     "sampling": {},
                     # Unknown future capabilities
                     "futureCapability": {"enabled": True},
-                    "anotherNewFeature": {
-                        "nested": {"deeply": {"value": 42}}
-                    }
+                    "anotherNewFeature": {"nested": {"deeply": {"value": 42}}},
                 },
-                "clientInfo": {"name": "FutureClient", "version": "2.0"}
-            }
+                "clientInfo": {"name": "FutureClient", "version": "2.0"},
+            },
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                },
-                timeout=30.0
-            )
+            response = await client.post(url, json=request, headers={"Content-Type": "application/json", "Accept": "text/event-stream, application/json"}, timeout=30.0)
 
             # Should succeed - unknown capabilities are ignored
-            assert response.status_code == 200, (
-                f"Failed with unknown capabilities: {response.text}"
-            )
+            assert response.status_code == 200, f"Failed with unknown capabilities: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
 
 class TestProtocolVersionNegotiation:
     """Test protocol version negotiation with various client versions."""
 
     async def test_accepts_2025_11_25_protocol_version(self, server):
-        """
-        Server should accept protocol version 2025-11-25 even if not fully supported.
+        """Server should accept protocol version 2025-11-25 even if not fully supported.
 
         The server may negotiate down to a supported version, but shouldn't reject
         the request outright.
@@ -338,33 +255,18 @@ class TestProtocolVersionNegotiation:
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "TestClient", "version": "1.0"}
-            }
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "TestClient", "version": "1.0"}},
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                },
-                timeout=30.0
-            )
+            response = await client.post(url, json=request, headers={"Content-Type": "application/json", "Accept": "text/event-stream, application/json"}, timeout=30.0)
 
             # Should not fail due to unsupported version
-            assert response.status_code == 200, (
-                f"Rejected protocol version 2025-11-25: {response.text}"
-            )
+            assert response.status_code == 200, f"Rejected protocol version 2025-11-25: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
     async def test_negotiates_to_supported_version(self, server):
-        """
-        Server should negotiate to a mutually supported protocol version.
-        """
+        """Server should negotiate to a mutually supported protocol version."""
         port = server.getPort()
         url = f"http://localhost:{port}/mcp/message"
 
@@ -372,16 +274,12 @@ class TestProtocolVersionNegotiation:
             response = await client.post(
                 url,
                 json=VSCODE_INITIALIZE_REQUEST,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                },
-                timeout=30.0
+                headers={"Content-Type": "application/json", "Accept": "text/event-stream, application/json"},
+                timeout=30.0,
             )
 
-            assert response.status_code == 200, (
-                f"Failed to negotiate version: {response.text}"
-            )
+            assert response.status_code == 200, f"Failed to negotiate version: {response.text}"
+            assert_int_invariants(response.status_code, min_value=100, max_value=599)
 
             # Parse response to check negotiated version
             content_type = response.headers.get("content-type", "")
@@ -390,9 +288,6 @@ class TestProtocolVersionNegotiation:
                 if "result" in result:
                     negotiated_version = result["result"].get("protocolVersion")
                     # Should be one of the supported versions
-                    supported_versions = [
-                        "2024-11-05", "2025-03-26", "2025-06-18"
-                    ]
-                    assert negotiated_version in supported_versions, (
-                        f"Unexpected negotiated version: {negotiated_version}"
-                    )
+                    supported_versions = ["2024-11-05", "2025-03-26", "2025-06-18"]
+                    assert negotiated_version in supported_versions, f"Unexpected negotiated version: {negotiated_version}"
+                    assert_string_invariants(negotiated_version)

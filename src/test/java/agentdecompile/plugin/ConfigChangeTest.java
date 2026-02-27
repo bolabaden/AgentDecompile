@@ -85,8 +85,6 @@ public class ConfigChangeTest {
         when(mockToolOptions.getInt(eq(ConfigManager.SERVER_PORT), anyInt())).thenReturn(8080);
         when(mockToolOptions.getString(eq(ConfigManager.SERVER_HOST), anyString())).thenReturn("127.0.0.1");
         when(mockToolOptions.getBoolean(eq(ConfigManager.SERVER_ENABLED), anyBoolean())).thenReturn(true);
-        when(mockToolOptions.getBoolean(eq(ConfigManager.API_KEY_ENABLED), anyBoolean())).thenReturn(false);
-        when(mockToolOptions.getString(eq(ConfigManager.API_KEY), anyString())).thenReturn("");
         when(mockToolOptions.getBoolean(eq(ConfigManager.DEBUG_MODE), anyBoolean())).thenReturn(false);
         when(mockToolOptions.getInt(eq(ConfigManager.MAX_DECOMPILER_SEARCH_FUNCTIONS), anyInt())).thenReturn(1000);
         when(mockToolOptions.getInt(eq(ConfigManager.DECOMPILER_TIMEOUT_SECONDS), anyInt())).thenReturn(10);

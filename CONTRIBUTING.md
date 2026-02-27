@@ -123,7 +123,7 @@ Thank you for your interest in improving AgentDecompile! We want to make this th
 - [API Documentation Reference](#api-documentation-reference)
   - [Quick Reference – Main Documentation URLs](#quick-reference--main-documentation-urls)
   - [Ghidra API – Package & Class URLs](#ghidra-api--package--class-urls)
-  - [MCP (Model Context Protocol) Java SDK](#mcp-model-context-protocol-java-sdk)
+  - [MCP (Model Context Protocol) Python SDK](#mcp-model-context-protocol-python-sdk)
   - [How to Add API Documentation Links in Code](#how-to-add-api-documentation-links-in-code)
   - [Package Summary Pages (Ghidra)](#package-summary-pages-ghidra)
 
@@ -139,7 +139,7 @@ Thank you for your interest in improving AgentDecompile! We want to make this th
 
 ## Guidelines
 
--   **Code Style**: We follow standard Java conventions.
+-   **Code Style**: We follow standard Python conventions (PEP 8).
 -   **Documentation**: Please update docs if you change functionality.
 -   **License**: By contributing, you agree that your contributions will be licensed under the project's GNU Affero General Public License v3.0 (AGPL-3.0).
 
@@ -161,7 +161,7 @@ This section covers setting up your development environment.
 
 ### Prerequisites
 
--   **Java 21**: We use Java 21 for modern features.
+-   **Python 3.9+**: We use modern Python features and async/await.
 -   **Gradle 8.10+**: Use the system gradle (not wrapper).
 -   **Ghidra 12.0+**: Required for the extension.
 -   **Python 3.11+**: For the CLI bridge and tests.
@@ -194,11 +194,9 @@ This section covers setting up your development environment.
 
 ### Project Structure
 
--   `src/main/java/agentdecompile`: Core Java extension (server, headless, tools, resources, plugin, util, ui).
--   `src/agentdecompile_cli`: Python CLI package; stdio bridge for `mcp-agentdecompile`, launcher, project_manager.
+-   `src/agentdecompile_cli`: Pure Python MCP server, CLI, and stdio bridge (primary implementation).
+-   `src/main/java/agentdecompile`: Legacy Java extension (deprecated - Python MCP server is now the primary implementation).
 -   `tests`: Python tests (unit, integration, e2e markers).
--   `src/test`: Java unit tests (no Ghidra env).
--   `src/test.slow`: Java integration tests (GUI/headed required).
 
 ### Architecture (overview)
 
@@ -301,65 +299,66 @@ src/
 
 #### 1. Python CLI Layer (`src/agentdecompile_cli/`)
 
-**Purpose:** Initialize Ghidra, start MCP server, and bridge stdio to HTTP
+**Purpose:** Pure Python MCP server implementation using FastAPI and MCP Python SDK. Tool names, resource URIs, and parameter names maintain 1:1 compatibility with legacy Java implementation.
 
 ##### Files:
-- **`__main__.py`** - Entry point; initializes PyGhidra, starts Java server, manages filters
-- **`launcher.py`** - Wraps Java AgentDecompileHeadlessLauncher; handles project initialization
-- **`stdio_bridge.py`** - MCP client that connects to Java server via HTTP; exposes stdio interface
+- **`mcp_server/server.py`** - FastAPI-based MCP server with tool/resource providers
+- **`mcp_server/providers/`** - 17 Python tool providers (replacing Java ToolProvider implementations)
+- **`mcp_server/resources/`** - 3 Python resource providers
+- **`mcp_utils/`** - Python utilities replacing Java utility classes
+- **`__main__.py`** - Entry point; initializes PyGhidra, starts Python server, manages filters
+- **`launcher.py`** - Initializes PyGhidra context and Python MCP server
+- **`stdio_bridge.py`** - MCP client connecting to Python server via HTTP; exposes stdio interface
 - **`project_manager.py`** - Manages Ghidra project lifecycle (open/close/import)
+- **`cli.py`** - Click-based CLI (`agentdecompile-cli`); commands map 1:1 to MCP tools
+- **`tools_schema.py`** - Canonical tool names, resource URIs, and parameter names (camelCase); use `TOOLS`, `TOOL_PARAMS`, `get_tool_params()`, `build_tool_payload()`
+- **`tools_schema.py`** - Canonical tool names, resource URIs, and parameter names (camelCase) matching Java; use `TOOLS`, `TOOL_PARAMS`, `get_tool_params()`, `build_tool_payload()`
 
 ##### Flow:
-1. **Pre-asyncio (blocking):** Install stdout/stderr filters (JSON-RPC only on stdout), initialize PyGhidra, redirect Java System.out/System.err via `JavaOutputRedirect`, create `ProjectManager` (ephemeral temp project for stdio mode unless `AGENT_DECOMPILE_PROJECT_PATH` is set), create `AgentDecompileLauncher`, call `launcher.start()` → starts Java MCP server.
+1. **Pre-asyncio (blocking):** Install stdout/stderr filters (JSON-RPC only on stdout), initialize PyGhidra, create `ProjectManager` (ephemeral temp project for stdio mode unless `AGENT_DECOMPILE_PROJECT_PATH` is set), create `AgentDecompileLauncher`, call `launcher.start()` → starts Python MCP server.
 2. **Async stdio bridge:** Create `AgentDecompileStdioBridge(port)`, run `bridge.run()` → connects to `http://localhost:{port}/mcp/message`, proxies all MCP requests (list_tools, call_tool, list_resources, read_resource, list_prompts) stdio ↔ HTTP.
 
 **Bridge stability (stdio_bridge.py):** Concurrency limiting (`asyncio.Semaphore(MAX_CONCURRENT_REQUESTS=3)`), retry with exponential backoff (max 3 retries), circuit breaker (5 consecutive failures → 10s backoff), long timeouts (1 hour for tool calls and connections). `JsonEnvelopeStream` wraps the HTTP stream to convert non-JSON log messages to JSON-RPC notifications.
 
-#### 2. Java MCP Server (`src/main/java/agentdecompile/server/`)
+#### 2. Python MCP Server (`src/agentdecompile_cli/mcp_server/`)
 
 **Purpose:** HTTP server that handles MCP requests and coordinates Ghidra operations
 
 ##### Files:
-- **`McpServerManager.java`** - Main server orchestrator; manages Jetty, thread pools, tool registration
-- **`KeepAliveFilter.java`** - HTTP filter that sets `Connection: keep-alive` headers
-- **`RequestLoggingFilter.java`** - Optional debug logging of HTTP requests/responses
-- **`ApiKeyAuthFilter.java`** - API key authentication (if enabled)
-- **`CachingRequestWrapper.java`** / **`CachingResponseWrapper.java`** - Wrap requests/responses for logging
+- **`server.py`** - FastAPI MCP server orchestrator; manages HTTP transport, tool/resource registration
+- **`tool_providers.py`** - Manages all 17 tool providers with unified interface
+- **`resource_providers.py`** - Manages all 3 resource providers
+- **`providers/`** - Individual tool provider implementations
+- **`resources/`** - Individual resource provider implementations
 
 ##### Key Details:
-- **Transport:** `HttpServletStreamableServerTransportProvider` (MCP SDK v0.17.0), streamable HTTP (not SSE).
+- **Transport:** FastAPI with MCP Python SDK, streamable HTTP (not SSE)
 - **Endpoint:** `POST /mcp/message`
-- **Filter order:** `GlobalExceptionFilter` → `ApiKeyAuthFilter` (optional) → `RequestLoggingFilter` → `KeepAliveFilter` → MCP handler.
-- **Thread Pool:** `QueuedThreadPool` with 24-hour idle timeout (prevents thread exhaustion)
-- **Connection Timeouts:** Jetty connector + HTTP config both set to 24 hours
-- **Keep-Alive:** MCP SDK `keepAliveInterval(Duration.ofSeconds(30))`; HTTP headers allow long keep-alive
+- **Async/Await:** Full async implementation with proper concurrency handling
+- **Threading:** Async event loop with background task management
+- **Connection Timeouts:** Configurable timeouts with keep-alive support
+- **Keep-Alive:** MCP SDK keep-alive intervals for connection stability
 
-#### 3. Java Headless Launcher (`src/main/java/agentdecompile/headless/`)
+#### 3. Python Utilities (`src/agentdecompile_cli/mcp_utils/`)
 
-**Purpose:** Initialize Ghidra in headless mode and set up server
-
-##### Files:
-- **`AgentDecompileHeadlessLauncher.java`** - Initializes Ghidra application, creates/opens project, starts MCP server
-
-##### Key Details:
-- Accepts project location and name as parameters (from Python)
-- Creates `McpServerManager` with `ConfigManager` (in-memory or file-based)
-- Uses random port if requested (avoids conflicts between multiple instances)
-- Handles project lock files (can force-ignore if `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` set)
-- Starts server in a background thread; waits for startup signal
-
-#### 4. Java Plugin (GUI Mode) (`src/main/java/agentdecompile/plugin/`)
-
-**Purpose:** Register MCP server as a Ghidra plugin to enable persistent, shared server across tools
+**Purpose:** Core utilities for Ghidra integration and MCP operations
 
 ##### Files:
-- **`AgentDecompileApplicationPlugin.java`** - Application-level plugin; creates single `McpServerManager` at app startup
-- **`ConfigManager.java`** - Manages configuration (settings, API key, server port/host)
-- **`AgentDecompileProgramManager.java`** - Tracks open programs and tool associations
+- **`address_util.py`** - Address parsing, formatting, symbol resolution
+- **`debug_logger.py`** - Configuration-aware logging and performance timing
+- **`memory_util.py`** - Safe memory access and hex formatting
+- **`symbol_util.py`** - Ghidra symbol identification and sorting
+- **`config_manager.py`** - Configuration with environment variable overrides
 
 ##### Key Details:
-- Runs at Ghidra application level (not tool level) so server persists across tool sessions
-- One server instance shared by all Ghidra tools
+- **Address Handling:** Robust address parsing with symbol resolution fallbacks
+- **Debug Logging:** Environment-controlled debug output and performance monitoring
+- **Memory Operations:** Safe memory reading with bounds checking
+- **Symbol Management:** Identification of auto-generated vs user symbols
+
+#### 4. Legacy Java Components (Deprecated)
+
+**Purpose:** Original Java implementation now superseded by Python MCP server. Maintained for compatibility but no longer the primary implementation.
 - Listens for project/tool lifecycle events and notifies server
 
 #### 5. Tool Providers (`src/main/java/agentdecompile/tools/*/`)
@@ -412,15 +411,13 @@ src/
    │
 4. Jetty receives HTTP request
    │
-5. ApiKeyAuthFilter validates auth (if enabled)
+5. RequestLoggingFilter logs request (if enabled)
    │
-6. RequestLoggingFilter logs request (if enabled)
+6. KeepAliveFilter adds keep-alive headers
    │
-7. KeepAliveFilter adds keep-alive headers
+7. HttpServletStreamableServerTransportProvider routes to MCP server
    │
-8. HttpServletStreamableServerTransportProvider routes to MCP server
-   │
-9. MCP server dispatches to tool/resource provider
+8. MCP server dispatches to tool/resource provider
    │
 10. Provider executes Ghidra operation
     │
@@ -525,7 +522,7 @@ src/
 
 **Default:** Server binds to `127.0.0.1` (configurable port, default 8080; CLI uses a random port). Python bridge connects to `http://localhost:{port}/mcp/message`. No remote access by default.
 
-**Remote access:** No built-in SSH tunneling or WebSocket transport. To allow remote MCP access: (1) set `server.host` to `0.0.0.0` (or a specific IP) via `ConfigManager`, (2) enable API key authentication if desired (`ApiKeyAuthFilter`, `X-API-Key` header), (3) open firewall ports, (4) have clients connect to `http://{remote_ip}:{port}/mcp/message`.
+**Remote access:** No built-in SSH tunneling or WebSocket transport. To allow remote MCP access: (1) set `server.host` to `0.0.0.0` (or a specific IP) via `ConfigManager`, (2) open firewall ports, (3) have clients connect to `http://{remote_ip}:{port}/mcp/message`.
 
 **Shared project auth:** For Ghidra Server (remote repositories), use env vars `AGENT_DECOMPILE_SERVER_USERNAME` / `AGENT_DECOMPILE_SERVER_PASSWORD` or tool params `serverUsername` / `serverPassword` in the open tool—these authenticate to the Ghidra Server, not to the MCP server itself.
 
@@ -678,8 +675,6 @@ Connection: keep-alive
 POST /mcp/message
 ↓
 [GlobalExceptionFilter]  (error handling)
-↓
-[ApiKeyAuthFilter]  (validates auth if enabled)
 ↓
 [RequestLoggingFilter]  (logs if debug enabled)
 ↓
@@ -883,13 +878,10 @@ public class ConfigManager {
     public static final String SERVER_OPTIONS = "Server";
     public static final String SERVER_HOST = "host";
     public static final String SERVER_PORT = "port";
-    public static final String API_KEY_ENABLED = "apiKeyEnabled";
-    public static final String API_KEY = "apiKey";
     
     // Retrieve settings
     public String getServerHost() { ... }
     public int getServerPort() { ... }
-    public boolean isApiKeyEnabled() { ... }
     
     // Listen for changes
     public void onConfigChanged(...) {
@@ -919,8 +911,6 @@ Environment variables override file config (checked by launcher):
 ##Python reads these and passes to Java
 AGENT_DECOMPILE_SERVER_HOST=0.0.0.0
 AGENT_DECOMPILE_SERVER_PORT=9999
-AGENT_DECOMPILE_API_KEY_ENABLED=true
-AGENT_DECOMPILE_API_KEY=secret123
 ```
 
 **Code:** `src/agentdecompile_cli/launcher.py` → `start()`
@@ -1854,7 +1844,7 @@ Response Body: {...}
 ### Further Reading
 
 - [MCP Specification](https://modelcontextprotocol.io/)
-- [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk)
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [Architecture](#architecture) - System design
 - [Internals](#internals) - Implementation details
 
@@ -2999,7 +2989,7 @@ This section provides **direct URLs** to all API documentation used by AgentDeco
 - **tools**: ToolProvider, AbstractToolProvider, ProgramValidationException, DecompilerToolProvider, FunctionToolProvider, SymbolToolProvider, BookmarkToolProvider, CallGraphToolProvider, CommentToolProvider, ConstantSearchToolProvider, DataToolProvider, DataFlowToolProvider, DataTypeToolProvider, GetFunctionToolProvider, ImportExportToolProvider, MemoryToolProvider, ProjectToolProvider, StringToolProvider, StructureToolProvider, SuggestionToolProvider, VtableToolProvider, CrossReferencesToolProvider
 - **plugin**: AgentDecompilePlugin, AgentDecompileApplicationPlugin, AgentDecompileProgramManager, ConfigManager, ConfigChangeListener
 - **plugin/config**: ConfigurationBackend, ConfigurationBackendListener, FileBackend, InMemoryBackend, ToolOptionsBackend
-- **server**: McpServerManager, GlobalExceptionFilter, ApiKeyAuthFilter, KeepAliveFilter, RequestLoggingFilter, CachingRequestWrapper, CachingResponseWrapper
+- **server**: McpServerManager, GlobalExceptionFilter, KeepAliveFilter, RequestLoggingFilter, CachingRequestWrapper, CachingResponseWrapper
 - **resources**: ResourceProvider, AbstractResourceProvider
 - **resources/impl**: ProgramListResource, StaticAnalysisResultsResource, AgentDecompileDebugInfoResource
 - **services**: AgentDecompileMcpService
@@ -3015,8 +3005,8 @@ This section provides **direct URLs** to all API documentation used by AgentDeco
 | API | Base URL | Description |
 |-----|----------|-------------|
 | **Ghidra API** | https://ghidra.re/ghidra_docs/api/ | Official Ghidra Javadoc (reverse engineering framework) |
-| **MCP Java SDK** | https://github.com/modelcontextprotocol/java-sdk | Model Context Protocol Java server/client SDK |
-| **MCP Java Server Docs** | https://modelcontextprotocol.info/docs/sdk/java/mcp-server/ | MCP Server implementation guide |
+| **MCP Python SDK** | https://github.com/modelcontextprotocol/python-sdk | Model Context Protocol Python server/client SDK |
+| **MCP Python Server Docs** | https://modelcontextprotocol.info/docs/sdk/python/mcp-server/ | MCP Server implementation guide |
 | **MCP Protocol Spec** | https://modelcontextprotocol.io/ | Model Context Protocol specification |
 | **Ghidra Main Site** | https://ghidra.re/ | Ghidra project home |
 
@@ -3224,7 +3214,7 @@ AgentDecompile uses the Ghidra Java API extensively. The URL pattern is:
 
 ---
 
-### MCP (Model Context Protocol) Java SDK
+### MCP (Model Context Protocol) Python SDK
 
 AgentDecompile uses `io.modelcontextprotocol.sdk:mcp` (BOM 0.17.0). The SDK provides server and client implementations.
 
@@ -3232,16 +3222,18 @@ AgentDecompile uses `io.modelcontextprotocol.sdk:mcp` (BOM 0.17.0). The SDK prov
 
 | Resource | URL |
 |----------|-----|
-| **MCP Java SDK GitHub** | https://github.com/modelcontextprotocol/java-sdk |
-| **MCP Java Server Docs** | https://modelcontextprotocol.info/docs/sdk/java/mcp-server/ |
+| **MCP Python SDK GitHub** | https://github.com/modelcontextprotocol/python-sdk |
+| **MCP Python Server Docs** | https://modelcontextprotocol.info/docs/sdk/python/mcp-server/ |
 | **MCP Protocol Spec** | https://modelcontextprotocol.io/ |
-| **MCP SDK Package** | io.modelcontextprotocol.sdk (Maven Central) |
+| **MCP SDK Package** | mcp (PyPI) |
 
 #### Key MCP Classes Used by AgentDecompile
 
-- `io.modelcontextprotocol.server.McpSyncServer` – Synchronous MCP server
-- `io.modelcontextprotocol.server.McpServer` – Base MCP server interface
-- `io.modelcontextprotocol.spec.McpSchema` – MCP schema types (Tool, CallToolRequest, CallToolResult, Content, TextContent, JsonSchema, Resource, ReadResourceResult, etc.)
+- `mcp.server.Server` – Async MCP server implementation
+- `mcp.Tool` – Tool definition and registration
+- `mcp.Resource` – Resource definition and registration
+- `mcp.types.TextContent` – Text content for responses
+- `mcp.types.CallToolRequest` – Tool call request structure
 - `io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification` – Tool registration
 - `io.modelcontextprotocol.server.McpServerFeatures.SyncResourceSpecification` – Resource registration
 - `io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider` – HTTP transport

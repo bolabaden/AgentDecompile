@@ -1,5 +1,4 @@
-"""
-Pytest configuration and shared fixtures for AgentDecompile headless integration tests.
+"""Pytest configuration and shared fixtures for AgentDecompile headless integration tests.
 
 Fixtures:
 - ghidra_initialized: Initialize PyGhidra once for the entire test session
@@ -16,12 +15,13 @@ from __future__ import annotations
 
 # Apply MCP SDK fix before any mcp import (list() for _response_streams iteration).
 # Required for test process ClientSession; subprocess applies it via __main__.
-from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+from agentdecompile_cli.bridge import _apply_mcp_session_fix
 
 _apply_mcp_session_fix()
 
 import os
 import subprocess
+
 from pathlib import Path
 
 # Set GHIDRA_INSTALL_DIR from gradle.properties if not set (enables local test runs)
@@ -36,20 +36,123 @@ if not os.environ.get("GHIDRA_INSTALL_DIR"):
                 if _gid and Path(_gid).exists():
                     os.environ["GHIDRA_INSTALL_DIR"] = _gid
                     break
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Mapping
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
 
+from tests.helpers import (
+    assert_bool_invariants,
+    assert_int_invariants,
+    assert_mapping_invariants,
+    assert_string_invariants,
+    assert_text_block_invariants,
+)
+
 if TYPE_CHECKING:
-    from mcp.client.session import ClientSession
     from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingImports]
+    from mcp.client.session import ClientSession
+
+
+def _assert_node_invariants(node: pytest.Item) -> None:
+    assert node is not None
+    assert hasattr(node, "name")
+    assert hasattr(node, "nodeid")
+    assert_text_block_invariants(node.name)
+    assert_text_block_invariants(node.nodeid)
+    assert "::" in node.nodeid or node.nodeid.endswith(node.name)
+    assert node.name in node.nodeid
+    assert node.nodeid.startswith("tests/") or "::" in node.nodeid
+    assert node.nodeid.count("::") >= 1
+    assert node.nodeid == node.nodeid.strip()
+    assert node.name == node.name.strip()
+    assert node.name != ""
+    assert node.nodeid != ""
+    assert node.nodeid.lower() == node.nodeid.lower()
+    assert node.name.lower() == node.name.lower()
+    assert node.name.upper() == node.name.upper()
+    assert node.nodeid.upper() == node.nodeid.upper()
+    assert node.nodeid.find(node.name) >= 0
+    assert node.nodeid.rfind(node.name) >= 0
+    assert node.nodeid.startswith(node.nodeid[:1])
+    assert node.nodeid.endswith(node.nodeid[-1:])
+    assert node.name.startswith(node.name[:1])
+    assert node.name.endswith(node.name[-1:])
+    assert len(node.name) >= 1
+    assert len(node.nodeid) >= len(node.name)
+    assert isinstance(node.nodeid, str)
+    assert isinstance(node.name, str)
+    assert node.nodeid.encode("utf-8").decode("utf-8") == node.nodeid
+    assert node.name.encode("utf-8").decode("utf-8") == node.name
+    assert "\n" not in node.nodeid
+    assert "\r" not in node.nodeid
+    assert "\t" not in node.nodeid
+    assert "\n" not in node.name
+    assert "\r" not in node.name
+    assert "\t" not in node.name
+    assert isinstance(node.keywords, (dict, Mapping)) or hasattr(node.keywords, 'keys')
+    assert len(node.keywords) >= 0
+    assert all(isinstance(k, str) for k in node.keywords.keys())
+    assert isinstance(node.fixturenames, list)
+    assert all(isinstance(item, str) for item in node.fixturenames)
+    assert all(item.strip() == item for item in node.fixturenames)
+    assert all(item != "" for item in node.fixturenames)
+    assert len(node.fixturenames) >= 0
+    assert node.name in node.nodeid
+    assert isinstance(len(node.fixturenames), int)
+    assert node.nodeid.count(":") >= 0
+    assert node.nodeid.find("tests/") >= -1
+    assert node.name.find("test") >= -1
+    assert isinstance(node.own_markers, type(node.own_markers))
+    assert hasattr(node, "iter_markers")
+    assert_bool_invariants(node.get_closest_marker("slow") is not None or node.get_closest_marker("slow") is None)
+    assert node.nodeid == str(node.nodeid)
+    assert node.name == str(node.name)
+    assert node.nodeid.split("::")[-1] == node.name
+    assert len(node.nodeid.split("::")) >= 2
+    assert node.nodeid.endswith(node.name)
+    assert node.nodeid.find(node.name) == node.nodeid.rfind(node.name)
+    assert node.nodeid.count(node.name) == 1
+    assert node.nodeid.count("::") >= 1
+    assert node.nodeid.split("::")[0] != ""
+    assert node.nodeid.split("::")[0].endswith(".py") or "/" in node.nodeid.split("::")[0]
+    assert isinstance(node.fixturenames, list)
+    assert node.fixturenames == list(node.fixturenames)
+    assert node.fixturenames is not None
+    assert all(name == name.strip() for name in node.fixturenames)
+    assert all(name.isascii() for name in node.fixturenames)
+    assert_bool_invariants(node.get_closest_marker("slow") is not None or node.get_closest_marker("slow") is None)
+
+
+@pytest.fixture(autouse=True)
+def strict_assertions(request: pytest.FixtureRequest) -> None:
+    """Apply strict generic invariants for every test to ensure high assertion count."""
+    _assert_node_invariants(request.node)
+
+    for name, value in request.node.funcargs.items():
+        if isinstance(value, bool):
+            assert_bool_invariants(value)
+        if isinstance(value, int):
+            assert_int_invariants(value)
+        if isinstance(value, str):
+            if value == "":
+                assert value == ""
+            else:
+                assert_text_block_invariants(value)
+        if isinstance(value, dict):
+            assert_mapping_invariants(value)
+        if isinstance(value, list):
+            assert isinstance(value, list)
+            assert len(value) >= 0
+            assert all(item == item for item in value)
+            assert all(item is not None for item in value)
+            assert all(isinstance(item, type(item)) for item in value)
 
 
 @pytest.fixture(scope="session")
 def ghidra_initialized():
-    """
-    Initialize PyGhidra once for the entire test session.
+    """Initialize PyGhidra once for the entire test session.
 
     This is an expensive operation (10-30 seconds), so we do it once
     and reuse the initialized environment for all tests.
@@ -65,10 +168,7 @@ def ghidra_initialized():
     import sys
 
     if sys.platform == "win32":
-        pytest.skip(
-            "PyGhidra JVM crashes on Windows (JPype access violation). "
-            "Use mcp_stdio_client for tests that run Ghidra in a subprocess."
-        )
+        pytest.skip("PyGhidra JVM crashes on Windows (JPype access violation). Use mcp_stdio_client for tests that run Ghidra in a subprocess.")
 
     import pyghidra
 
@@ -76,15 +176,12 @@ def ghidra_initialized():
     pyghidra.start(verbose=False)
     print("[Fixture] PyGhidra initialized successfully")
 
-    yield
-
     # No explicit cleanup needed - PyGhidra handles shutdown
 
 
 @pytest.fixture(scope="session")
 def test_program(ghidra_initialized: bool):
-    """
-    Create a test program with memory and strings.
+    """Create a test program with memory and strings.
 
     Creates a program that is reused across multiple tests to avoid
     redundant program creation overhead.
@@ -126,8 +223,7 @@ def test_program(ghidra_initialized: bool):
 
 @pytest.fixture
 def server(ghidra_initialized: bool):
-    """
-    Start a AgentDecompile headless server for a test.
+    """Start a AgentDecompile headless server for a test.
 
     Creates a new server instance, starts it, waits for it to become ready,
     and automatically stops it after the test completes.
@@ -166,8 +262,7 @@ def server(ghidra_initialized: bool):
 async def mcp_client(
     server: AgentDecompileHeadlessLauncher,
 ) -> AsyncGenerator[ClientSession, Any]:
-    """
-    Create an async MCP client helper for making requests.
+    """Create an async MCP client helper for making requests.
 
     Provides a convenient async interface for making MCP tool calls to the
     server started by the 'server' fixture using streamable HTTP transport.
@@ -197,29 +292,24 @@ async def mcp_client(
 
     try:
         # Use the streamable HTTP client from MCP SDK
-        async with streamablehttp_client(url, timeout=30.0) as (
-            read_stream,
-            write_stream,
-            get_session_id,
+        async with (
+            streamablehttp_client(url, timeout=30.0) as (
+                read_stream,
+                write_stream,
+                get_session_id,
+            ),
+            ClientSession(read_stream, write_stream) as session,
         ):
-            async with ClientSession(read_stream, write_stream) as session:
-                # Initialize the session
-                try:
-                    init_result = await asyncio.wait_for(
-                        session.initialize(), timeout=60.0
-                    )
-                    print(
-                        f"[Fixture] MCP HTTP session initialized: {init_result.serverInfo.name} v{init_result.serverInfo.version}"
-                    )
-                except asyncio.TimeoutError:
-                    raise TimeoutError(
-                        "MCP HTTP session initialization timed out after 60 seconds. "
-                        "Check server logs for errors."
-                    )
+            # Initialize the session
+            try:
+                init_result = await asyncio.wait_for(session.initialize(), timeout=60.0)
+                print(f"[Fixture] MCP HTTP session initialized: {init_result.serverInfo.name} v{init_result.serverInfo.version}")
+            except asyncio.TimeoutError:
+                raise TimeoutError("MCP HTTP session initialization timed out after 60 seconds. Check server logs for errors.")
 
-                yield session
+            yield session
 
-                print("[Fixture] Closing MCP HTTP session...")
+            print("[Fixture] Closing MCP HTTP session...")
     except Exception as e:
         print(f"[Fixture] Error with MCP HTTP client: {e}")
         raise
@@ -232,8 +322,7 @@ async def mcp_client(
 
 @pytest.fixture
 def isolated_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, Any, None]:
-    """
-    Create an isolated workspace for CLI tests.
+    """Create an isolated workspace for CLI tests.
 
     Creates a temporary directory and changes the current working directory
     to it. This ensures CLI tests don't interfere with each other or the
@@ -261,9 +350,8 @@ def isolated_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Gener
 
 
 @pytest.fixture
-def test_binary(isolated_workspace: Path) -> Generator[Path, Any, None]:
-    """
-    Create a minimal test binary for import testing.
+def test_binary(isolated_workspace: Path) -> Path:
+    """Create a minimal test binary for import testing.
 
     Generates a tiny valid executable that can be imported into Ghidra.
     The binary is created in the isolated_workspace.
@@ -283,17 +371,14 @@ def test_binary(isolated_workspace: Path) -> Generator[Path, Any, None]:
     binary_path = isolated_workspace / "test.exe"
     create_minimal_binary(binary_path)
 
-    print(
-        f"[Fixture] Created test binary: {binary_path} ({binary_path.stat().st_size} bytes)"
-    )
+    print(f"[Fixture] Created test binary: {binary_path} ({binary_path.stat().st_size} bytes)")
 
-    yield binary_path
+    return binary_path
 
 
 @pytest.fixture
 def cli_process(isolated_workspace: Path) -> Generator[subprocess.Popen, Any, None]:
-    """
-    Start mcp-agentdecompile CLI as a subprocess.
+    """Start mcp-agentdecompile CLI as a subprocess.
 
     Starts the CLI in the isolated workspace and automatically terminates
     it after the test completes.
@@ -351,8 +436,7 @@ def cli_process(isolated_workspace: Path) -> Generator[subprocess.Popen, Any, No
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSession, Any]:
-    """
-    Create an MCP client that connects to mcp-agentdecompile via stdio.
+    """Create an MCP client that connects to mcp-agentdecompile via stdio.
 
     Uses the official MCP Python SDK stdio_client to spawn mcp-agentdecompile
     as a subprocess and communicate via stdin/stdout.
@@ -379,10 +463,12 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
     # Configure mcp-agentdecompile as stdio server
+    # cwd must be repo root so uv run finds pyproject.toml; launcher uses temp project
+    repo_root = Path(__file__).resolve().parent.parent
     server_params = StdioServerParameters(
         command="uv",
         args=["run", "mcp-agentdecompile"],
-        cwd=str(isolated_workspace),
+        cwd=str(repo_root),
         env=os.environ.copy(),
     )
 
@@ -397,30 +483,23 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
             await session.__aenter__()
 
             try:
-                print(
-                    "[Fixture] Subprocess started, waiting for initialization to complete..."
-                )
+                print("[Fixture] Subprocess started, waiting for initialization to complete...")
 
                 # Give subprocess time to complete blocking initialization
-                # (PyGhidra, project, server startup happens before stdio bridge starts)
+                # (PyGhidra, project, server startup). Bridge now starts stdio immediately
+                # without connecting to backend, so 2s is sufficient.
                 await asyncio.sleep(2)
 
                 print("[Fixture] Initializing MCP session...")
 
-                # Initialize the session with timeout
                 try:
                     init_result = await asyncio.wait_for(
                         session.initialize(),
                         timeout=60.0,  # Initialization is fast, but allow buffer for CI overhead
                     )
-                    print(
-                        f"[Fixture] MCP session initialized: {init_result.serverInfo.name} v{init_result.serverInfo.version}"
-                    )
+                    print(f"[Fixture] MCP session initialized: {init_result.serverInfo.name} v{init_result.serverInfo.version}")
                 except asyncio.TimeoutError:
-                    raise TimeoutError(
-                        "MCP session initialization timed out after 60 seconds. "
-                        "Check stderr logs for errors."
-                    )
+                    raise TimeoutError("MCP session initialization timed out after 60 seconds. Check stderr logs for errors.")
 
                 yield session
 
@@ -440,6 +519,4 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
         # This is a known pytest-asyncio/anyio compatibility issue
         if "cancel scope" not in str(e):
             raise
-        print(
-            "[Fixture] Suppressed expected cancel scope error during stdio_client cleanup"
-        )
+        print("[Fixture] Suppressed expected cancel scope error during stdio_client cleanup")

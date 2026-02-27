@@ -1,5 +1,4 @@
-"""
-AgentDecompile Headless Integration Tests
+"""AgentDecompile Headless Integration Tests
 
 This package contains integration tests for AgentDecompile's headless mode using PyGhidra.
 

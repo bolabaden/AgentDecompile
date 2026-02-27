@@ -1,5 +1,4 @@
-"""
-Test AgentDecompile MCP tool functionality.
+"""Test AgentDecompile MCP tool functionality.
 
 Verifies that:
 - Tools can be called and return results
@@ -8,14 +7,14 @@ Verifies that:
 - get-functions works
 - Other key tools are accessible
 """
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
+
 from mcp.client.session import ClientSession
 
-from tests.helpers import get_response_result
+from tests.helpers import assert_tool_response_common, get_response_result
 
 # Mark all tests in this file as integration tests (require server)
 pytestmark = pytest.mark.integration
@@ -30,6 +29,7 @@ class TestProgramTools:
 
         # Should get a response (even if no files in project)
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
         # If it's an error response, check it's a valid error
         if response_result.isError:
@@ -37,10 +37,7 @@ class TestProgramTools:
             assert response_result is not None
         else:
             # If success, should have content that's a list
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             assert "content" in result
             content = result["content"]
             assert isinstance(content, list)
@@ -55,12 +52,10 @@ class TestProgramTools:
         if response_result.isError:
             # Expected - test_program isn't registered with MCP server
             assert response_result is not None
+            assert_tool_response_common(response_result)
             return
 
-        result = get_response_result({
-            "content": response_result.content,
-            "isError": response_result.isError
-        })
+        result = get_response_result({"content": response_result.content, "isError": response_result.isError})
 
         # Should have content
         assert "content" in result
@@ -78,12 +73,10 @@ class TestProgramTools:
         response_result = await mcp_client.call_tool("list-project-files", {})
 
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             assert "content" in result
             content = result["content"]
             assert isinstance(content, list)
@@ -95,12 +88,10 @@ class TestProgramTools:
 
         # Should get a response (even if no programs exist)
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             assert "content" in result
             content = result["content"]
             assert isinstance(content, list)
@@ -108,19 +99,14 @@ class TestProgramTools:
     async def test_list_open_programs_only_checked_out(self, mcp_client: ClientSession):
         """list-open-programs with onlyShowCheckedOutPrograms parameter"""
         # Test with onlyShowCheckedOutPrograms=True
-        response_result = await mcp_client.call_tool(
-            "list-open-programs",
-            {"onlyShowCheckedOutPrograms": True}
-        )
+        response_result = await mcp_client.call_tool("list-open-programs", {"onlyShowCheckedOutPrograms": True})
 
         # Should get a response
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             assert "content" in result
             content = result["content"]
             assert isinstance(content, list)
@@ -128,6 +114,7 @@ class TestProgramTools:
             # Check metadata if available
             if content:
                 import json
+
                 try:
                     metadata = json.loads(content[0].get("text", "{}"))
                     if "onlyCheckedOut" in metadata:
@@ -136,12 +123,10 @@ class TestProgramTools:
                     pass  # Not metadata, that's okay
 
         # Test with onlyShowCheckedOutPrograms=False (default)
-        response2_result = await mcp_client.call_tool(
-            "list-open-programs",
-            {"onlyShowCheckedOutPrograms": False}
-        )
+        response2_result = await mcp_client.call_tool("list-open-programs", {"onlyShowCheckedOutPrograms": False})
 
         assert response2_result is not None
+        assert_tool_response_common(response2_result)
 
 
 class TestStringTools:
@@ -156,6 +141,7 @@ class TestStringTools:
 
         # Should get a response (even if error due to missing program)
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
         # Will likely error since program doesn't exist, but that's okay
         # We're just testing the tool is registered and callable
@@ -171,6 +157,7 @@ class TestStringTools:
 
         # Should get response (even if error about program not existing)
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
 
 class TestFunctionTools:
@@ -178,21 +165,19 @@ class TestFunctionTools:
 
     async def test_list_functions_callable(self, mcp_client: ClientSession):
         """list_functions tool is registered and callable"""
-        response_result = await mcp_client.call_tool(
-            "list_functions", {"programPath": "/TestProgram"}
-        )
+        response_result = await mcp_client.call_tool("list_functions", {"programPath": "/TestProgram"})
 
         # Should get a response
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
     async def test_get_decompilation_callable(self, mcp_client: ClientSession):
         """get_function tool is registered and callable"""
-        response_result = await mcp_client.call_tool(
-            "get_function", {"programPath": "/TestProgram", "identifier": "0x00401000"}
-        )
+        response_result = await mcp_client.call_tool("get_function", {"programPath": "/TestProgram", "identifier": "0x00401000"})
 
         # Should get a response (even if error)
         assert response_result is not None
+        assert_tool_response_common(response_result)
 
 
 class TestToolRegistration:
@@ -234,71 +219,46 @@ class TestManageFilesVersionControl:
     async def test_checkout_operation(self, mcp_client: ClientSession, test_program):
         """Test checkout operation via manage-files"""
         program_path = test_program.getDomainFile().getPathname()
-        
+
         # Test checkout (may fail if not versioned or already checked out, which is ok)
-        response_result = await mcp_client.call_tool(
-            "manage-files",
-            {
-                "operation": "checkout",
-                "programPath": program_path,
-                "exclusive": False
-            }
-        )
-        
+        response_result = await mcp_client.call_tool("manage-files", {"operation": "checkout", "programPath": program_path, "exclusive": False})
+
         assert response_result is not None
+        assert_tool_response_common(response_result)
         # Checkout may succeed or fail depending on version control state
         # Either way, we should get a valid response
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             # Should have success field
             assert "success" in result
 
     async def test_uncheckout_operation(self, mcp_client: ClientSession, test_program):
         """Test uncheckout operation via manage-files"""
         program_path = test_program.getDomainFile().getPathname()
-        
+
         # Test uncheckout (may fail if not checked out, which is ok)
-        response_result = await mcp_client.call_tool(
-            "manage-files",
-            {
-                "operation": "uncheckout",
-                "programPath": program_path
-            }
-        )
-        
+        response_result = await mcp_client.call_tool("manage-files", {"operation": "uncheckout", "programPath": program_path})
+
         assert response_result is not None
+        assert_tool_response_common(response_result)
         # Uncheckout may succeed or fail depending on checkout state
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             # Should have success field
             assert "success" in result
 
     async def test_unhijack_operation(self, mcp_client: ClientSession, test_program):
         """Test unhijack operation via manage-files"""
         program_path = test_program.getDomainFile().getPathname()
-        
+
         # Test unhijack (may fail if not hijacked, which is ok)
-        response_result = await mcp_client.call_tool(
-            "manage-files",
-            {
-                "operation": "unhijack",
-                "programPath": program_path
-            }
-        )
-        
+        response_result = await mcp_client.call_tool("manage-files", {"operation": "unhijack", "programPath": program_path})
+
         assert response_result is not None
+        assert_tool_response_common(response_result)
         # Unhijack may succeed or fail depending on hijack state
         if not response_result.isError:
-            result = get_response_result({
-                "content": response_result.content,
-                "isError": response_result.isError
-            })
+            result = get_response_result({"content": response_result.content, "isError": response_result.isError})
             # Should have success field
             assert "success" in result
         args = {"programPath": "/TestProgram"}  # Most tools need programPath
@@ -318,9 +278,7 @@ class TestManageFilesVersionControl:
             args["action"] = "archives"
         elif tool_name == "inspect-memory":
             args["mode"] = "blocks"
-        elif tool_name == "manage-bookmarks":
-            args["action"] = "get"
-        elif tool_name == "manage-comments":
+        elif tool_name == "manage-bookmarks" or tool_name == "manage-comments":
             args["action"] = "get"
         elif tool_name == "analyze-vtables":
             args["mode"] = "analyze"
@@ -351,3 +309,4 @@ class TestManageFilesVersionControl:
         # Should get some response (even if error due to missing required args)
         # The key is that we get a response, not a connection error
         assert response_result is not None
+        assert_tool_response_common(response_result)

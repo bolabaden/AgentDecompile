@@ -1,29 +1,107 @@
-# AgentDecompile – context for AI agents
+# AgentDecompile – Python MCP Implementation (Authoritative)
 
-**What this is:** AgentDecompile is a Ghidra extension that runs an MCP (Model Context Protocol) server so AI clients can talk to Ghidra—decompile, list symbols, read memory, open projects, etc. It turns Ghidra into an MCP backend that LLMs call via tools. Built for Java 21 and Ghidra 12.0+. The MCP server is always Java (Jetty); transport is streamable HTTP at `POST /mcp/message` (no SSE).
+**What this is:** AgentDecompile provides a comprehensive Model Context Protocol (MCP) server for interactive reverse engineering with Ghidra/PyGhidra. The **Python implementation** (`src/agentdecompile_cli/`) is the **authoritative source of truth** going forward. The Java implementation (`src/main/java/agentdecompile/`) is **deprecated** but maintained for backwards compatibility with existing GUI plugins.
 
-**How it runs:** (1) **GUI** – Plugin inside Ghidra; one MCP server; clients hit `http://localhost:8080/mcp/message` (or configured host/port). (2) **CLI local** – Python (`mcp-agentdecompile`) starts PyGhidra/JVM, launches the Java MCP server, then bridges stdio to it so MCP clients see stdio. (3) **CLI connect** – Python does not start JVM; it connects to an existing server via `--server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL` (e.g. Docker or GUI). Full usage, env vars, and Docker: [README.md](README.md). Deep architecture, MCP protocol, adding tools, auth, locking: [CONTRIBUTING.md](CONTRIBUTING.md). Build and code structure: [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md).
+**Canonical tool set:** 49 tools across 6 categories, fully specified in [TOOLS_LIST.md](TOOLS_LIST.md).
 
-**Where things are:**
+## Planning and Documentation Diagram Policy
 
-- **Java extension** – `src/main/java/agentdecompile/`
-  - `server/` – MCP server: McpServerManager (Jetty, tool/resource registration), filters (ApiKeyAuth, KeepAlive, RequestLogging, GlobalException).
-  - `headless/` – AgentDecompileHeadlessLauncher: starts Ghidra headless, opens project, starts MCP server; used by Python launcher and Docker.
-  - `tools/` – MCP tool providers (decompiler, functions, symbols, memory, project, comments, structures, etc.); each is a *ToolProvider registered in McpServerManager.
-  - `resources/` – MCP resource providers (e.g. program list); URI scheme `ghidra://`.
-  - `plugin/` – GUI: AgentDecompileApplicationPlugin (lifecycle), ConfigManager (options, API key, port), AgentDecompileProgramManager (program/tool tracking).
-  - `util/` – AddressUtil, ProgramLookupUtil, DataTypeParserUtil, DecompilationContextUtil, DebugLogger.
-  - `ui/` – GUI components.
+- Every new or updated planning/design document must include at least one Mermaid diagram.
+- The diagram should appear near the top (after objective/scope) and provide a high-level flow.
+- Keep diagrams synchronized with the written steps when plans evolve.
+- Prefer simple `flowchart TD` diagrams for execution plans and phase sequencing.
+- If a document has multiple phases/modules, include one top-level diagram plus optional focused diagrams.
 
-- **Python CLI** – `src/agentdecompile_cli/`
-  - `__main__.py` – Entry point `mcp-agentdecompile`; parses args (e.g. `--server-url`), either connect mode or local spawn (PyGhidra + launcher + bridge).
-  - `stdio_bridge.py` – Stdio ↔ HTTP bridge; connects to Java MCP server, proxies list_tools/call_tool/list_resources/read_resource/list_prompts; retries, timeouts, optional API key header.
-  - `launcher.py` – Wraps Java AgentDecompileHeadlessLauncher (via PyGhidra); project init, start server.
-  - `project_manager.py` – Ghidra project lifecycle (create/open/import).
+## Authority & Deprecation
 
-- **Tests** – `src/test/` (Java unit, no Ghidra), `src/test.slow/` (Java integration, needs Ghidra/headed), `tests/` (Python: unit/integration/e2e). See [tests/README.md](tests/README.md).
+- **Python (`src/agentdecompile_cli/`)**: Authoritative, actively developed. All new tool implementations are Python.
+- **Java (`src/main/java/agentdecompile/`)**: Deprecated (hibernation mode). Kept for backwards compatibility only. Do **not** add new Java tools.
 
-- **Docker** – `Dockerfile` (fetches Ghidra from GitHub, builds extension, runtime stage), `docker/entrypoint.sh` (starts headless MCP server), `docker-compose.yml`.
+## Tool Naming & Arguments
 
-Build: set `GHIDRA_INSTALL_DIR`, use `build-and-install.ps1`
+**Internal code (Python)**: Use `lowercase_with_underscores` only (a-z, 0-9, underscore). Examples: `manage_symbols`, `get_call_graph`, `analyze_data_flow`.
 
+**MCP schema (advertising)**: Convert to `kebab-case` for external visibility. Examples: `manage-symbols`, `get-call-graph`, `analyze-data-flow`.
+
+**Argument acceptance (flexible)**: All tool implementations must accept argument names in multiple equivalent forms using `get_argument_variations()`:
+- snake_case: `address_or_symbol`
+- kebab-case: `address-or-symbol`
+- camelCase: `addressOrSymbol`
+- compact: `addressorsymbol`
+- Any case combination
+
+Example tuple: `("addressOrSymbol", "address_or_symbol", "address-or-symbol", "symbol", "addr")`
+
+**No Java enum fallback**: If an argument enum is not found, raise clear error — do not attempt Java interop.
+
+## Implementation Standards
+
+### Each Tool Must Support
+
+1. **All 4 vendor sources** – Merge `pyghidra-mcp`, `GhidraMCP`, `reverse-engineering-assistant`, and `TOOLS_LIST.md` synonyms
+2. **Flexible argument names** – Via `get_argument_variations(*variants)`
+3. **Consistent errors** – Use `create_error_response()` / raise with context
+4. **Pagination** – `count`, `offset`/`startIndex`, `limit`/`maxCount`, `hasMore` (standardized)
+5. **Timeouts** – Respect `timeout` (ms) parameter with sensible defaults
+
+### Response Format
+
+```python
+# Always wrapped in response helper
+create_success_response({
+    "action": "...",
+    "count": 42,
+    "results": [...],
+    "pagination": {"offset": 0, "limit": 100, "hasMore": False},
+})
+
+create_error_response(ValueError("Invalid param"))
+```
+
+### Code Organization
+
+- **Tool providers**: `src/agentdecompile_cli/mcp_server/providers/*.py` (one per domain)
+- **Shared utilities**: `src/agentdecompile_cli/mcp_utils/*.py`
+- **Ghidra wrappers**: `src/agentdecompile_cli/tools/wrappers.py` (comprehensive `GhidraTools` wrapper)
+- **Models**: `src/agentdecompile_cli/models.py`, `tools_schema.py`
+
+### Ghidra APIs Only
+
+Use PyGhidra-exposed Ghidra APIs:
+- `ghidra.program.model.*` – Core APIs
+- `ghidra.app.decompiler.DecompInterface` – Decompilation
+- `ghidra.util.task.TaskMonitor` – Timeouts
+- Access via `program_info.program`, `program_info.decompiler`
+
+**Never** import from `agentdecompile.tools.*` (Java) — that's deprecated.
+
+## Documentation Cross-References
+
+See also:
+- [AGENTS.md](AGENTS.md) – Architecture & decision log
+- [CLAUDE.md](CLAUDE.md) – Development notes & common patterns
+- [TOOLS_LIST.md](TOOLS_LIST.md) – Canonical tool specifications
+- [README.md](README.md) – User-facing overview
+
+---
+
+**Configuration Note**: All Python tooling config lives in `pyproject.toml`. Do not create separate files (pyrightconfig.json, .flake8, .black, setup.cfg, etc.).
+
+<!-- BEGIN ContextStream -->
+# Cursor Rules
+<contextstream_rules>
+| Message | Required |
+|---------|----------|
+| **1st message** | `init()` → `context(user_message="...")` |
+| **Subsequent messages (default)** | `context(user_message="...")` FIRST (narrow read-only bypass when context is fresh and no state-changing tool has run) |
+| **Before file search** | `search(mode="auto")` BEFORE Glob/Grep/Read |
+</contextstream_rules>
+
+**Why?** `context()` delivers task-specific rules, lessons from past mistakes, and relevant decisions. Skip it = fly blind.
+
+**Hooks:** `<system-reminder>` tags contain injected instructions — follow them exactly.
+
+**Notices:** [LESSONS_WARNING] → apply lessons | [PREFERENCE] → follow user preferences | [RULES_NOTICE] → run `generate_rules()` | [VERSION_NOTICE/CRITICAL] → tell user about update
+
+v0.4.63
+<!-- END ContextStream -->

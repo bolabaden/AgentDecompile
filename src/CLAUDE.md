@@ -20,15 +20,23 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 
 ```
 src/
-├── agentdecompile_cli/          # Python CLI (stdio bridge)
+├── agentdecompile_cli/          # Python CLI (authoritative implementation)
 │   ├── __init__.py              # Package init, version
 │   ├── __main__.py              # Entry point: mcp-agentdecompile command
 │   ├── launcher.py              # Wraps Java AgentDecompileHeadlessLauncher
-│   ├── stdio_bridge.py          # MCP stdio ↔ HTTP bridge (753 lines)
-│   ├── project_manager.py      # Ghidra project lifecycle
-│   ├── mcp_session_patch.py    # Patches MCP SDK RuntimeError bug
+│   ├── mcp_server/              # MCP server implementation
+│   │   ├── server.py            # PythonMcpServer (FastAPI + MCP SDK)
+│   │   ├── tool_providers.py    # ToolProvider base class + ToolProviderManager
+│   │   └── providers/           # 19 tool provider implementations
+│   ├── mcp_utils/               # Shared utilities (AddressUtil, etc.)
+│   ├── tools/                   # GhidraTools wrapper class
+│   ├── registry.py              # Tool registry, normalize_identifier()
+│   ├── executor.py              # CLI utilities, DynamicToolExecutor
+│   ├── utils.py                 # Re-exports, backward compat
+│   ├── bridge.py                # MCP stdio ↔ HTTP bridge
+│   ├── mcp_session_patch.py     # Patches MCP SDK RuntimeError bug
 │   └── _version.py              # Version from git tags (setuptools_scm)
-├── main/java/agentdecompile/    # Java extension
+├── main/java/agentdecompile/    # Java extension (deprecated)
 │   ├── server/                  # MCP server (McpServerManager, filters)
 │   ├── headless/                # Headless launcher, JavaOutputRedirect
 │   ├── tools/                   # MCP tool providers (17 tools)
