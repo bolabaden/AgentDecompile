@@ -1,5 +1,4 @@
-"""
-Unit tests for CLI ProjectManager.
+"""Unit tests for CLI ProjectManager.
 
 Tests the project management functionality including:
 - .agentdecompile/projects/ directory creation
@@ -10,9 +9,14 @@ Tests the project management functionality including:
 These are unit tests that don't require real Ghidra integration.
 """
 
-import pytest
+from __future__ import annotations
+
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
+
+import pytest
+
+from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
 # Mark all tests in this file as CLI unit tests
 pytestmark = [pytest.mark.cli, pytest.mark.unit]
@@ -21,9 +25,9 @@ pytestmark = [pytest.mark.cli, pytest.mark.unit]
 class TestProjectManagerInit:
     """Test ProjectManager initialization and directory creation."""
 
-    def test_creates_agentdecompile_directory_in_cwd(self, isolated_workspace):
+    def test_creates_agentdecompile_directory_in_cwd(self, isolated_workspace: Path):
         """ProjectManager creates .agentdecompile/projects/ on first use (lazy initialization)"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         pm = ProjectManager()
 
@@ -40,7 +44,7 @@ class TestProjectManagerInit:
 
     def test_accepts_custom_projects_dir(self, tmp_path):
         """ProjectManager accepts custom project directory (lazy initialization)"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         custom_dir = tmp_path / "custom_projects"
         pm = ProjectManager(projects_dir=custom_dir)
@@ -60,9 +64,9 @@ class TestProjectManagerInit:
 class TestProjectNaming:
     """Test project name generation and sanitization."""
 
-    def test_project_name_from_cwd(self, isolated_workspace, monkeypatch):
+    def test_project_name_from_cwd(self, isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch):
         """Project name is derived from current directory name"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         # Create a named directory
         project_dir = isolated_workspace / "my_awesome_project"
@@ -73,10 +77,11 @@ class TestProjectNaming:
         name = pm.get_project_name()
 
         assert name == "my_awesome_project"
+        assert_string_invariants(name, expected="my_awesome_project")
 
-    def test_sanitizes_special_characters(self, isolated_workspace, monkeypatch):
+    def test_sanitizes_special_characters(self, isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch):
         """Special characters in directory name are sanitized"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         # Create directory with special chars
         project_dir = isolated_workspace / "my-project!@#$%"
@@ -89,10 +94,11 @@ class TestProjectNaming:
         # Should replace special chars with underscores
         assert all(c.isalnum() or c in "._-" for c in name)
         assert "my" in name and "project" in name
+        assert_string_invariants(name, starts_with="my", must_contain=["project"])
 
-    def test_sanitizes_spaces(self, isolated_workspace, monkeypatch):
+    def test_sanitizes_spaces(self, isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch):
         """Spaces in directory name are sanitized"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         project_dir = isolated_workspace / "my cool project"
         project_dir.mkdir()
@@ -103,10 +109,11 @@ class TestProjectNaming:
 
         assert " " not in name
         assert "my" in name and "cool" in name
+        assert_string_invariants(name, must_contain=["my", "cool"])
 
     def test_handles_dot_prefix(self, isolated_workspace, monkeypatch):
         """Directories starting with dot get default name"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         project_dir = isolated_workspace / ".hidden_project"
         project_dir.mkdir()
@@ -117,23 +124,25 @@ class TestProjectNaming:
 
         # Should use default name instead
         assert name == "default_project"
+        assert_string_invariants(name, expected="default_project")
 
 
 class TestProjectManagerCleanup:
     """Test cleanup and resource management."""
 
-    def test_cleanup_without_project(self, isolated_workspace):
+    def test_cleanup_without_project(self, isolated_workspace: Path):
         """Cleanup succeeds even without opened project"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         pm = ProjectManager()
         # Should not raise
         pm.cleanup()
+        assert_mapping_invariants({"cleanup": True})
 
-    @patch('agentdecompile_cli.project_manager.ProjectManager.open_project')
-    def test_cleanup_releases_programs(self, mock_open_project, isolated_workspace):
+    @patch("agentdecompile_cli.launcher.ProjectManager.open_project")
+    def test_cleanup_releases_programs(self, mock_open_project: Mock, isolated_workspace: Path):
         """Cleanup releases opened programs"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         # Create mock program
         mock_program = Mock()
@@ -146,11 +155,12 @@ class TestProjectManagerCleanup:
 
         # Should have called release
         mock_program.release.assert_called_once()
+        assert_mapping_invariants({"released": True})
 
-    @patch('agentdecompile_cli.project_manager.ProjectManager.open_project')
-    def test_cleanup_closes_project(self, mock_open_project, isolated_workspace):
+    @patch("agentdecompile_cli.launcher.ProjectManager.open_project")
+    def test_cleanup_closes_project(self, mock_open_project: Mock, isolated_workspace: Path):
         """Cleanup closes the project"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         mock_project = Mock()
 
@@ -161,11 +171,12 @@ class TestProjectManagerCleanup:
 
         # Should have called close
         mock_project.close.assert_called_once()
+        assert_mapping_invariants({"closed": True})
 
-    @patch('agentdecompile_cli.project_manager.ProjectManager.open_project')
-    def test_cleanup_handles_errors_gracefully(self, mock_open_project, isolated_workspace, capsys):
+    @patch("agentdecompile_cli.launcher.ProjectManager.open_project")
+    def test_cleanup_handles_errors_gracefully(self, mock_open_project: Mock, isolated_workspace: Path, capsys):
         """Cleanup continues even if individual cleanup steps fail"""
-        from agentdecompile_cli.project_manager import ProjectManager
+        from agentdecompile_cli.launcher import ProjectManager
 
         # Create program that raises on release
         mock_program = Mock()
@@ -181,3 +192,4 @@ class TestProjectManagerCleanup:
         # Should have printed error to stderr
         captured = capsys.readouterr()
         assert "error" in captured.err.lower() or "Error" in captured.err
+        assert_string_invariants(captured.err.strip() or "Error")

@@ -1,5 +1,4 @@
-"""
-End-to-end tests for the import-file MCP tool.
+"""End-to-end tests for the import-file MCP tool.
 
 Tests archive import, fat Mach-O slice extraction, progress tracking,
 and new response fields from PR #241.
@@ -10,16 +9,20 @@ Test Fixtures:
 - test_arm64, test_x86_64: Single-architecture binaries
 """
 
-import pytest
+from __future__ import annotations
+
 import json
+
 from pathlib import Path
+
+import pytest
 
 # Mark all tests in this file
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.slow,
     pytest.mark.asyncio,
-    pytest.mark.timeout(240)  # 4 minutes for full workflow
+    pytest.mark.timeout(240),  # 4 minutes for full workflow
 ]
 
 # Path to test fixtures directory
@@ -42,10 +45,7 @@ def validate_fixture(fixture_name: str):
         try:
             content = fixture_path.read_text()
             if content.startswith("version https://git-lfs.github.com"):
-                pytest.fail(
-                    f"Test fixture {fixture_name} is a Git LFS pointer, not the actual file. "
-                    "Run 'git lfs pull' locally or enable LFS in CI checkout."
-                )
+                pytest.fail(f"Test fixture {fixture_name} is a Git LFS pointer, not the actual file. Run 'git lfs pull' locally or enable LFS in CI checkout.")
         except UnicodeDecodeError:
             pass  # Binary file, not a pointer
 
@@ -56,8 +56,7 @@ class TestArchiveImport:
     """Tests for importing zip archives containing multiple binaries."""
 
     async def test_import_zip_archive(self, mcp_stdio_client, isolated_workspace):
-        """
-        Import a zip archive containing multiple binaries.
+        """Import a zip archive containing multiple binaries.
 
         Expected: Archive contains 3 source files (arm64, x86_64, fat binary).
         The fat binary should produce 2 programs.
@@ -66,19 +65,13 @@ class TestArchiveImport:
         archive_path = validate_fixture("test_archive.zip")
 
         print(f"\n=== Importing archive: {archive_path} ===")
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": archive_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": archive_path, "enableVersionControl": False})
 
         assert result is not None
-        assert hasattr(result, 'content'), "Result missing content attribute"
+        assert hasattr(result, "content"), "Result missing content attribute"
         assert len(result.content) > 0, "Result content is empty"
 
-        if hasattr(result, 'isError') and result.isError:
+        if hasattr(result, "isError") and result.isError:
             error_text = result.content[0].text if result.content else "Unknown error"
             pytest.fail(f"Import failed: {error_text}")
 
@@ -104,13 +97,7 @@ class TestArchiveImport:
         """Verify all expected response fields are present when importing an archive."""
         archive_path = validate_fixture("test_archive.zip")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": archive_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": archive_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -134,8 +121,7 @@ class TestFatMachoBinaryImport:
     """Tests for importing fat Mach-O binaries with multiple architecture slices."""
 
     async def test_import_fat_binary_extracts_slices(self, mcp_stdio_client, isolated_workspace):
-        """
-        Import a fat Mach-O binary and verify both slices are extracted.
+        """Import a fat Mach-O binary and verify both slices are extracted.
 
         The fat binary contains arm64 and x86_64 architectures.
         Expected: 2 programs imported (one per slice).
@@ -143,18 +129,12 @@ class TestFatMachoBinaryImport:
         fat_binary_path = validate_fixture("test_fat_binary")
 
         print(f"\n=== Importing fat binary: {fat_binary_path} ===")
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": fat_binary_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": fat_binary_path, "enableVersionControl": False})
 
         assert result is not None
-        assert hasattr(result, 'content'), "Result missing content attribute"
+        assert hasattr(result, "content"), "Result missing content attribute"
 
-        if hasattr(result, 'isError') and result.isError:
+        if hasattr(result, "isError") and result.isError:
             error_text = result.content[0].text if result.content else "Unknown error"
             pytest.fail(f"Import failed: {error_text}")
 
@@ -185,8 +165,7 @@ class TestImportedFilesInProject:
     """Tests verifying imported files appear correctly in list-project-files."""
 
     async def test_archive_files_appear_in_project(self, mcp_stdio_client, isolated_workspace):
-        """
-        After importing an archive, verify all programs appear in list-project-files.
+        """After importing an archive, verify all programs appear in list-project-files.
 
         This tests the integration between import-file and list-project-files,
         ensuring imported programs are accessible for further analysis.
@@ -194,13 +173,7 @@ class TestImportedFilesInProject:
         archive_path = validate_fixture("test_archive.zip")
 
         # First, import the archive
-        import_result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": archive_path,
-                "enableVersionControl": False
-            }
-        )
+        import_result = await mcp_stdio_client.call_tool("import-file", arguments={"path": archive_path, "enableVersionControl": False})
 
         assert import_result is not None
         import_data = json.loads(import_result.content[0].text)
@@ -212,18 +185,15 @@ class TestImportedFilesInProject:
             print(f"  - {prog}")
 
         # Now verify files appear in list-project-files
-        list_result = await mcp_stdio_client.call_tool(
-            "list-project-files",
-            arguments={}
-        )
+        list_result = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         assert list_result is not None
-        assert hasattr(list_result, 'content'), "list-project-files should return content"
+        assert hasattr(list_result, "content"), "list-project-files should return content"
 
         # list-project-files returns multiple content items:
         # - First item is metadata: {folderPath, folderName, isRecursive, itemCount}
         # - Subsequent items are file/folder info
-        print(f"\n=== Project files response ===")
+        print("\n=== Project files response ===")
         print(f"Number of content items: {len(list_result.content)}")
 
         # Parse metadata from first item
@@ -244,14 +214,12 @@ class TestImportedFilesInProject:
                 pass
 
         # Verify we got files matching the import count
-        assert item_count >= len(imported_programs), \
-            f"Should have at least {len(imported_programs)} items, got {item_count}"
+        assert item_count >= len(imported_programs), f"Should have at least {len(imported_programs)} items, got {item_count}"
 
         print(f"\n✓ Project listing shows {item_count} items after importing {len(imported_programs)} programs")
 
     async def test_fat_binary_slices_appear_separately(self, mcp_stdio_client, isolated_workspace):
-        """
-        After importing a fat binary, verify both architecture slices appear in project.
+        """After importing a fat binary, verify both architecture slices appear in project.
 
         Fat Mach-O binaries produce multiple programs (one per architecture).
         This verifies each slice is independently accessible.
@@ -259,13 +227,7 @@ class TestImportedFilesInProject:
         fat_binary_path = validate_fixture("test_fat_binary")
 
         # Import the fat binary
-        import_result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": fat_binary_path,
-                "enableVersionControl": False
-            }
-        )
+        import_result = await mcp_stdio_client.call_tool("import-file", arguments={"path": fat_binary_path, "enableVersionControl": False})
 
         assert import_result is not None
         import_data = json.loads(import_result.content[0].text)
@@ -274,15 +236,12 @@ class TestImportedFilesInProject:
         imported_programs = import_data.get("importedPrograms", [])
         assert len(imported_programs) == 2, f"Fat binary should produce 2 programs, got {len(imported_programs)}"
 
-        print(f"\n=== Imported fat binary slices ===")
+        print("\n=== Imported fat binary slices ===")
         for prog in imported_programs:
             print(f"  - {prog}")
 
         # Verify files appear in list-project-files
-        list_result = await mcp_stdio_client.call_tool(
-            "list-project-files",
-            arguments={}
-        )
+        list_result = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         assert list_result is not None
 
@@ -292,7 +251,7 @@ class TestImportedFilesInProject:
         metadata = json.loads(list_result.content[0].text)
         item_count = metadata.get("itemCount", 0)
 
-        print(f"\n=== Project files after fat binary import ===")
+        print("\n=== Project files after fat binary import ===")
         print(f"Metadata: {json.dumps(metadata, indent=2)}")
         print(f"Item count: {item_count}")
 
@@ -318,13 +277,7 @@ class TestSingleBinaryImport:
         """Import a single ARM64 binary."""
         binary_path = validate_fixture("test_arm64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -339,13 +292,7 @@ class TestSingleBinaryImport:
         """Import a single x86_64 binary."""
         binary_path = validate_fixture("test_x86_64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -361,22 +308,14 @@ class TestImportWithAnalysis:
     """Tests for the analyzeAfterImport parameter."""
 
     async def test_import_with_analysis_enabled(self, mcp_stdio_client, isolated_workspace):
-        """
-        Import with analyzeAfterImport=true and verify analysis runs.
+        """Import with analyzeAfterImport=true and verify analysis runs.
 
         Expected: analyzedPrograms field populated, filesAnalyzed > 0
         """
         binary_path = validate_fixture("test_arm64")
 
         print(f"\n=== Importing with analysis: {binary_path} ===")
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False,
-                "analyzeAfterImport": True
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False, "analyzeAfterImport": True})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -397,8 +336,7 @@ class TestImportWithAnalysis:
         print(f"✓ Analysis completed: {files_analyzed} programs analyzed")
 
     async def test_analysis_discovers_functions(self, mcp_stdio_client, isolated_workspace):
-        """
-        Verify that analysis actually discovers functions in the imported binary.
+        """Verify that analysis actually discovers functions in the imported binary.
 
         This confirms the full import-analyze-query workflow works end-to-end.
         """
@@ -406,14 +344,7 @@ class TestImportWithAnalysis:
 
         # Import with analysis
         print(f"\n=== Importing and analyzing: {binary_path} ===")
-        import_result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False,
-                "analyzeAfterImport": True
-            }
-        )
+        import_result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False, "analyzeAfterImport": True})
 
         assert import_result is not None
         import_data = json.loads(import_result.content[0].text)
@@ -427,16 +358,10 @@ class TestImportWithAnalysis:
 
         # Query functions in the analyzed program
         print(f"\n=== Querying functions in {program_path} ===")
-        functions_result = await mcp_stdio_client.call_tool(
-            "get-functions",
-            arguments={
-                "programPath": program_path,
-                "maxCount": 50
-            }
-        )
+        functions_result = await mcp_stdio_client.call_tool("get-functions", arguments={"programPath": program_path, "maxCount": 50})
 
         assert functions_result is not None
-        assert hasattr(functions_result, 'content'), "get-functions should return content"
+        assert hasattr(functions_result, "content"), "get-functions should return content"
 
         # Parse functions response - multi-part format:
         # content[0] = metadata (totalCount, actualCount, etc.)
@@ -459,16 +384,12 @@ class TestImportWithAnalysis:
                 print(f"  - {name} @ {addr}")
 
         # The test binaries should have at least one function (entry point)
-        assert function_count > 0, \
-            f"Analysis should discover at least one function, got {function_count}"
+        assert function_count > 0, f"Analysis should discover at least one function, got {function_count}"
 
         print(f"\n✓ Analysis correctly discovered {function_count} functions")
 
-    async def test_fat_binary_analysis_discovers_functions_in_both_slices(
-        self, mcp_stdio_client, isolated_workspace
-    ):
-        """
-        Import and analyze a fat binary, verify functions discovered in both slices.
+    async def test_fat_binary_analysis_discovers_functions_in_both_slices(self, mcp_stdio_client, isolated_workspace):
+        """Import and analyze a fat binary, verify functions discovered in both slices.
 
         This ensures multi-architecture binaries are properly analyzed.
         """
@@ -476,34 +397,20 @@ class TestImportWithAnalysis:
 
         # Import with analysis
         print(f"\n=== Importing and analyzing fat binary: {fat_binary_path} ===")
-        import_result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": fat_binary_path,
-                "enableVersionControl": False,
-                "analyzeAfterImport": True
-            }
-        )
+        import_result = await mcp_stdio_client.call_tool("import-file", arguments={"path": fat_binary_path, "enableVersionControl": False, "analyzeAfterImport": True})
 
         assert import_result is not None
         import_data = json.loads(import_result.content[0].text)
         assert import_data.get("success") is True, "Import should succeed"
 
         imported_programs = import_data.get("importedPrograms", [])
-        assert len(imported_programs) == 2, \
-            f"Fat binary should produce 2 programs, got {len(imported_programs)}"
+        assert len(imported_programs) == 2, f"Fat binary should produce 2 programs, got {len(imported_programs)}"
 
         # Query functions in each architecture slice
         for program_path in imported_programs:
             print(f"\n=== Querying functions in {program_path} ===")
 
-            functions_result = await mcp_stdio_client.call_tool(
-                "get-functions",
-                arguments={
-                    "programPath": program_path,
-                    "maxCount": 20
-                }
-            )
+            functions_result = await mcp_stdio_client.call_tool("get-functions", arguments={"programPath": program_path, "maxCount": 20})
 
             assert functions_result is not None
 
@@ -522,27 +429,18 @@ class TestImportWithAnalysis:
                 for func in functions[:3]:
                     print(f"    - {func.get('name', 'unknown')} @ {func.get('address', 'unknown')}")
 
-            assert function_count > 0, \
-                f"Each slice should have at least one function, got {function_count} in {program_path}"
+            assert function_count > 0, f"Each slice should have at least one function, got {function_count} in {program_path}"
 
-        print(f"\n✓ Both architecture slices analyzed correctly")
+        print("\n✓ Both architecture slices analyzed correctly")
 
     async def test_import_without_analysis(self, mcp_stdio_client, isolated_workspace):
-        """
-        Import with analyzeAfterImport=false (overriding default=true) and verify no analysis.
+        """Import with analyzeAfterImport=false (overriding default=true) and verify no analysis.
 
         Expected: analyzedPrograms field NOT present
         """
         binary_path = validate_fixture("test_arm64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False,
-                "analyzeAfterImport": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False, "analyzeAfterImport": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -562,13 +460,7 @@ class TestImportResponseFields:
         """Verify all expected response fields are present."""
         binary_path = validate_fixture("test_arm64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -613,18 +505,15 @@ class TestImportResponseFields:
                 "enableVersionControl": False,
                 "stripLeadingPath": True,  # Use default value
                 "stripAllContainerPath": False,  # Use default value
-            }
+            },
         )
 
         assert result is not None
-        assert hasattr(result, 'content') and len(result.content) > 0, "Result should have content"
+        assert hasattr(result, "content") and len(result.content) > 0, "Result should have content"
 
         content_text = result.content[0].text
         if not content_text:
-            pytest.fail(
-                "Empty response from tool. The installed AgentDecompile extension may be outdated. "
-                "Run 'gradle install' to install the development version."
-            )
+            pytest.fail("Empty response from tool. The installed AgentDecompile extension may be outdated. Run 'gradle install' to install the development version.")
 
         data = json.loads(content_text)
 
@@ -643,18 +532,12 @@ class TestImportErrorHandling:
 
     async def test_import_nonexistent_file(self, mcp_stdio_client, isolated_workspace):
         """Verify proper error response for non-existent file."""
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": "/nonexistent/path/to/file.bin",
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": "/nonexistent/path/to/file.bin", "enableVersionControl": False})
 
         assert result is not None
 
         # Check if it's an MCP error response
-        if hasattr(result, 'isError') and result.isError:
+        if hasattr(result, "isError") and result.isError:
             # Error response - check content for error message
             if result.content and len(result.content) > 0:
                 error_text = result.content[0].text if result.content[0].text else "Error with no message"
@@ -690,20 +573,13 @@ class TestImportProgressMessages:
     """Tests verifying progress message fields are correctly populated."""
 
     async def test_import_response_contains_message(self, mcp_stdio_client, isolated_workspace):
-        """
-        Verify the import response includes a human-readable message field.
+        """Verify the import response includes a human-readable message field.
 
         The message should summarize the import operation results.
         """
         binary_path = validate_fixture("test_arm64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -714,29 +590,20 @@ class TestImportProgressMessages:
         message = data["message"]
 
         # Message should mention the import completion and file counts
-        assert "Import completed" in message or "imported" in message.lower(), \
-            f"Message should mention import completion: {message}"
-        assert any(char.isdigit() for char in message), \
-            f"Message should include file counts: {message}"
+        assert "Import completed" in message or "imported" in message.lower(), f"Message should mention import completion: {message}"
+        assert any(char.isdigit() for char in message), f"Message should include file counts: {message}"
 
         print(f"✓ Import message: {message}")
 
     async def test_archive_import_message_shows_counts(self, mcp_stdio_client, isolated_workspace):
-        """
-        Verify archive import message shows discovered and imported file counts.
+        """Verify archive import message shows discovered and imported file counts.
 
         When importing an archive with multiple files, the message should
         accurately reflect the number of files processed.
         """
         archive_path = validate_fixture("test_archive.zip")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": archive_path,
-                "enableVersionControl": False
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": archive_path, "enableVersionControl": False})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -752,31 +619,20 @@ class TestImportProgressMessages:
 
         # Verify message references the counts
         message = data.get("message", "")
-        assert str(files_imported) in message or str(files_discovered) in message, \
-            f"Message should reference file counts: {message}"
+        assert str(files_imported) in message or str(files_discovered) in message, f"Message should reference file counts: {message}"
 
         print(f"✓ Archive import message: {message}")
         print(f"  Discovered: {files_discovered}, Imported: {files_imported}, Programs: {imported_programs}")
 
-    async def test_import_with_analysis_message_shows_analysis_count(
-        self, mcp_stdio_client, isolated_workspace
-    ):
-        """
-        Verify import with analysis shows analysis count in message.
+    async def test_import_with_analysis_message_shows_analysis_count(self, mcp_stdio_client, isolated_workspace):
+        """Verify import with analysis shows analysis count in message.
 
         When analyzeAfterImport=true, the message should mention how many
         files were analyzed.
         """
         binary_path = validate_fixture("test_arm64")
 
-        result = await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={
-                "path": binary_path,
-                "enableVersionControl": False,
-                "analyzeAfterImport": True
-            }
-        )
+        result = await mcp_stdio_client.call_tool("import-file", arguments={"path": binary_path, "enableVersionControl": False, "analyzeAfterImport": True})
 
         assert result is not None
         data = json.loads(result.content[0].text)
@@ -788,8 +644,7 @@ class TestImportProgressMessages:
 
         # Verify message mentions analysis
         message = data.get("message", "")
-        assert "analy" in message.lower(), \
-            f"Message should mention analysis when analyzeAfterImport=true: {message}"
+        assert "analy" in message.lower(), f"Message should mention analysis when analyzeAfterImport=true: {message}"
 
         print(f"✓ Import with analysis message: {message}")
         print(f"  Files analyzed: {analyzed_count}")

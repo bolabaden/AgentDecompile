@@ -1,29 +1,90 @@
-# AgentDecompile – context for AI agents
+# AgentDecompile – Copilot/Claude Instructions
 
-**What this is:** AgentDecompile is a Ghidra extension that runs an MCP (Model Context Protocol) server so AI clients can talk to Ghidra—decompile, list symbols, read memory, open projects, etc. It turns Ghidra into an MCP backend that LLMs call via tools. Built for Java 21 and Ghidra 12.0+. The MCP server is always Java (Jetty); transport is streamable HTTP at `POST /mcp/message` (no SSE).
+**Current state (Feb 2026):** Python implementation (`src/agentdecompile_cli/`) is the **authoritative source**. Java (`src/main/java/agentdecompile/`) is **deprecated** but maintained for backwards compatibility.
 
-**How it runs:** (1) **GUI** – Plugin inside Ghidra; one MCP server; clients hit `http://localhost:8080/mcp/message` (or configured host/port). (2) **CLI local** – Python (`mcp-agentdecompile`) starts PyGhidra/JVM, launches the Java MCP server, then bridges stdio to it so MCP clients see stdio. (3) **CLI connect** – Python does not start JVM; it connects to an existing server via `--server-url` or `AGENT_DECOMPILE_MCP_SERVER_URL` (e.g. Docker or GUI). Full usage, env vars, and Docker: [README.md](README.md). Deep architecture, MCP protocol, adding tools, auth, locking: [CONTRIBUTING.md](CONTRIBUTING.md). Build and code structure: [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md).
+## Planning and Documentation Diagram Policy
 
-**Where things are:**
+- Every new or updated planning/design document must include at least one Mermaid diagram.
+- The diagram should appear near the top (after objective/scope) and provide a high-level flow.
+- Keep diagrams synchronized with the written steps when plans evolve.
+- Prefer simple `flowchart TD` diagrams for execution plans and phase sequencing.
+- If a document has multiple phases/modules, include one top-level diagram plus optional focused diagrams.
 
-- **Java extension** – `src/main/java/agentdecompile/`
-  - `server/` – MCP server: McpServerManager (Jetty, tool/resource registration), filters (ApiKeyAuth, KeepAlive, RequestLogging, GlobalException).
-  - `headless/` – AgentDecompileHeadlessLauncher: starts Ghidra headless, opens project, starts MCP server; used by Python launcher and Docker.
-  - `tools/` – MCP tool providers (decompiler, functions, symbols, memory, project, comments, structures, etc.); each is a *ToolProvider registered in McpServerManager.
-  - `resources/` – MCP resource providers (e.g. program list); URI scheme `ghidra://`.
-  - `plugin/` – GUI: AgentDecompileApplicationPlugin (lifecycle), ConfigManager (options, API key, port), AgentDecompileProgramManager (program/tool tracking).
-  - `util/` – AddressUtil, ProgramLookupUtil, DataTypeParserUtil, DecompilationContextUtil, DebugLogger.
-  - `ui/` – GUI components.
+## What is AgentDecompile?
 
-- **Python CLI** – `src/agentdecompile_cli/`
-  - `__main__.py` – Entry point `mcp-agentdecompile`; parses args (e.g. `--server-url`), either connect mode or local spawn (PyGhidra + launcher + bridge).
-  - `stdio_bridge.py` – Stdio ↔ HTTP bridge; connects to Java MCP server, proxies list_tools/call_tool/list_resources/read_resource/list_prompts; retries, timeouts, optional API key header.
-  - `launcher.py` – Wraps Java AgentDecompileHeadlessLauncher (via PyGhidra); project init, start server.
-  - `project_manager.py` – Ghidra project lifecycle (create/open/import).
+AgentDecompile provides a comprehensive Model Context Protocol (MCP) server that allows AI clients to interact with Ghidra/PyGhidra for reverse engineering. It surfaces **49 tools** across 6 functional domains:
 
-- **Tests** – `src/test/` (Java unit, no Ghidra), `src/test.slow/` (Java integration, needs Ghidra/headed), `tests/` (Python: unit/integration/e2e). See [tests/README.md](tests/README.md).
+1. **Symbol management** – `manage-symbols`, `search-symbols-by-name`
+2. **Function analysis** – `list-functions`, `manage-function`, `get-functions`, `match-function`
+3. **Memory & data** – `inspect-memory`, `manage-strings`, `manage-data-types`, `manage-structures`
+4. **Control flow** – `get-call-graph`, `get-references`, `analyze-data-flow`, `analyze-vtables`
+5. **Annotations** – `manage-comments`, `manage-bookmarks`, `manage-function-tags`
+6. **Project management** – `open`, `list-project-files`, `manage-files`, `import-binary`, `export`
 
-- **Docker** – `Dockerfile` (fetches Ghidra from GitHub, builds extension, runtime stage), `docker/entrypoint.sh` (starts headless MCP server), `docker-compose.yml`.
+Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 
-Build: set `GHIDRA_INSTALL_DIR`, use `build-and-install.ps1`
+## Python Implementation (Authoritative)
 
+**Location:** `src/agentdecompile_cli/`
+
+- `mcp_server/tool_providers.py` – `ToolProvider` base class + `ToolProviderManager` (centralized normalization, dispatch, error handling)
+- `mcp_server/providers/*.py` – Tool implementations (19 files, one per domain)
+- `mcp_server/server.py` – MCP server (FastAPI + MCP SDK wiring)
+- `mcp_utils/*.py` – Shared utilities (address resolution, symbol lookup, etc.)
+- `tools/wrappers.py` – `GhidraTools` wrapper class (comprehensive Ghidra API access)
+- `registry.py` – Tool registry, `normalize_identifier()`, canonical tool list
+- `models.py` – Response data structures
+
+### Normalization Contract (CRITICAL)
+
+**Advertisement Layer (External-Facing)**:
+- **CLI commands/options**: SHOULD BE ADVERTISED in `snake_case` (`manage_symbols`, `program_path`) BUT OBVIOUSLY NORMALIZE AND FLEXIBLY HANDLE THINGS LIKE managesymbols/manageSymbols/programPath/program<anysymbolswhatsoeverhere> should work fully. Do not forget this!
+- **MCP tool schemas**: MUST use `snake_case` (`manage_symbols`, `program_path`)
+- **Purpose**: Provides consistent, idiomatic naming for user-facing interfaces
+
+**Execution Layer (Internal Matching)**:
+- **Tool name matching**: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
+- **Argument name matching**: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
+- **Normalization**: `normalize_identifier(s)` = `re.sub(r"[^a-z]", "", s.lower().strip())` (alpha-only lowercase)
+- **Examples**:
+  - Tool names: `manage-symbols`, `Manage_Symbols`, `MANAGESYMBOLS`, `@@manage symbols@@` → all resolve to `managesymbols` internally
+  - Arguments: `programPath`, `program_path`, `PROGRAM PATH`, `__program-path__` → all resolve to `programpath` internally
+
+**Implementation Rules**:
+1. **Single normalization function**: `registry.normalize_identifier()` (aliased as `n()` in tool_providers.py)
+2. **Single advertisement function**: `registry.to_snake_case()` converts any format to snake_case for display
+3. **No hardcoded case matching**: Never check exact strings; always normalize first
+4. **User-friendly**: If it looks like the tool/arg name, accept it
+
+## Java Implementation (Deprecated)
+
+**Location:** `src/main/java/agentdecompile/`
+
+Kept for backwards compatibility with existing GUI workflows. Do not add new tools here. Extract implementation details, then rewrite in Python.
+
+## Vendor Source Integration
+
+Each tool merges compatible implementations from:
+1. `vendor/pyghidra-mcp/` – Base tool implementations
+2. `vendor/GhidraMCP/` – Additional symbols/xrefs API
+3. `vendor/reverse-engineering-assistant/` – Project management patterns
+4. `TOOLS_LIST.md` – Canonical specifications
+
+Example: `manage-symbols` consolidates:
+- pyghidra-mcp: `search_symbols_by_name()` → `mode='symbols'`
+- GhidraMCP: `list_methods()`, `list_classes()` → `mode='classes'`, `mode='namespaces'`
+- TOOLS_LIST: `demangle`, `imports`, `exports`, `rename_data`, `count`, `create_label`
+
+All modes, all argument names, all response formats in one unified tool.
+
+## How to Work on This (Cross-references in code)
+
+1. **Start with TOOLS_LIST.md** – Extract tool specification (modes, parameters, response shape)
+2. **Review vendor sources** – Check pyghidra-mcp, GhidraMCP, etc. for working implementations
+3. **Implement in Python** – `src/agentdecompile_cli/mcp_server/providers/DOMAIN_NAME.py`
+4. **Extend `ToolProvider`** – Define `HANDLERS` dict, use `self._get()` helpers for normalized arg access
+5. **Test** – Verify all modes, argument forms, error cases
+
+For detailed architectural notes, see [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md).
+
+ALWAYS keep [TOOLS_LIST.md](../TOOLS_LIST.md) as the source of truth for tool specifications and up to date!

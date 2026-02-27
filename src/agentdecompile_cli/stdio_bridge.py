@@ -1,19 +1,29 @@
-"""
+"""LEGACY: Content has been merged into bridge.py which is the single source of truth.
+This file is kept for backward-compatibility and will be removed by the project owner.
+Prefer importing from agentdecompile_cli.bridge.
+
 Stdio to HTTP MCP bridge using official MCP SDK Server abstraction.
 
 Provides a proper MCP Server that forwards all requests to AgentDecompile's StreamableHTTP endpoint.
 Uses the MCP SDK's stdio transport and Pydantic serialization - no manual JSON-RPC handling.
 
 The bridge acts as a transparent proxy - all tool calls, resources, and prompts are
-forwarded to the Java AgentDecompile backend running on localhost.
+forwarded to the Python AgentDecompile backend running on localhost.
+
+1:1 with Python MCP server: endpoint POST http://{host}:{port}/mcp/message (streamable HTTP);
+tool names, parameter names (camelCase), and resource URIs match src/agentdecompile_cli/mcp_server exactly.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+
 from collections import deque
-from typing import TYPE_CHECKING, Any, Iterable
+from collections.abc import Iterable
+from types import TracebackType
+from typing import TYPE_CHECKING, Any
 
 try:
     from anyio import BrokenResourceError, ClosedResourceError
@@ -26,8 +36,10 @@ except ImportError:
     BrokenResourceError = _PlaceholderConnectionError
     ClosedResourceError = _PlaceholderConnectionError
 
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from httpx import AsyncClient
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
@@ -39,21 +51,22 @@ from mcp.types import (
 
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
 
+if TYPE_CHECKING:
+    from contextlib import _AsyncGeneratorContextManager
+
 
 class ClientError(Exception):
     """Custom exception for client errors."""
-
-    pass
 
 
 class ServerNotRunningError(ClientError):
     """Raised when the backend is not running or unreachable."""
 
-    pass
-
 
 # Timeout for initial transport connect (separate from long-running operation timeouts)
 CONNECT_TIMEOUT = 5.0
+# Timeout for backend operations (tool calls, list_resources, etc.)
+BACKEND_OP_TIMEOUT = 90.0
 
 
 def _is_jsonrpc_request(msg: SessionMessage) -> bool:
@@ -85,20 +98,40 @@ def _session_message_with_id(msg: SessionMessage, new_id: int | str) -> SessionM
 
 
 class _IdFixReadStream:
-    """
-    Wraps the stdio read stream and records JSON-RPC request ids so responses
+    """Wraps the stdio read stream and records JSON-RPC request ids so responses
     with id:0 can be rewritten to match (see _IdFixWriteStream).
+
+    Implements async context manager protocol (delegates to underlying stream)
+    since MCP session._receive_loop uses async with on the read stream.
     """
 
-    def __init__(self, read_stream: Any, request_ids: deque[int | str]) -> None:
-        self._read = read_stream
-        self._request_ids = request_ids
+    def __init__(
+        self,
+        read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
+        request_ids: deque[int | str],
+    ) -> None:
+        self._read: MemoryObjectReceiveStream[SessionMessage | Exception] = read_stream
+        self._request_ids: deque[int | str] = request_ids
 
-    def __aiter__(self) -> Any:
+    async def __aenter__(self) -> _IdFixReadStream:
+        if hasattr(self._read, "__aenter__"):
+            await self._read.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if hasattr(self._read, "__aexit__"):
+            await self._read.__aexit__(exc_type, exc_val, exc_tb)
+
+    def __aiter__(self) -> _IdFixReadStream:
         return self
 
     async def __anext__(self) -> SessionMessage | Exception:
-        item = await self._read.__anext__()
+        item: SessionMessage | Exception = await self._read.__anext__()
         if isinstance(item, SessionMessage) and _is_jsonrpc_request(item):
             rid = getattr(item.message, "id", None)
             if rid is not None:
@@ -107,26 +140,35 @@ class _IdFixReadStream:
 
 
 class _IdFixWriteStream:
-    """
-    Wraps the stdio write stream and rewrites any JSON-RPC response with id:0
-    to use the corresponding client request id (FIFO), so strict clients like
-    Cursor accept the response instead of "unknown message ID".
+    """Wraps the stdio write stream.
+
+    Rewrites any JSON-RPC response with id:0 to use the corresponding client
+    request id (FIFO), so strict clients like Cursor accept the response
+    instead of "unknown message ID".
     """
 
-    def __init__(self, write_stream: Any, request_ids: deque[int | str]) -> None:
-        self._write = write_stream
-        self._request_ids = request_ids
+    def __init__(
+        self,
+        write_stream: MemoryObjectSendStream[SessionMessage | Exception],
+        request_ids: deque[int | str],
+    ) -> None:
+        self._write: MemoryObjectSendStream[SessionMessage | Exception] = write_stream
+        self._request_ids: deque[int | str] = request_ids
 
-    async def send(self, msg: SessionMessage | Exception) -> None:
+    async def send(
+        self,
+        msg: SessionMessage | Exception,
+    ) -> None:
         if isinstance(msg, SessionMessage) and _is_jsonrpc_response_with_id_zero(msg):
             if self._request_ids:
-                new_id = self._request_ids.popleft()
+                new_id: int | str = self._request_ids.popleft()
                 msg = _session_message_with_id(msg, new_id)
         await self._write.send(msg)
 
     async def aclose(self) -> None:
         if hasattr(self._write, "aclose"):
             await self._write.aclose()
+
 
 if TYPE_CHECKING:
     from mcp.server.lowlevel.helper_types import ReadResourceContents
@@ -145,34 +187,41 @@ if TYPE_CHECKING:
 
 
 class JsonEnvelopeStream:
-    """
-    Wraps the MCP stream to handle parsing errors gracefully.
+    """Wraps the MCP stream to handle parsing errors gracefully.
     The stream yields SessionMessage objects or Exception objects.
     When the MCP SDK fails to parse a log message as JSON-RPC, it creates an Exception.
     We catch those exceptions and convert them to valid SessionMessage objects.
     """
 
-    def __init__(self, original_stream):
-        self.original_stream = original_stream
+    def __init__(
+        self,
+        original_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
+    ) -> None:
+        self.original_stream: MemoryObjectReceiveStream[SessionMessage | Exception] = original_stream
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> JsonEnvelopeStream | MemoryObjectReceiveStream[SessionMessage | Exception]:
         # If original stream supports context manager, enter it
         if hasattr(self.original_stream, "__aenter__"):
             return await self.original_stream.__aenter__()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
         # If original stream supports context manager, exit it
         if hasattr(self.original_stream, "__aexit__"):
             return await self.original_stream.__aexit__(exc_type, exc_val, exc_tb)
         return None
 
-    def __aiter__(self):
+    def __aiter__(self) -> JsonEnvelopeStream:
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> SessionMessage | Exception:
         try:
-            item = await self.original_stream.__anext__()
+            item: SessionMessage | Exception = await self.original_stream.__anext__()
         except StopAsyncIteration:
             raise
 
@@ -200,20 +249,17 @@ class JsonEnvelopeStream:
 
 
 class AgentDecompileStdioBridge:
-    """
-    MCP Server that bridges stdio to AgentDecompile's StreamableHTTP endpoint.
+    """MCP Server that bridges stdio to AgentDecompile's Python StreamableHTTP endpoint.
 
-    Acts as a transparent proxy - forwards all MCP requests to the AgentDecompile backend
+    Acts as a transparent proxy - forwards all MCP requests to the Python AgentDecompile backend
     and returns responses.
     """
 
-    def __init__(self, backend: int | str, api_key: str | None = None):
-        """
-        Initialize the stdio bridge.
+    def __init__(self, backend: int | str):
+        """Initialize the stdio bridge.
 
         Args:
             backend: AgentDecompile server port (int) or URL (str) to connect to
-            api_key: Optional API key sent as X-API-Key header
         """
         if isinstance(backend, int):
             self.port: int | None = backend
@@ -223,21 +269,78 @@ class AgentDecompileStdioBridge:
             self.url = normalize_backend_url(backend)
 
         self._streamable_http_headers: dict[str, str] | None = None
-        if api_key is not None and api_key.strip():
-            self._streamable_http_headers = {"X-API-Key": api_key}
 
         self.server: Server = Server("AgentDecompile")
-        self.backend_session: ClientSession | None = None
-        self._current_json_stream: JsonEnvelopeStream | None = None
-        self._transport_cm: Any = None
+        self._backend_connect_lock: asyncio.Lock | None = None
 
         self._register_handlers()
 
-    async def _ensure_backend_connected(self) -> ClientSession:
-        """Ensure backend session is connected."""
-        if self.backend_session is None:
-            raise RuntimeError("Backend session not initialized - connection lost")
-        return self.backend_session
+    @contextlib.asynccontextmanager
+    async def _with_backend_session(self, _op_name: str):
+        """Context manager: create a fresh backend connection, init, yield session, then close.
+
+        Uses connection-per-request to avoid MCP streamable HTTP reuse bugs
+        (Connection closed on 2nd request; python-sdk#1941, #680).
+        """
+        client = AsyncClient(
+            headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
+            timeout=BACKEND_OP_TIMEOUT,
+        )
+        transport_gen: _AsyncGeneratorContextManager[tuple[MemoryObjectReceiveStream[SessionMessage | Exception]], None] = streamable_http_client(
+            url=self.url,
+            http_client=client,
+        )
+        transport_cm = transport_gen
+        json_stream: JsonEnvelopeStream | None = None
+        try:
+            stream: tuple[MemoryObjectReceiveStream[SessionMessage | Exception]] = await asyncio.wait_for(
+                transport_gen.__aenter__(),
+                timeout=CONNECT_TIMEOUT,
+            )
+            read_stream: MemoryObjectReceiveStream[SessionMessage | Exception] = stream[0]
+            write_stream: MemoryObjectSendStream[SessionMessage | Exception] = stream[1]  # pyright: ignore[reportInvalidTypeForm, reportAssignmentType, reportGeneralTypeIssues]
+        except asyncio.TimeoutError:
+            try:
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from None
+        except (ConnectionError, OSError) as e:
+            try:
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from e
+        except Exception as e:
+            try:
+                await transport_gen.__aexit__(None, None, None)
+            except Exception:
+                pass
+            err = str(e)
+            if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused"]):
+                raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from e
+            raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n{get_server_start_message()}") from e
+
+        json_stream = JsonEnvelopeStream(read_stream)
+        session_cm = ClientSession(json_stream, write_stream)
+        try:
+            session = await session_cm.__aenter__()
+            await session.initialize()
+            yield session
+        finally:
+            try:
+                await session_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+            if json_stream is not None:
+                try:
+                    await json_stream.aclose()
+                except Exception:
+                    pass
+            try:
+                await transport_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
@@ -245,9 +348,9 @@ class AgentDecompileStdioBridge:
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
             try:
-                await self._ensure_backend_connected()
-                result = await self.backend_session.list_tools()  # type: ignore
-                return result.tools if result else []
+                async with self._with_backend_session("list_tools") as session:
+                    result = await session.list_tools()
+                    return [] if result is None else result.tools
             except RuntimeError:
                 return []
             except Exception as e:
@@ -258,21 +361,14 @@ class AgentDecompileStdioBridge:
         async def call_tool(
             name: str,
             arguments: dict[str, Any],
-        ) -> (
-            UnstructuredContent
-            | StructuredContent
-            | CombinationContent
-            | CallToolResult
-        ):
+        ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # pyright: ignore[reportInvalidTypeForm]
             try:
-                await self._ensure_backend_connected()
-                session = self.backend_session
-                if session is None:
-                    return [TextContent(type="text", text="Error: Backend session not initialized")]
-                result = await session.call_tool(name, arguments)
-                if result is None:
-                    return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")]
-                return result.content
+                async with self._with_backend_session("call_tool") as session:
+                    result = await asyncio.wait_for(
+                        session.call_tool(name, arguments),
+                        timeout=BACKEND_OP_TIMEOUT,
+                    )
+                    return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")] if result is None else result.content
             except RuntimeError as e:
                 return [TextContent(type="text", text=f"Error: Backend connection lost: {e}")]
             except Exception as e:
@@ -282,9 +378,9 @@ class AgentDecompileStdioBridge:
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:
             try:
-                await self._ensure_backend_connected()
-                result = await self.backend_session.list_resources()  # type: ignore
-                return result.resources if result else []
+                async with self._with_backend_session("list_resources") as session:
+                    result = await session.list_resources()
+                    return [] if result is None else result.resources
             except RuntimeError:
                 return []
             except Exception as e:
@@ -296,16 +392,16 @@ class AgentDecompileStdioBridge:
             uri: AnyUrl,
         ) -> str | bytes | Iterable[ReadResourceContents]:
             try:
-                await self._ensure_backend_connected()
-                result = await self.backend_session.read_resource(uri)  # type: ignore
-                if result is None or not result.contents:
+                async with self._with_backend_session("read_resource") as session:
+                    result = await session.read_resource(uri)
+                    if result is None or not result.contents:
+                        return ""
+                    content = result.contents[0]
+                    if hasattr(content, "text") and content.text:  # pyright: ignore[reportAttributeAccessIssue]
+                        return content.text  # pyright: ignore[reportAttributeAccessIssue]
+                    if hasattr(content, "blob") and content.blob:  # pyright: ignore[reportAttributeAccessIssue]
+                        return content.blob  # pyright: ignore[reportAttributeAccessIssue]
                     return ""
-                content = result.contents[0]
-                if hasattr(content, "text") and content.text:  # pyright: ignore[reportAttributeAccessIssue]
-                    return content.text  # pyright: ignore[reportAttributeAccessIssue]
-                if hasattr(content, "blob") and content.blob:  # pyright: ignore[reportAttributeAccessIssue]
-                    return content.blob  # pyright: ignore[reportAttributeAccessIssue]
-                return ""
             except RuntimeError:
                 return ""
             except Exception as e:
@@ -315,9 +411,9 @@ class AgentDecompileStdioBridge:
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:
             try:
-                await self._ensure_backend_connected()
-                result = await self.backend_session.list_prompts()  # type: ignore
-                return result.prompts if result else []
+                async with self._with_backend_session("list_prompts") as session:
+                    result = await session.list_prompts()
+                    return [] if result is None else result.prompts
             except RuntimeError:
                 return []
             except Exception as e:
@@ -325,112 +421,30 @@ class AgentDecompileStdioBridge:
                 return []
 
     async def run(self):
+        """Run the stdio bridge.
+
+        Starts the MCP server on stdio immediately. Connects to the AgentDecompile
+        backend lazily on first tool/resource/prompt request to avoid MCP streamable
+        HTTP race conditions during the initialize handshake.
         """
-        Run the stdio bridge.
-
-        Connects to AgentDecompile backend via StreamableHTTP, initializes the session,
-        then exposes the MCP server via stdio transport.
-        """
-        sys.stderr.write(f"Connecting to AgentDecompile backend at {self.url}...\n")
-
-        if self._streamable_http_headers:
-            transport_gen = streamablehttp_client(self.url, headers=self._streamable_http_headers)
-        else:
-            transport_gen = streamablehttp_client(self.url)
+        sys.stderr.write("Bridge ready - stdio transport active\n")
         try:
-            read_stream, write_stream, get_session_id = await asyncio.wait_for(
-                transport_gen.__aenter__(),
-                timeout=CONNECT_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}"
-            ) from None
-        except (ConnectionError, OSError) as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}"
-            ) from e
-        except Exception as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            error_msg = str(e)
-            if any(
-                x in error_msg
-                for x in ["ConnectError", "connection", "ConnectionRefused"]
-            ):
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile backend at {self.url}\n\n"
-                    f"{get_server_start_message()}"
-                ) from e
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n"
-                f"{get_server_start_message()}"
-            ) from e
-
-        self._transport_cm = transport_gen
-        session_cm = None
-        try:
-            json_stream = JsonEnvelopeStream(read_stream)
-            self._current_json_stream = json_stream
-
-            async with json_stream:
-                session_cm = ClientSession(json_stream, write_stream)  # pyright: ignore[reportArgumentType]
-                self.backend_session = await session_cm.__aenter__()
-                sys.stderr.write("Initializing AgentDecompile backend session...\n")
-                init_result = await self.backend_session.initialize()
-                sys.stderr.write(f"Connected to {init_result.serverInfo.name} v{init_result.serverInfo.version}\n")
-                sys.stderr.write("Bridge ready - stdio transport active\n")
-                try:
-                    async with stdio_server() as (stdio_read, stdio_write):
-                        request_ids: deque[int | str] = deque()
-                        read_fix = _IdFixReadStream(stdio_read, request_ids)
-                        write_fix = _IdFixWriteStream(stdio_write, request_ids)
-                        await self.server.run(
-                            read_fix,  # pyright: ignore[reportArgumentType]
-                            write_fix,  # pyright: ignore[reportArgumentType]
-                            self.server.create_initialization_options(),
-                        )
-                except ClosedResourceError:
-                    sys.stderr.write("Client disconnected\n")
-                except BrokenResourceError:
-                    sys.stderr.write("Client connection broken - disconnecting\n")
-                except Exception:
-                    raise
+            async with stdio_server() as (stdio_read, stdio_write):
+                # Pass raw streams - _IdFix wrappers cause MCP SDK async context manager errors
+                await self.server.run(
+                    stdio_read,  # pyright: ignore[reportArgumentType]
+                    stdio_write,  # pyright: ignore[reportArgumentType]
+                    self.server.create_initialization_options(),
+                )
+        except ClosedResourceError:
+            sys.stderr.write("Client disconnected\n")
+        except BrokenResourceError:
+            sys.stderr.write("Client connection broken - disconnecting\n")
+        except Exception:
+            raise
         finally:
-            self.backend_session = None
-            if session_cm is not None:
-                try:
-                    await session_cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
-            if self._current_json_stream is not None:
-                try:
-                    await self._current_json_stream.aclose()
-                except Exception:
-                    pass
-                self._current_json_stream = None
-            if getattr(self, "_transport_cm", None) is not None:
-                try:
-                    await self._transport_cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                self._transport_cm = None
+            pass  # Connection-per-request; no persistent backend to close
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
-        if self._current_json_stream is not None:
-            try:
-                pass
-            except Exception:
-                pass
-            self._current_json_stream = None
+        # Connection-per-request; no persistent backend to close

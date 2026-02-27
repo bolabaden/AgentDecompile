@@ -1,4 +1,7 @@
-"""
+"""LEGACY: Content has been merged into bridge.py which is the single source of truth.
+This file is kept for backward-compatibility and will be removed by the project owner.
+Prefer importing from agentdecompile_cli.bridge.
+
 MCP client for the AgentDecompile server.
 
 Async client that connects to an AgentDecompile MCP server via HTTP
@@ -13,7 +16,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+
 from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
@@ -25,24 +30,17 @@ if TYPE_CHECKING:
 class ClientError(Exception):
     """Custom exception for client errors."""
 
-    pass
-
 
 class ServerNotRunningError(ClientError):
     """Raised when the AgentDecompile server is not running or unreachable."""
-
-    pass
 
 
 class NotFoundError(ClientError):
     """Raised when a resource or program is not found."""
 
-    pass
-
 
 class AgentDecompileMcpClient:
-    """
-    MCP client for the AgentDecompile server.
+    """MCP client for the AgentDecompile server.
 
     Connects via Streamable HTTP and provides async methods for
     list_tools, call_tool, list_resources, read_resource, list_prompts.
@@ -53,16 +51,13 @@ class AgentDecompileMcpClient:
         host: str = "127.0.0.1",
         port: int = 8080,
         url: str | None = None,
-        api_key: str | None = None,
     ):
-        """
-        Initialize the client.
+        """Initialize the client.
 
         Args:
             host: Server host (used if url is None).
             port: Server port (used if url is None).
             url: Override URL (e.g. http://host:port or http://host:port/mcp/message).
-            api_key: Optional X-API-Key header value.
         """
         if url and url.strip():
             self._url = normalize_backend_url(url.strip())
@@ -71,10 +66,8 @@ class AgentDecompileMcpClient:
             if not base.endswith("/mcp/message"):
                 base = f"{base.rstrip('/')}/mcp/message"
             self._url = base
-        self._api_key = api_key.strip() if api_key and api_key.strip() else None
         self._session: Any = None
-        self._session_cm: Any = None
-        self._transport_cm: Any = None
+        self._exit_stack: contextlib.AsyncExitStack | None = None
         self._connected: bool = False
 
     async def __aenter__(self) -> AgentDecompileMcpClient:
@@ -85,86 +78,70 @@ class AgentDecompileMcpClient:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit; closes connection."""
         await self._close_internal()
-        return None
 
     async def _connect_internal(self) -> None:
         """Establish connection to the AgentDecompile MCP server."""
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
 
-        headers = None
-        if self._api_key:
-            headers = {"X-API-Key": self._api_key}
+        self._exit_stack = contextlib.AsyncExitStack()
+        await self._exit_stack.__aenter__()
 
-        transport_gen = (
-            streamablehttp_client(self._url, headers=headers)
-            if headers
-            else streamablehttp_client(self._url)
-        )
         try:
-            read, write, _ = await asyncio.wait_for(
-                transport_gen.__aenter__(),
-                timeout=5.0,
+            read, write, _ = await self._exit_stack.enter_async_context(
+                streamablehttp_client(self._url, timeout=5),
             )
-        except asyncio.TimeoutError:
+            self._session = await self._exit_stack.enter_async_context(
+                ClientSession(read, write),
+            )
+            await self._session.initialize()
+            self._connected = True
+        except BaseException as e:
             try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
+                await self._exit_stack.__aexit__(None, None, None)
+            except BaseException:
                 pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile server at {self._url}\n\n"
-                f"{get_server_start_message()}"
-            ) from None
-        except (ConnectionError, OSError) as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile server at {self._url}\n\n"
-                f"{get_server_start_message()}"
-            ) from e
-        except Exception as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            err = str(e)
-            if any(
-                x in err
-                for x in ["ConnectError", "connection", "ConnectionRefused"]
-            ):
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile server at {self._url}\n\n"
-                    f"{get_server_start_message()}"
-                ) from e
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n"
-                f"{get_server_start_message()}"
-            ) from e
+            self._exit_stack = None
+            self._session = None
 
-        self._transport_cm = transport_gen
-        self._session_cm = ClientSession(read, write)
-        self._session = await self._session_cm.__aenter__()
-        await self._session.initialize()
-        self._connected = True
+            err = str(e)
+            is_conn = (
+                isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError))
+                or any(
+                    x in err
+                    for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"]
+                )
+            )
+            if not is_conn and hasattr(e, "exceptions"):
+                is_conn = any(
+                    isinstance(sub, (ConnectionError, OSError))
+                    or any(
+                        x in str(sub)
+                        for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"]
+                    )
+                    for sub in e.exceptions  # type: ignore[union-attr]
+                )
+
+            if is_conn:
+                raise ServerNotRunningError(
+                    f"Cannot connect to AgentDecompile server at {self._url}\n\n{get_server_start_message()}",
+                ) from e
+            if isinstance(e, Exception):
+                raise ServerNotRunningError(
+                    f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n{get_server_start_message()}",
+                ) from e
+            raise
 
     async def _close_internal(self) -> None:
         """Close connection and release resources."""
-        if self._session_cm is not None and self._connected:
-            self._connected = False
+        self._connected = False
+        self._session = None
+        if self._exit_stack is not None:
             try:
-                await self._session_cm.__aexit__(None, None, None)
-            except Exception:
+                await self._exit_stack.__aexit__(None, None, None)
+            except BaseException:
                 pass
-            self._session_cm = None
-            self._session = None
-        if self._transport_cm is not None:
-            try:
-                await self._transport_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
-            self._transport_cm = None
+            self._exit_stack = None
 
     def _extract_result(self, result: CallToolResult) -> dict[str, Any]:
         """Extract data from MCP CallToolResult; raise on error or not-found."""
@@ -189,13 +166,13 @@ class AgentDecompileMcpClient:
                     except (json.JSONDecodeError, KeyError):
                         pass
                 raise NotFoundError(
-                    "Resource not found. List programs or resources and try again."
+                    "Resource not found. List programs or resources and try again.",
                 )
             return structured
 
         if not result_dict or (isinstance(result_dict, dict) and not result_dict):
             raise NotFoundError(
-                "Resource not found. List programs or resources and try again."
+                "Resource not found. List programs or resources and try again.",
             )
 
         return result_dict
@@ -208,7 +185,12 @@ class AgentDecompileMcpClient:
         return list(result.tools) if result and result.tools else []
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Call a tool by name with optional arguments."""
+        """Call a tool by name with optional arguments.
+
+        Returns the extracted JSON from the server. The server may return a
+        error result: a dict with success=false and an "error" key; check for that
+        if you need to handle errors programmatically (the CLI exits non-zero on such results).
+        """
         if not self._connected or self._session is None:
             raise ClientError("Not connected")
         result = await self._session.call_tool(name, arguments or {})

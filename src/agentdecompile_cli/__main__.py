@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""
-AgentDecompile CLI - Main entry point.
+"""AgentDecompile CLI - Main entry point.
 
 Provides stdio MCP transport for AgentDecompile, enabling integration with Claude CLI.
 Usage: claude mcp add AgentDecompile -- mcp-agentdecompile [--config PATH] [--verbose]
+
+Connect mode (1:1 with Python MCP server): --server-url or --host/--port.
+Defaults for host/port come from AGENT_DECOMPILE_SERVER_HOST and AGENT_DECOMPILE_SERVER_PORT.
+Project path (when spawning local server): AGENT_DECOMPILE_PROJECT_PATH.
 """
 
 from __future__ import annotations
@@ -11,28 +14,28 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import signal
 import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Coroutine, TextIO
 
-from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
+
+from agentdecompile_cli.bridge import _apply_mcp_session_fix
 
 # Apply MCP SDK fix before any ClientSession use (list() snapshot for _response_streams iteration)
 _apply_mcp_session_fix()
 
-from agentdecompile_cli.launcher import AgentDecompileLauncher  # noqa: E402
-from agentdecompile_cli.project_manager import ProjectManager  # noqa: E402
-from agentdecompile_cli.stdio_bridge import AgentDecompileStdioBridge  # noqa: E402
-from agentdecompile_cli.utils import (  # noqa: E402
-    get_server_start_message,
+from agentdecompile_cli.bridge import AgentDecompileStdioBridge  # noqa: E402
+from agentdecompile_cli.executor import (  # noqa: E402
     handle_command_error,
-    handle_noisy_mcp_errors,
     resolve_backend_url,
     run_async,
-    show_connection_error,
 )
+from agentdecompile_cli.launcher import (
+    AgentDecompileLauncher,  # noqa: E402
+    ProjectManager,  # noqa: E402
+)
+
 try:
     from agentdecompile_cli import __version__
 except ImportError:
@@ -71,7 +74,7 @@ def _redirect_java_outputs():
                     return
                 try:
                     # Java byte is signed (-128..127); normalize to 0..255 for Python bytes
-                    chunk = bytes((int(b[i]) & 0xFF for i in range(off, off + len_val)))
+                    chunk = bytes(int(b[i]) & 0xFF for i in range(off, off + len_val))
                     sys.stderr.write(chunk.decode("utf-8", errors="replace"))
                     sys.stderr.flush()
                 except Exception:
@@ -87,8 +90,7 @@ def _redirect_java_outputs():
 
 
 class StderrFilter:
-    """
-    Wraps stderr writes in JSON-RPC notification messages to ensure all output is valid JSON.
+    """Wraps stderr writes in JSON-RPC notification messages to ensure all output is valid JSON.
 
     All writes to stderr are wrapped in JSON-RPC notifications with method "_log" so they
     can be safely read by MCP clients without causing JSON parsing errors.
@@ -110,7 +112,7 @@ class StderrFilter:
         # Flush when we see a newline (complete log message) or buffer gets too large
         if "\n" in self._buffer or len(self._buffer) > 4096:
             # Extract complete lines
-            lines = self._buffer.split("\n")
+            lines: list[str] = self._buffer.split("\n")
             # Keep the last incomplete line in buffer
             self._buffer = lines[-1]
             # Process complete lines
@@ -131,11 +133,7 @@ class StderrFilter:
         escaped_message: str = json.dumps(message)
         # Create JSON-RPC notification
         # Format: {"jsonrpc":"2.0","method":"_log","params":{"message":"..."}}
-        jsonrpc_msg: str = (
-            '{"jsonrpc":"2.0","method":"_log","params":{"message":'
-            + escaped_message
-            + "}}\n"
-        )
+        jsonrpc_msg: str = '{"jsonrpc":"2.0","method":"_log","params":{"message":' + escaped_message + "}}\n"
         self.real_stderr.write(jsonrpc_msg)
         self.real_stderr.flush()
 
@@ -153,14 +151,13 @@ class StderrFilter:
             self.flush()
             self._closed = True
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """Delegate other attributes to real stderr."""
         return getattr(self.real_stderr, name)
 
 
 class StdoutFilter:
-    """
-    Filters stdout writes to prevent non-JSON output from interfering with MCP stdio protocol.
+    """Filters stdout writes to prevent non-JSON output from interfering with MCP stdio protocol.
 
     Writes that look like JSON-RPC messages (start with '{' and contain "jsonrpc") are passed
     through to the real stdout. All other writes are redirected to stderr (which is wrapped
@@ -182,7 +179,7 @@ class StdoutFilter:
 
         # Add to buffer
         self._buffer += s
-        buffer_stripped = self._buffer.lstrip()
+        buffer_stripped: str = self._buffer.lstrip()
 
         # CRITICAL: Immediately redirect anything that doesn't start with '{'
         # This prevents Java log messages (like "INFO  Using...") from corrupting JSON-RPC
@@ -209,12 +206,11 @@ class StdoutFilter:
                     # Keep any remaining content in buffer
                     self._buffer = lines[1] if len(lines) > 1 else ""
                     return written
-                else:
-                    # Not valid JSON-RPC - redirect to stderr
-                    written = sys.stderr.write(self._buffer)
-                    sys.stderr.flush()
-                    self._buffer = ""
-                    return written
+                # Not valid JSON-RPC - redirect to stderr
+                written = sys.stderr.write(self._buffer)
+                sys.stderr.flush()
+                self._buffer = ""
+                return written
 
         # Buffer is growing - if it gets too large, assume it's not JSON-RPC
         if len(self._buffer) > 8192:
@@ -232,11 +228,7 @@ class StdoutFilter:
         if self._buffer:
             # Check if remaining buffer is JSON-RPC
             buffer_stripped = self._buffer.lstrip()
-            if (
-                buffer_stripped.startswith("{")
-                and '"jsonrpc"' in self._buffer
-                and self._buffer.rstrip().endswith("}")
-            ):
+            if buffer_stripped.startswith("{") and '"jsonrpc"' in self._buffer and self._buffer.rstrip().endswith("}"):
                 # Complete JSON-RPC message - write to stdout
                 self.real_stdout.write(self._buffer)
                 self.real_stdout.flush()
@@ -254,7 +246,7 @@ class StdoutFilter:
             self.flush()
             self._closed = True
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """Delegate other attributes to real stdout."""
         return getattr(self.real_stdout, name)
 
@@ -267,21 +259,17 @@ class AgentDecompileCLI:
         launcher: AgentDecompileLauncher | None,
         project_manager: ProjectManager | None,
         backend: int | str,
-        api_key: str | None = None,
     ):
-        """
-        Initialize AgentDecompile CLI with pre-initialized components.
+        """Initialize AgentDecompile CLI with pre-initialized components.
 
         Args:
             launcher: Pre-initialized AgentDecompile server launcher (local mode)
             project_manager: Pre-initialized project manager (local mode)
             backend: Backend port (int) or URL (str)
-            api_key: Optional API key sent as X-API-Key in connect mode
         """
         self.launcher: AgentDecompileLauncher | None = launcher
         self.project_manager: ProjectManager | None = project_manager
         self.backend: int | str = backend
-        self.api_key: str | None = api_key if api_key is not None and api_key.strip() else None
         self.bridge: AgentDecompileStdioBridge | None = None
         self.cleanup_done: bool = False
 
@@ -291,7 +279,7 @@ class AgentDecompileCLI:
         def signal_handler(sig: int, frame: FrameType | None):
             if not self.cleanup_done:
                 sys.stderr.write(
-                    f"\nReceived signal {sig}, shutting down gracefully...\n"
+                    f"\nReceived signal {sig}, shutting down gracefully...\n",
                 )
                 self.cleanup()
             sys.exit(0)
@@ -342,7 +330,7 @@ class AgentDecompileCLI:
                 sys.stderr.write(f"Starting stdio bridge on local backend port {self.backend}...\n")
             else:
                 sys.stderr.write(f"Starting stdio bridge to remote backend {self.backend}...\n")
-            self.bridge = AgentDecompileStdioBridge(self.backend, api_key=self.api_key)
+            self.bridge = AgentDecompileStdioBridge(self.backend)
 
             # Run the bridge (this blocks until stopped)
             await self.bridge.run()
@@ -353,11 +341,7 @@ class AgentDecompileCLI:
             raise
         finally:
             # Clean up json stream
-            if (
-                self.bridge
-                and hasattr(self.bridge, "_current_json_stream")
-                and self.bridge._current_json_stream
-            ):
+            if self.bridge and hasattr(self.bridge, "_current_json_stream") and self.bridge._current_json_stream:
                 try:
                     # Note: aclose is async, but we can't await here
                     # The async context managers should have handled cleanup already
@@ -409,12 +393,6 @@ def main():
         help="Output format for human-readable messages (default: text)",
     )
     parser.add_argument(
-        "--api-key",
-        type=str,
-        help="Optional MCP API key sent as X-API-Key",
-        required=False,
-    )
-    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -435,22 +413,22 @@ def main():
         args.host,
         args.port,
     )
-    api_key: str | None = args.api_key or os.getenv("AGENT_DECOMPILE_API_KEY")
 
     # Validate config file if provided
     if args.config and not args.config.exists():
         sys.stderr.write(f"Error: Configuration file not found: {args.config}\n")
         sys.exit(1)
 
-    # Connect mode: strictly bridge to existing Java-hosted MCP server.
+    # Connect mode: strictly bridge to existing Python-hosted MCP server.
     if backend_url is not None and backend_url.strip():
         if args.config:
-            sys.stderr.write("Note: --config is ignored when connecting to an existing MCP server.\n")
+            sys.stderr.write(
+                "Note: --config is ignored when connecting to an existing MCP server.\n",
+            )
         cli = AgentDecompileCLI(
             launcher=None,
             project_manager=None,
             backend=backend_url,
-            api_key=api_key,
         )
         try:
             run_async(cli.run())
@@ -468,7 +446,7 @@ def main():
     # All blocking operations happen here to avoid blocking the event loop
     # This ensures the stdio bridge can start immediately when asyncio.run() is called
     #
-    # CRITICAL: PyGhidra and Java code may write log messages to stdout during both
+    # CRITICAL: PyGhidra and Python code may write log messages to stdout during both
     # initialization and runtime. We install a stdout filter that intercepts all writes:
     # - JSON-RPC messages (for MCP protocol) are passed through to real stdout
     # - All other output (logs, prints, etc.) is redirected to stderr
@@ -499,14 +477,14 @@ def main():
             sys.stderr = original_stderr
             sys.stderr.write(
                 "PyGhidra is not installed for local spawn mode.\n"
-                "Install with the local extra (e.g. `pip install \"agentdecompile[local]\"`) "
-                "or connect to an existing server using --server-url.\n"
+                'Install with the local extra (e.g. `pip install "agentdecompile[local]"`) '
+                "or connect to an existing server using --server-url.\n",
             )
             sys.exit(1)
 
         pyghidra.start(verbose=args.verbose)
 
-        # CRITICAL: Redirect Java's System.out/System.err AFTER PyGhidra starts
+        # CRITICAL: Redirect Java's System.out/System.err AFTER PyGhidra starts (for compatibility)
         # This ensures Java/Ghidra log messages go through our Python filters
         _redirect_java_outputs()
 
@@ -543,7 +521,6 @@ def main():
         launcher=launcher,
         project_manager=project_manager,
         backend=port,
-        api_key=None,
     )
 
     try:

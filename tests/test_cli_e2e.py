@@ -1,5 +1,4 @@
-"""
-End-to-end tests for mcp-agentdecompile CLI with stdio transport.
+"""End-to-end tests for mcp-agentdecompile CLI with stdio transport.
 
 Tests the complete CLI workflow using the official MCP Python SDK's stdio_client.
 These tests verify that the CLI can:
@@ -11,12 +10,15 @@ These tests verify that the CLI can:
 
 All tests use real PyGhidra and Ghidra integration.
 """
+
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 
+import pytest
+
 from mcp import ClientSession
+from tests.helpers import assert_bool_invariants, assert_int_invariants, assert_mapping_invariants, assert_tool_response_common
 
 # Mark all tests in this file
 # E2E tests need longer timeout due to PyGhidra initialization (10-30s) + server startup
@@ -25,7 +27,7 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.slow,
     pytest.mark.asyncio,
-    pytest.mark.timeout(180)  # 3 minutes for full subprocess + PyGhidra + server startup
+    pytest.mark.timeout(180),  # 3 minutes for full subprocess + PyGhidra + server startup
 ]
 
 
@@ -37,16 +39,18 @@ class TestCLIStartup:
         # mcp_stdio_client fixture already initializes
         # If we got here, initialization succeeded
         assert mcp_stdio_client is not None
+        assert_bool_invariants(mcp_stdio_client is not None)
 
     async def test_cli_starts_even_if_project_is_locked(self, isolated_workspace: Path):
         """A locked AGENT_DECOMPILE_PROJECT_PATH should not prevent tool registration/startup.
 
         Regression test: previously a project open failure would crash startup and no tools would register.
         """
-        import os
         import asyncio
-        from mcp.client.stdio import stdio_client, StdioServerParameters
+        import os
+
         from mcp import ClientSession
+        from mcp.client.stdio import StdioServerParameters, stdio_client
 
         project_name = "LockedProject"
         project_dir = isolated_workspace
@@ -67,10 +71,12 @@ class TestCLIStartup:
         # Ensure we are not using the risky bypass for this test.
         env.pop("AGENT_DECOMPILE_FORCE_IGNORE_LOCK", None)
 
+        # cwd must be repo root so uv run finds pyproject.toml
+        repo_root = Path(__file__).resolve().parent.parent
         server_params = StdioServerParameters(
             command="uv",
             args=["run", "mcp-agentdecompile"],
-            cwd=str(isolated_workspace),
+            cwd=str(repo_root),
             env=env,
         )
 
@@ -83,10 +89,12 @@ class TestCLIStartup:
 
                 init_result = await asyncio.wait_for(session.initialize(), timeout=60.0)
                 assert init_result.serverInfo.name == "AgentDecompile"
+                assert_bool_invariants(init_result.serverInfo.name == "AgentDecompile")
 
                 tools = await session.list_tools()
                 # Locked project should not prevent tool registration - expect substantial tool list
                 assert len(tools.tools) > 20
+                assert_int_invariants(len(tools.tools), min_value=1)
             finally:
                 try:
                     await session.__aexit__(None, None, None)
@@ -105,7 +113,9 @@ class TestCLIStartup:
         result = await mcp_stdio_client.initialize()
 
         assert result.serverInfo.name == "AgentDecompile"
-        assert result.serverInfo.version == "1.21.0"  # MCP SDK protocol version
+        # Version from MCP SDK (e.g. 1.26.0)
+        assert result.serverInfo.version and result.serverInfo.version.startswith("1.")
+        assert_bool_invariants(result.serverInfo.version.startswith("1."))
 
     async def test_server_capabilities(
         self,
@@ -118,6 +128,9 @@ class TestCLIStartup:
         assert result.capabilities.tools is not None
         assert result.capabilities.resources is not None
         assert result.capabilities.prompts is not None
+        assert_bool_invariants(result.capabilities.tools is not None)
+        assert_bool_invariants(result.capabilities.resources is not None)
+        assert_bool_invariants(result.capabilities.prompts is not None)
 
 
 class TestMCPToolCalls:
@@ -132,6 +145,7 @@ class TestMCPToolCalls:
 
         # AgentDecompile has substantial tool set
         assert len(result.tools) > 20
+        assert_int_invariants(len(result.tools), min_value=1)
 
         # Check for some essential tools
         tool_names = [tool.name for tool in result.tools]
@@ -150,16 +164,12 @@ class TestMCPToolCalls:
         Starting PyGhidra in test process causes Windows access violation.
         """
         # The test_binary fixture creates a binary in isolated_workspace
-        # The ProjectManager should have auto-imported it
-
-        result = await mcp_stdio_client.call_tool(
-            "list-project-files",
-            arguments={}
-        )
+        result = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         # Should get a response (even if no files in project yet)
         assert result is not None
-        assert hasattr(result, 'content')
+        assert hasattr(result, "content")
+        assert_tool_response_common(result)
 
     async def test_list_resources(
         self,
@@ -170,6 +180,7 @@ class TestMCPToolCalls:
 
         # AgentDecompile provides program list resource
         assert result.resources is not None
+        assert_bool_invariants(result.resources is not None)
 
     async def test_sequential_tool_calls(
         self,
@@ -182,6 +193,7 @@ class TestMCPToolCalls:
 
         # Should get same results
         assert len(result1.tools) == len(result2.tools)
+        assert_int_invariants(len(result1.tools), min_value=1)
 
 
 class TestProjectCreation:
@@ -198,16 +210,15 @@ class TestProjectCreation:
 
         # After CLI starts, .agentdecompile should NOT exist (lazy initialization)
         assert not agentdecompile_dir.exists(), ".agentdecompile directory should not exist at startup"
+        assert_bool_invariants(agentdecompile_dir.exists() is False)
 
         # Even after using MCP tools, .agentdecompile should NOT be created
         # (MCP tools use Java-side project management, not Python ProjectManager)
-        await mcp_stdio_client.call_tool(
-            "import-file",
-            arguments={"path": str(test_binary)}
-        )
+        await mcp_stdio_client.call_tool("import-file", arguments={"path": str(test_binary)})
 
         # .agentdecompile still should NOT exist (ProjectManager.import_binary() was never called)
         assert not agentdecompile_dir.exists(), ".agentdecompile directory should not be created by MCP tools in stdio mode"
+        assert_bool_invariants(agentdecompile_dir.exists() is False)
 
     async def test_lazy_initialization_prevents_directory_creation(
         self,
@@ -220,11 +231,14 @@ class TestProjectCreation:
         # The mcp_stdio_client fixture starts the CLI which creates a ProjectManager
         # With lazy initialization, .agentdecompile should NOT be created
         assert not agentdecompile_dir.exists(), ".agentdecompile directory should not be created by CLI startup"
+        assert_bool_invariants(agentdecompile_dir.exists() is False)
 
         # Verify this remains true after a short delay
         import asyncio
+
         await asyncio.sleep(0.5)
         assert not agentdecompile_dir.exists(), ".agentdecompile directory should still not exist after CLI is running"
+        assert_bool_invariants(agentdecompile_dir.exists() is False)
 
 
 class TestBinaryAutoImport:
@@ -246,18 +260,17 @@ class TestBinaryAutoImport:
 
         # Give it time to import
         import asyncio
+
         await asyncio.sleep(5)
 
         # Try to list files in project
-        result = await mcp_stdio_client.call_tool(
-            "list-project-files",
-            arguments={}
-        )
+        result = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         # Ideally we'd check if the binary was imported, but that requires
         # the import to succeed, which might fail for minimal test binaries
         # At minimum, the tool call should work
         assert result is not None
+        assert_tool_response_common(result)
 
 
 class TestErrorHandling:
@@ -272,13 +285,11 @@ class TestErrorHandling:
         # depending on SDK version and server implementation
         # Just verify the call completes without crashing
         try:
-            result = await mcp_stdio_client.call_tool(
-                "nonexistent-tool",
-                arguments={}
-            )
+            result = await mcp_stdio_client.call_tool("nonexistent-tool", arguments={})
             # If it doesn't raise, that's also acceptable
             # The server may return an error result instead
             assert result is not None
+            assert_tool_response_common(result)
         except Exception:
             # Exception is also acceptable for unknown tools
             pass
@@ -293,11 +304,12 @@ class TestErrorHandling:
         try:
             result = await mcp_stdio_client.call_tool(
                 "get-functions",  # Current tool name
-                arguments={"invalid_param": "value"}
+                arguments={"invalid_param": "value"},
             )
             # If it doesn't raise, check for error in result
-            if hasattr(result, 'isError'):
+            if hasattr(result, "isError"):
                 assert result.isError
+            assert_tool_response_common(result)
         except Exception:
             # Exception is also acceptable for invalid arguments
             pass
