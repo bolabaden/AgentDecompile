@@ -12,7 +12,6 @@ Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
 - AGENT_DECOMPILE_PROJECT_PATH: Path to .gpr file (persistent project)
 - AGENT_DECOMPILE_HOST: Server bind host (applied when no config file)
 - AGENT_DECOMPILE_PORT: Server port (applied when no config file)
-- AGENT_DECOMPILE_FORCE_IGNORE_LOCK: Force ignore project lock files (risky)
 - AGENT_DECOMPILE_SERVER_USERNAME, AGENT_DECOMPILE_SERVER_PASSWORD: Shared project auth
 - AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_SERVER_PORT: Ghidra server for shared projects
 - AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH

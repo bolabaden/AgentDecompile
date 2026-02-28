@@ -117,7 +117,6 @@ class TestToolsSchema:
     def test_tool_params_has_open_params(self):
         assert "open" in TOOL_PARAMS
         assert "path" in TOOL_PARAMS["open"]
-        assert "forceIgnoreLock" in TOOL_PARAMS["open"]
         assert "open" in TOOL_PARAMS
         assert isinstance(TOOL_PARAMS["open"], list)
 
@@ -134,7 +133,6 @@ class TestToolsSchema:
             "serverPassword",
             "serverHost",
             "serverPort",
-            "forceIgnoreLock",
         ]
         assert get_tool_params("unknown-tool") == []
         assert isinstance(get_tool_params("get-data"), list)

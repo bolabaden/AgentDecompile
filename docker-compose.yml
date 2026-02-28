@@ -69,10 +69,6 @@ services:
       GHIDRA_HOME: "${GHIDRA_HOME:-/ghidra}"
       GHIDRA_BSIM_PORT: "${GHIDRA_BSIM_PORT:-5432}"
 
-      # --- Project lock workaround (risky; can cause data corruption if multiple writers) ---
-      # Usage: src/agentdecompile_cli/project_manager.py
-      AGENT_DECOMPILE_FORCE_IGNORE_LOCK: "${AGENT_DECOMPILE_FORCE_IGNORE_LOCK:-false}"
-
       # --- Intelligent defaults (no tool params): auto-label, auto-tag, auto-bookmark ---
       # Usage: environment-driven defaults in the Python runtime, README.md
       AGENT_DECOMPILE_AUTO_LABEL: "${AGENT_DECOMPILE_AUTO_LABEL:-true}"

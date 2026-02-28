@@ -92,7 +92,6 @@ class ProjectToolProvider(ToolProvider):
                         "serverPassword": {"type": "string"},
                         "serverHost": {"type": "string"},
                         "serverPort": {"type": "integer"},
-                        "forceIgnoreLock": {"type": "boolean", "default": False},
                     },
                     "required": [],
                 },

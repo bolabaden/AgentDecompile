@@ -66,7 +66,6 @@ class TestProjectProviderSchema:
             "destinationFolder",
             "analyzeAfterImport",
             "enableVersionControl",
-            "forceIgnoreLock",
         ):
             assert key in props
 

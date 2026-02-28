@@ -59,12 +59,12 @@ THREAD_COUNT = multiprocessing.cpu_count()
 _dynamic_commands_registered = False
 
 
-def _get_opts(ctx: click.Context) -> dict:
+def _get_opts(ctx: click.Context) -> dict[str, Any]:
     """Global options from context (set by main group)."""
     return ctx.obj or {}
 
 
-def _client(ctx: click.Context):
+def _client(ctx: click.Context) -> Any:
     opts = _get_opts(ctx)
     url = resolve_backend_url(
         opts.get("server_url"),
@@ -84,7 +84,7 @@ def _fmt(ctx: click.Context) -> str:
 
 
 def _extract_text(result: Any) -> str | None:
-    contents = getattr(result, "contents", None) or []
+    contents: list[Any] = getattr(result, "contents", None) or []
     for c in contents:
         text = getattr(c, "text", None)
         if text:
@@ -123,8 +123,12 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
-    resolved_tool_name = tool_registry.resolve_tool_name(tool)
-    call_tool_name = resolved_tool_name or to_snake_case(tool)
+    # Canonicalize tool + args through the shared registry path when known.
+    call_tool_name = tool
+    if tool_registry.is_valid_tool(tool):
+        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
+        payload = tool_registry.parse_arguments(payload, call_tool_name)
+    call_tool_name = to_snake_case(call_tool_name)
 
     try:
         client = _client(ctx)
@@ -150,8 +154,11 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
-    resolved_tool_name = tool_registry.resolve_tool_name(tool)
-    call_tool_name = resolved_tool_name or to_snake_case(tool)
+    call_tool_name = tool
+    if tool_registry.is_valid_tool(tool):
+        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
+        safe_payload = tool_registry.parse_arguments(safe_payload, call_tool_name)
+    call_tool_name = to_snake_case(call_tool_name)
     try:
         client = _client(ctx)
         async with client:
@@ -518,8 +525,8 @@ def list_binaries(ctx: click.Context) -> None:
         client = _client(ctx)
         async with client:
             result = await client.read_resource("ghidra://programs")
-        contents = getattr(result, "contents", None) or []
-        programs = []
+        contents: list[Any] = getattr(result, "contents", None) or []
+        programs: list[dict[str, Any]] = []
         for c in contents:
             text = getattr(c, "text", None)
             if text:
@@ -888,10 +895,9 @@ def symbols_grp() -> None:
 @click.option("--label-name", "label_name", multiple=True)
 @click.option("--new-name", "new_name", multiple=True)
 @click.option("--library-filter", "library_filter")
-@click.option("--max-results", "max_results", type=int)
+@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--start-index", "start_index", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
 @click.option("--max-count", "max_count", type=int)
 @click.option(
     "--group-by-library/--no-group-by-library",
@@ -914,7 +920,6 @@ def symbols_run(
     label_name: tuple[str, ...],
     new_name: tuple[str, ...],
     library_filter: str | None,
-    max_results: int | None,
     start_index: int | None,
     offset: int | None,
     limit: int | None,
@@ -935,8 +940,6 @@ def symbols_run(
         payload["newName"] = list(new_name) if len(new_name) != 1 else new_name[0]
     if library_filter is not None:
         payload["libraryFilter"] = library_filter
-    if max_results is not None:
-        payload["maxResults"] = max_results
     if start_index is not None:
         payload["startIndex"] = start_index
     if offset is not None:
@@ -960,9 +963,8 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
 
     @symbols_grp.command(mode_name, help=help_text or f"manage-symbols mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
-    @click.option("--max-results", "max_results", type=int)
+    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--offset", type=int)
-    @click.option("--limit", type=int)
     @click.option("--library-filter", "library_filter")
     @click.option("--group-by-library/--no-group-by-library", "group_by_library", default=True)
     @click.option("--include-external", "include_external", is_flag=True)
@@ -971,7 +973,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
     def _cmd(
         ctx: click.Context,
         program_path: str | None,
-        max_results: int | None,
         offset: int | None,
         limit: int | None,
         library_filter: str | None,
@@ -982,8 +983,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
         payload: dict[str, Any] = {"mode": mode_name}
         if program_path:
             payload["programPath"] = program_path
-        if max_results is not None:
-            payload["maxResults"] = max_results
         if offset is not None:
             payload["offset"] = offset
         if limit is not None:
@@ -1025,8 +1024,7 @@ def strings_grp() -> None:
 @click.option("--start-index", "startIndex", type=int)
 @click.option("--max-count", "maxCount", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
-@click.option("--max-results", "maxResults", type=int)
+@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--include-referencing-functions", "includeReferencingFunctions", is_flag=True)
 @click.pass_context
 def strings_run(
@@ -1040,7 +1038,6 @@ def strings_run(
     max_count: int | None,
     offset: int | None,
     limit: int | None,
-    max_results: int | None,
     include_referencing_functions: bool,
 ) -> None:
     payload: dict[str, Any] = {"mode": mode}
@@ -1060,8 +1057,6 @@ def strings_run(
         payload["offset"] = offset
     if limit is not None:
         payload["limit"] = limit
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["includeReferencingFunctions"] = include_referencing_functions
     _run_async(_call(ctx, "manage-strings", **payload))
 
@@ -1077,8 +1072,7 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--search-string", "search_string")
     @click.option("--filter")
     @click.option("--offset", type=int)
-    @click.option("--limit", type=int)
-    @click.option("--max-results", "max_results", type=int)
+    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--include-referencing-functions", "include_refs", is_flag=True)
     @click.pass_context
     def _cmd(
@@ -1089,7 +1083,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
         filter: str | None,
         offset: int | None,
         limit: int | None,
-        max_results: int | None,
         include_refs: bool,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
@@ -1105,8 +1098,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
             payload["offset"] = offset
         if limit is not None:
             payload["limit"] = limit
-        if max_results is not None:
-            payload["maxResults"] = max_results
         payload["includeReferencingFunctions"] = include_refs
         _run_async(_call(ctx, "manage-strings", **payload))
 
@@ -1283,7 +1274,7 @@ def function_grp() -> None:
     "variableMappings",
     help="oldName1:newName1,oldName2:newName2",
 )
-@click.option("--prototype", multiple=True)
+@click.option("--prototype", "prototype", multiple=True)
 @click.option("--variable-name", "variableName")
 @click.option("--new-type", "newType")
 @click.option("--datatype-mappings", "datatypeMappings", help="varName1:type1,varName2:type2")
@@ -1535,36 +1526,10 @@ def memory_run(
     "enable_version_control",
     default=True,
 )
-@click.option(
-    "--server_username",
-    "--server-username",
-    "server_username",
-    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME"],
-    show_envvar=True,
-)
-@click.option(
-    "--server_password",
-    "--server-password",
-    "server_password",
-    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD"],
-    show_envvar=True,
-)
-@click.option(
-    "--server_host",
-    "--server-host",
-    "server_host",
-    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "AGENTDECOMPILE_GHIDRA_SERVER_HOST"],
-    show_envvar=True,
-)
-@click.option(
-    "--server_port",
-    "--server-port",
-    "server_port",
-    type=int,
-    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "AGENTDECOMPILE_GHIDRA_SERVER_PORT"],
-    show_envvar=True,
-)
-@click.option("--force_ignore_lock", "--force-ignore-lock", "force_ignore_lock", is_flag=True)
+@click.option("--server_username", "--server-username", "server_username")
+@click.option("--server_password", "--server-password", "server_password")
+@click.option("--server_host", "--server-host", "server_host")
+@click.option("--server_port", "--server-port", "server_port", type=int)
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
@@ -1578,7 +1543,6 @@ def open_cmd(
     server_password: str | None,
     server_host: str | None,
     server_port: int | None,
-    force_ignore_lock: bool,
 ) -> None:
     payload: dict[str, Any] = {}
     is_shared_server_mode = bool(server_host and server_host.strip())
@@ -1613,7 +1577,6 @@ def open_cmd(
         payload["serverHost"] = server_host
     if server_port is not None:
         payload["serverPort"] = server_port
-    payload["forceIgnoreLock"] = force_ignore_lock
     _run_async(_call(ctx, "open", **payload))
 
 
@@ -1646,19 +1609,18 @@ def references_grp() -> None:
 )
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
-@click.option("--max-results", "max_results", type=int)
-@click.option("--library-name", "library_name")
-@click.option("--start-index", "start_index", type=int)
-@click.option("--max-referencers", "max_referencers", type=int)
+@click.option("--limit", "--max-results", "limit", type=int)
+@click.option("--library-name", "libraryName")
+@click.option("--start-index", "startIndex", type=int)
+@click.option("--max-referencers", "maxReferencers", type=int)
 @click.option(
     "--include-ref-context/--no-include-ref-context",
-    "include_ref_context",
+    "includeRefContext",
     default=True,
 )
 @click.option(
     "--include-data-refs/--no-include-data-refs",
-    "include_data_refs",
+    "includeDataRefs",
     default=True,
 )
 @click.pass_context
@@ -1670,7 +1632,6 @@ def references_run(
     direction: str | None,
     offset: int | None,
     limit: int | None,
-    max_results: int | None,
     library_name: str | None,
     start_index: int | None,
     max_referencers: int | None,
@@ -1686,8 +1647,6 @@ def references_run(
         payload["offset"] = offset
     if limit is not None:
         payload["limit"] = limit
-    if max_results is not None:
-        payload["maxResults"] = max_results
     if library_name is not None:
         payload["libraryName"] = library_name
     if start_index is not None:
@@ -1709,8 +1668,7 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--target", required=True, help="Address, symbol, function, or import name")
     @click.option("--direction", type=click.Choice(["to", "from", "both"]))
     @click.option("--offset", type=int)
-    @click.option("--limit", type=int)
-    @click.option("--max-results", "max_results", type=int)
+    @click.option("--limit", "--max-results", "limit", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -1719,7 +1677,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
         direction: str | None,
         offset: int | None,
         limit: int | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"target": target, "mode": mode_name}
         if program_path:
@@ -1730,8 +1687,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
             payload["offset"] = offset
         if limit is not None:
             payload["limit"] = limit
-        if max_results is not None:
-            payload["maxResults"] = max_results
         _run_async(_call(ctx, "get-references", **payload))
 
     return _cmd
@@ -2953,7 +2908,7 @@ def metadata_cmd(ctx: click.Context, program_path: str) -> None:
     "tool",
     help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
 )
-@click.argument("name", required=False, default="")
+@click.argument("name", required=True)
 @click.argument(
     "arguments",
     required=False,
@@ -2978,10 +2933,6 @@ def tool_cmd(
         for t in sorted(available_tools):
             click.echo(f"  {t}")
         return
-
-    if not name.strip():
-        click.echo("Missing tool NAME. Use 'agentdecompile-cli tool --list-tools' to discover valid tools.", err=True)
-        sys.exit(2)
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)
