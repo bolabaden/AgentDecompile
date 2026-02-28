@@ -123,6 +123,67 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
+#### Shared server quick usage (concise)
+
+The examples below use the published Git source install form and redact sensitive values.
+
+```powershell
+# 1) Open a program from a Ghidra shared repository
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 open --server_host 170.9.241.140 --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+
+# concise output
+mode: shared-server
+serverConnected: True
+repository: Odyssey
+programCount: 26
+checkedOutProgram: /K1/k1_win_gog_swkotor.exe
+
+# 2) List files in the shared repository
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 list project-files
+
+# concise output
+folder: /
+count: 26
+source: shared-server-session
+
+# 3) List a small function sample
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
+
+# concise output
+count: 5
+totalMatched: 24242
+hasMore: True
+
+# 4) Search symbols by name
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
+
+# concise output
+query: main
+count: 5
+totalMatched: 58
+hasMore: True
+
+# 5) Find references to a symbol
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+
+# concise output
+mode: to
+target: 004041f0
+count: 1
+
+# 6) Raw tool mode examples
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+
+# concise output
+mode: imports
+count: 5
+mode: exports
+count: 1
+```
+
+Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
+
 For shared Ghidra server workflows (`open --server-host ... --server-port ...`), you can set defaults once with environment variables:
 
 ```bash
