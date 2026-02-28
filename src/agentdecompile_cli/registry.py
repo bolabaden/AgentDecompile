@@ -101,6 +101,29 @@ def _params(*names: str) -> list[str]:
     return list(names)
 
 
+MODE_PARAM_ALIASES: frozenset[str] = frozenset(
+    {
+        "mode",
+        "action",
+        "operation",
+        "command",
+        "op",
+        "task",
+        "intent",
+        "verb",
+        "actiontype",
+        "method",
+        "type",
+    },
+)
+
+
+def _canonical_param_name(param: str) -> str:
+    if normalize_identifier(param) in MODE_PARAM_ALIASES:
+        return "mode"
+    return param
+
+
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
 TOOL_PARAMS: dict[str, list[str]] = {
     "get-data": _params("programPath", "addressOrSymbol"),
@@ -140,7 +163,6 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "manage-symbols": _params(
         "programPath",
         "mode",
-        "action",
         "address",
         "labelName",
         "newName",
@@ -154,7 +176,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-data-types": _params(
         "programPath",
-        "action",
+        "mode",
         "archiveName",
         "categoryPath",
         "includeSubcategories",
@@ -165,7 +187,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-structures": _params(
         "programPath",
-        "action",
+        "mode",
         "cDefinition",
         "headerContent",
         "structureName",
@@ -184,7 +206,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-comments": _params(
         "programPath",
-        "action",
+        "mode",
         "addressOrSymbol",
         "function",
         "lineNumber",
@@ -199,7 +221,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "limit",
         "overrideMaxFunctionsLimit",
     ),
-    "manage-bookmarks": _params("programPath", "action", "addressOrSymbol", "type", "category", "comment", "bookmarks", "query", "limit", "removeAll"),
+    "manage-bookmarks": _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "query", "limit", "removeAll"),
     "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "get-call-graph": _params(
         "programPath",
@@ -231,7 +253,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-function": _params(
         "programPath",
-        "action",
+        "mode",
         "address",
         "functionIdentifier",
         "name",
@@ -286,8 +308,6 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "analyze-program": _params("programPath"),
     "change-processor": _params("programPath", "languageId", "compilerSpecId"),
     "manage-files": _params(
-        "operation",
-        "action",
         "mode",
         "path",
         "sourcePath",
@@ -568,13 +588,15 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
     for tool, params in extra.items():
         if tool not in merged:
             continue
-        existing: list[str] = merged[tool]
+        existing: list[str] = [_canonical_param_name(param) for param in merged[tool]]
         existing_norm: set[str] = {normalize_identifier(x) for x in existing}
         for param in params:
-            param_norm: str = normalize_identifier(param)
+            canonical_param = _canonical_param_name(param)
+            param_norm: str = normalize_identifier(canonical_param)
             if param_norm not in existing_norm:
-                existing.append(param)
+                existing.append(canonical_param)
                 existing_norm.add(param_norm)
+        merged[tool] = existing
     return merged
 
 
@@ -591,11 +613,28 @@ ADVERTISED_TOOLS: list[str] = [
     if tool not in DISABLED_GUI_ONLY_TOOLS and tool not in NON_ADVERTISED_TOOL_ALIASES
 ]
 
-ADVERTISED_TOOL_PARAMS: dict[str, list[str]] = {
-    tool: params
-    for tool, params in TOOL_PARAMS.items()
-    if tool in set(ADVERTISED_TOOLS)
-}
+_ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ("action", "operation")
+
+
+def _build_advertised_tool_params() -> dict[str, list[str]]:
+    advertised: dict[str, list[str]] = {}
+    advertised_set = set(ADVERTISED_TOOLS)
+    for tool, params in TOOL_PARAMS.items():
+        if tool not in advertised_set:
+            continue
+        expanded: list[str] = list(params)
+        normalized_expanded = {normalize_identifier(param) for param in expanded}
+        if "mode" in normalized_expanded:
+            for alias in _ADVERTISED_SELECTOR_ALIASES:
+                alias_norm = normalize_identifier(alias)
+                if alias_norm not in normalized_expanded:
+                    expanded.append(alias)
+                    normalized_expanded.add(alias_norm)
+        advertised[tool] = expanded
+    return advertised
+
+
+ADVERTISED_TOOL_PARAMS: dict[str, list[str]] = _build_advertised_tool_params()
 
 
 _TOOL_PREFIXES = (
@@ -624,12 +663,12 @@ def resolve_tool_name(tool_name: str) -> str | None:
     if not norm:
         return None
 
-    by_norm = {normalize_identifier(tool): tool for tool in TOOLS}
-    direct = by_norm.get(norm)
+    by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in TOOLS}
+    direct: str | None = by_norm.get(norm)
     if direct is not None:
         return direct
 
-    aliased = TOOL_ALIASES.get(norm)
+    aliased: str | None = TOOL_ALIASES.get(norm)
     if aliased is not None:
         return aliased
 
@@ -642,7 +681,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
                 stripped = stripped[len(prefix) :]
                 changed = True
                 break
-    changed = True
+    changed: bool = True
     while changed and stripped:
         changed = False
         for suffix in _TOOL_SUFFIXES:
@@ -655,7 +694,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
         direct = by_norm.get(stripped)
         if direct is not None:
             return direct
-        aliased = TOOL_ALIASES.get(stripped)
+        aliased: str | None = TOOL_ALIASES.get(stripped)
         if aliased is not None:
             return aliased
 
@@ -881,10 +920,16 @@ class ToolRegistry:
             if variation in arguments:
                 return arguments[variation]
 
+        # Selector fallback: canonical "mode" accepts action/operation/etc.
+        normalized_param = normalize_identifier(param_name)
+        if _canonical_param_name(param_name) == "mode":
+            for key, value in arguments.items():
+                if normalize_identifier(key) in MODE_PARAM_ALIASES:
+                    return value
+
         # Normalized fallback: strip all non-alpha chars and compare.
         # This means any casing or separator style will match as long as the
         # alphabetic characters are the same.
-        normalized_param = normalize_identifier(param_name)
         for key in arguments:
             if normalize_identifier(key) == normalized_param:
                 return arguments[key]
@@ -967,9 +1012,9 @@ class ToolRegistry:
             "getdata": ["programPath", "addressOrSymbol"],
             "getreferences": ["programPath", "target"],
             "inspectmemory": ["programPath", "mode"],
-            "managebookmarks": ["programPath", "action"],
-            "managecomments": ["programPath", "action"],
-            "managestructures": ["programPath", "action"],
+            "managebookmarks": ["programPath", "mode"],
+            "managecomments": ["programPath", "mode"],
+            "managestructures": ["programPath", "mode"],
             "open": ["path"],
             "searchconstants": ["programPath", "mode"],
         }

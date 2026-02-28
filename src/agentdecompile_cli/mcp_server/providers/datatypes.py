@@ -46,7 +46,7 @@ class DataTypeToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "action", "mode", default="list")
+        action = self._get_str(args, "mode", "action", default="list")
 
         dispatch = {
             "archives": self._archives,

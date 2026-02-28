@@ -60,7 +60,7 @@ class CommentToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "action", "mode", default="get")
+        action = self._get_str(args, "mode", "action", default="get")
 
         dispatch = {
             "set": self._set,

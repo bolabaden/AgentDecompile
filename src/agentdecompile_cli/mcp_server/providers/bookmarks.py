@@ -53,9 +53,9 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = n(self._get_str(args, "action", "mode"))
+        action = n(self._get_str(args, "mode", "action"))
         if not action:
-            raise ValueError("action/mode is required")
+            raise ValueError("mode/action is required")
 
         if action in ("add", "set"):
             return await self._add(args)

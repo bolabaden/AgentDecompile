@@ -152,7 +152,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-data-types": _params(
         "programPath",
-        "action",
+        "mode",
         "archiveName",
         "categoryPath",
         "includeSubcategories",
@@ -163,7 +163,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-structures": _params(
         "programPath",
-        "action",
+        "mode",
         "cDefinition",
         "headerContent",
         "structureName",
@@ -182,7 +182,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-comments": _params(
         "programPath",
-        "action",
+        "mode",
         "addressOrSymbol",
         "function",
         "lineNumber",
@@ -198,7 +198,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "maxResults",
         "overrideMaxFunctionsLimit",
     ),
-    "manage-bookmarks": _params("programPath", "action", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll"),
+    "manage-bookmarks": _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll"),
     "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "get-call-graph": _params(
         "programPath",
@@ -235,7 +235,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     ),
     "manage-function": _params(
         "programPath",
-        "action",
+        "mode",
         "address",
         "functionIdentifier",
         "name",
@@ -290,9 +290,9 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "analyze-program": _params("programPath"),
     "change-processor": _params("programPath", "languageId", "compilerSpecId"),
     "manage-files": _params(
-        "operation",
-        "action",
         "mode",
+        "action",
+        "operation",
         "path",
         "sourcePath",
         "filePath",
