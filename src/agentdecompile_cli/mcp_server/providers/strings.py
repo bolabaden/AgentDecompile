@@ -25,6 +25,7 @@ class StringToolProvider(ToolProvider):
         "managestrings": "_handle",
         "liststrings": "_handle_list_strings",
         "searchstrings": "_handle_search_strings",
+        "searchcode": "_handle_search_code",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -77,6 +78,22 @@ class StringToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
+            types.Tool(
+                name="search-code",
+                description="Search code using semantic/literal strategies (falls back to function-name literal search when semantic index is unavailable)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string"},
+                        "binaryName": {"type": "string"},
+                        "query": {"type": "string"},
+                        "searchMode": {"type": "string", "enum": ["semantic", "literal"], "default": "semantic"},
+                        "limit": {"type": "integer", "default": 10},
+                        "offset": {"type": "integer", "default": 0},
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     async def _handle_list_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -89,6 +106,65 @@ class StringToolProvider(ToolProvider):
         if not self._get_str(updated, "mode"):
             updated["mode"] = "list"
         return await self._handle(updated)
+
+    async def _handle_search_code(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_program()
+        query = self._require_str(args, "query", "pattern", "text", name="query")
+        limit = self._get_int(args, "limit", "maxresults", default=10)
+        offset = self._get_int(args, "offset", "startindex", default=0)
+        mode = self._get_str(args, "searchmode", "mode", default="semantic")
+
+        if self.ghidra_tools is not None:
+            try:
+                from agentdecompile_cli.models import SearchMode
+
+                mode_norm = mode.strip().lower()
+                search_mode = SearchMode.LITERAL if mode_norm == "literal" else SearchMode.SEMANTIC
+                results = self.ghidra_tools.search_code(
+                    query=query,
+                    limit=limit,
+                    offset=offset,
+                    search_mode=search_mode,
+                )
+                if hasattr(results, "model_dump"):
+                    return create_success_response(results.model_dump())
+                return create_success_response({"query": query, "results": results})
+            except Exception as e:
+                logger.warning(f"search-code semantic/literal backend unavailable, using fallback search: {e}")
+
+        program = self.program_info.program
+        fm = program.getFunctionManager()
+
+        matches = []
+        skipped = 0
+        needle = query.lower()
+        for func in fm.getFunctions(True):
+            function_name = str(func.getName())
+            if needle not in function_name.lower():
+                continue
+            if skipped < offset:
+                skipped += 1
+                continue
+            if len(matches) >= limit:
+                break
+            matches.append(
+                {
+                    "function": function_name,
+                    "address": str(func.getEntryPoint()),
+                    "match": "name",
+                }
+            )
+
+        return create_success_response(
+            {
+                "query": query,
+                "searchMode": "literal-fallback",
+                "returnedCount": len(matches),
+                "offset": offset,
+                "limit": limit,
+                "results": matches,
+            }
+        )
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
