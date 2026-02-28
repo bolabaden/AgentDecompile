@@ -29,7 +29,6 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Natural Language :: English",
     "Operating System :: OS Independent",
-    "Programming Language :: Java",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -68,11 +67,11 @@ Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 # CLI inspired by pyghidra-mcp project.
 agentdecompile        = "agentdecompile_cli.cli:main"
 agentdecompile-cli    = "agentdecompile_cli.cli:main"
-# Legacy mcp server uses stdio to connect to the java extension.
+# MCP stdio entrypoint.
 agentdecompile-mcp    = "agentdecompile_cli.__main__:main"
 mcp_agentdecompile    = "agentdecompile_cli.__main__:main"
 mcp-agentdecompile    = "agentdecompile_cli.__main__:main"
-# STDIO/Streamable-http/sse server entry point. Does not depend on the java extension.
+# STDIO/Streamable-http/sse server entry point.
 agentdecompile-server = "agentdecompile_cli.server:main"
 
 [project.optional-dependencies]
@@ -92,8 +91,11 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agentdecompile_cli"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agentdecompile_cli*"]
 
 [dependency-groups]
 dev = [

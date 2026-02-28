@@ -148,11 +148,13 @@ class CallGraphToolProvider(ToolProvider):
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
 
-            if mode in ("callers", "callers_decomp", "common_callers"):
+            from agentdecompile_cli.registry import normalize_identifier as _n
+            mode_n = _n(mode)
+            if mode_n in ("callers", "callersdecomp", "commoncallers"):
                 callers = list(target_func.getCallingFunctions(None))[:max_nodes]
                 caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
 
-                if mode == "common_callers" and second:
+                if mode_n == "commoncallers" and second:
                     second_func = None
                     for f in fm.getFunctions(True):
                         if f.getName() == second or str(f.getEntryPoint()) == second:
@@ -179,7 +181,7 @@ class CallGraphToolProvider(ToolProvider):
                         "count": len(caller_info),
                     }
                 )
-            if mode == "callees":
+            if mode_n == "callees":
                 callees = list(target_func.getCalledFunctions(None))[:max_nodes]
                 callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
                 return create_success_response(

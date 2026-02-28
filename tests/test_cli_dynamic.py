@@ -8,7 +8,7 @@ These tests verify:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 try:
     from click.testing import CliRunner
@@ -18,10 +18,11 @@ except ImportError:
     _CLICK_AVAILABLE = False
 
 from tests.helpers import assert_text_block_invariants
+from agentdecompile_cli.registry import to_snake_case, tool_registry
 
 pytestmark = pytest.mark.skipif(not _CLICK_AVAILABLE, reason="click CLI not available")
 
-_EXECUTOR_PATH = "agentdecompile_cli.dynamic_tool_executor.dynamic_executor.execute_tool"
+_CALL_PATH = "agentdecompile_cli.cli._call"
 _SUCCESS = {"success": True, "result": "ok"}
 
 
@@ -69,6 +70,10 @@ class TestCliCommandRegistration:
     def test_tool_command_registered(self):
         """The 'tool' command must be registered on the main group."""
         assert "tool" in main.commands, "Expected 'tool' command in main.commands"
+
+    def test_tool_seq_command_registered(self):
+        """The 'tool-seq' command must be registered on the main group."""
+        assert "tool-seq" in main.commands, "Expected 'tool-seq' command in main.commands"
 
     def test_callgraph_command_registered(self):
         assert "callgraph" in main.commands
@@ -139,6 +144,54 @@ class TestCliToolCommandObject:
         assert len(main.commands) >= 20, f"Expected 20+ commands, got {len(main.commands)}"
 
 
+class TestCliGenericToolJsonValidation:
+    def test_tool_rejects_non_object_json_arguments(self):
+        result = _runner().invoke(main, ["tool", "open", "[]"])
+        assert result.exit_code != 0
+        assert "Arguments must be a JSON object" in result.output
+
+    def test_tool_seq_rejects_non_array_json(self):
+        result = _runner().invoke(main, ["tool-seq", "{}"])
+        assert result.exit_code != 0
+        assert "Steps must be a JSON array of objects" in result.output
+
+
+class TestCliToolSequence:
+    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
+    def test_tool_seq_runs_multiple_steps(self, mocked_call_raw):
+        mocked_call_raw.side_effect = [
+            {"success": True, "repository": "Odyssey"},
+            {"success": True, "count": 12345},
+        ]
+
+        steps = (
+            '[{"name":"open","arguments":{"path":"Odyssey"}},'
+            '{"name":"list-functions","arguments":{"mode":"count"}}]'
+        )
+        result = _runner().invoke(main, ["-f", "json", "tool-seq", steps])
+
+        assert result.exit_code == 0, result.output
+        assert '"success": true' in result.output.lower()
+        assert '"name": "open"' in result.output
+        assert '"name": "list-functions"' in result.output
+
+    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
+    def test_tool_seq_stops_on_error_by_default(self, mocked_call_raw):
+        mocked_call_raw.side_effect = [
+            {"success": False, "error": "checkout failed"},
+            {"success": True, "count": 12345},
+        ]
+
+        steps = (
+            '[{"name":"manage-files","arguments":{"operation":"checkout","path":"/K1/k1_win_gog_swkotor.exe"}},'
+            '{"name":"list-functions","arguments":{"mode":"count"}}]'
+        )
+        result = _runner().invoke(main, ["-f", "json", "tool-seq", steps])
+
+        assert result.exit_code != 0
+        assert mocked_call_raw.await_count == 1
+
+
 class TestCliToolListIntegration:
     """Test the tool list functionality."""
 
@@ -156,7 +209,6 @@ class TestCliToolListIntegration:
 
     def test_tool_registry_integration(self):
         """The tool registry should know about canonical tools."""
-        from agentdecompile_cli.registry import tool_registry
         tools = tool_registry.get_tools()
         assert "manage-symbols" in tools
         assert "list-functions" in tools
@@ -164,12 +216,26 @@ class TestCliToolListIntegration:
         assert "inspect-memory" in tools
         assert "manage-strings" in tools
 
+    def test_all_canonical_tools_have_direct_cli_commands(self):
+        """Every canonical tool should be available as a direct CLI command."""
+        missing = []
+        for tool_name in tool_registry.get_tools():
+            snake_name = to_snake_case(tool_name)
+            if snake_name not in main.commands:
+                missing.append(snake_name)
+            if tool_name != snake_name and tool_name not in main.commands:
+                missing.append(tool_name)
+
+        assert not missing, f"Missing direct CLI commands for tools: {sorted(set(missing))}"
+        
+
 
 class TestCliDynamicDispatch:
     """Ensure dynamic subcommands resolve and dispatch the intended canonical tool."""
 
-    @patch(_EXECUTOR_PATH, return_value=_SUCCESS)
-    def test_symbols_dispatches_manage_symbols(self, mocked_execute_tool):
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_symbols_dispatches_manage_symbols(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
         result = _runner().invoke(
             main,
             [
@@ -183,17 +249,19 @@ class TestCliDynamicDispatch:
         )
 
         assert result.exit_code == 0, result.output
-        mocked_execute_tool.assert_called_once()
+        mocked_call.assert_awaited_once()
 
-        called_tool_name = mocked_execute_tool.call_args.args[0]
-        called_payload = mocked_execute_tool.call_args.args[1]
+        assert mocked_call.await_args is not None, "Expected _call to be awaited with arguments"
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
 
         assert called_tool_name == "manage-symbols"
         assert called_payload["programPath"] == "dummy_program"
         assert called_payload["mode"] == "classes"
 
-    @patch(_EXECUTOR_PATH, return_value=_SUCCESS)
-    def test_open_dispatches_shared_server_payload(self, mocked_execute_tool):
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_open_dispatches_shared_server_payload(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
         result = _runner().invoke(
             main,
             [
@@ -211,10 +279,11 @@ class TestCliDynamicDispatch:
         )
 
         assert result.exit_code == 0, result.output
-        mocked_execute_tool.assert_called_once()
+        mocked_call.assert_awaited_once()
 
-        called_tool_name = mocked_execute_tool.call_args.args[0]
-        called_payload = mocked_execute_tool.call_args.args[1]
+        assert mocked_call.await_args is not None, "Expected _call to be awaited with arguments"
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
 
         assert called_tool_name == "open"
         assert called_payload["path"] == "Odyssey"
@@ -222,3 +291,25 @@ class TestCliDynamicDispatch:
         assert called_payload["serverPort"] == 13100
         assert called_payload["serverUsername"] == "OpenKotOR"
         assert called_payload["serverPassword"] == "MuchaShakaPaka"
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_dynamic_canonical_alias_dispatches(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(
+            main,
+            [
+                "capture-agentdecompile-debug-info",
+                "--message",
+                "hello",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+
+        assert called_tool_name == "capture-agentdecompile-debug-info"
+        assert called_payload["message"] == "hello"

@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1
-# BuildKit enables cache mounts (--mount=type=cache) for apk and Gradle. Required for cache mounts:
+# BuildKit can be enabled, but this Dockerfile avoids requiring an external Dockerfile frontend image.
+# (No #syntax directive and no RUN --mount cache syntax, so builds work even when docker.io is unreachable.)
 #   Linux/mac:  export DOCKER_BUILDKIT=1
 #   PowerShell: $Env:DOCKER_BUILDKIT="1"
 #   Cmd:        set DOCKER_BUILDKIT=1
@@ -39,7 +39,7 @@ ENV PGID=${PGID}
 
 # --- Layer 2: system packages + fonts (cached unless this RUN or above changes) ---
 # Use dl.alpinelinux.org to avoid "No such file or directory" under QEMU; install packages then create user/group
-RUN --mount=type=cache,target=/var/cache/apk \
+RUN \
     set -eux; \
     run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run cat /etc/apk/repositories; \
@@ -49,7 +49,6 @@ RUN --mount=type=cache,target=/var/cache/apk \
         openjdk21 \
         bash \
         gcompat \
-        gradle \
         unzip \
         curl \
         jq \
@@ -57,18 +56,12 @@ RUN --mount=type=cache,target=/var/cache/apk \
         py3-pip \
         python3-dev \
         git \
+        gradle \
         fontconfig \
         msttcorefonts-installer \
         linux-headers \
         libressl-dev \
         powershell \
-        g++ \
-        gcc \
-        musl-dev \
-        bison \
-        flex \
-        make \
-        zlib-dev \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
@@ -96,22 +89,38 @@ RUN set -eux; \
     rm -rf /tmp/ghidra_extract
 
 # build postgres and install pyghidra
-RUN ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh \
-        && python3 -m venv ${GHIDRA_HOME}/venv \
-        && ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra \
-		&& mkdir ${GHIDRA_HOME}/repositories \
-        && mkdir ${GHIDRA_HOME}/bsim_datadir
-
-# --- Layer 3b: build native decompiler/sleigh for current platform if missing ---
-# The Ghidra PUBLIC release may not include linux_arm_64 native binaries.
-# Build them from the included source when the platform dir is absent.
 RUN set -eux; \
-    OSDIR="linux_$(uname -m | sed 's/aarch64/arm_64/' | sed 's/x86_64/x86_64/')"; \
+        apk add --no-cache g++ gcc musl-dev make bison flex zlib-dev readline-dev perl; \
+        ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
+        ARCH="$(uname -m)"; \
+        case "${ARCH}" in \
+            x86_64) OSDIR="linux_x86_64" ;; \
+            aarch64) OSDIR="linux_arm_64" ;; \
+            *) OSDIR="linux_${ARCH}" ;; \
+        esac; \
+        test -x "${GHIDRA_HOME}/Ghidra/Features/BSim/build/os/${OSDIR}/postgresql/bin/postgres"; \
+        python3 -m venv ${GHIDRA_HOME}/venv; \
+        ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
+        apk del g++ gcc musl-dev make bison flex zlib-dev readline-dev perl || true; \
+        mkdir ${GHIDRA_HOME}/repositories; \
+        mkdir ${GHIDRA_HOME}/bsim_datadir
+
+# --- Layer 3b: build native decompiler/sleigh ONLY on arm64 (x86_64 ships prebuilt) ---
+# The Ghidra PUBLIC release includes prebuilt linux_x86_64 binaries but NOT linux_arm_64.
+# On arm64: install C++ toolchain, build from source, then remove toolchain to shrink layer.
+# On x86_64: no-op — the release zip already has the binaries.
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    OSDIR="linux_$(echo "${ARCH}" | sed 's/aarch64/arm_64/' | sed 's/x86_64/x86_64/')"; \
     NATIVE_DIR="${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${OSDIR}"; \
     if [ -d "${NATIVE_DIR}" ] && [ -f "${NATIVE_DIR}/decompile" ]; then \
-        echo "Native decompiler already exists at ${NATIVE_DIR}, skipping build"; \
+        echo "Native decompiler already present at ${NATIVE_DIR} — skipping build (${ARCH})"; \
+    elif [ "${ARCH}" = "x86_64" ]; then \
+        echo "ERROR: x86_64 prebuilt binaries missing from Ghidra release — this should not happen"; \
+        exit 1; \
     else \
-        echo "Building native decompiler for ${OSDIR}..."; \
+        echo "Platform ${ARCH} (${OSDIR}): prebuilt binaries not included in Ghidra release — building from source..."; \
+        apk add --no-cache g++ gcc musl-dev bison flex make zlib-dev readline-dev; \
         cd ${GHIDRA_HOME}/Ghidra/Features/Decompiler/src/decompile/cpp; \
         mkdir -p ghi_opt sla_opt; \
         make OSDIR="${OSDIR}" ARCH_TYPE="" ghidra_opt sleigh_opt; \
@@ -121,20 +130,42 @@ RUN set -eux; \
         chmod +x "${NATIVE_DIR}/decompile" "${NATIVE_DIR}/sleigh"; \
         echo "Native binaries installed to ${NATIVE_DIR}"; \
         make clean; \
+        echo "Removing C++ build toolchain to reduce image size..."; \
+        apk del g++ gcc musl-dev bison flex make zlib-dev readline-dev || true; \
     fi
 
 # --- Layer 4: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
 WORKDIR /src/agentdecompile
 
-# Disable Gradle daemon so native code does not run under QEMU (avoids SIGSEGV on arm64 when host is amd64)
-ENV GRADLE_OPTS="-Dorg.gradle.daemon=false"
+# --- Layer 4b: build/install AgentDecompile Ghidra extension ---
+RUN set -eux; \
+        if [ -f ./build.gradle ] || [ -f ./build.gradle.kts ] || [ -f ./settings.gradle ] || [ -f ./settings.gradle.kts ]; then \
+            gradle clean buildExtension; \
+            EXTENSION_ZIP="$(find . -maxdepth 4 -type f -path '*/dist/*.zip' | head -n 1)"; \
+            test -n "${EXTENSION_ZIP}"; \
+            mkdir -p /ghidra/Ghidra/Extensions; \
+            unzip -q "${EXTENSION_ZIP}" -d /ghidra/Ghidra/Extensions/; \
+        else \
+            echo "No Gradle build files found; skipping extension build"; \
+        fi
 
-# --- Layer 5: build extension (reuses Gradle cache when layer runs again) ---
-RUN --mount=type=cache,target=/root/.gradle \
-    pwsh -NoProfile -NonInteractive -Command " \
-    & ./build-and-install.ps1 -ProjectDir /src/agentdecompile -GhidraInstallDir ${GHIDRA_INSTALL_DIR} -GradlePath /usr/bin/gradle \
-    "
+# --- Layer 5: install AgentDecompile Python package into venv ---
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
+RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
+    anyio \
+    click \
+    fastapi \
+    ghidra-stubs \
+    httpx \
+    httpx-sse \
+    mcp \
+    psutil \
+    pydantic \
+    starlette \
+    uvicorn
+RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --no-deps /src/agentdecompile
 
 FROM alpine:latest AS runtime
 
@@ -150,7 +181,7 @@ ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
 
 ARG AGENT_DECOMPILE_HOST="0.0.0.0"
 ENV AGENT_DECOMPILE_HOST=${AGENT_DECOMPILE_HOST}
-ARG AGENT_DECOMPILE_PROJECT_PATH="/projects/agentdecompile.gpr"
+ARG AGENT_DECOMPILE_PROJECT_PATH=""
 ENV AGENT_DECOMPILE_PROJECT_PATH=${AGENT_DECOMPILE_PROJECT_PATH}
 ARG AGENT_DECOMPILE_CONFIG_FILE=""
 ENV AGENT_DECOMPILE_CONFIG_FILE=${AGENT_DECOMPILE_CONFIG_FILE}
@@ -168,7 +199,7 @@ ENV PGID=${PGID}
 # Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
 # BSim PostgreSQL is built against LibreSSL in build stage; runtime needs libressl for libssl.so.60/libcrypto.so.57
 #( grep -qE '^[^#].*community' /etc/apk/repositories ) || echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
-RUN --mount=type=cache,target=/var/cache/apk \
+RUN \
     set -eux; \
     run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
     run cat /etc/apk/repositories; \
@@ -197,11 +228,17 @@ COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
 # BSim PostgreSQL was linked against LibreSSL in build stage; copy exact libs so pg_ctl/initdb find libssl.so.60/libcrypto.so.57
 RUN mkdir -p /opt/bsim-libs
 COPY --from=build /usr/lib/libssl.so* /usr/lib/libcrypto.so* /opt/bsim-libs/
+RUN set -eux; \
+    cp -f /opt/bsim-libs/libssl.so.60* /usr/lib/; \
+    cp -f /opt/bsim-libs/libcrypto.so.57* /usr/lib/; \
+    test -f /usr/lib/libssl.so.60; \
+    test -f /usr/lib/libcrypto.so.57
 COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
 COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
 COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/run-bsim.sh ${GHIDRA_HOME}/docker/
 
-RUN chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
+RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
+    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
     && mkdir -p /work /projects \
     && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
 

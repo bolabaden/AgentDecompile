@@ -64,14 +64,14 @@ class TestPyGhidraIntegration:
 
     def test_agentdecompile_classes_importable(self, ghidra_initialized: bool):
         """AgentDecompile classes can be imported after Ghidra initialization"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
-        assert AgentDecompileHeadlessLauncher is not None
-        assert_bool_invariants(AgentDecompileHeadlessLauncher is not None)
+        assert AgentDecompileLauncher is not None
+        assert_bool_invariants(AgentDecompileLauncher is not None)
 
-    def test_java_output_redirect_via_callback(self, ghidra_initialized: bool):
-        """Java System.out/err can be redirected via StderrWriter callback (no Python subclass of OutputStream)."""
+    def test_jvm_output_redirect_hook(self, ghidra_initialized: bool):
+        """JVM output redirect hook executes without raising."""
         from agentdecompile_cli import __main__ as cli_main
 
-        # Should not raise; redirect uses Java interface impl from Python, not extending OutputStream
+        # Should not raise; hook is safe even when redirect bridge is unavailable
         cli_main._redirect_java_outputs()

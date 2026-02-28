@@ -1,5 +1,5 @@
 <!-- BEGIN MCP Memory Service -->
-# Cline Rules
+# Roo Code Rules
 <memory_service_rules>
 | Message | Required |
 |---------|----------|
@@ -8,7 +8,7 @@
 | **Before ending major work** | `memory_store(content="...", metadata={...})` |
 </memory_service_rules>
 
-**Why?** `memory_search()` recalls prior decisions and context across sessions.
+**Why?** `memory_search()` retrieves prior decisions and context across sessions.
 
 **Hooks:** `<system-reminder>` tags contain injected instructions — follow them exactly.
 

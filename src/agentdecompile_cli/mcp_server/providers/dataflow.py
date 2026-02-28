@@ -46,11 +46,12 @@ class DataFlowToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "functionidentifier")
+        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "functionidentifier", "functionaddress", "startaddress")
         if not addr_str:
             raise ValueError("addressOrSymbol or functionIdentifier required")
 
-        direction = self._get_str(args, "direction", "mode", default="backward")
+        from agentdecompile_cli.registry import normalize_identifier as n
+        direction = n(self._get_str(args, "direction", "mode", default="backward"))
         max_ops = self._get_int(args, "maxops", default=500)
         timeout_s = self._get_int(args, "timeout", default=30)
 
@@ -113,7 +114,7 @@ class DataFlowToolProvider(ToolProvider):
 
             decomp.dispose()
 
-            if direction == "variableaccesses":
+            if direction in ("variableaccesses", "variable_accesses"):
                 # Gather variable info from high function
                 variables = []
                 for sym in hfunc.getLocalSymbolMap().getSymbols():

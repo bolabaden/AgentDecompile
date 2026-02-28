@@ -40,8 +40,8 @@ class BookmarkToolProvider(ToolProvider):
                         "category": {"type": "string", "description": "Bookmark category"},
                         "comment": {"type": "string", "description": "Bookmark comment"},
                         "bookmarks": {"type": "array", "description": "Batch bookmarks", "items": {"type": "object"}},
-                        "searchText": {"type": "string", "description": "Search text in bookmarks"},
-                        "maxResults": {"type": "integer", "description": "Maximum results", "default": 100},
+                        "query": {"type": "string", "description": "Search text in bookmarks"},
+                        "limit": {"type": "integer", "description": "Maximum results", "default": 100},
                         "offset": {"type": "integer", "description": "Pagination offset", "default": 0},
                         "removeAll": {"type": "boolean", "description": "Remove all bookmarks", "default": False},
                     },
@@ -52,8 +52,8 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        self._require_str(args, "programPath", "program", "binary", name="programPath")
-        action = self._get_str(args, "action", "mode").lower()
+        from agentdecompile_cli.registry import normalize_identifier as n
+        action = n(self._get_str(args, "action", "mode"))
         if not action:
             raise ValueError("action/mode is required")
 
@@ -65,7 +65,7 @@ class BookmarkToolProvider(ToolProvider):
             return await self._list(args)
         if action == "removeall":
             return await self._remove_all(args)
-        if action == "categories":
+        if action in ("categories", "category"):
             return await self._categories(args)
         raise ValueError(f"Unknown bookmark action: {action}")
 

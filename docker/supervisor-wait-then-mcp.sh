@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Waits for Ghidra server to bind, then starts AgentDecompile MCP so it can connect to Ghidra.
-# Ensures MCP (headless) starts only after Ghidra server is up.
+# Waits for Ghidra server to bind, then starts the Python AgentDecompile MCP server.
 set -euo pipefail
 
 GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
@@ -9,6 +8,9 @@ GHIDRA_SERVER_PORT="${GHIDRA_SERVER_PORT1:-13100}"
 MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
 VMARG_LIST="${AGENT_DECOMPILE_VMARG_LIST:=${VMARG_LIST:=-Djava.awt.headless=true}}"
 CONFIG_FILE="${AGENT_DECOMPILE_CONFIG_FILE:-}"
+MCP_HOST="${AGENT_DECOMPILE_HOST:-0.0.0.0}"
+MCP_PORT="${AGENT_DECOMPILE_PORT:-8080}"
+PROJECT_PATH="${AGENT_DECOMPILE_PROJECT_PATH:-}"
 
 # Wait for Ghidra server so MCP can connect to shared repos. Portable: try nc then /dev/tcp then fixed sleep.
 wait_for_ghidra() {
@@ -33,15 +35,22 @@ wait_for_ghidra() {
 }
 
 if ! wait_for_ghidra "$GHIDRA_SERVER_PORT" 60 2>/dev/null; then
-  echo "WARNING: Ghidra server port $GHIDRA_SERVER_PORT not ready after 60s; starting MCP anyway (will retry connect to Ghidra when opening projects)."
+  echo "WARNING: Ghidra server port $GHIDRA_SERVER_PORT not ready after 60s; starting MCP anyway."
 fi
 
-# launch.sh -> ghidra.Ghidra -> GhidraLauncher: sets up classpath (modules+extensions),
-# then calls our GhidraLaunchable.launch() which initialises Ghidra and starts the MCP server.
-# APPNAME ("AgentDecompile") is cosmetic only (macOS dock name).
-if [[ -n "${CONFIG_FILE}" ]]; then
-  exec "${GHIDRA_HOME}/support/launch.sh" fg jdk AgentDecompile "${MAXMEM}" "${VMARG_LIST}" \
-    agentdecompile.headless.AgentDecompileHeadlessLauncher "${CONFIG_FILE}"
+# Start Python MCP server (streamable-http) from project venv.
+ARGS=(
+  -t streamable-http
+  --host "${MCP_HOST}"
+  --port "${MCP_PORT}"
+)
+
+if [[ -n "${PROJECT_PATH}" ]]; then
+  ARGS+=(--project-path "${PROJECT_PATH}")
 fi
-exec "${GHIDRA_HOME}/support/launch.sh" fg jdk AgentDecompile "${MAXMEM}" "${VMARG_LIST}" \
-  agentdecompile.headless.AgentDecompileHeadlessLauncher
+
+if [[ -n "${CONFIG_FILE}" ]]; then
+  ARGS+=(--config "${CONFIG_FILE}")
+fi
+exec "${GHIDRA_HOME}/venv/bin/agentdecompile-server" \
+  "${ARGS[@]}"

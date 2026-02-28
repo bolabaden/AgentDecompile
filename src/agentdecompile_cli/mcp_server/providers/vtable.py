@@ -34,7 +34,7 @@ class VtableToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string", "description": "Address of vtable or class"},
                         "mode": {"type": "string", "enum": ["analyze", "callers", "containing"], "default": "analyze"},
                         "maxEntries": {"type": "integer", "default": 200},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                     },
                     "required": [],
                 },
@@ -44,7 +44,7 @@ class VtableToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
-        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol")
+        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "vtableaddress", "functionaddress")
         max_entries = self._get_int(args, "maxentries", default=200)
         max_results = self._get_int(args, "maxresults", "limit", default=100)
 

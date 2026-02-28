@@ -54,7 +54,7 @@ class TestXrefsProviderSchema:
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "list-cross-references")
         props = tool.inputSchema["properties"]
-        assert "maxResults" in props
+        assert "limit" in props
         assert "offset" in props
 
 

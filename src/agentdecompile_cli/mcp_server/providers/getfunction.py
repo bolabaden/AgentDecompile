@@ -198,7 +198,7 @@ class GetFunctionToolProvider(ToolProvider):
         self._require_program()
         action = self._get_str(args, "action", "mode", default="list")
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier")
-        tag_name = self._get_str(args, "tag", "tagname", "name")
+        tag_name = self._get_str(args, "tag", "tagname", "tags", "name")
         program = self.program_info.program
 
         from agentdecompile_cli.registry import normalize_identifier as n
@@ -263,7 +263,7 @@ class GetFunctionToolProvider(ToolProvider):
         self._require_program()
         func_id = self._require_str(args, "function", "addressorsymbol", "functionidentifier", name="function")
         mode = self._get_str(args, "mode", default="similar")
-        max_results = self._get_int(args, "maxresults", "limit", default=50)
+        max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)
 
         func = self._find_function(func_id)
         if func is None:

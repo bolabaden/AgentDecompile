@@ -1,236 +1,239 @@
-# AgentDecompile Headless Integration Tests
+# AgentDecompile Tests
 
-Professional pytest suite for testing AgentDecompile's headless mode with PyGhidra.
+Professional pytest suite for testing AgentDecompile with PyGhidra.
 
 ## Overview
 
-These integration tests verify that AgentDecompile components work together in headless Ghidra mode:
+These tests verify that AgentDecompile components work together correctly:
 
-- **PyGhidra Integration**: Ghidra can be initialized without GUI
-- **Launcher Lifecycle**: AgentDecompileHeadlessLauncher can start/stop servers
-- **MCP Tool Connectivity**: Tools are registered and accessible
-- **Configuration Loading**: Property files are parsed correctly
+- **Integration Tests**: PyGhidra initialization, launcher lifecycle, tool connectivity
+- **Unit Tests**: Individual tool providers, normalization, configuration
+- **E2E Tests**: Full CLI workflows and cross-client compatibility  
+- **Provider Tests**: Each of the 19 tool providers in isolation
 
-## Test Structure
+## Test Types and Organization
 
-```
-tests/
-├── __init__.py              # Package documentation
-├── conftest.py              # Pytest fixtures (shared across all tests)
-├── helpers.py               # Utility functions (MCP requests, program creation)
-├── requirements.txt         # Python dependencies
-├── README.md                # This file
-├── test_pyghidra.py         # PyGhidra integration tests
-├── test_launcher.py         # Launcher lifecycle tests
-├── test_mcp_tools.py        # MCP tool connectivity tests
-└── test_config.py           # Configuration loading tests
-```
+Tests are organized by functionality (37 test files total):
 
-## Fixtures
+### Core Tests
+- `test_pyghidra.py` - PyGhidra initialization
+- `test_launcher.py` - AgentDecompileLauncher lifecycle
+- `test_mcp_tools.py` - MCP tool connectivity
+- `test_config.py` - Configuration loading
+- `test_session_context.py` - Session context management
 
-Shared fixtures are defined in `conftest.py`:
+### CLI Tests
+- `test_cli_connect_mode.py` - CLI in connect mode (server attachment)
+- `test_cli_dynamic.py` - CLI dynamic tool execution
+- `test_cli_e2e.py` - CLI end-to-end workflows
+- `test_cli_helpers.py` - CLI helper utilities
+- `test_cli_project_manager.py` - CLI project management
 
-### Session-Scoped Fixtures (Created Once)
+### Tool Provider Tests (19 providers)
+- `test_provider_symbols.py` - Symbol management
+- `test_provider_functions.py` - Function analysis
+- `test_provider_memory.py` - Memory inspection
+- `test_provider_callgraph.py` - Call graph analysis
+- `test_provider_comments.py` - Comments/annotations
+- `test_provider_bookmarks.py` - Bookmarks
+- `test_provider_project.py` - Project management
+- `test_provider_strings.py` - String management
+- `test_provider_structures_datatypes_data.py` - Data types and structures
+- `test_provider_xrefs.py` - Cross-references
+- `test_provider_dataflow.py` - Data flow analysis
+- `test_provider_getfunction.py` - Function retrieval
+- `test_provider_import_export.py` - Import/export operations
+- `test_provider_constants.py` - Constants and data
+- `test_provider_decompiler.py` - Decompiler integration
+- `test_provider_vtable.py` - Virtual table analysis
+- `test_provider_suggestions.py` - Suggestion generation
 
-- **`ghidra_initialized`**: Initializes PyGhidra once for entire test session (expensive: 10-30s)
-- **`test_program`**: Creates a test program with memory and strings (reused across tests)
+### Normalization and Compatibility Tests
+- `test_normalization_combinatorial.py` - Comprehensive normalization coverage
+- `test_python_tool_registry_parity.py` - Tool registry parity checks
 
-### Function-Scoped Fixtures (Per Test)
+### Workflow and Integration Tests
+- `test_e2e_workflow.py` - End-to-end workflow scenarios
+- `test_dynamic_tool_executor.py` - Dynamic tool execution
+- `test_import_e2e.py` - Binary import workflows
 
-- **`server`**: Starts a AgentDecompileHeadlessLauncher, waits for ready, stops after test
-- **`mcp_client`**: Helper object with `call_tool(name, args)` method
+### Helpers and Configuration
+- `conftest.py` - Pytest fixtures (shared across all tests)
+- `helpers.py` - Utility functions (MCP requests, program creation)
 
 ## Running Tests
 
 ### Prerequisites
 
 ```bash
-# Install dependencies
-pip install -r tests/requirements.txt
+# Install dependencies with uv
+uv sync
+# or: pip install -r tests/requirements.txt
 
 # Ensure GHIDRA_INSTALL_DIR is set
-export GHIDRA_INSTALL_DIR=/path/to/ghidra
+export GHIDRA_INSTALL_DIR=/path/to/ghidra  # or set via Windows environment
 
-# Build and install AgentDecompile extension
-gradle buildExtension
-# Install the extension from dist/*.zip to Ghidra
+# AgentDecompile is installed as editable package (via uv sync)
 ```
 
 ### Run All Tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
-### Run Specific Test Module
+### Run Tests by Category
 
 ```bash
-pytest tests/test_launcher.py -v
-pytest tests/test_mcp_tools.py -v
+# Core functionality tests only
+uv run pytest tests/test_launcher.py tests/test_config.py -v
+
+# CLI tests
+uv run pytest tests/test_cli_*.py -v
+
+# Provider tests
+uv run pytest tests/test_provider_*.py -v
+
+# Normalization/compatibility tests
+uv run pytest tests/test_*normalization*.py tests/test_*compatibility*.py -v
 ```
 
 ### Run Tests Matching Pattern
 
 ```bash
-pytest tests/ -k "config" -v          # All config tests
-pytest tests/ -k "launcher" -v        # All launcher tests
-pytest tests/ -k "list_programs" -v   # Specific test names
+uv run pytest tests/ -k "symbols" -v          # All symbol-related tests
+uv run pytest tests/ -k "provider" -v         # All provider tests
+uv run pytest tests/ -k "normalize" -v        # All normalization tests
 ```
 
 ### Run with Timeout
 
 ```bash
-pytest tests/ -v --timeout=60
+uv run pytest tests/ -v --timeout=180  # 3-minute timeout per test
 ```
 
 ### Run with Different Output
 
 ```bash
-pytest tests/ -v --tb=short    # Shorter tracebacks
-pytest tests/ -v --tb=line     # One-line tracebacks
-pytest tests/ -v -s            # Show print statements
+uv run pytest tests/ -v --tb=short    # Shorter tracebacks
+uv run pytest tests/ -v --tb=line     # One-line tracebacks
+uv run pytest tests/ -v -s            # Show print statements
 ```
 
-## Test Details
+## Test Markers
 
-### test_pyghidra.py
+Tests use pytest markers for filtering:
 
-Verifies PyGhidra integration:
-- PyGhidra can be imported
-- Ghidra initializes in headless mode
-- Test program fixture creates valid program
-- AgentDecompile classes can be imported
+```bash
+@pytest.mark.unit        # Unit tests (mocked PyGhidra)
+@pytest.mark.integration # Integration tests (requires PyGhidra)
+@pytest.mark.e2e         # End-to-end tests
+@pytest.mark.slow        # Slow tests (skip with --ignore-slow)
+```
 
-### test_launcher.py
-
-Tests AgentDecompileHeadlessLauncher lifecycle:
-- **Lifecycle**: Start, wait for ready, stop
-- **Status**: isRunning(), isServerReady(), getPort()
-- **Configuration**: Default config, custom config file
-- **Edge Cases**: Invalid config files, timeouts
-
-### test_mcp_tools.py
-
-Tests MCP tool connectivity:
-- **list-programs**: Returns program list
-- **list-strings**: Accepts programPath parameter
-- **list-functions**: Tool is registered
-- **get-decompilation**: Tool is registered
-- **Parametrized**: Verifies multiple tools are callable
-
-### test_config.py
-
-Tests configuration loading:
-- **Default**: In-memory configuration with defaults
-- **File Loading**: Properties file parsing
-- **Multiple Options**: Port, host, debug settings
-- **Edge Cases**: Missing files, empty files, comments
+Run only specific markers:
+```bash
+uv run pytest tests/ -m integration -v
+uv run pytest tests/ -m "not slow" -v
+```
 
 ## CI Integration
 
 The GitHub Actions workflow (`.github/workflows/test-headless.yml`) runs these tests:
 
-- **Matrix**: Ubuntu/macOS × Python 3.9/3.11/3.12 × Ghidra 12.0/latest
-- **Timeout**: 10 minutes per job
-- **Artifacts**: Uploads logs and pytest cache
+- **Matrix**: Ubuntu/macOS × Ghidra 12.0/latest
+- **Timeout**: 30 minutes per job
+- **Python**: 3.10
+- **Artifacts**: Uploads test results and logs
 
 Workflow steps:
-1. Setup Java 21
-2. Setup Python
-3. Install Ghidra
-4. Build AgentDecompile extension
-5. Install extension to Ghidra
-6. Install Python dependencies (`pip install -r tests/requirements.txt`)
-7. Run pytest (`pytest tests/ -v --timeout=60 --tb=short`)
-8. Upload artifacts
+1. Setup Java 21 (required for PyGhidra)
+2. Install Ghidra
+3. Build AgentDecompile extension with Gradle
+4. Install extension to Ghidra
+5. Setup Python and `uv`
+6. Install Python dependencies (`uv sync`)
+7. Install PyGhidra from local Ghidra
+8. Run pytest (`uv run pytest tests/ -v --timeout=180`)
+9. Upload test results and artifacts
 
 ## Writing New Tests
 
-### Example: Test a New Tool
+### Example: Test a New Tool Provider
 
 ```python
-# tests/test_my_tool.py
+# tests/test_provider_mytool.py
 import pytest
 from tests.helpers import get_response_result
 
-class TestMyTool:
-    """Test my-new-tool functionality"""
+class TestMyToolProvider:
+    """Test my-tool-provider functionality"""
 
     def test_tool_is_callable(self, mcp_client):
-        """my-new-tool is registered and responds"""
-        response = mcp_client.call_tool("my-new-tool", {
+        """my-tool is registered and responds"""
+        response = mcp_client.call_tool("my-tool", {
             "programPath": "/TestProgram"
         })
 
         assert response is not None
+        result = get_response_result(response)
+        assert result is not None
 
-    def test_tool_returns_expected_format(self, mcp_client):
-        """my-new-tool returns expected result structure"""
-        response = mcp_client.call_tool("my-new-tool", {
-            "programPath": "/TestProgram"
+    def test_tool_with_arguments(self, mcp_client):
+        """my-tool accepts expected arguments"""
+        response = mcp_client.call_tool("my-tool", {
+            "programPath": "/TestProgram",
+            "myArg": "someValue"
         })
 
-        # get_response_result asserts no error
         result = get_response_result(response)
-
-        # Verify expected fields
-        assert "content" in result
+        assert "expected_field" in result
 ```
 
-### Example: Test with Custom Fixture
+### Example: Test Normalization
 
 ```python
-# tests/test_custom.py
+# tests/test_my_normalization.py
 import pytest
+from agentdecompile_cli.registry import normalize_identifier
 
-@pytest.fixture
-def custom_config(tmp_path):
-    """Create a custom config file"""
-    config_file = tmp_path / "custom.properties"
-    config_file.write_text("agentdecompile.server.options.server.port=5555\n")
-    return str(config_file)
+def test_tool_name_normalization():
+    """Tool names normalize correctly"""
+    assert normalize_identifier("my-tool") == "mytool"
+    assert normalize_identifier("MY_TOOL") == "mytool"
+    assert normalize_identifier("myTool") == "mytool"
 
-class TestCustomConfig:
-    def test_with_custom_config(self, ghidra_initialized, custom_config):
-        """Server uses custom configuration"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher
-
-        launcher = AgentDecompileHeadlessLauncher(custom_config)
-        launcher.start()
-        assert launcher.getPort() == 5555
-        launcher.stop()
+def test_with_mcp_client(mcp_client):
+    """Tool accepts any normalized variant"""
+    # All these should call the same tool
+    for name_variant in ["my-tool", "MY-TOOL", "my_tool", "myTool"]:
+        response = mcp_client.call_tool(name_variant, {"programPath": "/TestProgram"})
+        assert response is not None
 ```
 
 ## Troubleshooting
 
-### "ModuleNotFoundError: No module named 'pyghidra'"
-
+### PyGhidra Initialization Fails
+```
+Error: GHIDRA_INSTALL_DIR not set
+```
+Set the environment variable:
 ```bash
-pip install -r tests/requirements.txt
+export GHIDRA_INSTALL_DIR=/path/to/ghidra  # Linux/macOS
+set GHIDRA_INSTALL_DIR=C:\path\to\ghidra   # Windows  
 ```
 
-### "GHIDRA_INSTALL_DIR not set"
+### Tests Timeout
+If tests timeout during CI:
+1. Increase the `--timeout` value (default 180 seconds)
+2. Look for slow fixtures or heavy operations
+3. Mark very slow tests with `@pytest.mark.slow`
 
-```bash
-export GHIDRA_INSTALL_DIR=/path/to/ghidra
-```
-
-### "Server failed to become ready within 30 seconds"
-
-- Check that AgentDecompile extension is installed in Ghidra
-- Verify extension ZIP was built: `ls dist/*.zip`
-- Check Ghidra Extensions directory contains AgentDecompile
-
-### "Failed to import agentdecompile.headless"
-
-- Build the extension: `gradle buildExtension`
-- Install to Ghidra: Unzip `dist/*.zip` into `$GHIDRA_INSTALL_DIR/Ghidra/Extensions/`
-
-### Tests are slow
-
-- PyGhidra initialization is expensive (10-30s), but happens once per session
-- Use session-scoped fixtures to avoid redundant initialization
-- Use `-k` to run specific tests during development
+### Fixture Issues
+If you get fixture errors, ensure:
+- `conftest.py` is in the top-level tests/ directory
+- Fixtures are properly scoped (session, module, function, etc.)
+- Dependencies are installed (`uv sync`)
 
 ## Performance
 
@@ -243,16 +246,13 @@ Typical test execution times:
 
 ## Best Practices
 
-1. **Use fixtures**: Don't initialize PyGhidra or start servers manually
-2. **Session fixtures**: Expensive operations (PyGhidra init) should be session-scoped
-3. **Cleanup**: Function-scoped fixtures handle cleanup automatically
-4. **Assertions**: Use `get_response_result()` helper for MCP response validation
-5. **Parametrize**: Use `@pytest.mark.parametrize` for testing multiple similar cases
-6. **Descriptive names**: Test names should describe what is being tested
+1. **Use fixtures** - Reuse `ghidra_initialized` and `mcp_client` rather than creating new ones
+2. **Test one thing** - Keep tests focused on a single behavior
+3. **Use markers** - Mark slow tests with `@pytest.mark.slow`
+4. **Clean up** - Ensure temporary projects/files are cleaned up after tests
+5. **Verify state changes** - For integration tests, verify actual program state changed
 
 ## Related Documentation
 
-- **Main README**: `/README.md` - Project overview
-- **Headless Mode**: `/src/main/java/agentdecompile/headless/CLAUDE.md` - Java implementation
-- **Python Scripts**: `/scripts/` - User-facing headless tools
-- **CI Workflows**: `/.github/CI_WORKFLOWS.md` - Complete CI documentation
+- **Main README**: [README.md](../README.md) - Project overview
+- **CI Workflows**: [../.github/CI_WORKFLOWS.md](../.github/CI_WORKFLOWS.md) - Complete CI documentation

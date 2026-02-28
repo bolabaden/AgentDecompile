@@ -1,6 +1,6 @@
 # AgentDecompile – Python MCP Implementation (Authoritative)
 
-**What this is:** AgentDecompile provides a comprehensive Model Context Protocol (MCP) server for interactive reverse engineering with Ghidra/PyGhidra. The **Python implementation** (`src/agentdecompile_cli/`) is the **authoritative source of truth** going forward. The Java implementation (`src/main/java/agentdecompile/`) is **deprecated** but maintained for backwards compatibility with existing GUI plugins.
+**What this is:** AgentDecompile provides a comprehensive Model Context Protocol (MCP) server for interactive reverse engineering with Ghidra/PyGhidra. The **Python implementation** (`src/agentdecompile_cli/`) is the **authoritative source of truth** and the Java implementation has been removed.
 
 **Canonical tool set:** 49 tools across 6 categories, fully specified in [TOOLS_LIST.md](TOOLS_LIST.md).
 
@@ -15,7 +15,7 @@
 ## Authority & Deprecation
 
 - **Python (`src/agentdecompile_cli/`)**: Authoritative, actively developed. All new tool implementations are Python.
-- **Java (`src/main/java/agentdecompile/`)**: Deprecated (hibernation mode). Kept for backwards compatibility only. Do **not** add new Java tools.
+- **Java (`src/main/java/agentdecompile/`)**: Removed. Do not add new Java tools.
 
 ## Tool Naming & Arguments
 
@@ -87,21 +87,19 @@ See also:
 
 **Configuration Note**: All Python tooling config lives in `pyproject.toml`. Do not create separate files (pyrightconfig.json, .flake8, .black, setup.cfg, etc.).
 
-<!-- BEGIN ContextStream -->
+<!-- BEGIN MCP Memory Service -->
 # Cursor Rules
-<contextstream_rules>
+<memory_service_rules>
 | Message | Required |
 |---------|----------|
-| **1st message** | `init()` → `context(user_message="...")` |
-| **Subsequent messages (default)** | `context(user_message="...")` FIRST (narrow read-only bypass when context is fresh and no state-changing tool has run) |
-| **Before file search** | `search(mode="auto")` BEFORE Glob/Grep/Read |
-</contextstream_rules>
+| **1st message** | `memory_health()` → `memory_search(query="...", mode="hybrid")` |
+| **Subsequent messages (default)** | `memory_search(query="...", mode="hybrid")` FIRST for recall |
+| **Before ending major work** | `memory_store(content="...", metadata={...})` |
+</memory_service_rules>
 
-**Why?** `context()` delivers task-specific rules, lessons from past mistakes, and relevant decisions. Skip it = fly blind.
+**Why?** `memory_search()` provides persistent cross-session recall for decisions and implementation history.
 
 **Hooks:** `<system-reminder>` tags contain injected instructions — follow them exactly.
 
-**Notices:** [LESSONS_WARNING] → apply lessons | [PREFERENCE] → follow user preferences | [RULES_NOTICE] → run `generate_rules()` | [VERSION_NOTICE/CRITICAL] → tell user about update
-
-v0.4.63
-<!-- END ContextStream -->
+v1.0.0
+<!-- END MCP Memory Service -->

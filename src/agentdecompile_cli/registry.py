@@ -11,6 +11,7 @@ import json as _json
 import logging
 import re
 
+from pathlib import Path
 from typing import Any
 
 from mcp import types
@@ -105,14 +106,9 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "manage-strings": _params(
         "programPath",
         "mode",
-        "pattern",
-        "searchString",
-        "filter",
-        "startIndex",
-        "maxCount",
+        "query",
         "offset",
         "limit",
-        "maxResults",
         "includeReferencingFunctions",
     ),
     "get-references": _params(
@@ -122,10 +118,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "direction",
         "offset",
         "limit",
-        "maxResults",
         "libraryName",
-        "startIndex",
-        "maxReferencers",
         "includeRefContext",
         "includeDataRefs",
     ),
@@ -149,13 +142,10 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "labelName",
         "newName",
         "libraryFilter",
-        "maxResults",
-        "startIndex",
         "offset",
         "limit",
         "groupByLibrary",
         "includeExternal",
-        "maxCount",
         "filterDefaultNames",
         "demangleAll",
     ),
@@ -165,8 +155,8 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "archiveName",
         "categoryPath",
         "includeSubcategories",
-        "startIndex",
-        "maxCount",
+        "offset",
+        "limit",
         "dataTypeString",
         "addressOrSymbol",
     ),
@@ -201,38 +191,32 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "start",
         "end",
         "commentTypes",
-        "searchText",
-        "pattern",
+        "query",
         "caseSensitive",
-        "maxResults",
+        "limit",
         "overrideMaxFunctionsLimit",
     ),
-    "manage-bookmarks": _params("programPath", "action", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll"),
+    "manage-bookmarks": _params("programPath", "action", "addressOrSymbol", "type", "category", "comment", "bookmarks", "query", "limit", "removeAll"),
     "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "get-call-graph": _params(
         "programPath",
         "functionIdentifier",
         "mode",
-        "depth",
-        "direction",
         "maxDepth",
-        "startIndex",
+        "direction",
         "maxCallers",
         "includeCallContext",
         "functionAddresses",
     ),
-    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
-    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
+    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "limit", "includeSmallValues", "topN"),
+    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "limit"),
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     "list-functions": _params(
         "programPath",
         "mode",
         "query",
-        "searchString",
         "minReferenceCount",
-        "startIndex",
-        "maxCount",
         "offset",
         "limit",
         "filterDefaultNames",
@@ -275,7 +259,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "propagateComments",
         "filterDefaultNames",
         "filterByTag",
-        "maxFunctions",
+        "limit",
         "batchSize",
     ),
     "get-current-program": _params("programPath"),
@@ -349,6 +333,14 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "search-symbols": _params("binaryName", "query", "offset", "limit"),
 }
 
+# Populated from TOOLS_LIST.md when available.
+# Key: normalized canonical tool name -> {normalized param alias -> {normalized canonical params}}
+TOOL_PARAM_ALIASES: dict[str, dict[str, set[str]]] = {}
+
+# Populated from TOOLS_LIST.md overload/synonyms when available.
+# Key: normalized alias tool name -> canonical kebab-case tool name
+TOOL_ALIASES: dict[str, str] = {}
+
 
 def to_camel_case_key(key: str) -> str:
     """Convert snake_case to camelCase for MCP payload keys."""
@@ -395,6 +387,191 @@ def normalize_identifier(s: str) -> str:
     return re.sub(r"[^a-z]", "", s.lower().strip())
 
 
+def _find_repo_root_for_tools_list() -> Path | None:
+    """Best-effort discovery of repository root containing TOOLS_LIST.md."""
+    current = Path(__file__).resolve()
+    for parent in [current.parent, *current.parents]:
+        candidate = parent / "TOOLS_LIST.md"
+        if candidate.exists():
+            return parent
+    return None
+
+
+def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dict[str, set[str]]], dict[str, str]]:
+    """Parse TOOLS_LIST.md and extract parameter names, param aliases, and tool aliases.
+
+    Returns:
+        (params_by_tool, param_aliases_by_tool_norm, tool_aliases_by_norm)
+    """
+    root = _find_repo_root_for_tools_list()
+    if root is None:
+        return {}, {}, {}
+
+    tools_list = root / "TOOLS_LIST.md"
+    try:
+        text = tools_list.read_text(encoding="utf-8")
+    except Exception:
+        return {}, {}, {}
+
+    parts = re.split(r"^### `([^`]+)`(?: \(forwards to `([^`]+)`\))?\n", text, flags=re.M)
+    if len(parts) < 3:
+        return {}, {}, {}
+
+    params_by_tool: dict[str, list[str]] = {}
+    param_aliases_by_tool: dict[str, dict[str, set[str]]] = {}
+    tool_aliases_by_norm: dict[str, str] = {}
+
+    for i in range(1, len(parts), 3):
+        tool_name = parts[i]
+        forwarded_to = parts[i + 1]
+        body = parts[i + 2]
+        canonical_tool = forwarded_to or tool_name
+        canonical_norm = normalize_identifier(canonical_tool)
+
+        if forwarded_to:
+            tool_aliases_by_norm[normalize_identifier(tool_name)] = canonical_tool
+
+        params_match = re.search(
+            r"\*\*Parameters\*\*:\n(.*?)(?:\n\*\*Overloads\*\*|\n\*\*Synonyms\*\*|\n\*\*Examples\*\*)",
+            body,
+            flags=re.S,
+        )
+        if params_match:
+            block = params_match.group(1)
+            lines = block.splitlines()
+            extracted_params: list[str] = []
+            alias_map = param_aliases_by_tool.setdefault(canonical_norm, {})
+
+            idx = 0
+            while idx < len(lines):
+                line = lines[idx]
+                param_match = re.match(r"^- `([^`]+)` \(", line)
+                if param_match:
+                    param_name = param_match.group(1)
+                    extracted_params.append(param_name)
+                    canonical_param_norm = normalize_identifier(param_name)
+                    alias_map.setdefault(canonical_param_norm, set()).add(canonical_param_norm)
+
+                    j = idx + 1
+                    while j < len(lines):
+                        next_line = lines[j]
+                        if next_line.startswith("- `"):
+                            break
+                        if "Synonyms:" in next_line:
+                            for alias in re.findall(r"`([^`]+)`", next_line):
+                                alias_map.setdefault(normalize_identifier(alias), set()).add(canonical_param_norm)
+                        j += 1
+                    idx = j
+                    continue
+                idx += 1
+
+            if extracted_params:
+                existing = params_by_tool.setdefault(canonical_tool, [])
+                for param in extracted_params:
+                    if normalize_identifier(param) not in {normalize_identifier(x) for x in existing}:
+                        existing.append(param)
+
+        overload_match = re.search(
+            r"\*\*Overloads\*\*:\n(.*?)(?:\n\*\*Synonyms\*\*|\n\*\*Examples\*\*)",
+            body,
+            flags=re.S,
+        )
+        if overload_match:
+            for alias, target in re.findall(r"- `([^`(]+)\([^`]*\)`.*?forwards to `([^`]+)`", overload_match.group(1)):
+                tool_aliases_by_norm[normalize_identifier(alias)] = target
+
+        synonyms_match = re.search(
+            r"\*\*Synonyms\*\*:\s*(.*?)(?:\n\*\*Examples\*\*|\n\*\*API References\*\*|\Z)",
+            body,
+            flags=re.S,
+        )
+        if synonyms_match:
+            for alias in re.findall(r"`([^`]+)`", synonyms_match.group(1)):
+                tool_aliases_by_norm[normalize_identifier(alias)] = canonical_tool
+
+    return params_by_tool, param_aliases_by_tool, tool_aliases_by_norm
+
+
+def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Merge TOOLS_LIST parameter names into TOOL_PARAMS without losing existing names."""
+    merged = {k: list(v) for k, v in base.items()}
+    for tool, params in extra.items():
+        if tool not in merged:
+            continue
+        existing = merged[tool]
+        existing_norm = {normalize_identifier(x) for x in existing}
+        for param in params:
+            param_norm = normalize_identifier(param)
+            if param_norm not in existing_norm:
+                existing.append(param)
+                existing_norm.add(param_norm)
+    return merged
+
+
+_tools_list_params, _tools_list_param_aliases, _tools_list_tool_aliases = _extract_tools_list_sync_data()
+TOOL_PARAMS = _merge_tools_list_params(TOOL_PARAMS, _tools_list_params)
+TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
+TOOL_ALIASES.update(_tools_list_tool_aliases)
+
+
+_TOOL_PREFIXES = (
+    "agentdecompile",
+    "ghidra",
+    "execute",
+    "tool",
+    "cmd",
+    "run",
+    "do",
+    "api",
+    "mcp",
+)
+_TOOL_SUFFIXES = ("command", "action", "task", "tool", "op")
+
+
+def resolve_tool_name(tool_name: str) -> str | None:
+    """Resolve arbitrary tool aliases/noisy variants to canonical kebab-case tool names."""
+    norm = normalize_identifier(tool_name)
+    if not norm:
+        return None
+
+    by_norm = {normalize_identifier(tool): tool for tool in TOOLS}
+    direct = by_norm.get(norm)
+    if direct is not None:
+        return direct
+
+    aliased = TOOL_ALIASES.get(norm)
+    if aliased is not None:
+        return aliased
+
+    stripped = norm
+    changed = True
+    while changed and stripped:
+        changed = False
+        for prefix in _TOOL_PREFIXES:
+            if stripped.startswith(prefix) and len(stripped) > len(prefix):
+                stripped = stripped[len(prefix):]
+                changed = True
+                break
+    changed = True
+    while changed and stripped:
+        changed = False
+        for suffix in _TOOL_SUFFIXES:
+            if stripped.endswith(suffix) and len(stripped) > len(suffix):
+                stripped = stripped[: -len(suffix)]
+                changed = True
+                break
+
+    if stripped:
+        direct = by_norm.get(stripped)
+        if direct is not None:
+            return direct
+        aliased = TOOL_ALIASES.get(stripped)
+        if aliased is not None:
+            return aliased
+
+    return None
+
+
 def to_snake_case(s: str) -> str:
     """Convert any identifier format to snake_case for advertising.
 
@@ -422,11 +599,13 @@ class ToolRegistry:
     def __init__(self):
         self._tool_params: dict[str, list[str]] = TOOL_PARAMS.copy()
         self._tools: list[str] = TOOLS.copy()
+        self._tool_aliases: dict[str, str] = TOOL_ALIASES.copy()
         # Pre-computed normalized (alpha-only, lowercase) lookups so that
         # callers using alpha-only keys (e.g. "getdata") resolve correctly
         # alongside the kebab-case storage keys (e.g. "get-data").
         self._params_by_norm: dict[str, list[str]] = {normalize_identifier(k): v for k, v in TOOL_PARAMS.items()}
         self._display_name_by_norm: dict[str, str] = {normalize_identifier(k): k for k in TOOL_PARAMS}
+        self._tool_by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in self._tools}
 
     def get_tools(self) -> list[str]:
         """Get all available tool names."""
@@ -439,12 +618,14 @@ class ToolRegistry:
         Performs an exact match first, then a normalized (alpha-only, lowercase)
         fallback so callers using the internal alpha-only form still resolve.
         """
+        resolved_tool = self.resolve_tool_name(tool_name) or tool_name
+
         # Fast path: exact match on the storage key (kebab-case)
-        result = self._tool_params.get(tool_name)
+        result = self._tool_params.get(resolved_tool)
         if result is not None:
             return result
         # Normalized fallback: alpha-only form resolves to kebab-case key params
-        return self._params_by_norm.get(normalize_identifier(tool_name), [])
+        return self._params_by_norm.get(normalize_identifier(resolved_tool), [])
 
     def get_display_name(self, normalized_name: str) -> str:
         """Return the kebab-case display name for an alpha-only (normalized) tool name.
@@ -461,11 +642,22 @@ class ToolRegistry:
 
     def is_valid_tool(self, tool_name: str) -> bool:
         """Check if a tool name is valid (with fuzzy matching)."""
-        canonical_input: str = self.canonicalize_tool_name(tool_name)
-        for tool_key in self._tool_params.keys():
-            if self.canonicalize_tool_name(tool_key) == canonical_input:
-                return True
-        return False
+        return self.resolve_tool_name(tool_name) is not None
+
+    def resolve_tool_name(self, tool_name: str) -> str | None:
+        """Resolve any supported alias/noisy variation to canonical kebab-case name."""
+        resolved = resolve_tool_name(tool_name)
+        if resolved is not None:
+            return resolved
+
+        # Local fallback using internal tables (defensive; should be redundant).
+        norm = self.canonicalize_tool_name(tool_name)
+        if not norm:
+            return None
+        direct = self._tool_by_norm.get(norm)
+        if direct is not None:
+            return direct
+        return self._tool_aliases.get(norm)
 
     def canonicalize_tool_name(self, tool_name: str) -> str:
         """Canonicalize a tool name for matching by removing all non-alphabet chars.
@@ -508,9 +700,11 @@ class ToolRegistry:
         -------
             True if the tool names match (after canonicalization), False otherwise
         """
-        parsed_tool_name: str = self.canonicalize_tool_name(tool_name)
-        parsed_canonical_name: str = self.canonicalize_tool_name(canonical_name)
-        return parsed_tool_name == parsed_canonical_name
+        resolved_tool = self.resolve_tool_name(tool_name)
+        resolved_canonical = self.resolve_tool_name(canonical_name) or canonical_name
+        if resolved_tool is None:
+            return False
+        return self.canonicalize_tool_name(resolved_tool) == self.canonicalize_tool_name(resolved_canonical)
 
     def parse_arguments(
         self,
@@ -530,21 +724,14 @@ class ToolRegistry:
         -------
             Parsed and validated arguments dictionary
         """
-        if not self.is_valid_tool(tool_name):
+        resolved_tool = self.resolve_tool_name(tool_name)
+        if resolved_tool is None:
             raise ValueError(f"Unknown tool: {tool_name}")
 
-        # Find the actual tool key that matches this canonicalized name
-        canonical_input: str = self.canonicalize_tool_name(tool_name)
-        actual_tool_key: str | None = None
-        for tool_key in self._tool_params.keys():
-            if self.canonicalize_tool_name(tool_key) == canonical_input:
-                actual_tool_key = tool_key
-                break
+        actual_tool_key: str = resolved_tool
 
-        if actual_tool_key is None:
-            raise ValueError(f"Could not find tool key for: {tool_name}")
-
-        expected_params: list[str] = self._tool_params[actual_tool_key]
+        expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
+        param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
 
         parsed_args: dict[str, Any] = {}
 
@@ -553,6 +740,20 @@ class ToolRegistry:
             value = self._extract_argument_value(arguments, param)
             if value is not None:
                 parsed_args[param] = value
+
+        # Alias-driven pass: map tool-specific synonym names (from TOOLS_LIST)
+        # to canonical parameter keys when not already set.
+        if param_aliases:
+            expected_by_norm = {normalize_identifier(param): param for param in expected_params}
+            for arg_key, arg_val in arguments.items():
+                alias_norm = normalize_identifier(arg_key)
+                target_norms = param_aliases.get(alias_norm)
+                if not target_norms:
+                    continue
+                for target_norm in target_norms:
+                    canonical_param = expected_by_norm.get(target_norm)
+                    if canonical_param is not None and parsed_args.get(canonical_param) is None:
+                        parsed_args[canonical_param] = arg_val
 
         return parsed_args
 
@@ -633,9 +834,9 @@ class ToolRegistry:
         if param_name == "addressOrSymbol":
             variations.extend(["address_or_symbol", "addressOrSymbol", "address"])
         elif param_name == "programPath":
-            variations.extend(["program_path", "program-path", "program"])
+            variations.extend(["program_path", "program-path", "program", "filepath", "path"])
         elif param_name == "maxResults":
-            variations.extend(["max_results", "max-results", "limit", "maxResults"])
+            variations.extend(["max_results", "max-results", "limit", "maxResults", "limits"])
 
         return variations
 
@@ -655,7 +856,8 @@ class ToolRegistry:
         -------
             ValueError: If required arguments are missing
         """
-        canonical_name: str = self.canonicalize_tool_name(tool_name)
+        resolved_tool = self.resolve_tool_name(tool_name) or tool_name
+        canonical_name: str = self.canonicalize_tool_name(resolved_tool)
         expected_params: list[str] = self.get_tool_params(canonical_name)  # noqa: F841
 
         # Define which parameters are required for each tool
@@ -663,21 +865,21 @@ class ToolRegistry:
         # canonical_name (which is already alpha-only from canonicalize_tool_name)
         # always succeeds.
         required_params: dict[str, list[str]] = {
-            "getdata": ["programPath", "addressOrSymbol"],
+            "analyzedataflow": ["programPath"],
+            "analyzeprogram": ["programPath"],
+            "analyzevtables": ["programPath", "mode"],
             "applydatatype": ["programPath", "addressOrSymbol", "dataTypeString"],
             "createlabel": ["programPath", "addressOrSymbol", "labelName"],
-            "getreferences": ["programPath", "target"],
-            "managestructures": ["programPath", "action"],
-            "managecomments": ["programPath", "action"],
-            "managebookmarks": ["programPath", "action"],
-            "inspectmemory": ["programPath", "mode"],
-            "getcallgraph": ["programPath"],
-            "searchconstants": ["programPath", "mode"],
-            "analyzevtables": ["programPath", "mode"],
-            "analyzedataflow": ["programPath"],
             "decompile": ["programPath"],
-            "analyzeprogram": ["programPath"],
+            "getcallgraph": ["programPath"],
+            "getdata": ["programPath", "addressOrSymbol"],
+            "getreferences": ["programPath", "target"],
+            "inspectmemory": ["programPath", "mode"],
+            "managebookmarks": ["programPath", "action"],
+            "managecomments": ["programPath", "action"],
+            "managestructures": ["programPath", "action"],
             "open": ["path"],
+            "searchconstants": ["programPath", "mode"],
         }
 
         required: list[str] = required_params.get(canonical_name, [])
@@ -704,13 +906,14 @@ class ToolRegistry:
             Tool call payload dictionary
         """
         if validate:
-            parsed_args: dict[str, Any] = self.parse_arguments(arguments, tool_name)
-            self.validate_required_arguments(parsed_args, tool_name)
+            resolved_tool = self.resolve_tool_name(tool_name) or tool_name
+            parsed_args: dict[str, Any] = self.parse_arguments(arguments, resolved_tool)
+            self.validate_required_arguments(parsed_args, resolved_tool)
         else:
             parsed_args = arguments
 
         return {
-            "name": tool_name,
+            "name": self.resolve_tool_name(tool_name) or tool_name,
             "arguments": parsed_args,
         }
 

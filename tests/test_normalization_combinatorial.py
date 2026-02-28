@@ -80,7 +80,8 @@ class TestCombinatorialToolNameResolution:
 
         for variant in _noisy_tool_variants(tool_name):
             resolved = executor._resolve_tool_name(variant)
-            assert resolved == tool_name
+            assert resolved is not None, f"Expected to resolve {variant!r} to {tool_name!r} but got None"
+            assert resolved == tool_name, f"Expected to resolve {variant!r} to {tool_name!r} but got {resolved!r}"
             assert_string_invariants(resolved, expected=tool_name)
 
 

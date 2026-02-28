@@ -87,7 +87,7 @@ class TestSymbolProviderSchema:
         assert_tool_schema_invariants(tool, expected_name="search-symbols-by-name")
         props = tool.inputSchema["properties"]
         assert "query" in props
-        assert "maxResults" in props
+        assert "limit" in props
 
 
 # ---------------------------------------------------------------------------

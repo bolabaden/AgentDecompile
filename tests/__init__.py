@@ -1,16 +1,16 @@
-"""AgentDecompile Headless Integration Tests
+"""AgentDecompile Integration Tests
 
 This package contains integration tests for AgentDecompile's headless mode using PyGhidra.
 
-These tests verify that AgentDecompile components work together in headless mode:
+These tests verify that AgentDecompile components work together:
 - PyGhidra can initialize Ghidra
-- AgentDecompileHeadlessLauncher can start/stop servers
+- AgentDecompileLauncher can start/stop servers
 - MCP tools are accessible and functional
 - Configuration files are loaded correctly
 
 Test Structure:
 - test_pyghidra.py - PyGhidra integration verification
-- test_launcher.py - AgentDecompileHeadlessLauncher lifecycle tests
+- test_launcher.py - AgentDecompileLauncher lifecycle tests
 - test_mcp_tools.py - MCP tool connectivity and functionality
 - test_config.py - Configuration file loading tests
 

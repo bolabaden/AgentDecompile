@@ -99,5 +99,29 @@ class SessionContextStore:
         with self._lock:
             return session.get_active_program_info()
 
+    def get_program_info(self, session_id: str, key: str) -> ProgramInfo | None:
+        session = self.get_or_create(session_id)
+        with self._lock:
+            direct = session.open_programs.get(key)
+            if direct is not None:
+                return direct
+
+            key_l = key.strip().lower()
+            for existing_key, info in session.open_programs.items():
+                if existing_key.strip().lower() == key_l:
+                    return info
+                if existing_key.strip().lower().lstrip("/") == key_l.lstrip("/"):
+                    return info
+
+                try:
+                    program = getattr(info, "program", None)
+                    if program is not None and hasattr(program, "getName"):
+                        if str(program.getName()).strip().lower() == key_l.split("/")[-1]:
+                            return info
+                except Exception:
+                    continue
+
+            return None
+
 
 SESSION_CONTEXTS = SessionContextStore()

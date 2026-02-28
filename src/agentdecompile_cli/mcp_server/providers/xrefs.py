@@ -37,7 +37,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string"},
                         "target": {"type": "string"},
                         "mode": {"type": "string", "enum": ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"], "default": "to"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -52,7 +52,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "addressOrSymbol": {"type": "string"},
                         "target": {"type": "string"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -74,8 +74,12 @@ class CrossReferencesToolProvider(ToolProvider):
 
         program = self.program_info.program
 
+        from agentdecompile_cli.registry import normalize_identifier as n
+
+        mode_n = n(mode)
+
         # Try GhidraTools first
-        if self.ghidra_tools and mode in ("to", "from", "both"):
+        if self.ghidra_tools and mode_n in ("to", "from", "both"):
             try:
                 results = self.ghidra_tools.list_cross_references(addr_str)
                 paginated = results[offset : offset + max_results]
@@ -97,10 +101,6 @@ class CrossReferencesToolProvider(ToolProvider):
         addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
         ref_mgr = program.getReferenceManager()
         fm = program.getFunctionManager()
-
-        from agentdecompile_cli.registry import normalize_identifier as n
-
-        mode_n = n(mode)
 
         if mode_n in ("to", "both"):
             refs_to = []

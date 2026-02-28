@@ -118,7 +118,7 @@ class ImportExportToolProvider(ToolProvider):
         file_path = self._require_str(args, "filepath", "path", "file", "binarypath", "binary", name="filePath")
         prog_name = self._get_str(args, "programname", "name")
         language = self._get_str(args, "language", "lang", "processor")
-        compiler = self._get_str(args, "compiler", "compilerspec")
+        compiler = self._get_str(args, "compiler", "compilerspec", "compilerspecid")
         recursive = self._get_bool(args, "recursive", default=False)
         max_depth = self._get_int(args, "maxdepth", default=16)
         analyze_after_import = self._get_bool(args, "analyzeafterimport", default=False)

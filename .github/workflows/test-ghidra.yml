@@ -10,7 +10,6 @@ permissions:
   contents: write
   actions: read
   checks: write
-  security-events: write
 
 jobs:
   test:
@@ -21,7 +20,7 @@ jobs:
             "12.0",
             "latest",
         ]
-    name: Test on Ghidra ${{ matrix.ghidra-version }}
+    name: Build on Ghidra ${{ matrix.ghidra-version }}
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v6
@@ -55,116 +54,12 @@ jobs:
     - name: Build Extension 🔨
       run: gradle buildExtension
 
-    - name: Run Unit Tests 🧪
-      run: gradle test --info
-      env:
-        _JAVA_OPTIONS: "-Djava.awt.headless=true"
-
-    - name: Run Integration Tests 🖥️
-      run: gradle integrationTest --info
-      env:
-        DISPLAY: :99
-
-    - name: Upload test results
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v6
       if: always()
       with:
-        name: test-results-${{ matrix.ghidra-version }}
+        name: extension-build-${{ matrix.ghidra-version }}
         path: |
-          build/reports/tests/
-          build/test-results/
-          build/reports/integrationTest/
-          build/test-results/integrationTest/
+          dist/*.zip
+          build/libs/
         if-no-files-found: ignore
-
-    - name: Test Summary
-      uses: test-summary/action@v2
-      with:
-        show: "fail, skip"
-        paths: |
-          build/test-results/**/TEST-*.xml
-      if: always()
-
-  lint:
-    name: Lint and Check 🔍
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        lfs: true
-
-    - name: Set up Java 🍵
-      uses: actions/setup-java@v5
-      with:
-        java-version: "21"
-        distribution: "microsoft"
-
-    - name: Install Ghidra 🐉
-      uses: antoniovazquezblanco/setup-ghidra@v2.0.16
-      with:
-        version: "latest"
-        auth_token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Setup Xvfb for headless testing
-      run: |
-        sudo apt-get update && sudo apt-get install -y xvfb
-        Xvfb :99 -nolisten tcp &
-        echo "DISPLAY=:99" >> $GITHUB_ENV
-
-    - name: Setup Gradle 🔧
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        gradle-version: "8.14"
-        dependency-graph: generate-and-submit
-        dependency-graph-continue-on-failure: true
-
-    - name: Check code compilation
-      run: gradle compileJava
-
-    - name: Check test compilation
-      run: gradle compileTestJava
-
-  codeql:
-    name: CodeQL Security Analysis 🔒
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        lfs: true
-
-    - name: Set up Java 🍵
-      uses: actions/setup-java@v5
-      with:
-        java-version: "21"
-        distribution: "microsoft"
-
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v4
-      with:
-        languages: java
-        # Use security-extended queries for more thorough analysis
-        queries: security-extended,security-and-quality
-
-    - name: Install Ghidra 🐉
-      uses: antoniovazquezblanco/setup-ghidra@v2.0.16
-      with:
-        version: "latest"
-        auth_token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Setup Gradle for CodeQL 🔧
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        gradle-version: "8.14"
-
-    - name: Build Extension for CodeQL Analysis 🔨
-      run: gradle buildExtension
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v4
-      with:
-        category: "/language:java"

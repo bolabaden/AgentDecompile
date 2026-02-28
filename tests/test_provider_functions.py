@@ -53,7 +53,7 @@ class TestFunctionProviderSchema:
         tool = next(t for t in p.list_tools() if t.name == "list-functions")
         assert_tool_schema_invariants(tool, expected_name="list-functions")
         props = tool.inputSchema["properties"]
-        for key in ("programPath", "namePattern", "includeExternals", "maxResults", "offset"):
+        for key in ("programPath", "namePattern", "includeExternals", "limit", "offset"):
             assert key in props
 
     def test_get_functions_view_enum(self):
