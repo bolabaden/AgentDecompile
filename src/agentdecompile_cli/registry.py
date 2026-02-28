@@ -420,8 +420,9 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "search-symbols-by-name": "manage-symbols",
 }
 
-# GUI-only tools are disabled for MCP/CLI usage in this headless-focused surface.
-# TODO(gui-only): Re-enable when a GUI capability flag is introduced.
+# TODO: GUI Only tools/commands
+# Disabled for MCP/CLI usage in this headless-focused surface.
+# Re-enable when a GUI capability flag is introduced.
 DISABLED_GUI_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "get-current-address",
