@@ -173,8 +173,13 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
 
 def _parse_tool_payload(arguments: str) -> dict[str, Any]:
     """Parse CLI JSON argument payload for generic tool commands."""
+    # Strip whitespace and leading/trailing quotes (PowerShell may pass them)
+    arguments = arguments.strip()
+    if arguments and arguments[0] in ('"', "'") and arguments[-1] == arguments[0]:
+        arguments = arguments[1:-1]
+    
     try:
-        payload = json.loads(arguments) if arguments.strip() else {}
+        payload = json.loads(arguments) if arguments else {}
     except json.JSONDecodeError as e:
         click.echo(f"Invalid JSON arguments: {e}", err=True)
         sys.exit(1)
