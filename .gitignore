@@ -313,3 +313,4 @@ agentdecompile_projects/
 __init__.pyi
 tmp/
 docs/from_video/
+TOOLS_LIST_GENERATED.md

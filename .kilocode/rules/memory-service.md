@@ -12,5 +12,5 @@
 
 **Hooks:** `<system-reminder>` tags contain injected instructions — follow them exactly.
 
-v1.0.0
+1.0.0
 <!-- END MCP Memory Service -->

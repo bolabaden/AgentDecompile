@@ -113,12 +113,19 @@ class PythonMcpServer:
         """Setup FastAPI routes for MCP communication."""
 
         class _SessionContextASGI:
-            def __init__(self, inner_app):
-                self._inner_app = inner_app
+            def __init__(self, inner_app: Any):
+                self._inner_app: Any = inner_app
 
-            async def __call__(self, scope, receive, send):
+            async def __call__(
+                self,
+                scope: dict[str, Any],
+                receive: Any,
+                send: Any,
+            ):
                 session_id = "default"
                 if scope.get("type") == "http":
+                    key_b: bytes
+                    value_b: bytes
                     for key_b, value_b in scope.get("headers", []):
                         if key_b.decode("latin1").lower() == "mcp-session-id":
                             value = value_b.decode("latin1").strip()
@@ -210,7 +217,7 @@ class PythonMcpServer:
         self._shutdown_event.clear()
 
         # Enable debug logging if configured
-        debug_env = os.getenv("AGENT_DECOMPILE_DEBUG", "").lower()
+        debug_env: str = os.getenv("AGENT_DECOMPILE_DEBUG", "").lower()
         if debug_env in ("true", "1", "yes", "on"):
             DebugLogger.set_debug_enabled(True)
             DebugLogger.debug(self, "Debug logging enabled")

@@ -12,6 +12,7 @@ Thanks for helping improve AgentDecompile.
 - [Testing](#testing)
 - [Style](#style)
 - [Debugging](#debugging)
+- [Release Process](#release-process)
 
 ---
 
@@ -128,6 +129,56 @@ Quick local run:
 ```bash
 uv run agentdecompile-cli --help
 ```
+
+---
+
+## Release Process
+
+All project release identifiers must use plain semver format like `1.0.0` (never with a leading `v`).
+
+```mermaid
+flowchart TD
+  A[Update docs and release notes] --> B[Tag and push 1.0.0]
+  B --> C[Build multi-arch AIO and MCP manifests]
+  C --> D[Push manifests to docker.io with 1.0.0 tag]
+  D --> E[Create GitHub release with gh CLI]
+```
+
+1. Create and push the release tag:
+
+```bash
+git tag 1.0.0
+git push origin 1.0.0
+```
+
+2. Build multi-arch images with Podman manifests:
+
+```bash
+podman build --platform linux/amd64,linux/arm64 -f Dockerfile.aio --manifest bolabaden/agentdecompile-aio:1.0.0 .
+podman build --platform linux/amd64,linux/arm64 -f Dockerfile --manifest bolabaden/agentdecompile-mcp:1.0.0 .
+```
+
+3. Push both manifests to Docker Hub under `1.0.0`:
+
+```bash
+podman manifest push --all bolabaden/agentdecompile-aio:1.0.0 docker://docker.io/bolabaden/agentdecompile-aio:1.0.0
+podman manifest push --all bolabaden/agentdecompile-mcp:1.0.0 docker://docker.io/bolabaden/agentdecompile-mcp:1.0.0
+```
+
+4. Create the GitHub release using `gh`:
+
+```bash
+gh release create 1.0.0 --title "AgentDecompile 1.0.0" --notes-file RELEASE_NOTES_1.0.0.md
+```
+
+Recommended release notes structure in `RELEASE_NOTES_1.0.0.md`:
+
+- Heading: `# AgentDecompile 1.0.0`
+- Highlights: major capabilities, compatibility guarantees, and notable fixes.
+- Containers:
+  - `docker.io/bolabaden/agentdecompile-aio:1.0.0`
+  - `docker.io/bolabaden/agentdecompile-mcp:1.0.0`
+- Installation/upgrade snippets for CLI and containers.
 
 ---
 
