@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# AIO: supervisord runs ghidra-server and agentdecompile-mcp (headless).
+# AIO: supervisord runs ghidra-server, bsim-server, and agentdecompile-mcp (headless).
 # Both log with [program-name] prefix for readable interleaved output.
-# MCP waits for Ghidra server so it can connect to shared repos.
+# MCP waits for Ghidra + BSim so it can connect to shared services.
 set -euo pipefail
 
 MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
@@ -44,6 +44,6 @@ mkdir -p /home/ghidra/.config/ghidra/ghidra_headless
 touch /home/ghidra/.config/ghidra/ghidra_headless/application.log
 
 # Canonical log line so logs are recognizable
-echo "[supervisor] AIO starting: ghidra-server (1) -> agentdecompile-mcp (2); MCP waits for Ghidra then connects."
+echo "[supervisor] AIO starting: ghidra-server (1) -> bsim-server (2) -> agentdecompile-mcp (3); MCP waits for Ghidra + BSim then connects."
 
 exec supervisord -n -c /ghidra/docker/supervisord.conf

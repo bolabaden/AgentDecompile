@@ -4,8 +4,7 @@
 #   PowerShell: $Env:DOCKER_BUILDKIT="1"
 #   Cmd:        set DOCKER_BUILDKIT=1
 #
-# AIO image: one container runs Ghidra server (13100-13102) and AgentDecompile MCP (8080).
-# BSim: use an external PostgreSQL 15 server (see docker-compose.yml).
+# AIO image: one container runs Ghidra server (13100-13102), BSim server (5432), and AgentDecompile MCP (8080).
 # PyGhidra headless and Ghidra AnalyzeHeadless: docker exec -it <container> bash, then run there.
 FROM alpine:latest AS build
 
@@ -89,14 +88,16 @@ RUN set -eux; \
     rm -f /tmp/ghidra.zip; \
     rm -rf /tmp/ghidra_extract
 
-# install pyghidra into venv (BSim PostgreSQL is now external; see docker-compose.yml)
+# build BSim PostgreSQL and install pyghidra into venv
 # JPype1 is bundled as a source tarball and needs g++ to compile its C++ extension.
 RUN set -eux; \
-        apk add --no-cache --virtual .jpype-build g++ python3-dev; \
+    apk add --no-cache --virtual .build-tools g++ gcc musl-dev make bison flex zlib-dev readline-dev perl python3-dev; \
+    ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
         python3 -m venv ${GHIDRA_HOME}/venv; \
         ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
-        apk del .jpype-build; \
-        mkdir -p ${GHIDRA_HOME}/repositories
+    apk del .build-tools; \
+    mkdir -p ${GHIDRA_HOME}/repositories; \
+    mkdir -p ${GHIDRA_HOME}/bsim_datadir
 
 # --- Layer 3b: build native decompiler/sleigh ONLY on arm64 (x86_64 ships prebuilt) ---
 # The Ghidra PUBLIC release includes prebuilt linux_x86_64 binaries but NOT linux_arm_64.
@@ -148,6 +149,7 @@ ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
     anyio \
+    chromadb \
     click \
     fastapi \
     ghidra-stubs \
@@ -214,10 +216,10 @@ WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
 COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
 COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
-COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/
+COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/supervisor-start-bsim.sh ${GHIDRA_HOME}/docker/
 
-RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh \
-    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh \
+RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/supervisor-start-bsim.sh \
+    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/supervisor-start-bsim.sh \
     && mkdir -p /work /projects \
     && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
 
@@ -235,5 +237,8 @@ EXPOSE ${GHIDRA_SERVER_PORT2}
 ARG GHIDRA_SERVER_PORT3="13102"
 ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
 EXPOSE ${GHIDRA_SERVER_PORT3}
+ARG GHIDRA_BSIM_PORT="5432"
+ENV GHIDRA_BSIM_PORT=${GHIDRA_BSIM_PORT}
+EXPOSE ${GHIDRA_BSIM_PORT}
 
 ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]
