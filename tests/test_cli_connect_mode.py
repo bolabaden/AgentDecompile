@@ -52,6 +52,14 @@ def test_stdio_bridge_accepts_url():
     assert_bool_invariants(bridge.port is None)
 
 
+def test_stdio_bridge_initialization_options_include_logging_capability():
+    bridge = AgentDecompileStdioBridge(8080)
+    options = bridge._create_initialization_options()
+
+    assert options.capabilities is not None
+    assert options.capabilities.logging is not None
+
+
 def test_connect_mode_main_does_not_import_pyghidra(monkeypatch):
     # Import module lazily so monkeypatches apply to the module's main() call.
     import agentdecompile_cli.__main__ as cli_main

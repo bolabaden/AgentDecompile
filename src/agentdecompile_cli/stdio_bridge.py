@@ -46,6 +46,8 @@ from mcp.shared.message import SessionMessage
 from mcp.types import (
     JSONRPCMessage,
     JSONRPCNotification,
+    LoggingCapability,
+    ServerCapabilities,
     TextContent,
 )
 
@@ -436,6 +438,18 @@ class AgentDecompileStdioBridge:
                 sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
                 return []
 
+    def _create_initialization_options(self):
+        """Create MCP initialization options with explicit logging capability."""
+        options = self.server.create_initialization_options()
+        capabilities = getattr(options, "capabilities", None)
+        if capabilities is None:
+            capabilities = ServerCapabilities()
+
+        if getattr(capabilities, "logging", None) is None:
+            capabilities = capabilities.model_copy(update={"logging": LoggingCapability()})
+
+        return options.model_copy(update={"capabilities": capabilities})
+
     async def run(self):
         """Run the stdio bridge.
 
@@ -450,7 +464,7 @@ class AgentDecompileStdioBridge:
                 await self.server.run(
                     stdio_read,  # pyright: ignore[reportArgumentType]
                     stdio_write,  # pyright: ignore[reportArgumentType]
-                    self.server.create_initialization_options(),
+                    self._create_initialization_options(),
                 )
         except ClosedResourceError:
             sys.stderr.write("Client disconnected\n")
