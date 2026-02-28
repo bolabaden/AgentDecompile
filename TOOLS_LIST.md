@@ -1,6 +1,6 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 50 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all 51 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
@@ -8,7 +8,7 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
   - [Table of Contents](#table-of-contents)
-  - [Canonical Tools (50)](#canonical-tools-50)
+  - [Canonical Tools (51)](#canonical-tools-51)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
@@ -18,6 +18,7 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
+    - [`download-shared-repository`](#download-shared-repository)
     - [`export`](#export)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
@@ -49,6 +50,7 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
     - [`manage-structures`](#manage-structures)
     - [`manage-symbols`](#manage-symbols)
     - [`match-function`](#match-function)
+    - [`execute-script`](#execute-script)
     - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser)
     - [`open-program-in-code-browser`](#open-program-in-code-browser)
     - [`open`](#open)
@@ -154,7 +156,7 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
 
-## Canonical Tools (50)
+## Canonical Tools (51)
 
 ### `analyze-data-flow`
 
@@ -475,6 +477,35 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
 
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
+
+### `download-shared-repository`
+
+**Description**: Transfers and synchronizes content between an active Ghidra shared repository session and the local project. It supports explicit pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning.
+
+**Parameters**:
+- `mode` (string, optional): Transfer mode (`pull`, `push`, `bidirectional`, default: `pull`).
+  - Synonyms: `mode`, `direction`, `syncMode`, `operation`, `action`.
+- `path` (string, optional): Shared repository source path or folder (default: `/`).
+  - Synonyms: `path`, `sourcePath`, `source`, `folder`.
+- `newPath` (string, optional): Local project destination path or folder (default: `/`).
+  - Synonyms: `newPath`, `destinationPath`, `destinationFolder`, `destination`.
+- `recursive` (boolean, optional): Recursively include children under source path (default: true).
+  - Synonyms: `recursive`, `recurse`.
+- `maxResults` (integer, optional): Maximum number of repository items to process.
+  - Synonyms: `maxResults`, `limit`.
+- `force` (boolean, optional): Overwrite existing local project files.
+  - Synonyms: `force`, `overwrite`.
+- `dryRun` (boolean, optional): Preview planned transfers without writing data.
+  - Synonyms: `dryRun`, `planOnly`, `preview`.
+**Overloads**:
+- `download-shared-repository(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
+
+**Synonyms**: `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`, `sync-shared-project`
+
+**Examples**:
+- Pull all repository files: `download-shared-repository mode="pull" path="/" newPath="/" recursive=true`.
+- Push local scope mapping: `download-shared-repository mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
+- Plan bidirectional sync: `download-shared-repository mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
 
 ### `export`
 
@@ -1141,10 +1172,10 @@ This document provides an exhaustive, consolidated reference for all 50 canonica
 - List types: `manage-data-types programPath="/bin.exe" action="list" categoryPath="/structs" includeSubcategories=true`.
 ### `manage-files`
 
-**Description**: Manages project files, including import, export, deletion, and organization. This tool extends import-binary for broader file handling, supporting versioning and mirroring.
+**Description**: Manages project files, including import/export, local filesystem operations, project version-control helpers, and shared-repository transfer orchestration. Shared flows support pull/push/sync modes via action aliases.
 
 **Parameters**:
-- `action` (string, required): Action (`import`, `export`, `delete`, `list`).
+- `action` (string, required): Action (`import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, plus local file actions).
   - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `filePath` (string, required for import/export): File path.
   - Synonyms: `filePath`, `filep`.

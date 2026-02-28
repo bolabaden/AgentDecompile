@@ -38,8 +38,6 @@ if TYPE_CHECKING:
         def getRootFolder(self) -> ProjectData: ...
         @abstractmethod
         def createFolder(self, folderPath: str) -> ProjectData: ...
-        @abstractmethod
-        def createFile(self, filePath: str, source: Path) -> ProjectData: ...
 
     class RepoItem(ABC):
         @abstractmethod
@@ -60,6 +58,7 @@ class ProjectToolProvider(ToolProvider):
         "open": "_handle_open",
         "getcurrentprogram": "_handle_current",
         "listprojectfiles": "_handle_list",
+        "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "listprojectbinaries": "_handle_list_project_binaries",
         "listprojectbinarymetadata": "_handle_list_project_binary_metadata",
@@ -115,6 +114,30 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
+                name="download-shared-repository",
+                description="Transfer or sync files between active shared repository session and local project storage",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["pull", "push", "bidirectional"],
+                            "default": "pull",
+                        },
+                        "path": {"type": "string", "default": "/"},
+                        "sourcePath": {"type": "string"},
+                        "newPath": {"type": "string", "default": "/"},
+                        "destinationPath": {"type": "string"},
+                        "destinationFolder": {"type": "string"},
+                        "recursive": {"type": "boolean", "default": True},
+                        "maxResults": {"type": "integer", "default": 100000},
+                        "force": {"type": "boolean", "default": False},
+                        "dryRun": {"type": "boolean", "default": False},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
                 name="manage-files",
                 description="Manage project and filesystem files (import/export/list/info/create/edit/move/version-control)",
                 inputSchema={
@@ -136,6 +159,10 @@ class ProjectToolProvider(ToolProvider):
                                 "append",
                                 "import",
                                 "export",
+                                "download-shared",
+                                "pull-shared",
+                                "push-shared",
+                                "sync-shared",
                                 "checkout",
                                 "uncheckout",
                                 "unhijack",
@@ -157,6 +184,10 @@ class ProjectToolProvider(ToolProvider):
                                 "append",
                                 "import",
                                 "export",
+                                "download-shared",
+                                "pull-shared",
+                                "push-shared",
+                                "sync-shared",
                                 "checkout",
                                 "uncheckout",
                                 "unhijack",
@@ -639,6 +670,36 @@ class ProjectToolProvider(ToolProvider):
         if op == "export":
             return await self._export_current_program(args)
 
+        pull_aliases = {
+            "downloadshared",
+            "downloadsharedrepository",
+            "downloadsharedproject",
+            "pullshared",
+            "pullsharedrepository",
+            "pullsharedproject",
+        }
+        push_aliases = {
+            "pushshared",
+            "pushsharedrepository",
+            "pushsharedproject",
+            "uploadshared",
+            "uploadsharedrepository",
+            "importtoshared",
+        }
+        sync_aliases = {
+            "syncshared",
+            "syncsharedrepository",
+            "syncsharedproject",
+            "syncwithshared",
+            "mirrorshared",
+        }
+        if op in pull_aliases:
+            return await self._sync_shared_repository(args, default_mode="pull")
+        if op in push_aliases:
+            return await self._sync_shared_repository(args, default_mode="push")
+        if op in sync_aliases:
+            return await self._sync_shared_repository(args, default_mode="bidirectional")
+
         if op in {"checkout", "uncheckout", "unhijack"}:
             domain_file = self._resolve_domain_file(program_path)
             if domain_file is None:
@@ -844,6 +905,9 @@ class ProjectToolProvider(ToolProvider):
 
         raise ValueError(f"Unsupported manage-files operation: {operation}")
 
+    async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._sync_shared_repository(args, default_mode="pull")
+
     def _resolve_domain_file(self, program_path: str | None):
         if not program_path:
             if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
@@ -987,6 +1051,380 @@ class ProjectToolProvider(ToolProvider):
         output.write_text(str(payload), encoding="utf-8")
 
         return create_success_response({"operation": "export", "program": program.getName(), "outputPath": str(output), "success": True})
+
+    def _normalize_repo_path(self, value: str | None, default: str = "/") -> str:
+        normalized = (value or default).strip()
+        if not normalized:
+            normalized = default
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        while "//" in normalized:
+            normalized = normalized.replace("//", "/")
+        if len(normalized) > 1:
+            normalized = normalized.rstrip("/")
+        return normalized
+
+    def _path_in_scope(self, item_path: str, source_folder: str, recursive: bool) -> bool:
+        path = self._normalize_repo_path(item_path)
+        source = self._normalize_repo_path(source_folder)
+        if source == "/":
+            if recursive:
+                return True
+            parent = path.rsplit("/", 1)[0] or "/"
+            return parent == "/"
+
+        if recursive:
+            return path == source or path.startswith(f"{source}/")
+
+        parent = path.rsplit("/", 1)[0] or "/"
+        return parent == source
+
+    def _map_repo_path_to_local(self, repo_path: str, source_folder: str, destination_folder: str) -> str:
+        source = self._normalize_repo_path(source_folder)
+        destination = self._normalize_repo_path(destination_folder)
+        path = self._normalize_repo_path(repo_path)
+
+        relative = path.lstrip("/")
+        if source != "/":
+            prefix = f"{source}/"
+            if path.startswith(prefix):
+                relative = path[len(prefix) :]
+
+        if destination == "/":
+            return self._normalize_repo_path(f"/{relative}")
+        return self._normalize_repo_path(f"{destination}/{relative}")
+
+    def _get_active_project_data(self):
+        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        if ghidra_project is not None:
+            try:
+                return ghidra_project.getProject().getProjectData()
+            except Exception:
+                try:
+                    return ghidra_project.getProjectData()
+                except Exception:
+                    pass
+
+        if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+            try:
+                domain_file = self.program_info.program.getDomainFile()
+                if domain_file is not None:
+                    return domain_file.getProjectData()
+            except Exception:
+                pass
+
+        return None
+
+    def _ensure_project_folder(self, project_data: ProjectData, folder_path: str):
+        normalized = self._normalize_repo_path(folder_path)
+        if normalized == "/":
+            return project_data.getRootFolder()
+
+        folder = project_data.getFolder(normalized)
+        if folder is not None:
+            return folder
+
+        current = project_data.getRootFolder()
+        for component in normalized.strip("/").split("/"):
+            if not component:
+                continue
+            child = current.getFolder(component)
+            if child is None:
+                child = current.createFolder(component)
+            current = child
+        return current
+
+    def _resolve_shared_sync_mode(self, args: dict[str, Any], default_mode: str = "pull") -> str:
+        requested = self._get_str(args, "mode", "direction", "syncmode", "operation", "action", default=default_mode)
+        normalized = n(requested)
+        if normalized in {"pull", "download", "downloadshared", "pullshared"}:
+            return "pull"
+        if normalized in {"push", "upload", "uploadshared", "pushshared", "importtoshared"}:
+            return "push"
+        if normalized in {"bidirectional", "both", "sync", "syncshared", "mirror"}:
+            return "bidirectional"
+        return default_mode
+
+    def _get_shared_session_context(self) -> tuple[str, dict[str, Any] | None, Any, str | None]:
+        session_id = get_current_mcp_session_id()
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        repository_adapter = handle.get("repository_adapter") if handle else None
+        repository_name = handle.get("repository_name") if handle else None
+        return session_id, handle, repository_adapter, repository_name
+
+    def _pull_shared_repository_to_local(self, args: dict[str, Any], repository_adapter: Any, repository_name: str | None, project_data: Any) -> dict[str, Any]:
+        source_folder = self._normalize_repo_path(
+            self._get_str(args, "path", "sourcepath", "folder", default="/"),
+        )
+        destination_folder = self._normalize_repo_path(
+            self._get_str(args, "newpath", "destinationpath", "destinationfolder", default="/"),
+        )
+        recursive = self._get_bool(args, "recursive", default=True)
+        max_results = self._get_int(args, "maxresults", "limit", default=100000)
+        force = self._get_bool(args, "force", default=False)
+        dry_run = self._get_bool(args, "dryrun", default=False)
+
+        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+        session_id = get_current_mcp_session_id()
+        items = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        if not items:
+            items = self._list_repository_items(repository_adapter)
+
+        candidates: list[dict[str, Any]] = []
+        for item in items:
+            item_path = str(item.get("path") or "")
+            if item_path and self._path_in_scope(item_path, source_folder, recursive):
+                candidates.append(item)
+
+        if max_results > 0:
+            candidates = candidates[:max_results]
+
+        monitor = TaskMonitor.DUMMY
+        transferred: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        for item in candidates:
+            repo_path = self._normalize_repo_path(str(item.get("path") or ""))
+            if not repo_path or repo_path == "/":
+                continue
+
+            target_path = self._map_repo_path_to_local(repo_path, source_folder, destination_folder)
+            existing = project_data.getFile(target_path)
+            if existing is not None and not force:
+                skipped.append({"sourcePath": repo_path, "targetPath": target_path, "reason": "already-exists"})
+                continue
+
+            if dry_run:
+                transferred.append({"sourcePath": repo_path, "targetPath": target_path, "planned": True})
+                continue
+
+            parts = repo_path.rsplit("/", 1)
+            repo_folder = parts[0] if len(parts) == 2 else "/"
+            item_name = parts[1] if len(parts) == 2 else parts[0]
+            target_parent_path = target_path.rsplit("/", 1)[0] or "/"
+
+            try:
+                repo_item = repository_adapter.getItem(repo_folder, item_name)
+                if repo_item is None:
+                    raise ValueError(f"Repository item not found: {repo_path}")
+
+                if existing is not None and force and hasattr(existing, "delete"):
+                    existing.delete()
+
+                parent_folder = self._ensure_project_folder(project_data, target_parent_path)
+                remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                if remote_domain_obj is None:
+                    raise ValueError(f"Unable to open shared item: {repo_path}")
+
+                try:
+                    parent_folder.createFile(item_name, remote_domain_obj, monitor)
+                finally:
+                    try:
+                        remote_domain_obj.release(self)
+                    except Exception:
+                        pass
+
+                transferred.append({"sourcePath": repo_path, "targetPath": target_path})
+            except Exception as exc:
+                errors.append({"sourcePath": repo_path, "targetPath": target_path, "error": str(exc)})
+
+        return {
+            "direction": "pull",
+            "repository": repository_name,
+            "sourceFolder": source_folder,
+            "destinationFolder": destination_folder,
+            "recursive": recursive,
+            "requested": len(candidates),
+            "transferred": len(transferred),
+            "skipped": len(skipped),
+            "errors": errors,
+            "items": transferred,
+            "skippedItems": skipped,
+            "dryRun": dry_run,
+        }
+
+    def _push_local_project_to_shared(self, args: dict[str, Any], repository_name: str | None, project_data: Any) -> dict[str, Any]:
+        source_folder = self._normalize_repo_path(
+            self._get_str(args, "path", "sourcepath", "folder", default="/"),
+        )
+        destination_folder = self._normalize_repo_path(
+            self._get_str(args, "newpath", "destinationpath", "destinationfolder", default="/"),
+        )
+        recursive = self._get_bool(args, "recursive", default=True)
+        max_results = self._get_int(args, "maxresults", "limit", default=100000)
+        force = self._get_bool(args, "force", default=False)
+        dry_run = self._get_bool(args, "dryrun", default=False)
+
+        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+        root = project_data.getRootFolder()
+        local_items = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
+
+        candidates: list[dict[str, Any]] = []
+        for item in local_items:
+            local_path = self._normalize_repo_path(str(item.get("path") or ""))
+            if local_path and self._path_in_scope(local_path, source_folder, recursive):
+                candidates.append(item)
+
+        if max_results > 0:
+            candidates = candidates[:max_results]
+
+        monitor = TaskMonitor.DUMMY
+        transferred: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        for item in candidates:
+            source_path = self._normalize_repo_path(str(item.get("path") or ""))
+            if not source_path or source_path == "/":
+                continue
+
+            target_path = self._map_repo_path_to_local(source_path, source_folder, destination_folder)
+            if source_path == target_path:
+                skipped.append({"sourcePath": source_path, "targetPath": target_path, "reason": "same-path"})
+                continue
+
+            existing = project_data.getFile(target_path)
+            if existing is not None and not force:
+                skipped.append({"sourcePath": source_path, "targetPath": target_path, "reason": "already-exists"})
+                continue
+
+            if dry_run:
+                transferred.append({"sourcePath": source_path, "targetPath": target_path, "planned": True})
+                continue
+
+            try:
+                source_file = project_data.getFile(source_path)
+                if source_file is None:
+                    raise ValueError(f"Local project item not found: {source_path}")
+
+                if existing is not None and force and hasattr(existing, "delete"):
+                    existing.delete()
+
+                target_parent_path = target_path.rsplit("/", 1)[0] or "/"
+                parent_folder = self._ensure_project_folder(project_data, target_parent_path)
+                item_name = target_path.rsplit("/", 1)[-1]
+
+                source_domain_obj = source_file.getDomainObject(self, True, False, monitor)
+                if source_domain_obj is None:
+                    raise ValueError(f"Unable to open local project item: {source_path}")
+
+                try:
+                    parent_folder.createFile(item_name, source_domain_obj, monitor)
+                finally:
+                    try:
+                        source_domain_obj.release(self)
+                    except Exception:
+                        pass
+
+                transferred.append({"sourcePath": source_path, "targetPath": target_path})
+            except Exception as exc:
+                errors.append({"sourcePath": source_path, "targetPath": target_path, "error": str(exc)})
+
+        return {
+            "direction": "push",
+            "repository": repository_name,
+            "sourceFolder": source_folder,
+            "destinationFolder": destination_folder,
+            "recursive": recursive,
+            "requested": len(candidates),
+            "transferred": len(transferred),
+            "skipped": len(skipped),
+            "errors": errors,
+            "items": transferred,
+            "skippedItems": skipped,
+            "dryRun": dry_run,
+            "note": "Push uses local project domain files; if the project is shared-backed, created items are synchronized through that backend.",
+        }
+
+    async def _sync_shared_repository(self, args: dict[str, Any], default_mode: str = "pull") -> list[types.TextContent]:
+        mode = self._resolve_shared_sync_mode(args, default_mode=default_mode)
+        _, handle, repository_adapter, repository_name = self._get_shared_session_context()
+        if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
+            return create_success_response(
+                {
+                    "operation": "sync-shared",
+                    "mode": mode,
+                    "success": False,
+                    "error": "No active shared-server session. Run open with --server-host first.",
+                },
+            )
+
+        if repository_adapter is None:
+            return create_success_response(
+                {
+                    "operation": "sync-shared",
+                    "mode": mode,
+                    "success": False,
+                    "repository": repository_name,
+                    "error": "Shared repository adapter is unavailable in this session.",
+                },
+            )
+
+        project_data = self._get_active_project_data()
+        if project_data is None:
+            return create_success_response(
+                {
+                    "operation": "sync-shared",
+                    "mode": mode,
+                    "success": False,
+                    "repository": repository_name,
+                    "error": "No local Ghidra project context available for shared sync.",
+                },
+            )
+
+        if mode == "pull":
+            pull_result = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
+            return create_success_response(
+                {
+                    "operation": "sync-shared",
+                    "mode": mode,
+                    "direction": "shared-to-local",
+                    "success": len(pull_result["errors"]) == 0,
+                    **pull_result,
+                },
+            )
+
+        if mode == "push":
+            push_result = self._push_local_project_to_shared(args, repository_name, project_data)
+            return create_success_response(
+                {
+                    "operation": "sync-shared",
+                    "mode": mode,
+                    "direction": "local-to-shared",
+                    "success": len(push_result["errors"]) == 0,
+                    **push_result,
+                },
+            )
+
+        pull_result = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
+        push_result = self._push_local_project_to_shared(args, repository_name, project_data)
+
+        return create_success_response(
+            {
+                "operation": "sync-shared",
+                "mode": "bidirectional",
+                "direction": "shared-and-local",
+                "success": len(pull_result["errors"]) == 0 and len(push_result["errors"]) == 0,
+                "repository": repository_name,
+                "phases": {
+                    "pull": pull_result,
+                    "push": push_result,
+                },
+                "totals": {
+                    "requested": int(pull_result.get("requested", 0)) + int(push_result.get("requested", 0)),
+                    "transferred": int(pull_result.get("transferred", 0)) + int(push_result.get("transferred", 0)),
+                    "skipped": int(pull_result.get("skipped", 0)) + int(push_result.get("skipped", 0)),
+                    "errors": len(pull_result.get("errors", [])) + len(push_result.get("errors", [])),
+                },
+            },
+        )
+
+    async def _download_shared_repository_to_local(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._sync_shared_repository(args, default_mode="pull")
 
     async def _handle_list_project_binaries(self, args: dict[str, Any]) -> list[types.TextContent]:
         session_id = get_current_mcp_session_id()
