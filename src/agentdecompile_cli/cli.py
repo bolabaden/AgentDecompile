@@ -48,6 +48,8 @@ from agentdecompile_cli.executor import (
 )
 from agentdecompile_cli.ghidrecomp.decompile import decompile
 from agentdecompile_cli.registry import (
+    NON_ADVERTISED_TOOL_ALIASES,
+    TOOL_PARAMS,
     RESOURCE_URI_DEBUG_INFO,
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
@@ -61,6 +63,46 @@ _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
 _DEFAULT_OUTPUT_FORMAT = "shell"
+
+
+# Canonical tools that already have curated command wrappers.
+# Dynamic command registration keeps these callable but hidden from top-level help
+# to avoid duplicate/alias noise in command listings.
+_TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "analyze-data-flow",
+        "analyze-program",
+        "analyze-vtables",
+        "capture-agentdecompile-debug-info",
+        "change-processor",
+        "checkin-program",
+        "get-call-graph",
+        "get-current-address",
+        "get-current-function",
+        "get-current-program",
+        "get-data",
+        "get-functions",
+        "get-references",
+        "inspect-memory",
+        "list-functions",
+        "list-open-programs",
+        "list-project-binaries",
+        "list-project-binary-metadata",
+        "list-project-files",
+        "manage-bookmarks",
+        "manage-comments",
+        "manage-data-types",
+        "manage-files",
+        "manage-function",
+        "manage-function-tags",
+        "manage-strings",
+        "manage-structures",
+        "manage-symbols",
+        "match-function",
+        "search-constants",
+        "sync-shared-project",
+    },
+)
 
 
 def _get_opts(ctx: click.Context) -> dict[str, Any]:
@@ -433,10 +475,13 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
     """Dynamically create CLI commands from the tool registry."""
     for tool_name in tool_registry.get_tools():
         tool_params = tool_registry.get_tool_params(tool_name)
+        snake_params = [to_snake_case(param) for param in tool_params]
+        params_help = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
+        command_help = f"Call `{tool_name}`. Parameters: {params_help}"
 
         # Create parameter options for this tool
         def tool_command(_tool_name: str = tool_name, **kwargs: Any) -> None:
-            """Dynamically generated tool command."""
+            """Auto-generated MCP tool command."""
             ctx = click.get_current_context()
             # Remove None values and format arguments
             args = {k: v for k, v in kwargs.items() if v is not None}
@@ -479,20 +524,39 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
                 help=f"{snake_param} parameter",
             )(tool_command)
 
-        command_name = to_snake_case(tool_name)
+        command_name = tool_name
+        hidden_from_help = tool_name in _TOOLS_WITH_CURATED_COMMANDS
 
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
 
-        # Register snake_case command unless an explicit command already exists.
+        # Register canonical kebab-case command unless an explicit command already exists.
         if command_name not in cli_group.commands:
-            command_obj = cli_group.command(command_name)(tool_command)
-        else:
-            command_obj = cli_group.commands[command_name]
+            cli_group.command(command_name, help=command_help, hidden=hidden_from_help)(tool_command)
 
-        # Also register canonical kebab-case alias from TOOLS_LIST when distinct.
-        if tool_name != command_name and tool_name not in cli_group.commands:
-            cli_group.add_command(command_obj, tool_name)
+
+def _tool_aliases_for(canonical_tool: str) -> list[str]:
+    aliases: list[str] = [
+        alias
+        for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()
+        if target == canonical_tool
+    ]
+    snake_alias = to_snake_case(canonical_tool)
+    if snake_alias != canonical_tool:
+        aliases.append(snake_alias)
+    return sorted(set(aliases))
+
+
+def _tool_signature(tool_name: str) -> str:
+    params = TOOL_PARAMS.get(tool_name)
+    if params is None:
+        resolved = tool_registry.resolve_tool_name(tool_name)
+        if resolved:
+            params = TOOL_PARAMS.get(resolved, [])
+        else:
+            params = []
+    params = [to_snake_case(param) for param in params]
+    return " ".join(f"--{param}" for param in params) if params else "(none)"
 
 
 def _ensure_dynamic_commands_registered() -> None:
@@ -3349,6 +3413,47 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
 # Generic tool call (any MCP tool by name + JSON args)
 # ---------------------------------------------------------------------------
 
+@main.command(
+    "alias",
+    help="Show alias/overload mappings and signatures for a tool name.",
+)
+@click.argument("name", required=True)
+def alias_cmd(name: str) -> None:
+    """Show alias details for a canonical or alias tool name."""
+    resolved = tool_registry.resolve_tool_name(name)
+    if not resolved:
+        click.echo(f"Unknown tool or alias: {name}", err=True)
+        sys.exit(1)
+
+    canonical = resolved
+    canonical_sig = _tool_signature(canonical)
+    click.echo(f"Canonical: {canonical}")
+    click.echo(f"  Signature: {canonical_sig}")
+
+    aliases = _tool_aliases_for(canonical)
+    if not aliases:
+        click.echo("Aliases: none")
+        return
+
+    different_signatures: list[tuple[str, str]] = []
+    same_signature_aliases: list[str] = []
+    for alias in aliases:
+        alias_sig = _tool_signature(alias)
+        if alias_sig != canonical_sig:
+            different_signatures.append((alias, alias_sig))
+        else:
+            same_signature_aliases.append(alias)
+
+    if different_signatures:
+        click.echo("Aliases with different signatures:")
+        for alias, signature in different_signatures:
+            click.echo(f"  - {alias}")
+            click.echo(f"      Signature: {signature}")
+
+    if same_signature_aliases:
+        click.echo("Aliases with identical signatures (hidden from main help):")
+        for alias in same_signature_aliases:
+            click.echo(f"  - {alias}")
 
 @main.command(
     "tool",
