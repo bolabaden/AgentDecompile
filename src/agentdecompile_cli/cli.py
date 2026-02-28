@@ -57,6 +57,10 @@ from agentdecompile_cli.registry import (
 
 THREAD_COUNT = multiprocessing.cpu_count()
 _dynamic_commands_registered = False
+_format_options_registered = False
+_CLI_STATE_DIR = ".agentdecompile"
+_CLI_STATE_FILE = "cli_state.json"
+_DEFAULT_OUTPUT_FORMAT = "shell"
 
 
 def _get_opts(ctx: click.Context) -> dict[str, Any]:
@@ -80,7 +84,7 @@ def _client(ctx: click.Context) -> Any:
 
 
 def _fmt(ctx: click.Context) -> str:
-    return _get_opts(ctx).get("format", "text")
+    return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
 
 
 def _extract_text(result: Any) -> str | None:
@@ -128,6 +132,11 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     if tool_registry.is_valid_tool(tool):
         call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
         payload = tool_registry.parse_arguments(payload, call_tool_name)
+
+    explicit_program = _extract_program_argument(payload)
+    if explicit_program is not None:
+        _set_cached_program(ctx, explicit_program)
+
     call_tool_name = to_snake_case(call_tool_name)
 
     try:
@@ -158,6 +167,11 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
     if tool_registry.is_valid_tool(tool):
         call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
         safe_payload = tool_registry.parse_arguments(safe_payload, call_tool_name)
+
+    explicit_program = _extract_program_argument(safe_payload)
+    if explicit_program is not None:
+        _set_cached_program(ctx, explicit_program)
+
     call_tool_name = to_snake_case(call_tool_name)
     try:
         client = _client(ctx)
@@ -188,6 +202,136 @@ def _parse_tool_payload(arguments: str) -> dict[str, Any]:
         click.echo("Arguments must be a JSON object.", err=True)
         sys.exit(1)
     return payload
+
+
+def _cli_state_path() -> Path:
+    return Path.cwd() / _CLI_STATE_DIR / _CLI_STATE_FILE
+
+
+def _load_cli_state() -> dict[str, Any]:
+    state_path = _cli_state_path()
+    if not state_path.exists():
+        return {}
+    try:
+        with state_path.open(encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_cli_state(data: dict[str, Any]) -> None:
+    try:
+        state_path = _cli_state_path()
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with state_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        return
+
+
+def _cache_scope_key(ctx: click.Context) -> str:
+    opts = _get_opts(ctx)
+    url = resolve_backend_url(
+        opts.get("server_url"),
+        opts.get("host"),
+        opts.get("port"),
+    )
+    if url:
+        return url.rstrip("/")
+    return f"http://{opts.get('host', '127.0.0.1')}:{opts.get('port', 8080)}"
+
+
+def _extract_program_argument(payload: dict[str, Any]) -> str | None:
+    for key in ("programPath", "binaryName", "program_path", "binary_name", "program", "binary"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _set_cached_program(ctx: click.Context, program: str) -> None:
+    if not program.strip():
+        return
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        backends = {}
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry["last_program"] = program.strip()
+    backends[scope] = entry
+    state["backends"] = backends
+    _save_cli_state(state)
+
+
+def _get_cached_program(ctx: click.Context) -> str | None:
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        return None
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("last_program")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _tool_program_param(tool_name: str) -> str | None:
+    if not tool_registry.is_valid_tool(tool_name):
+        return None
+    resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool_name))
+    params = tool_registry.get_tool_params(resolved_name)
+    if "programPath" in params:
+        return "programPath"
+    if "binaryName" in params:
+        return "binaryName"
+    return None
+
+
+def _prepare_tool_payload_with_program_fallback(
+    ctx: click.Context,
+    tool_name: str,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    normalized_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
+    resolved_name = tool_name
+    if tool_registry.is_valid_tool(tool_name):
+        resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool_name))
+        normalized_payload = tool_registry.parse_arguments(normalized_payload, resolved_name)
+
+    explicit_program = _extract_program_argument(normalized_payload)
+    if explicit_program is not None:
+        _set_cached_program(ctx, explicit_program)
+        return normalized_payload, None
+
+    program_key = _tool_program_param(resolved_name)
+    if program_key is None:
+        return normalized_payload, None
+
+    cached_program = _get_cached_program(ctx)
+    if cached_program is None:
+        raise click.ClickException(
+            "Program is required for this tool. Provide 'programPath' or 'binaryName' in arguments, or run a prior command with an explicit program first.",
+        )
+
+    normalized_payload[program_key] = cached_program
+    return normalized_payload, cached_program
+
+
+def _inject_inferred_program(data: Any, inferred_program: str | None) -> Any:
+    if inferred_program is None:
+        return data
+    if isinstance(data, dict):
+        if any(k in data for k in ("program", "programPath", "binaryName")):
+            return data
+        return {"program": inferred_program, **data}
+    return {"program": inferred_program, "result": data}
 
 
 def _validate_known_tool(name: str) -> None:
@@ -222,11 +366,67 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
     cmd = click.option(
         "-f",
         "--format",
-        type=click.Choice(["json", "table", "text"]),
-        default="text",
-        help="Output format",
+        type=str,
+        default=_DEFAULT_OUTPUT_FORMAT,
+        help="Output format (shell/json/markdown/xml/etc.)",
     )(cmd)
     return cmd
+
+
+def _set_output_format_option(
+    ctx: click.Context,
+    _param: click.Parameter,
+    value: str | None,
+) -> str | None:
+    if value is None:
+        return value
+    root_ctx = ctx.find_root()
+    if root_ctx.obj is None:
+        root_ctx.obj = {}
+    root_ctx.obj["format"] = value
+    return value
+
+
+def _command_has_output_format_option(command: click.Command) -> bool:
+    for param in command.params:
+        if isinstance(param, click.Option):
+            opts = set(param.opts + param.secondary_opts)
+            if "--format" in opts or "-f" in opts:
+                return True
+    return False
+
+
+def _register_output_format_option_on_all_commands(root: click.Command) -> None:
+    global _format_options_registered
+    if _format_options_registered:
+        return
+
+    visited: set[int] = set()
+
+    def _walk(command: click.Command) -> None:
+        command_id = id(command)
+        if command_id in visited:
+            return
+        visited.add(command_id)
+
+        if not _command_has_output_format_option(command):
+            command.params.append(
+                click.Option(
+                    ["-f", "--format"],
+                    type=str,
+                    default=None,
+                    expose_value=False,
+                    callback=_set_output_format_option,
+                    help="Output format (shell/json/markdown/xml/etc.)",
+                ),
+            )
+
+        if isinstance(command, click.Group):
+            for subcommand in command.commands.values():
+                _walk(subcommand)
+
+    _walk(root)
+    _format_options_registered = True
 
 
 def _create_dynamic_commands(cli_group: click.Group) -> None:
@@ -310,9 +510,9 @@ def _ensure_dynamic_commands_registered() -> None:
 @click.option(
     "-f",
     "--format",
-    type=click.Choice(["json", "table", "text"]),
-    default="text",
-    help="Output format",
+    type=str,
+    default=_DEFAULT_OUTPUT_FORMAT,
+    help="Output format (shell/json/markdown/xml/etc.)",
 )
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
@@ -324,15 +524,17 @@ def main(
     format: str,
 ) -> None:
     """AgentDecompile CLI – all tools from TOOLS_LIST.md (30+ tools)."""
+    existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
     ctx.obj = {
         "host": host,
         "port": port,
         "server_url": server_url,
-        "format": format,
+        "format": existing_obj.get("format", format),
     }
 
     # Ensure command surface includes canonical + snake_case tool commands.
     _ensure_dynamic_commands_registered()
+    _register_output_format_option_on_all_commands(main)
 
 
 @click.version_option(__version__, "--version", "-V")
@@ -528,7 +730,7 @@ def list_grp() -> None:
     "-f",
     "--format",
     "local_format",
-    type=click.Choice(["json", "table", "text"]),
+    type=str,
     default=None,
     help="Output format override for this command",
 )
@@ -2748,7 +2950,7 @@ def files_grp() -> None:
     "exportType",
     type=click.Choice(["program", "function_info", "strings"]),
 )
-@click.option("--format", "format_", type=click.Choice(["json", "csv"]))
+@click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
 @click.option("--include-parameters", "includeParameters", is_flag=True)
 @click.option("--include-variables", "includeVariables", is_flag=True)
 @click.option("--include-comments", "includeComments", is_flag=True)
@@ -2776,7 +2978,7 @@ def files_run(
     mirror_fs: bool,
     enable_version_control: bool,
     export_type: str | None,
-    format_: str | None,
+    export_format: str | None,
     include_parameters: bool,
     include_variables: bool,
     include_comments: bool,
@@ -2810,8 +3012,8 @@ def files_run(
     payload["enableVersionControl"] = enable_version_control
     if export_type is not None:
         payload["exportType"] = export_type
-    if format_ is not None:
-        payload["format"] = format_
+    if export_format is not None:
+        payload["format"] = export_format
     payload["includeParameters"] = include_parameters
     payload["includeVariables"] = include_variables
     payload["includeComments"] = include_comments
@@ -3060,7 +3262,17 @@ def tool_cmd(
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)
-    _run_async(_call(ctx, name, **payload))
+
+    async def _run() -> None:
+        prepared_payload, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, payload)
+        data = await _call_raw(ctx, name, prepared_payload)
+        err_msg = _get_error_result_message(data)
+        if err_msg is not None:
+            click.echo(err_msg, err=True)
+            sys.exit(1)
+        click.echo(format_output(_inject_inferred_program(data, inferred_program), _fmt(ctx)))
+
+    _run_async(_run())
 
 
 @main.command(
@@ -3096,7 +3308,10 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                 sys.exit(1)
 
             _validate_known_tool(name)
-            data = await _call_raw(ctx, name, arguments)
+            prepared_arguments, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, arguments)
+            data = await _call_raw(ctx, name, prepared_arguments)
+            if inferred_program is not None:
+                data = _inject_inferred_program(data, inferred_program)
             step_result = {
                 "index": index,
                 "name": name,
@@ -3126,3 +3341,4 @@ if __name__ == "__main__":
 # Register dynamic commands for normal CLI invocation paths as well
 # (important for subcommand resolution before main() callback runs).
 _ensure_dynamic_commands_registered()
+_register_output_format_option_on_all_commands(main)

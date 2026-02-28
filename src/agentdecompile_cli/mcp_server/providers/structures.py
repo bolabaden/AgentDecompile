@@ -15,6 +15,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,6 @@ class StructureToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         action = self._get_str(args, "action", "mode", default="list")
-
-        from agentdecompile_cli.registry import normalize_identifier as n
 
         dispatch = {
             "list": self._list,
@@ -197,8 +196,6 @@ class StructureToolProvider(ToolProvider):
         # Batch support
         batch = self._get_list(args, "fields")
         if batch:
-            from agentdecompile_cli.registry import normalize_identifier as n
-
             results = []
             tx = program.startTransaction("batch-add-fields")
             try:

@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,6 @@ class CrossReferencesToolProvider(ToolProvider):
         offset = self._get_int(args, "offset", "startindex", default=0)
 
         program = self.program_info.program
-
-        from agentdecompile_cli.registry import normalize_identifier as n
 
         mode_n = n(mode)
 

@@ -42,6 +42,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
 from mcp.types import (
+    CallToolResult,
     JSONRPCMessage,
     JSONRPCNotification,
     TextContent,
@@ -678,17 +679,30 @@ class AgentDecompileStdioBridge:
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
             try:
                 async with self._with_backend_session("call_tool") as session:
-                    backend_name = name.replace("-", "_") if isinstance(name, str) else name
+                    backend_name = resolve_tool_name(name) if isinstance(name, str) else None
+                    if backend_name is None:
+                        backend_name = name
                     result = await asyncio.wait_for(
                         session.call_tool(backend_name, arguments),
                         timeout=BACKEND_OP_TIMEOUT,
                     )
-                    return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")] if result is None else result.content
+                    if result is None:
+                        return CallToolResult(
+                            content=[TextContent(type="text", text=f"Error: Tool '{name}' returned no result")],
+                            isError=True,
+                        )
+                    return result
             except RuntimeError as e:
-                return [TextContent(type="text", text=f"Error: Backend connection lost: {e}")]
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Error: Backend connection lost: {e}")],
+                    isError=True,
+                )
             except Exception as e:
                 sys.stderr.write(f"ERROR: call_tool {name} failed: {e.__class__.__name__}: {e}\n")
-                return [TextContent(type="text", text=f"Error: {e.__class__.__name__}: {e}")]
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Error: {e.__class__.__name__}: {e}")],
+                    isError=True,
+                )
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]

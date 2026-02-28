@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,6 @@ class VtableToolProvider(ToolProvider):
         listing = program.getListing()
         memory = program.getMemory()
         fm = program.getFunctionManager()
-
-        from agentdecompile_cli.registry import normalize_identifier as n
 
         mode_n = n(mode)
 

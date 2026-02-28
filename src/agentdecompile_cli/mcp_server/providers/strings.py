@@ -15,6 +15,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,8 +208,6 @@ class StringToolProvider(ToolProvider):
         return self._filter_strings(strings, mode, pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(self, strings: list, mode: str, pattern: str, min_len: int, max_results: int, offset: int, include_refs: bool) -> list[types.TextContent]:
-        from agentdecompile_cli.registry import normalize_identifier as n
-
         mode_n = n(mode)
 
         if mode_n == "count":

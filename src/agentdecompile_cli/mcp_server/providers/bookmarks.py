@@ -15,6 +15,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,6 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        from agentdecompile_cli.registry import normalize_identifier as n
-
         action = n(self._get_str(args, "action", "mode"))
         if not action:
             raise ValueError("action/mode is required")
@@ -90,7 +89,6 @@ class BookmarkToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _add_single(self, bm: dict[str, Any]) -> dict[str, Any]:
-        from agentdecompile_cli.mcp_server.tool_providers import n
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
         norm = {n(k): v for k, v in bm.items()}

@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,9 +149,7 @@ class CallGraphToolProvider(ToolProvider):
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
 
-            from agentdecompile_cli.registry import normalize_identifier as _n
-
-            mode_n = _n(mode)
+            mode_n = n(mode)
             if mode_n in ("callers", "callersdecomp", "commoncallers"):
                 callers = list(target_func.getCallingFunctions(None))[:max_nodes]
                 caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]

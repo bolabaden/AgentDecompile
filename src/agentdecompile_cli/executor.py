@@ -136,17 +136,56 @@ def resolve_backend_url(
 def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
     """Format data for human-readable output.
 
-    fmt: 'json' | 'table' | 'text'
+    fmt: 'shell' (default) | 'json' | 'markdown' | 'xml' | legacy aliases ('text', 'table')
     """
-    if fmt == "json":
+    normalized = (fmt or "shell").strip().lower()
+
+    if normalized == "json":
         return _json.dumps(data, indent=2)
-    if fmt == "text":
+
+    if normalized in {"shell", "text"}:
         if isinstance(data, dict):
             return "\n".join(f"{k}: {v}" for k, v in data.items())
         if isinstance(data, list):
             return "\n".join(f"- {item}" for item in data)
         return str(data)
-    if fmt == "table":
+
+    if normalized == "markdown":
+        if isinstance(data, dict):
+            return "\n".join(f"- **{k}**: {v}" for k, v in data.items())
+        if isinstance(data, list):
+            if data and isinstance(data[0], dict):
+                headers = list(data[0].keys())
+                header_row = "| " + " | ".join(headers) + " |"
+                sep_row = "| " + " | ".join(["---"] * len(headers)) + " |"
+                body_rows = ["| " + " | ".join(str(item.get(h, "")) for h in headers) + " |" for item in data]
+                return "\n".join([header_row, sep_row, *body_rows])
+            return "\n".join(f"- {item}" for item in data)
+        return str(data)
+
+    if normalized == "xml":
+        def _xml_escape(value: Any) -> str:
+            return (
+                str(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&apos;")
+            )
+
+        def _to_xml(value: Any, tag: str = "item") -> str:
+            if isinstance(value, dict):
+                inner = "".join(_to_xml(v, k) for k, v in value.items())
+                return f"<{tag}>{inner}</{tag}>"
+            if isinstance(value, list):
+                inner = "".join(_to_xml(item, "item") for item in value)
+                return f"<{tag}>{inner}</{tag}>"
+            return f"<{tag}>{_xml_escape(value)}</{tag}>"
+
+        return _to_xml(data, "result")
+
+    if normalized == "table":
         if isinstance(data, list) and data and isinstance(data[0], dict):
             headers = list(data[0].keys())
             lines = [" | ".join(headers), "-" * (len(headers) * 10)]
@@ -155,6 +194,7 @@ def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
                 lines.append(" | ".join(row))
             return "\n".join(lines)
         return str(data)
+
     return str(data)
 
 

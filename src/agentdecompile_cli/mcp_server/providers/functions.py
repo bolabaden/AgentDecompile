@@ -15,6 +15,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,9 +116,7 @@ class FunctionToolProvider(ToolProvider):
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
-        from agentdecompile_cli.registry import normalize_identifier as _n
-
-        view = _n(self._get_str(args, "view", "mode", default="info"))
+        view = n(self._get_str(args, "view", "mode", default="info"))
         max_results = self._get_int(args, "limit", "maxresults", default=100)
 
         program = getattr(self.program_info, "program", None)

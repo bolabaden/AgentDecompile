@@ -17,7 +17,6 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
     - [`change-processor`](#change-processor)
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
-    - [`execute-script`](#execute-script)
     - [`decompile-function`](#decompile-function)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
@@ -436,72 +435,6 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
   - Values: `DEFAULT`, `ANALYSIS`, `IMPORTED`, `USER_DEFINED`
 - **PyGhidra**: `sym = currentProgram.getSymbolTable().createLabel(toAddr('0x401000'), 'myLabel', SourceType.USER_DEFINED)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 - **Community**: [RE.SE: "Ghidra Headless Analyzer - Create Functions"](https://reverseengineering.stackexchange.com/questions/22880/ghidra-headless-analyzer-create-functions)
-### `execute-script`
-
-**Description**: Executes arbitrary Ghidra/PyGhidra Python code directly in the JVM context, giving full access to the Ghidra API. The execution namespace is pre-populated with standard Ghidra script variables (`currentProgram`, `flatApi`, `monitor`, `toAddr()`, `getFunctionManager()`, `getMemory()`, etc.) and common Ghidra imports (`SourceType`, `CodeUnit`, `AddressSet`, `DecompInterface`, etc.). Use this tool when no existing tool covers your use-case, or when you want to call the Ghidra API verbatim. Single expressions are automatically eval'd and returned; for multi-statement scripts, assign to `__result__` to set the return value. Stdout/stderr are captured and returned alongside the result.
-
-**Parameters**:
-- `code` (string, required): Python code to execute. Single expressions are eval'd; multi-line code is exec'd.
-  - Synonyms: `code`, `script`, `expression`, `source`, `snippet`, `pythonCode`, `ghidraScript`.
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `program`, `path`, `binaryPath`, `filePath`, `binary`.
-- `timeout` (integer, optional): Maximum execution time in seconds (default: 30).
-  - Synonyms: `timeout`, `maxTime`, `timeLimit`.
-
-**Synonyms**: `execute-script`, `execute_script`, `eval`, `run-script`, `run_script`, `exec-script`, `ghidra-eval`, `ghidra_eval`, `pyghidra-eval`, `api-eval`, `tool_execute_script`, `cmd_execute_script`, `mcp_execute_script`, `ghidra_execute_script`, `agentdecompile_execute_script`
-
-**Examples**:
-- Get program name: `execute-script code="currentProgram.getName()"`.
-- Get language ID: `execute-script code="str(currentProgram.getLanguage().getLanguageID())" programPath="/bin.exe"`.
-- Count functions: `execute-script code="currentProgram.getFunctionManager().getFunctionCount()"`.
-- List first 10 functions: `execute-script code="[str(f) for f in currentProgram.getFunctionManager().getFunctions(True)][:10]"`.
-- Read memory block names: `execute-script code="[b.getName() for b in currentProgram.getMemory().getBlocks()]"`.
-- Get entry point: `execute-script code="str(currentProgram.getMinAddress())"`.
-- Decompile a function by name:
-  ```
-  execute-script code="
-  from ghidra.app.decompiler import DecompInterface
-  ifc = DecompInterface()
-  ifc.openProgram(currentProgram)
-  fm = currentProgram.getFunctionManager()
-  func = list(fm.getFunctions(True))[0]
-  res = ifc.decompileFunction(func, 60, monitor)
-  __result__ = res.getDecompiledFunction().getC()
-  "
-  ```
-- Search for a string in defined strings:
-  ```
-  execute-script code="
-  from ghidra.program.util import DefinedDataIterator
-  __result__ = [str(s) for s in DefinedDataIterator.definedStrings(currentProgram) if 'error' in str(s).lower()][:20]
-  "
-  ```
-- List all imports (external functions):
-  ```
-  execute-script code="
-  st = currentProgram.getSymbolTable()
-  __result__ = [s.getName() for s in st.getExternalSymbols() if s.getSymbolType().toString() == 'Function'][:50]
-  "
-  ```
-- Create a label at an address:
-  ```
-  execute-script code="
-  from ghidra.program.model.symbol import SourceType
-  t = currentProgram.startTransaction('label')
-  currentProgram.getSymbolTable().createLabel(toAddr('0x401000'), 'my_label', SourceType.USER_DEFINED)
-  currentProgram.endTransaction(t, True)
-  __result__ = 'Label created'
-  "
-  ```
-
-**API References**:
-- The **entire Ghidra API** is available. Key entry points pre-populated in the namespace:
-  - `currentProgram` → `ghidra.program.model.listing.Program`
-  - `flatApi` → `ghidra.program.flatapi.FlatProgramAPI`
-  - `monitor` → `ghidra.util.task.ConsoleTaskMonitor`
-  - `toAddr(s)` → `ghidra.program.model.address.Address`
-  - `getFunctionManager()`, `getMemory()`, `getListing()`, `getSymbolTable()`, `getReferenceManager()`, `getDataTypeManager()`, etc.
-- **PyGhidra**: All Java classes are accessible via JPype bridge — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 ### `decompile-function`
 
 **Description**: Decompiles a specific function to high-level C-like pseudocode, supporting line limits, offset starting, and inclusion of comments or references. This tool leverages Ghidra's decompiler for readable code views, aiding in understanding logic without assembly. It handles timeouts, simplification options, and batch decompilation for multiple functions. Essential for algorithm reverse engineering, with options to include caller/callee context for broader insight.
@@ -1171,63 +1104,25 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
 - List types: `manage-data-types programPath="/bin.exe" action="list" categoryPath="/structs" includeSubcategories=true`.
 ### `manage-files`
 
-**Description**: Comprehensive repository and file management tool for AgentDecompile workflows. It supports filesystem operations (list/info/create/read/write/append/rename/move/copy/delete), program import/export, and shared-project style version-control operations (`checkout`, `uncheckout`, `unhijack`) when a project-backed `DomainFile` is available. This is the primary tool for repository hygiene and scripted project orchestration.
+**Description**: Manages project files, including import, export, deletion, and organization. This tool extends import-binary for broader file handling, supporting versioning and mirroring.
 
 **Parameters**:
-- `operation` (string, required): Operation (`list`, `info`, `mkdir`, `touch`, `read`, `write`, `append`, `rename`, `delete`, `copy`, `move`, `import`, `export`, `checkout`, `uncheckout`, `unhijack`).
-  - Synonyms: `operation`, `action`, `mode`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `path` (string, optional): Source path for file/folder operations.
-  - Synonyms: `path`, `filePath`, `filepath`, `file`.
-- `programPath` (string, optional): Program path for program-scoped operations (`checkout`, `uncheckout`, `unhijack`, and import/export contexts).
-  - Synonyms: `programPath`, `program`, `binaryPath`, `targetProgram`.
-- `newPath` (string, optional): Destination path for `copy`/`move`.
-  - Synonyms: `newPath`, `destinationPath`, `destination`, `dest`.
-- `newName` (string, optional): Replacement name for `rename`.
-  - Synonyms: `newName`, `name`.
-- `content` (string, optional): Text payload for `write`/`append`.
-  - Synonyms: `content`, `text`, `body`.
-- `encoding` (string, optional): Text encoding for file read/write operations (default: `utf-8`).
-  - Synonyms: `encoding`, `charset`.
-- `createParents` (boolean, optional): Auto-create parent folders for `mkdir`/`touch`/`write`/`append` (default: true).
-  - Synonyms: `createParents`, `parents`, `mkdirParents`.
-- `recursive` (boolean, optional): Recursive traversal/delete/import where applicable.
-  - Synonyms: `recursive`, `recurse`.
-- `maxResults` (integer, optional): Maximum entries returned by `list` (default: 200).
-  - Synonyms: `maxResults`, `limit`, `maxCount`.
-- `maxDepth` (integer, optional): Maximum recursion depth for import traversal.
-  - Synonyms: `maxDepth`, `depth`.
-- `analyzeAfterImport` (boolean, optional): Request analysis after import.
-  - Synonyms: `analyzeAfterImport`, `analyze`.
-- `exclusive` (boolean, optional): Exclusive checkout hint for `checkout`.
-  - Synonyms: `exclusive`.
-- `keep` (boolean, optional): Preserve local changes during `uncheckout` when backend supports it.
-  - Synonyms: `keep`.
-- `force` (boolean, optional): Force mode for `uncheckout` / `unhijack` where supported.
-  - Synonyms: `force`.
-- `destinationFolder` (string, optional): Destination folder for import/export flows.
-  - Synonyms: `destinationFolder`.
-- `exportType` (string, optional): Export format selection (`program`, `function_info`, `strings`) for compatible backends.
-  - Synonyms: `exportType`.
-- `format` (string, optional): Output format (`json`, `csv`) for compatible exports.
-  - Synonyms: `format`.
-- `includeParameters` / `includeVariables` / `includeComments` (boolean, optional): Export detail toggles.
-  - Synonyms: `includeParameters`, `includeVariables`, `includeComments`.
-- `stripLeadingPath` / `stripAllContainerPath` / `mirrorFs` / `enableVersionControl` (boolean, optional): Import/export behavior controls for compatible backends.
-  - Synonyms: `stripLeadingPath`, `stripAllContainerPath`, `mirrorFs`, `enableVersionControl`.
+- `action` (string, required): Action (`import`, `export`, `delete`, `list`).
+  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `filePath` (string, required for import/export): File path.
+  - Synonyms: `filePath`, `filep`.
+- `destination` (string, optional): Project destination.
+  - Synonyms: `destination`
+- `recursive` (boolean, optional): Recursive (default: false).
+  - Synonyms: `mode`, `path`, `dest`, `recurse`, `recursive`
 **Overloads**:
-- `manage-files(operation, path, ...)` canonical signature with operation-specific argument subsets.
+- `manage-files(action, filePath, destination, recursive)` canonical signature.
 
 
 **Synonyms**: `manage-files`, `tool_manage_files`, `manage_files_tool`, `cmd_manage_files`, `run_manage_files`, `do_manage_files`, `api_manage_files`, `mcp_manage_files`, `ghidra_manage_files`, `agentdecompile_manage_files`, `manage_files_command`, `manage_files_action`, `manage_files_op`, `manage_files_task`, `execute_manage_files`
 
 **Examples**:
-- List repository folder: `manage-files operation="list" path="/analysis" maxResults=100`.
-- Create folder: `manage-files operation="mkdir" path="/analysis/new_case" createParents=true`.
-- Write notes file: `manage-files operation="write" path="/analysis/new_case/notes.txt" content="initial notes"`.
-- Move artifact: `manage-files operation="move" path="/analysis/new_case/notes.txt" newPath="/analysis/archive/notes.txt"`.
-- Import program(s): `manage-files operation="import" path="/binaries" recursive=true maxDepth=4`.
-- Checkout program: `manage-files operation="checkout" programPath="/K1/k1_win_gog_swkotor.exe" exclusive=false`.
-- Undo checkout: `manage-files operation="uncheckout" programPath="/K1/k1_win_gog_swkotor.exe" keep=false force=false`.
+- Manage import: `manage-files action="import" filePath="/newfile.exe" destination="/imports"`.
 ### `manage-function-tags`
 
 **Description**: Manages tags on functions for categorization, such as "crypto" or "network". This tool supports adding, removing, or listing tags, aiding in organization and querying.

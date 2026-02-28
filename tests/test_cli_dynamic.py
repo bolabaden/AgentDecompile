@@ -8,7 +8,7 @@ These tests verify:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 try:
     from click.testing import CliRunner
@@ -163,6 +163,34 @@ class TestCliToolCommandObject:
         assert len(main.commands) >= 20, f"Expected 20+ commands, got {len(main.commands)}"
 
 
+class TestCliGlobalFormatOption:
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_format_flag_works_on_non_tool_command(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+        result = _runner().invoke(
+            main,
+            [
+                "data",
+                "get",
+                "--binary",
+                "dummy_program",
+                "entry",
+                "-f",
+                "markdown",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+
+    def test_files_run_help_shows_export_and_output_format(self):
+        result = _runner().invoke(main, ["files", "run", "--help"])
+
+        assert result.exit_code == 0, result.output
+        assert "--export-format" in result.output
+        assert "-f, --format" in result.output
+
+
 class TestCliGenericToolJsonValidation:
     def test_tool_rejects_non_object_json_arguments(self):
         result = _runner().invoke(main, ["tool", "open", "[]"])
@@ -173,6 +201,38 @@ class TestCliGenericToolJsonValidation:
         result = _runner().invoke(main, ["tool-seq", "{}"])
         assert result.exit_code != 0
         assert "Steps must be a JSON array of objects" in result.output
+
+
+class TestCliProgramFallback:
+    @patch("agentdecompile_cli.cli._get_cached_program", return_value="/cached/program.exe")
+    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
+    def test_tool_uses_cached_program_when_missing(self, mocked_call_raw: AsyncMock, _mocked_get_cached):
+        mocked_call_raw.return_value = {"success": True, "count": 1}
+
+        result = _runner().invoke(main, ["tool", "list-exports"])
+
+        assert result.exit_code == 0, result.output
+        assert mocked_call_raw.await_args is not None
+        called_payload = mocked_call_raw.await_args.args[2]
+        assert called_payload.get("binaryName") == "/cached/program.exe" or called_payload.get("programPath") == "/cached/program.exe"
+        assert "program: /cached/program.exe" in result.output
+
+    @patch("agentdecompile_cli.cli._get_cached_program", return_value=None)
+    def test_tool_errors_when_program_missing_and_no_cache(self, _mocked_get_cached):
+        result = _runner().invoke(main, ["tool", "list-exports"])
+
+        assert result.exit_code != 0
+        assert "Program is required for this tool" in result.output
+
+    @patch("agentdecompile_cli.cli._set_cached_program")
+    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
+    def test_tool_caches_explicit_program_argument(self, mocked_call_raw: AsyncMock, mocked_set_cached):
+        mocked_call_raw.return_value = {"success": True, "count": 1}
+
+        result = _runner().invoke(main, ["tool", "list-exports", '{"binaryName":"/explicit/program.exe"}'])
+
+        assert result.exit_code == 0, result.output
+        mocked_set_cached.assert_any_call(ANY, "/explicit/program.exe")
 
 
 class TestCliToolSequence:

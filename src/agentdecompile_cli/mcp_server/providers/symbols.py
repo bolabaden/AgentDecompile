@@ -8,13 +8,14 @@ from __future__ import annotations
 import logging
 import re
 
-from typing import Any
+from typing import Any, Callable
 
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,9 +144,7 @@ class SymbolToolProvider(ToolProvider):
         self._require_program()
         mode = self._get_str(args, "mode", "action", default="symbols")
 
-        from agentdecompile_cli.registry import normalize_identifier as n
-
-        dispatch = {
+        dispatch: dict[str, Callable[[dict[str, Any]], list[types.TextContent]]] = {
             "symbols": self._list_symbols,
             "classes": self._list_classes,
             "namespaces": self._list_namespaces,
@@ -163,15 +162,15 @@ class SymbolToolProvider(ToolProvider):
 
     async def _handle_search(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        query = self._get_str(args, "query", "namepattern", "pattern", "search", "name")
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        query: str = self._get_str(args, "query", "namepattern", "pattern", "search", "name")
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        offset: int = self._get_int(args, "offset", "startindex", default=0)
 
         # Try GhidraTools
         if self.ghidra_tools:
             try:
-                results = self.ghidra_tools.search_symbols_by_name(query)
-                paginated = results[offset : offset + max_results]
+                results: list[dict[str, Any]] = self.ghidra_tools.search_symbols_by_name(query)
+                paginated: list[dict[str, Any]] = results[offset : offset + max_results]
                 return create_success_response(
                     {
                         "query": query,
@@ -185,10 +184,10 @@ class SymbolToolProvider(ToolProvider):
                 pass
 
         # Direct API
-        program = self.program_info.program
-        st = program.getSymbolTable()
-        results = []
-        count = 0
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
+        results: list[dict[str, Any]] = []
+        count: int = 0
 
         pat = re.compile(query, re.IGNORECASE) if query else None
         for sym in st.getAllSymbols(True):
@@ -225,8 +224,8 @@ class SymbolToolProvider(ToolProvider):
     async def _list_symbols(self, args: dict[str, Any]) -> list[types.TextContent]:
         query = self._get_str(args, "query", "pattern", "search")
         filter_default = self._get_bool(args, "filterdefaultnames", default=True)
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        offset: int = self._get_int(args, "offset", "startindex", default=0)
 
         # Try GhidraTools
         if self.ghidra_tools:
@@ -253,13 +252,13 @@ class SymbolToolProvider(ToolProvider):
         return await self._handle_search(args)
 
     async def _list_classes(self, args: dict[str, Any]) -> list[types.TextContent]:
-        program = self.program_info.program
-        st = program.getSymbolTable()
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
         from ghidra.program.model.symbol import SymbolType
 
-        classes = []
+        classes: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
             if sym.getSymbolType() == SymbolType.CLASS:
                 classes.append({"name": sym.getName(), "address": str(sym.getAddress()), "namespace": str(sym.getParentNamespace())})
@@ -268,13 +267,13 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "classes", "results": classes, "count": len(classes)})
 
     async def _list_namespaces(self, args: dict[str, Any]) -> list[types.TextContent]:
-        program = self.program_info.program
-        st = program.getSymbolTable()
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
         from ghidra.program.model.symbol import SymbolType
 
-        namespaces = []
+        namespaces: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
             if sym.getSymbolType() == SymbolType.NAMESPACE:
                 namespaces.append({"name": sym.getName(), "address": str(sym.getAddress())})
@@ -292,9 +291,9 @@ class SymbolToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        program = self.program_info.program
-        st = program.getSymbolTable()
-        imports = []
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
+        imports: list[dict[str, Any]] = []
         for sym in st.getExternalSymbols():
             imports.append({"name": sym.getName(), "address": str(sym.getAddress()), "namespace": str(sym.getParentNamespace())})
             if len(imports) >= max_results:
@@ -302,7 +301,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "imports", "results": imports, "count": len(imports)})
 
     async def _list_exports(self, args: dict[str, Any]) -> list[types.TextContent]:
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
         if self.ghidra_tools:
             try:
@@ -311,9 +310,9 @@ class SymbolToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        program = self.program_info.program
-        st = program.getSymbolTable()
-        exports = []
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
+        exports: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
             if sym.isExternalEntryPoint():
                 exports.append({"name": sym.getName(), "address": str(sym.getAddress())})
@@ -325,7 +324,7 @@ class SymbolToolProvider(ToolProvider):
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         label = self._require_str(args, "labelname", "label", "name", name="labelName")
 
-        program = self.program_info.program
+        program: Any = self.program_info.program
         from ghidra.program.model.symbol import SourceType
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
@@ -350,8 +349,8 @@ class SymbolToolProvider(ToolProvider):
                 raise
             return create_success_response({"mode": "create_label", "batch": True, "results": results})
 
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-        tx = program.startTransaction("create-label")
+        addr: Any = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        tx: Any = program.startTransaction("create-label")
         try:
             program.getSymbolTable().createLabel(addr, label, SourceType.USER_DEFINED)
             program.endTransaction(tx, True)
@@ -361,26 +360,26 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "create_label", "address": str(addr), "label": label, "success": True})
 
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:
-        program = self.program_info.program
-        st = program.getSymbolTable()
+        program: Any = self.program_info.program
+        st: Any = program.getSymbolTable()
         return create_success_response({"mode": "count", "totalSymbols": st.getNumSymbols()})
 
     async def _rename_data(self, args: dict[str, Any]) -> list[types.TextContent]:
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         new_name = self._require_str(args, "newname", "name", "labelname", name="newName")
 
-        program = self.program_info.program
+        program: Any = self.program_info.program
         from ghidra.program.model.symbol import SourceType
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-        st = program.getSymbolTable()
-        sym = st.getPrimarySymbol(addr)
+        addr: Any = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        st: Any = program.getSymbolTable()
+        sym: Any = st.getPrimarySymbol(addr)
         if sym is None:
             raise ValueError(f"No symbol at {addr_str}")
 
-        tx = program.startTransaction("rename-data")
+        tx: Any = program.startTransaction("rename-data")
         try:
             sym.setName(new_name, SourceType.USER_DEFINED)
             program.endTransaction(tx, True)
@@ -390,16 +389,16 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
 
     async def _demangle(self, args: dict[str, Any]) -> list[types.TextContent]:
-        query = self._get_str(args, "query", "symbol", "name", "addressorsymbol")
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        query: str = self._get_str(args, "query", "symbol", "name", "addressorsymbol")
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
-        program = self.program_info.program
-        results = []
+        program: Any = self.program_info.program
+        results: list[dict[str, Any]] = []
 
         try:
             from ghidra.app.util.demangler import DemanglerUtil
 
-            st = program.getSymbolTable()
+            st: Any = program.getSymbolTable()
             for sym in st.getAllSymbols(True):
                 if len(results) >= max_results:
                     break
