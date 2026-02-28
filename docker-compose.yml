@@ -2,92 +2,177 @@
 # All env vars and volumes below are used by Dockerfile/entrypoint or the app; relpaths point to usage.
 # Ghidra server volume conventions: https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
 
+x-common-env: &common-env 
+  # Optional: pin Ghidra release (e.g. 12.0.3); omit for latest. Used in Dockerfile layer 3.
+  GHIDRA_VERSION: ${GHIDRA_VERSION:-}
+  # Build-time only; runtime user in container (default 1001). Dockerfile RUN adduser.
+  PUID: ${PUID:-1001}
+  PGID: ${PGID:-999}
+  TZ: ${TZ:-America/Chicago}
+  UMASK: ${UMASK:-002}
+
+
 services:
+  biodecompwarehouse:
+    build:
+      # Build context (remote repo ref); pin to branch/tag/commit as needed.
+      #context: https://github.com/bolabaden/agentdecompile.git#master
+      context: .
+      dockerfile: Dockerfile.ghidra
+    image: docker.io/bolabaden/ghidra:latest
+    container_name: biodecompwarehouse
+    hostname: biodecompwarehouse
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - publicnet
+    ports:
+      # Ghidra server (NSA Ghidra docker README: 13100-13102)
+      - ${GHIDRA_SERVER_PORT1:-13100}:13100        # RMI Registry Port
+      - ${GHIDRA_SERVER_PORT2:-13101}:13101        # RMI SSL Port
+      - ${GHIDRA_SERVER_PORT3:-13102}:13102        # Block Stream Port
+    volumes:
+      # BSim/Postgres data and Ghidra repos/projects/work directories.
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/repos:/ghidra/repositories
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/projects:/projects
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/work:/work
+    environment:
+      <<: *common-env
+      # Ghidra server users (space-separated; admins by default).
+      # MODE: ghidra-server
+      #GHIDRA_USERS:  # Space-separated usernames (admins by default)
+    command: server
+    labels:
+      traefik.enable: true
+      traefik.tcp.routers.biodecompwarehouse.rule: HostSNI(`biodecompwarehouse.$DOMAIN`) || HostSNI(`biodecompwarehouse.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.routers.biodecompwarehouse.service: biodecompwarehouse@docker
+      traefik.tcp.routers.biodecompwarehouse.tls.domains[0].main: $DOMAIN
+      traefik.tcp.routers.biodecompwarehouse.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
+      traefik.tcp.routers.biodecompwarehouse.tls.passthrough: true
+      traefik.tcp.services.biodecompwarehouse.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
+      traefik.tcp.services.biodecompwarehouse.loadbalancer.server.tls: true
+      # Auto-restart on unhealthy state
+      deunhealth.restart.on.unhealthy: "true"
+    restart: always
+
   agentdecompile-mcp:
     build:
-      context: .  # or specify a specific branch/tag/commit/repo: https://github.com/bolabaden/agentdecompile.git#master
-      dockerfile: Dockerfile.aio
-      args:
-        # Optional: pin Ghidra release (e.g. 12.0.3); omit for latest. Used in Dockerfile layer 3.
-        - GHIDRA_VERSION=${GHIDRA_VERSION:-}
-        # Build-time only; runtime user in container (default 1001). Dockerfile RUN adduser.
-        - PUID=${PUID:-1001}
-        - PGID=${PGID:-1001}
-    image: docker.io/bolabaden/agentdecompile-aio:latest
-    container_name: agentdecompile
+      # Build context (remote repo ref); pin to branch/tag/commit as needed.
+      #context: https://github.com/bolabaden/agentdecompile.git#master
+      context: .
+      dockerfile: Dockerfile
+    image: docker.io/bolabaden/agentdecompile-mcp:latest
+    container_name: agentdecompile-mcp
+    hostname: agentdecompile-mcp
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - publicnet
     ports:
-      # AgentDecompile MCP HTTP server (host/port via Python server env defaults)
-      - "${AGENT_DECOMPILE_PORT:-8080}:${AGENT_DECOMPILE_PORT:-8080}"
-      # Ghidra server (NSA Ghidra docker README: 13100-13102)
-      - "${GHIDRA_SERVER_PORT1:-13100}:${GHIDRA_SERVER_PORT1:-13100}"
-      - "${GHIDRA_SERVER_PORT2:-13101}:${GHIDRA_SERVER_PORT2:-13101}"
-      - "${GHIDRA_SERVER_PORT3:-13102}:${GHIDRA_SERVER_PORT3:-13102}"
+      # AgentDecompile MCP HTTP server (binds to container port 8080 by default).
+      - ${BIOMEDWAREHOUSE_MCP_PORT:-8080}:8080  # AgentDecompile MCP HTTP
+    command: --transport streamable-http
+    labels:
+      traefik.enable: true
+      traefik.tcp.routers.agentdecompile-mcp.rule: HostSNI(`agentdecompile-mcp.$DOMAIN`) || HostSNI(`agentdecompile-mcp.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.routers.agentdecompile-mcp.service: agentdecompile-mcp@docker
+      traefik.tcp.routers.agentdecompile-mcp.tls.domains[0].main: $DOMAIN
+      traefik.tcp.routers.agentdecompile-mcp.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
+      traefik.tcp.routers.agentdecompile-mcp.tls.passthrough: true
+      traefik.tcp.services.agentdecompile-mcp.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
+      traefik.tcp.services.agentdecompile-mcp.loadbalancer.server.tls: true
+      # Auto-restart on unhealthy state
+      deunhealth.restart.on.unhealthy: "true"
+    restart: always
+
+  agentdecompile-bsim-server:
+    build:
+      # Build context (remote repo ref); pin to branch/tag/commit as needed.
+      #context: https://github.com/bolabaden/agentdecompile.git#master
+      context: .
+      dockerfile: Dockerfile.ghidra-bsim-server
+    image: docker.io/bolabaden/ghidra-bsim-server:latest
+    container_name: agentdecompile-bsim-server
+    hostname: agentdecompile-bsim-server
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - publicnet
+    ports:
       # BSim server (embedded PostgreSQL)
-      - "${GHIDRA_BSIM_PORT:-5432}:${GHIDRA_BSIM_PORT:-5432}"
-    environment:
-      # --- MCP server bind ---
-      # Usage: src/agentdecompile_cli/server.py (defaults from env)
-      AGENT_DECOMPILE_HOST: "${AGENT_DECOMPILE_HOST:-0.0.0.0}"
-      AGENT_DECOMPILE_PORT: "${AGENT_DECOMPILE_PORT:-8080}"
-
-      # --- Project: path to .gpr file or project dir (persistent project for headless) ---
-      # Usage: src/agentdecompile_cli/server.py and src/agentdecompile_cli/project_manager.py
-      AGENT_DECOMPILE_PROJECT_PATH: "${AGENT_DECOMPILE_PROJECT_PATH:-/projects/agentdecompile.gpr}"
-      # Project directory and name (entrypoint only; launcher uses AGENT_DECOMPILE_PROJECT_PATH for Java). Usage: docker/entrypoint.sh
-      AGENT_DECOMPILE_PROJECT_DIR: "${AGENT_DECOMPILE_PROJECT_DIR:-/projects}"
-      AGENT_DECOMPILE_PROJECT_NAME: "${AGENT_DECOMPILE_PROJECT_NAME:-agentdecompile}"
-
-      # --- API key auth (MCP server / CLI connect mode) ---
-      # Usage: src/agentdecompile_cli/__main__.py (connect mode)
-      AGENT_DECOMPILE_API_KEY: "${AGENT_DECOMPILE_API_KEY:-}"
-      AGENT_DECOMPILE_API_KEY_ENABLED: "${AGENT_DECOMPILE_API_KEY_ENABLED:-false}"
-
-      # --- Config file (optional .properties/json; passed to Python server if set) ---
-      # Usage: docker/entrypoint.sh, docker/supervisor-wait-then-mcp.sh
-      AGENT_DECOMPILE_CONFIG_FILE: "${AGENT_DECOMPILE_CONFIG_FILE:-}"
-
-      # --- JVM / launch (entrypoint: MAXMEM and VMARG_LIST passed to launch.sh for BSim + AgentDecompile) ---
-      # Usage: docker/entrypoint.sh
-      MAXMEM: "${MAXMEM:-2G}"
-      VMARG_LIST: "${VMARG_LIST:--Djava.awt.headless=true}"
-      AGENT_DECOMPILE_MAXMEM: "${AGENT_DECOMPILE_MAXMEM:-}"
-      AGENT_DECOMPILE_VMARG_LIST: "${AGENT_DECOMPILE_VMARG_LIST:-}"
-
-      # --- Ghidra Server (shared repositories): auth and connection refs for open tool / shared projects ---
-      # Usage: src/agentdecompile_cli/project_manager.py and provider-level project open logic
-      AGENT_DECOMPILE_SERVER_USERNAME: "${AGENT_DECOMPILE_SERVER_USERNAME:-}"
-      AGENT_DECOMPILE_SERVER_PASSWORD: "${AGENT_DECOMPILE_SERVER_PASSWORD:-}"
-      AGENT_DECOMPILE_SERVER_HOST: "${AGENT_DECOMPILE_SERVER_HOST:-}"
-      AGENT_DECOMPILE_SERVER_PORT: "${AGENT_DECOMPILE_SERVER_PORT:-}"
-      AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: "${AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY:-}"
-      AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH: "${AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH:-}"
-      AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT: "${AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT:-}"
-
-      # --- BSim / Ghidra server paths and ports (entrypoint) ---
-      # Usage: docker/entrypoint.sh (Ghidra repos dir)
-      GHIDRA_REPOS_DIR: "${GHIDRA_REPOS_DIR:-/ghidra/repositories}"
-      GHIDRA_HOME: "${GHIDRA_HOME:-/ghidra}"
-      GHIDRA_BSIM_PORT: "${GHIDRA_BSIM_PORT:-5432}"
-
-      # --- Intelligent defaults (no tool params): auto-label, auto-tag, auto-bookmark ---
-      # Usage: environment-driven defaults in the Python runtime, README.md
-      AGENT_DECOMPILE_AUTO_LABEL: "${AGENT_DECOMPILE_AUTO_LABEL:-true}"
-      AGENT_DECOMPILE_AUTO_TAG: "${AGENT_DECOMPILE_AUTO_TAG:-true}"
-      AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE: "${AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE:-97.0}"
-
-      # --- CLI connect-mode / tool timeout (Python CLI only when connecting to this server) ---
-      # AGENT_DECOMPILE_MCP_SERVER_URL: used by CLI to skip local JVM. README.md.
-      # AGENT_DECOMPILE_TOOL_CALL_TIMEOUT: usage src/agentdecompile_cli/stdio_bridge.py
-      AGENT_DECOMPILE_TOOL_CALL_TIMEOUT: "${AGENT_DECOMPILE_TOOL_CALL_TIMEOUT:-}"
+      - ${GHIDRA_BSIM_SERVER_PORT:-5432}:5432      # BSIM server connection
     volumes:
-      # Scratch / work dir. Usage: docker/entrypoint.sh (mkdir), optional for tools.
-      - ./work:/work
-      # AgentDecompile project dir; must contain project (e.g. agentdecompile.gpr or PROJECT_NAME subdir).
-      # Python server uses AGENT_DECOMPILE_PROJECT_PATH (e.g. /projects/agentdecompile.gpr).
-      - ./projects:/projects
-      # Ghidra server repository root (NSA Ghidra: volume to /ghidra/repositories). Server stores shared repos here.
-      # https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
-      - ./ghidra_repositories:/ghidra/repositories
-      # Optional: Ghidra server config (NSA Ghidra: server.conf at /ghidra/server/server.conf). Uncomment to use.
-      # - ./server.conf:/ghidra/server/server.conf
-    restart: unless-stopped
+      # BSim/Postgres data and Ghidra repos/projects/work directories.
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
+    environment:
+      <<: *common-env
+      # Ghidra server users (space-separated; admins by default).
+      MODE: bsim-server
+      #GHIDRA_USERS: # Space-separated usernames (admins by default)
+    command: server
+    labels:
+      traefik.enable: true
+      traefik.tcp.routers.agentdecompile-bsim-server.rule: HostSNI(`agentdecompile-bsim-server.$DOMAIN`) || HostSNI(`agentdecompile-bsim-server.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.routers.agentdecompile-bsim-server.service: agentdecompile-bsim-server@docker
+      traefik.tcp.routers.agentdecompile-bsim-server.tls.domains[0].main: $DOMAIN
+      traefik.tcp.routers.agentdecompile-bsim-server.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
+      traefik.tcp.routers.agentdecompile-bsim-server.tls.passthrough: true
+      traefik.tcp.services.agentdecompile-bsim-server.loadbalancer.server.port: ${GHIDRA_BSIM_SERVER_PORT:-5432}
+      traefik.tcp.services.agentdecompile-bsim-server.loadbalancer.server.tls: true
+      # Auto-restart on unhealthy state
+      deunhealth.restart.on.unhealthy: "true"
+    restart: always
+
+  agentdecompile-aio:
+    profiles:
+      - disabled
+    build:
+      # Build context (local checkout by default; optionally swap to remote ref).
+      #context: https://github.com/bolabaden/agentdecompile.git#master
+      context: .
+      dockerfile: Dockerfile.aio
+    image: docker.io/bolabaden/agentdecompile-aio:latest
+    container_name: agentdecompile-aio
+    hostname: agentdecompile-aio
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - publicnet
+    ports:
+      # BSim server (embedded PostgreSQL)
+      - ${GHIDRA_BSIM_SERVER_PORT:-5432}:5432      # BSIM server connection
+      # AgentDecompile MCP HTTP server
+      - ${AGENTDECOMPILE_MCP_HTTP_PORT:-8080}:8080                                  # AgentDecompile MCP HTTP
+      # Ghidra server (NSA Ghidra docker README: 13100-13102)
+      - ${GHIDRA_SERVER_PORT1:-13100}:13100        # RMI Registry Port
+      - ${GHIDRA_SERVER_PORT2:-13101}:13101        # RMI SSL Port
+      - ${GHIDRA_SERVER_PORT3:-13102}:13102        # Block Stream Port
+    volumes:
+      # BSim/Postgres data and Ghidra repos/projects/work directories.
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/repos:/ghidra/repositories
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/projects:/projects
+      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/work:/work
+    environment:
+      <<: *common-env
+      # Ghidra server users (space-separated; admins by default).
+      # MODE: ghidra-server
+      #GHIDRA_USERS: # Space-separated usernames (admins by default)
+    command: server
+    labels:
+      traefik.enable: true
+      traefik.tcp.routers.agentdecompile-aio.rule: HostSNI(`biodecompwarehouse.$DOMAIN`) || HostSNI(`biodecompwarehouse.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.services.agentdecompile-aio.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
+      traefik.tcp.services.agentdecompile-aio.loadbalancer.server.tls: true
+      traefik.tcp.routers.agentdecompile-aio.service: agentdecompile-aio@docker
+      traefik.tcp.routers.agentdecompile-aio.tls.domains[0].main: $DOMAIN
+      traefik.tcp.routers.agentdecompile-aio.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
+      traefik.tcp.routers.agentdecompile-aio.tls.passthrough: true
+      traefik.tcp.services.agentdecompile-bsim-server.loadbalancer.server.port: ${GHIDRA_BSIM_SERVER_PORT:-5432}
+      traefik.tcp.services.agentdecompile-bsim-server.loadbalancer.server.tls: true
+      traefik.http.routers.agentdecompile-aio.rule: Host(`agentdecompile-mcp.$DOMAIN`) || Host(`agentdecompile-mcp.$TS_HOSTNAME.$DOMAIN`)
+      traefik.http.routers.agentdecompile-aio.entrypoints: websecure
+      # Auto-restart on unhealthy state
+      deunhealth.restart.on.unhealthy: "true"
+    restart: always
