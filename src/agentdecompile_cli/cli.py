@@ -2665,7 +2665,7 @@ def change_processor(
 
 @main.group(
     "files",
-    help="Manage files (manage-files): import, export, checkout, uncheckout, unhijack",
+    help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout",
 )
 def files_grp() -> None:
     pass
@@ -2674,13 +2674,38 @@ def files_grp() -> None:
 @files_grp.command("run", help="Run manage-files with --operation")
 @click.option(
     "--operation",
-    type=click.Choice(["import", "export", "checkout", "uncheckout", "unhijack"]),
+    type=click.Choice(
+        [
+            "import",
+            "export",
+            "checkout",
+            "uncheckout",
+            "unhijack",
+            "list",
+            "info",
+            "mkdir",
+            "touch",
+            "read",
+            "write",
+            "append",
+            "rename",
+            "delete",
+            "copy",
+            "move",
+        ]
+    ),
     required=True,
 )
-@click.option("--path", required=True)
+@click.option("--path")
 @click.option("-b", "--binary", "program_path")
+@click.option("--new-path", "new_path")
+@click.option("--new-name", "new_name")
+@click.option("--content")
+@click.option("--encoding", default="utf-8")
+@click.option("--create-parents/--no-create-parents", "create_parents", default=True)
 @click.option("--destination-folder", "destinationFolder", default="/")
 @click.option("--recursive/--no-recursive", default=True)
+@click.option("--max-results", "max_results", type=int)
 @click.option("--max-depth", "maxDepth", type=int)
 @click.option(
     "--analyze-after-import/--no-analyze-after-import",
@@ -2708,15 +2733,23 @@ def files_grp() -> None:
 @click.option("--include-parameters", "includeParameters", is_flag=True)
 @click.option("--include-variables", "includeVariables", is_flag=True)
 @click.option("--include-comments", "includeComments", is_flag=True)
+@click.option("--keep", is_flag=True)
+@click.option("--force", is_flag=True)
 @click.option("--exclusive", is_flag=True)
 @click.pass_context
 def files_run(
     ctx: click.Context,
     operation: str,
-    path: str,
+    path: str | None,
     program_path: str | None,
+    new_path: str | None,
+    new_name: str | None,
+    content: str | None,
+    encoding: str,
+    create_parents: bool,
     destination_folder: str,
     recursive: bool,
+    max_results: int | None,
     max_depth: int | None,
     analyze_after_import: bool,
     strip_leading_path: bool,
@@ -2728,13 +2761,27 @@ def files_run(
     include_parameters: bool,
     include_variables: bool,
     include_comments: bool,
+    keep: bool,
+    force: bool,
     exclusive: bool,
 ) -> None:
-    payload: dict[str, Any] = {"operation": operation, "path": path}
+    payload: dict[str, Any] = {"operation": operation}
+    if path is not None:
+        payload["path"] = path
     if program_path is not None:
         payload["programPath"] = program_path
+    if new_path is not None:
+        payload["newPath"] = new_path
+    if new_name is not None:
+        payload["newName"] = new_name
+    if content is not None:
+        payload["content"] = content
+    payload["encoding"] = encoding
+    payload["createParents"] = create_parents
     payload["destinationFolder"] = destination_folder
     payload["recursive"] = recursive
+    if max_results is not None:
+        payload["maxResults"] = max_results
     if max_depth is not None:
         payload["maxDepth"] = max_depth
     payload["analyzeAfterImport"] = analyze_after_import
@@ -2749,6 +2796,8 @@ def files_run(
     payload["includeParameters"] = include_parameters
     payload["includeVariables"] = include_variables
     payload["includeComments"] = include_comments
+    payload["keep"] = keep
+    payload["force"] = force
     payload["exclusive"] = exclusive
     _run_async(_call(ctx, "manage-files", **payload))
 
@@ -2902,6 +2951,57 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
 @click.pass_context
 def metadata_cmd(ctx: click.Context, program_path: str) -> None:
     _run_async(_call(ctx, "get-current-program", programPath=program_path))
+
+
+# ---------------------------------------------------------------------------
+# eval – execute arbitrary Ghidra/PyGhidra API code (execute-script)
+# ---------------------------------------------------------------------------
+
+
+@main.command(
+    "eval",
+    help=(
+        "Execute Ghidra/PyGhidra API code on the server. "
+        "The full Ghidra API is available (currentProgram, flatApi, toAddr, …). "
+        "Example: eval -b /myapp 'currentProgram.getName()'"
+    ),
+)
+@click.argument("code")
+@click.option(
+    "-b",
+    "--binary",
+    "program_path",
+    help="Program path in the project (optional in GUI mode)",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=30,
+    show_default=True,
+    help="Max execution time in seconds",
+)
+@click.pass_context
+def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: int) -> None:
+    """Execute arbitrary Ghidra/PyGhidra Python code on the MCP server.
+
+    The code runs in a namespace with the full Ghidra API pre-imported:
+    currentProgram, flatApi, monitor, toAddr(), getFunctionManager(), etc.
+
+    Use __result__ to explicitly set the return value, or simply write an
+    expression (it will be eval'd and returned automatically).
+
+    \b
+    Examples:
+      eval -b /myapp 'currentProgram.getName()'
+      eval -b /myapp 'currentProgram.getLanguage().getLanguageID()'
+      eval -b /myapp 'len(list(currentProgram.getFunctionManager().getFunctions(True)))'
+      eval -b /myapp 'list(currentProgram.getMemory().getBlocks())'
+      eval -b /myapp 'fm=getFunctionManager(); __result__=[str(f) for f in fm.getFunctions(True)][:10'
+    """
+    kwargs: dict[str, Any] = {"code": code, "timeout": timeout}
+    if program_path:
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, "execute-script", **kwargs))
 
 
 # ---------------------------------------------------------------------------
