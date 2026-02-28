@@ -209,6 +209,7 @@ RUN \
         openjdk21 \
         bash \
         gcompat \
+        python3 \
         openssl \
         openssh-client \
         xhost \
