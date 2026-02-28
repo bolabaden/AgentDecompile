@@ -98,6 +98,14 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 
 The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message`. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
+Local proxy mode (no local Ghidra/JVM startup):
+
+```bash
+agentdecompile-server -t streamable-http -o 127.0.0.1 -p 8081 --backend-url http://170.9.241.140:8080
+```
+
+This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp/message` and forwards all tools/resources/prompts to the remote backend 1:1.
+
 ### CLI client
 
 For a command-line interface to a **running** server (no new Ghidra process per command):
@@ -269,6 +277,7 @@ Use `agentdecompile-cli tool --list-tools` to view tool names available from you
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Python MCP server, then bridges stdio to it.
 - **Connect mode (no local runtime startup):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
+- **Local proxy server mode:** run `agentdecompile-server --backend-url http://host:port` to host local MCP transports (`stdio`, `streamable-http`, `sse`) that forward to a remote MCP backend without starting local PyGhidra/JVM.
 
 ### Remote access
 

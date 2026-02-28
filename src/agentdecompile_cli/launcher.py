@@ -35,7 +35,7 @@ except Exception:
     chromadb = None  # type: ignore[assignment]
     Settings = None  # type: ignore[assignment]
 
-from agentdecompile_cli.executor import get_client, run_async
+from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
@@ -1688,6 +1688,20 @@ def _env_host() -> str:
     return (os.environ.get("AGENT_DECOMPILE_HOST") or "").strip() or "127.0.0.1"
 
 
+def _resolve_proxy_backend_url(explicit_backend_url: str | None) -> str | None:
+    """Resolve proxy backend URL from CLI/env and normalize to /mcp/message."""
+    raw = explicit_backend_url
+    if not raw or not raw.strip():
+        raw = (
+            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
+            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
+            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
+        )
+    if not raw or not raw.strip():
+        return None
+    return normalize_backend_url(raw.strip())
+
+
 def main() -> None:
     """Parse server options and run init + transport."""
     import argparse
@@ -1725,6 +1739,17 @@ def main() -> None:
         type=str,
         default=None,
         help="Host for HTTP transports (default: AGENT_DECOMPILE_HOST or 127.0.0.1)",
+    )
+    g_server.add_argument(
+        "--backend-url",
+        "--server-url",
+        dest="backend_url",
+        type=str,
+        default=None,
+        help=(
+            "Run in proxy mode and forward all MCP requests to an existing MCP server "
+            "(http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"
+        ),
     )
     g_server.add_argument(
         "--project-path",
@@ -1778,6 +1803,60 @@ def main() -> None:
     # Apply env defaults for host/port (1:1 Java headless)
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
+    backend_url = _resolve_proxy_backend_url(args.backend_url)
+
+    if backend_url:
+        from agentdecompile_cli.bridge import _apply_mcp_session_fix
+
+        _apply_mcp_session_fix()
+
+        if args.list_project_binaries:
+            parser.error("--list-project-binaries is not supported with --backend-url proxy mode")
+        if args.delete_project_binary:
+            parser.error("--delete-project-binary is not supported with --backend-url proxy mode")
+        if args.input_paths:
+            parser.error("input_paths import is not supported with --backend-url proxy mode")
+
+        try:
+            if args.transport == "stdio":
+                from agentdecompile_cli.__main__ import AgentDecompileCLI
+
+                cli = AgentDecompileCLI(
+                    launcher=None,
+                    project_manager=None,
+                    backend=backend_url,
+                )
+                run_async(cli.run())
+            elif args.transport in ["streamable-http", "http", "sse"]:
+                from agentdecompile_cli.mcp_server.proxy_server import (
+                    AgentDecompileMcpProxyServer,
+                    ProxyServerConfig,
+                )
+
+                proxy_server = AgentDecompileMcpProxyServer(
+                    ProxyServerConfig(
+                        host=host,
+                        port=port,
+                        backend_url=backend_url,
+                    ),
+                )
+                started_port = proxy_server.start()
+                sys.stderr.write(
+                    f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
+                )
+                sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
+                sys.stderr.write("Press Ctrl+C to stop.\n")
+                while True:
+                    time.sleep(3600)
+            else:
+                sys.stderr.write(f"Unknown transport: {args.transport}\n")
+                sys.exit(1)
+        except KeyboardInterrupt:
+            sys.stderr.write("\nShutdown complete\n")
+        finally:
+            if args.transport in ["streamable-http", "http", "sse"] and "proxy_server" in locals():
+                proxy_server.stop()
+        return
 
     # Resolve project path (.gpr vs directory)
     project_path = args.project_path.resolve()
