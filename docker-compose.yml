@@ -1,6 +1,7 @@
-# AgentDecompile AIO: Ghidra server + BSim server + AgentDecompile MCP in one container.
+# AgentDecompile AIO: Ghidra server + AgentDecompile MCP in one container.
+# BSim (optional): use an external PostgreSQL 15 server with the Ghidra BSim lsh extension.
 # All env vars and volumes below are used by Dockerfile/entrypoint or the app; relpaths point to usage.
-# Ghidra server/BSim volume conventions: https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
+# Ghidra server volume conventions: https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
 
 services:
   agentdecompile-mcp:
@@ -15,8 +16,6 @@ services:
     image: docker.io/bolabaden/agentdecompile:latest
     container_name: agentdecompile
     ports:
-      # BSim PostgreSQL server (entrypoint starts BSim; port from GHIDRA_BSIM_PORT)
-      - "${GHIDRA_BSIM_PORT:-5432}:${GHIDRA_BSIM_PORT:-5432}"
       # AgentDecompile MCP HTTP server (host/port via Python server env defaults)
       - "${AGENT_DECOMPILE_PORT:-8080}:${AGENT_DECOMPILE_PORT:-8080}"
       # Ghidra server (NSA Ghidra docker README: 13100-13102)
@@ -63,10 +62,7 @@ services:
       AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT: "${AGENT_DECOMPILE_GHIDRA_SERVER_ALLOW_PASSWORD_PROMPT:-}"
 
       # --- BSim / Ghidra server paths and ports (entrypoint) ---
-      # Usage: docker/entrypoint.sh (BSim datadir/port; Ghidra repos dir)
-      GHIDRA_BSIM_PORT: "${GHIDRA_BSIM_PORT:-5432}"
-      GHIDRA_BSIM_DATADIR: "${GHIDRA_BSIM_DATADIR:-/ghidra/bsim_datadir}"
-      BSIM_DATADIR: "${BSIM_DATADIR:-}"
+      # Usage: docker/entrypoint.sh (Ghidra repos dir)
       GHIDRA_REPOS_DIR: "${GHIDRA_REPOS_DIR:-/ghidra/repositories}"
       GHIDRA_HOME: "${GHIDRA_HOME:-/ghidra}"
 
@@ -93,9 +89,6 @@ services:
       # Ghidra server repository root (NSA Ghidra: volume to /ghidra/repositories). Server stores shared repos here.
       # https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
       - ./ghidra_repositories:/ghidra/repositories
-      # BSim PostgreSQL data directory (NSA Ghidra: volume to /ghidra/bsim_datadir).
-      # https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
-      - ./bsim_datadir:/ghidra/bsim_datadir
       # Optional: Ghidra server config (NSA Ghidra: server.conf at /ghidra/server/server.conf). Uncomment to use.
       # - ./server.conf:/ghidra/server/server.conf
     restart: unless-stopped

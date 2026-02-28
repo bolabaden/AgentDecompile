@@ -207,6 +207,9 @@ RUN \
         openjdk21 \
         bash \
         gcompat \
+    python3 \
+    openssl \
+    libstdc++ \
         musl-locales \
                 musl-locales-lang \
     ; \
