@@ -295,6 +295,19 @@ class TestCliToolListIntegration:
         assert "inspect-memory" in tools
         assert "manage-strings" in tools
 
+    def test_tool_list_hides_aliases_but_keeps_canonical(self):
+        """`tool --list-tools` should not advertise aliases like gen-callgraph."""
+        result = _runner().invoke(main, ["tool", "get-call-graph", "{}", "--list-tools"])
+
+        assert result.exit_code == 0, result.output
+        assert "get-call-graph" in result.output
+        assert "gen-callgraph" not in result.output
+
+    def test_tool_registry_accepts_hidden_aliases(self):
+        """Aliases remain accepted even when not shown in `--list-tools`."""
+        assert tool_registry.is_valid_tool("gen-callgraph")
+        assert tool_registry.resolve_tool_name("gen-callgraph") == "gen-callgraph"
+
     def test_all_canonical_tools_have_direct_cli_commands(self):
         """Every canonical tool should be available as a direct CLI command."""
         missing = []
@@ -472,3 +485,46 @@ class TestCliDynamicDispatch:
         assert called_tool_name == "manage-strings"
         assert called_payload["limit"] == 10
         assert "maxResults" not in called_payload
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_shared_download_dispatches_pull_mode(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(main, ["shared", "download", "--source", "/K1", "--destination", "/K1"])
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+        assert called_tool_name == "download-shared-repository"
+        assert called_payload["mode"] == "pull"
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_shared_push_dispatches_push_mode(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(main, ["shared", "push", "--source", "/K1", "--destination", "/K1", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+        assert called_tool_name == "download-shared-repository"
+        assert called_payload["mode"] == "push"
+        assert called_payload["dryRun"] is True
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_shared_sync_dispatches_bidirectional_mode(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(main, ["shared", "sync", "--source", "/K1", "--destination", "/K1"])
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+        assert called_tool_name == "download-shared-repository"
+        assert called_payload["mode"] == "bidirectional"

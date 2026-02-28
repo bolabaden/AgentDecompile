@@ -2899,6 +2899,10 @@ def files_grp() -> None:
         [
             "import",
             "export",
+            "download-shared",
+            "pull-shared",
+            "push-shared",
+            "sync-shared",
             "checkout",
             "uncheckout",
             "unhijack",
@@ -3021,6 +3025,110 @@ def files_run(
     payload["force"] = force
     payload["exclusive"] = exclusive
     _run_async(_call(ctx, "manage-files", **payload))
+
+
+@main.group(
+    "shared",
+    help="Shared repository workflows",
+)
+def shared_grp() -> None:
+    pass
+
+
+@shared_grp.command(
+    "download",
+    help="Pull shared repository files into local project storage",
+)
+@click.option("--source", "source_path", default="/", show_default=True, help="Shared repository folder/path to download")
+@click.option("--destination", "destination_path", default="/", show_default=True, help="Destination folder in local project")
+@click.option("--recursive/--no-recursive", default=True, show_default=True)
+@click.option("--max-results", type=int, default=100000, show_default=True)
+@click.option("--force", is_flag=True, help="Overwrite existing local project files")
+@click.option("--dry-run", is_flag=True, help="Preview changes without copying")
+@click.pass_context
+def shared_download(
+    ctx: click.Context,
+    source_path: str,
+    destination_path: str,
+    recursive: bool,
+    max_results: int,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    payload: dict[str, Any] = {
+        "mode": "pull",
+        "path": source_path,
+        "newPath": destination_path,
+        "recursive": recursive,
+        "maxResults": max_results,
+        "force": force,
+        "dryRun": dry_run,
+    }
+    _run_async(_call(ctx, "download-shared-repository", **payload))
+
+
+@shared_grp.command(
+    "push",
+    help="Push local project files toward shared-backed storage mapping",
+)
+@click.option("--source", "source_path", default="/", show_default=True, help="Local project source folder/path")
+@click.option("--destination", "destination_path", default="/", show_default=True, help="Destination mapping path")
+@click.option("--recursive/--no-recursive", default=True, show_default=True)
+@click.option("--max-results", type=int, default=100000, show_default=True)
+@click.option("--force", is_flag=True, help="Overwrite destination items")
+@click.option("--dry-run", is_flag=True, help="Preview changes without copying")
+@click.pass_context
+def shared_push(
+    ctx: click.Context,
+    source_path: str,
+    destination_path: str,
+    recursive: bool,
+    max_results: int,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    payload: dict[str, Any] = {
+        "mode": "push",
+        "path": source_path,
+        "newPath": destination_path,
+        "recursive": recursive,
+        "maxResults": max_results,
+        "force": force,
+        "dryRun": dry_run,
+    }
+    _run_async(_call(ctx, "download-shared-repository", **payload))
+
+
+@shared_grp.command(
+    "sync",
+    help="Bidirectional shared/local synchronization",
+)
+@click.option("--source", "source_path", default="/", show_default=True, help="Scope source folder/path")
+@click.option("--destination", "destination_path", default="/", show_default=True, help="Scope destination mapping")
+@click.option("--recursive/--no-recursive", default=True, show_default=True)
+@click.option("--max-results", type=int, default=100000, show_default=True)
+@click.option("--force", is_flag=True, help="Overwrite destination items")
+@click.option("--dry-run", is_flag=True, help="Preview changes without copying")
+@click.pass_context
+def shared_sync(
+    ctx: click.Context,
+    source_path: str,
+    destination_path: str,
+    recursive: bool,
+    max_results: int,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    payload: dict[str, Any] = {
+        "mode": "bidirectional",
+        "path": source_path,
+        "newPath": destination_path,
+        "recursive": recursive,
+        "maxResults": max_results,
+        "force": force,
+        "dryRun": dry_run,
+    }
+    _run_async(_call(ctx, "download-shared-repository", **payload))
 
 
 @main.command("current-program", help="Get current program (get-current-program, GUI)")

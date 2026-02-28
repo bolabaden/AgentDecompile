@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProvider
-from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, TOOLS, normalize_identifier, to_snake_case
+from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, NON_ADVERTISED_TOOL_ALIASES, TOOLS, normalize_identifier, to_snake_case
 from mcp import types
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
@@ -96,6 +96,20 @@ class TestUnifiedProviderAdvertisement:
             matched = [canonical for canonical in canonical_tools_set if normalize_identifier(canonical) == normalize_identifier(advertised.name)]
             assert len(matched) == 1, f"Advertised tool {advertised.name!r} should map to exactly one canonical schema tool"
             assert_string_invariants(advertised.name)
+
+    def test_aliases_are_not_advertised(self):
+        provider = UnifiedToolProvider()
+        advertised_names = {tool.name for tool in provider.list_tools()}
+
+        for alias_name in NON_ADVERTISED_TOOL_ALIASES:
+            assert to_snake_case(alias_name) not in advertised_names
+
+    def test_gui_only_tools_are_not_advertised(self):
+        provider = UnifiedToolProvider()
+        advertised_names = {tool.name for tool in provider.list_tools()}
+
+        for gui_tool_name in DISABLED_GUI_ONLY_TOOLS:
+            assert to_snake_case(gui_tool_name) not in advertised_names
 
 
 class TestToolsListParity:

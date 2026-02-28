@@ -41,6 +41,7 @@ class TestProjectProviderSchema:
         assert "open" in names
         assert "get-current-program" in names
         assert "list-project-files" in names
+        assert "download-shared-repository" in names
         assert "manage-files" in names
         assert "list-project-binaries" in names
         assert "list-project-binary-metadata" in names
@@ -82,6 +83,10 @@ class TestProjectProviderSchema:
         enum_vals = props[enum_key]["enum"]
         for action in ("rename", "delete", "copy", "move"):
             assert action in enum_vals
+        assert "download-shared" in enum_vals
+        assert "pull-shared" in enum_vals
+        assert "push-shared" in enum_vals
+        assert "sync-shared" in enum_vals
 
     def test_list_project_files_pagination(self):
         p = _make_provider()
@@ -196,6 +201,77 @@ class TestProjectProviderValidation:
         assert result.get("serverPort") == 13100
         assert result.get("repository") == "Odyssey"
         assert result.get("authProvided") is True
+
+    @pytest.mark.asyncio
+    async def test_manage_files_download_shared_requires_shared_session(self):
+        p = _make_provider(with_program=False)
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "operation": "download-shared",
+                "path": "/K1",
+                "newPath": "/K1",
+                "recursive": True,
+            },
+        )
+        result = _parse(resp)
+        assert result.get("operation") == "sync-shared"
+        assert result.get("mode") == "pull"
+        assert result.get("success") is False
+        assert "shared-server" in str(result.get("error", ""))
+
+    @pytest.mark.asyncio
+    async def test_download_shared_repository_tool_requires_shared_session(self):
+        p = _make_provider(with_program=False)
+        resp = await p.call_tool(
+            "download-shared-repository",
+            {
+                "path": "/K1",
+                "newPath": "/K1",
+                "recursive": True,
+            },
+        )
+        result = _parse(resp)
+        assert result.get("operation") == "sync-shared"
+        assert result.get("mode") == "pull"
+        assert result.get("success") is False
+        assert "shared-server" in str(result.get("error", ""))
+
+    @pytest.mark.asyncio
+    async def test_manage_files_push_shared_requires_shared_session(self):
+        p = _make_provider(with_program=False)
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "operation": "push-shared",
+                "path": "/K1",
+                "newPath": "/K1",
+                "recursive": True,
+            },
+        )
+        result = _parse(resp)
+        assert result.get("operation") == "sync-shared"
+        assert result.get("mode") == "push"
+        assert result.get("success") is False
+        assert "shared-server" in str(result.get("error", ""))
+
+    @pytest.mark.asyncio
+    async def test_manage_files_sync_shared_requires_shared_session(self):
+        p = _make_provider(with_program=False)
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "operation": "sync-shared",
+                "path": "/K1",
+                "newPath": "/K1",
+                "recursive": True,
+            },
+        )
+        result = _parse(resp)
+        assert result.get("operation") == "sync-shared"
+        assert result.get("mode") == "bidirectional"
+        assert result.get("success") is False
+        assert "shared-server" in str(result.get("error", ""))
 
 
 class TestProjectProviderArgNormalization:

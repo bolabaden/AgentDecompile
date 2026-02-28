@@ -80,3 +80,16 @@ async def test_manager_falls_back_to_active_program_when_requested_not_found() -
         assert payload["programName"] == "active_program.exe"
     finally:
         CURRENT_MCP_SESSION_ID.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_manager_accepts_hidden_alias_tool_name() -> None:
+    manager = ToolProviderManager()
+    manager.register_all_providers()
+
+    # `gen-callgraph` is intentionally hidden from advertisement but must remain callable.
+    response = await manager.call_tool("gen-callgraph", {"function": "main"})
+    payload = parse_single_text_content_json(response)
+
+    assert "error" in payload
+    assert "Unknown tool" not in str(payload.get("error", ""))

@@ -305,15 +305,10 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). |
 | `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. |
-| `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` | If `true`, delete project lock files before opening (risky; see Project locking below). |
 
 ### Shared project authentication
 
 When opening a `.gpr` file connected to a Ghidra Server, authentication may be required. Provide credentials via the `open` tool parameters (`serverUsername`, `serverPassword`) or the environment variables above; tool parameters override env. Local projects do not need credentials. If you see "Shared project requires authentication but no credentials provided", set the env vars or pass parameters. For troubleshooting, see [CONTRIBUTING.md](CONTRIBUTING.md) (Ghidra Project Authentication Implementation).
-
-### Project locking
-
-Ghidra allows only one process to open a project at a time (file-based locks). If you see "Project 'X' is locked", close the project in the other process or use a different project. For shared access, use Ghidra Server. **Workaround:** `AGENT_DECOMPILE_FORCE_IGNORE_LOCK=true` (or `forceIgnoreLock: true` on `open`) deletes lock files before opening—**risky**; can cause data corruption if multiple processes write. Use only when you are sure only one process will write and you have backups.
 
 ### Structure size (manage-structures)
 
