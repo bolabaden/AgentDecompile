@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to update (e.g., v4.1.0). If not provided, uses the current ref.'
+        description: 'Release tag to update (e.g., 1.0.0). If not provided, uses the current ref.'
         required: false
         type: string
 jobs:
