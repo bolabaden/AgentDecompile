@@ -529,84 +529,95 @@ class AgentDecompileStdioBridge:
         self._streamable_http_headers: dict[str, str] | None = None
 
         self.server: Server = Server("AgentDecompile")
-        self._backend_connect_lock: asyncio.Lock | None = None
+        self._backend_connect_lock: asyncio.Lock = asyncio.Lock()
+        self._backend_exit_stack: contextlib.AsyncExitStack | None = None
+        self._backend_session: ClientSession | None = None
+        self._backend_connected: bool = False
 
         self._register_handlers()
 
-    @contextlib.asynccontextmanager
-    async def _with_backend_session(self, _op_name: str):
-        """Context manager: create a fresh backend connection, init, yield session, then close.
+    async def _reset_backend_session(self) -> None:
+        """Close and clear any existing backend session state."""
+        self._backend_connected = False
+        self._backend_session = None
+        if self._backend_exit_stack is not None:
+            try:
+                await self._backend_exit_stack.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._backend_exit_stack = None
 
-        Uses connection-per-request to avoid MCP streamable HTTP reuse bugs
-        (Connection closed on 2nd request; python-sdk#1941, #680).
-        """
-        client = AsyncClient(
-            headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
-            timeout=BACKEND_OP_TIMEOUT,
-        )
-        transport_gen: _AsyncGeneratorContextManager[tuple[MemoryObjectReceiveStream[SessionMessage | Exception]], None] = streamable_http_client(
-            url=self.url,
-            http_client=client,
-        )
-        transport_cm = transport_gen
-        json_stream: JsonEnvelopeStream | None = None
-        try:
-            stream: tuple[MemoryObjectReceiveStream[SessionMessage | Exception]] = await asyncio.wait_for(
-                transport_gen.__aenter__(),
-                timeout=CONNECT_TIMEOUT,
-            )
-            read_stream: MemoryObjectReceiveStream[SessionMessage | Exception] = stream[0]
-            write_stream: MemoryObjectSendStream[SessionMessage | Exception] = stream[1]  # pyright: ignore[reportInvalidTypeForm]
-        except asyncio.TimeoutError:
+    async def _ensure_backend_session(self) -> ClientSession:
+        """Ensure there is a live backend MCP session and return it."""
+        if self._backend_connected and self._backend_session is not None:
+            return self._backend_session
+
+        async with self._backend_connect_lock:
+            if self._backend_connected and self._backend_session is not None:
+                return self._backend_session
+
+            await self._reset_backend_session()
+
             try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
-            ) from None
-        except (ConnectionError, OSError) as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
-            ) from e
-        except Exception as e:
-            try:
-                await transport_gen.__aexit__(None, None, None)
-            except Exception:
-                pass
-            err = str(e)
-            if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused"]):
+                exit_stack = contextlib.AsyncExitStack()
+                await exit_stack.__aenter__()
+
+                client = AsyncClient(
+                    headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
+                    timeout=BACKEND_OP_TIMEOUT,
+                )
+                read_stream, write_stream, _ = await asyncio.wait_for(
+                    exit_stack.enter_async_context(
+                        streamable_http_client(
+                            url=self.url,
+                            http_client=client,
+                        ),
+                    ),
+                    timeout=CONNECT_TIMEOUT,
+                )
+
+                json_stream = JsonEnvelopeStream(read_stream)
+                session = await exit_stack.enter_async_context(ClientSession(json_stream, write_stream))
+                await session.initialize()
+
+                self._backend_exit_stack = exit_stack
+                self._backend_session = session
+                self._backend_connected = True
+                return session
+            except asyncio.TimeoutError:
+                await self._reset_backend_session()
+                raise ServerNotRunningError(
+                    f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
+                ) from None
+            except (ConnectionError, OSError) as e:
+                await self._reset_backend_session()
                 raise ServerNotRunningError(
                     f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
                 ) from e
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n{get_server_start_message()}",
-            ) from e
+            except Exception as e:
+                await self._reset_backend_session()
+                err = str(e)
+                if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused"]):
+                    raise ServerNotRunningError(
+                        f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
+                    ) from e
+                raise ServerNotRunningError(
+                    f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n{get_server_start_message()}",
+                ) from e
 
-        json_stream = JsonEnvelopeStream(read_stream)
-        session_cm: _AsyncGeneratorContextManager[ClientSession] = ClientSession(json_stream, write_stream)
+    @contextlib.asynccontextmanager
+    async def _with_backend_session(self, _op_name: str):
+        """Context manager over a persistent backend MCP session.
+
+        Reuses a single initialized session for all requests so server-side
+        session context (open program/project state) survives across commands.
+        """
+        session = await self._ensure_backend_session()
         try:
-            session = await session_cm.__aenter__()
-            await session.initialize()
             yield session
-        finally:
-            try:
-                await session_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
-            if json_stream is not None:
-                try:
-                    await json_stream.aclose()
-                except Exception:
-                    pass
-            try:
-                await transport_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
+        except Exception:
+            await self._reset_backend_session()
+            raise
 
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
@@ -708,8 +719,12 @@ class AgentDecompileStdioBridge:
         except Exception:
             raise
         finally:
-            pass  # Connection-per-request; no persistent backend to close
+            await self._reset_backend_session()
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
-        # Connection-per-request; no persistent backend to close
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._reset_backend_session())
