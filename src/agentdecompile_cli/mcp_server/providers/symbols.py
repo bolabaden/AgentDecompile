@@ -132,10 +132,14 @@ class SymbolToolProvider(ToolProvider):
         ]
 
     async def _handle_list_imports_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
-        return await self._list_imports(args)
+        forwarded_args = dict(args)
+        forwarded_args.setdefault("mode", "imports")
+        return await self._handle(forwarded_args)
 
     async def _handle_list_exports_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
-        return await self._list_exports(args)
+        forwarded_args = dict(args)
+        forwarded_args.setdefault("mode", "exports")
+        return await self._handle(forwarded_args)
 
     async def _handle_create_label_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._create_label(args)
@@ -282,6 +286,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "namespaces", "results": namespaces, "count": len(namespaces)})
 
     async def _list_imports(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_program()
         max_results = self._get_int(args, "maxresults", "limit", default=100)
 
         if self.ghidra_tools:
@@ -301,6 +306,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "imports", "results": imports, "count": len(imports)})
 
     async def _list_exports(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_program()
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
         if self.ghidra_tools:

@@ -514,6 +514,169 @@ class ToolProviderManager:
             except Exception as e:
                 logger.warning(f"Failed to set program info for {p.__class__.__name__}! {e.__class__.__name__}: {e}")
 
+    def _get_project_provider(self) -> Any | None:
+        for provider in self.providers:
+            if hasattr(provider, "_handle_open") and hasattr(provider, "_checkout_shared_program"):
+                return provider
+        return None
+
+    async def _bootstrap_shared_session_from_env(self, session_id: str, requested_program_key: str) -> None:
+        project_provider = self._get_project_provider()
+        if project_provider is None:
+            return
+
+        host = os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        if not host:
+            return
+
+        open_args: dict[str, Any] = {
+            "serverhost": host,
+            "serverport": os.getenv("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100",
+            "serverusername": os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", "").strip(),
+            "serverpassword": os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip(),
+            "path": requested_program_key,
+        }
+
+        try:
+            await project_provider._handle_open(open_args)
+        except Exception as e:
+            logger.debug("Shared-session bootstrap failed for %s: %s", requested_program_key, e)
+
+    def _resolve_project_data(self) -> Any | None:
+        ghidra_project = self.ghidra_project
+        if ghidra_project is None:
+            return None
+        try:
+            return ghidra_project.getProject().getProjectData()
+        except Exception:
+            try:
+                return ghidra_project.getProjectData()
+            except Exception:
+                return None
+
+    def _find_domain_file_by_name(self, folder: Any, file_name: str, max_results: int = 5000) -> Any | None:
+        stack: list[Any] = [folder]
+        visited = 0
+        while stack and visited < max_results:
+            current = stack.pop()
+            visited += 1
+            try:
+                for domain_file in current.getFiles() or []:
+                    if str(domain_file.getName()) == file_name:
+                        return domain_file
+                for subfolder in current.getFolders() or []:
+                    stack.append(subfolder)
+            except Exception:
+                continue
+        return None
+
+    def _activate_local_program_by_path(self, session_id: str, requested_program_key: str) -> ProgramInfo | None:
+        project_data = self._resolve_project_data()
+        if project_data is None:
+            return None
+
+        normalized = str(requested_program_key).strip()
+        if not normalized:
+            return None
+
+        candidate_paths = [normalized]
+        if not normalized.startswith("/"):
+            candidate_paths.append(f"/{normalized}")
+
+        domain_file = None
+        for candidate in candidate_paths:
+            try:
+                domain_file = project_data.getFile(candidate)
+            except Exception:
+                domain_file = None
+            if domain_file is not None:
+                break
+
+        if domain_file is None:
+            file_name = Path(normalized).name
+            if file_name:
+                try:
+                    root = project_data.getRootFolder()
+                    domain_file = self._find_domain_file_by_name(root, file_name)
+                except Exception:
+                    domain_file = None
+
+        if domain_file is None:
+            return None
+
+        try:
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+            program = domain_file.getDomainObject(self, True, False, TaskMonitor.DUMMY)
+        except Exception:
+            program = None
+
+        if program is None:
+            return None
+
+        try:
+            from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+            decompiler = DecompInterface()
+            decompiler.openProgram(program)
+        except Exception:
+            decompiler = None
+
+        from agentdecompile_cli.launcher import ProgramInfo
+
+        program_path = normalized
+        try:
+            if hasattr(domain_file, "getPathname"):
+                program_path = str(domain_file.getPathname())
+        except Exception:
+            program_path = normalized
+
+        program_info = ProgramInfo(
+            name=program.getName() if hasattr(program, "getName") else Path(program_path).name,
+            program=program,
+            flat_api=None,
+            decompiler=decompiler,
+            metadata={},
+            ghidra_analysis_complete=True,
+            file_path=None,
+            load_time=None,
+        )
+
+        SESSION_CONTEXTS.set_active_program_info(session_id, program_path, program_info)
+        if program_path.strip().lower() != normalized.strip().lower():
+            SESSION_CONTEXTS.set_active_program_info(session_id, normalized, program_info)
+        self.set_program_info(program_info)
+        return program_info
+
+    async def _activate_requested_program(self, session_id: str, requested_program_key: str) -> ProgramInfo | None:
+        existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
+        if existing is not None:
+            return existing
+
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        project_provider = self._get_project_provider()
+
+        if project_provider is not None and handle and n(str(handle.get("mode", ""))) == "sharedserver":
+            repository_adapter = handle.get("repository_adapter")
+            if repository_adapter is not None:
+                try:
+                    await project_provider._checkout_shared_program(repository_adapter, requested_program_key, session_id)
+                except Exception as e:
+                    logger.debug("Shared checkout attempt failed for %s: %s", requested_program_key, e)
+
+        activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
+        if activated is not None:
+            return activated
+
+        if project_provider is not None:
+            await self._bootstrap_shared_session_from_env(session_id, requested_program_key)
+            activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
+            if activated is not None:
+                return activated
+
+        return self._activate_local_program_by_path(session_id, requested_program_key)
+
     def list_tools(self) -> list[types.Tool]:
         provider_tools: list[types.Tool] = []
         for p in self.providers:
@@ -611,8 +774,17 @@ class ToolProviderManager:
 
         requested_program_info = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 
+        if requested_program_key and requested_program_info is None:
+            requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
+
         session_program_info = SESSION_CONTEXTS.get_active_program_info(session_id)
         effective_program_info = requested_program_info or session_program_info or self.program_info
+
+        if requested_program_key and effective_program_info is None:
+            return create_error_response(
+                f"Program path '{requested_program_key}' was provided but could not be resolved/opened from the current project or shared repository session.",
+            )
+
         if effective_program_info is not None and provider.program_info is not effective_program_info:
             try:
                 provider.set_program_info(effective_program_info)

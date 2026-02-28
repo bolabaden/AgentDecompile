@@ -392,23 +392,32 @@ class ProjectToolProvider(ToolProvider):
                         connected = bool(server_adapter.connect())
                     if not connected:
                         last_error = server_adapter.getLastConnectError()
-                        logger.warning(
-                            "Repository server connect() returned false for %s:%s: %s",
-                            server_host,
-                            server_port,
-                            last_error,
+                        message = str(last_error) if last_error else "unknown authentication/connection failure"
+                        if auth_provided:
+                            raise PermissionError(
+                                f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
+                            )
+                        raise ValueError(
+                            f"Repository connection failed for {server_host}:{server_port}: {message}",
                         )
                 except Exception as exc:
-                    logger.warning(
-                        "Repository server connect() raised for %s:%s: %s. Continuing with repository probe.",
-                        server_host,
-                        server_port,
-                        exc,
-                    )
+                    exc_text = str(exc)
+                    if auth_provided:
+                        raise PermissionError(
+                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
+                        ) from exc
+                    raise ValueError(
+                        f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
+                    ) from exc
 
             try:
                 repository_names_raw = server_adapter.getRepositoryNames() or []
             except Exception as exc:
+                exc_text = str(exc)
+                if auth_provided:
+                    raise PermissionError(
+                        f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
+                    ) from exc
                 raise ValueError(f"Repository server connection failed for {server_host}:{server_port}: {exc}") from exc
             finally:
                 if server_username and original_user_name is not None:
@@ -448,7 +457,23 @@ class ProjectToolProvider(ToolProvider):
                 raise ValueError(f"Failed to get repository handle for '{repository_name}'")
 
             if not repository_adapter.isConnected():
-                repository_adapter.connect()
+                try:
+                    connected_repo = bool(repository_adapter.connect())
+                except Exception as exc:
+                    exc_text = str(exc)
+                    if auth_provided:
+                        raise PermissionError(
+                            f"Authentication failed while opening repository '{repository_name}': {exc_text}",
+                        ) from exc
+                    raise ValueError(
+                        f"Failed to connect repository '{repository_name}': {exc_text}",
+                    ) from exc
+                if not connected_repo:
+                    if auth_provided:
+                        raise PermissionError(
+                            f"Authentication failed while opening repository '{repository_name}'",
+                        )
+                    raise ValueError(f"Failed to connect repository '{repository_name}'")
 
             binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
 

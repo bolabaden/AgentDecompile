@@ -67,6 +67,23 @@ class TestCliCommandRegistration:
         assert "symbols [OPTIONS] COMMAND" in result.output
         assert "TypeError" not in result.output
 
+    def test_list_project_files_help_shows_no_tool_params(self):
+        """list-project-files should be zero-arg and not advertise project/folder params."""
+        result = _runner().invoke(main, ["list-project-files", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--program_path" not in result.output
+        assert "--folder_path" not in result.output
+        assert "--recursive" not in result.output
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_list_project_files_runs_without_arguments(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(main, ["list-project-files"])
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+
     def test_tool_command_registered(self):
         """The 'tool' command must be registered on the main group."""
         assert "tool" in main.commands, "Expected 'tool' command in main.commands"

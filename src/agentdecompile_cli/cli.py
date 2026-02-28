@@ -29,12 +29,14 @@ from __future__ import annotations
 import asyncio
 import json
 import multiprocessing
+import os
 import sys
 
 from collections.abc import Coroutine
 from pathlib import Path
 from types import FunctionType, SimpleNamespace
 from typing import Any
+from urllib.parse import urlparse
 
 import click
 
@@ -157,6 +159,117 @@ def _get_error_result_message(data: Any) -> str | None:
     return str(data.get("error", "Tool returned an error"))
 
 
+def _is_no_program_loaded_error(data: Any) -> bool:
+    err = _get_error_result_message(data)
+    if not err:
+        return False
+    err_l = err.strip().lower()
+    return "no program loaded" in err_l or "no active program" in err_l
+
+
+def _backend_host_for_recovery(ctx: click.Context) -> str:
+    opts = _get_opts(ctx)
+    backend_url = resolve_backend_url(opts.get("server_url"), opts.get("host"), opts.get("port"))
+    if backend_url:
+        try:
+            parsed = urlparse(backend_url)
+            if parsed.hostname:
+                return parsed.hostname
+        except Exception:
+            pass
+    return str(opts.get("host", "127.0.0.1"))
+
+
+async def _recover_and_retry_with_program(
+    ctx: click.Context,
+    client: Any,
+    tool_name: str,
+    payload: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    if not _is_no_program_loaded_error(result):
+        return result
+
+    requested_program = _extract_program_argument(payload)
+    if not requested_program:
+        return result
+
+    shared_host = _backend_host_for_recovery(ctx)
+    shared_port_raw = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
+    try:
+        shared_port = int(shared_port_raw)
+    except ValueError:
+        shared_port = 13100
+
+    shared_user = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+    shared_pass = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+    shared_repo = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+
+    open_attempts: list[dict[str, Any]] = [
+        {"path": requested_program},
+        {
+            "serverHost": shared_host,
+            "serverPort": shared_port,
+            "serverUsername": shared_user or None,
+            "serverPassword": shared_pass or None,
+            "path": requested_program,
+        },
+    ]
+    if shared_repo:
+        open_attempts.append(
+            {
+                "serverHost": shared_host,
+                "serverPort": shared_port,
+                "serverUsername": shared_user or None,
+                "serverPassword": shared_pass or None,
+                "path": shared_repo,
+            },
+        )
+
+    for open_payload in open_attempts:
+        clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
+        try:
+            await client.call_tool("open", clean_open_payload)
+        except Exception:
+            continue
+
+        # Best-effort explicit checkout when shared open connected at repo scope.
+        try:
+            await client.call_tool("manage_files", {"operation": "checkout", "programPath": requested_program})
+        except Exception:
+            pass
+
+        try:
+            retried = await client.call_tool(tool_name, payload)
+            if not _is_no_program_loaded_error(retried):
+                return retried
+            result = retried
+        except Exception:
+            continue
+
+    return result
+
+
+def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Resolve CLI-invoked tool name to a server-advertised canonical call target."""
+    call_tool_name = tool
+    resolved_tool = tool_registry.resolve_tool_name(tool) if tool_registry.is_valid_tool(tool) else None
+    if resolved_tool is not None:
+        call_tool_name = resolved_tool
+
+    resolved_payload = dict(payload)
+
+    if call_tool_name in NON_ADVERTISED_TOOL_ALIASES:
+        forwarded_tool = NON_ADVERTISED_TOOL_ALIASES[call_tool_name]
+        if call_tool_name == "list-exports":
+            resolved_payload.setdefault("mode", "exports")
+        elif call_tool_name == "list-imports":
+            resolved_payload.setdefault("mode", "imports")
+        call_tool_name = forwarded_tool
+
+    return call_tool_name, resolved_payload
+
+
 async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     """Call tool on the remote MCP server via HTTP client.
 
@@ -170,9 +283,9 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
     # Canonicalize tool + args through the shared registry path when known.
-    call_tool_name = tool
-    if tool_registry.is_valid_tool(tool):
-        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
+    call_tool_name, payload = _resolve_tool_call_target(tool, payload)
+    if tool_registry.is_valid_tool(call_tool_name):
+        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
         payload = tool_registry.parse_arguments(payload, call_tool_name)
 
     explicit_program = _extract_program_argument(payload)
@@ -185,6 +298,7 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
         client = _client(ctx)
         async with client:
             data = await client.call_tool(call_tool_name, payload)
+            data = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, data)
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
@@ -205,9 +319,9 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
-    call_tool_name = tool
-    if tool_registry.is_valid_tool(tool):
-        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool))
+    call_tool_name, safe_payload = _resolve_tool_call_target(tool, safe_payload)
+    if tool_registry.is_valid_tool(call_tool_name):
+        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
         safe_payload = tool_registry.parse_arguments(safe_payload, call_tool_name)
 
     explicit_program = _extract_program_argument(safe_payload)
@@ -218,7 +332,8 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
     try:
         client = _client(ctx)
         async with client:
-            return await client.call_tool(call_tool_name, safe_payload)
+            first = await client.call_tool(call_tool_name, safe_payload)
+            return await _recover_and_retry_with_program(ctx, client, call_tool_name, safe_payload, first)
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
