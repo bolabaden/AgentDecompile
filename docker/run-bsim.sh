@@ -26,6 +26,11 @@ if [ ! -d "${PG_BIN}" ] || [ ! -x "${PG_BIN}/postgres" ]; then
   exit 1
 fi
 
+if "${PG_BIN}/pg_ctl" -D "${GHIDRA_BSIM_DATADIR}" status >/dev/null 2>&1; then
+  echo "BSim PostgreSQL is already running (datadir=${GHIDRA_BSIM_DATADIR}); skipping duplicate start."
+  exit 0
+fi
+
 echo "Starting BSim server (datadir=${GHIDRA_BSIM_DATADIR})..."
 exec "${GHIDRA_HOME}/support/launch.sh" fg jdk BSimControl "${MAXMEM}" "${VMARG_LIST} -Xshare:off" \
   ghidra.features.bsim.query.BSimControlLaunchable start "${GHIDRA_BSIM_DATADIR}"

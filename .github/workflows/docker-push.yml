@@ -54,8 +54,8 @@ on:
 # Configuration – change these for your repo
 # ------------------------------------------------------------------------------
 env:
-  IMAGE_NAME: agentdecompile
-  DOCKERFILE_PATH: "./Dockerfile"
+  IMAGE_NAME: agentdecompile-aio
+  DOCKERFILE_PATH: "./Docker.aio"
   BUILD_CONTEXT: "."
   # Optional: GitHub API URL for "latest" release (tag_name parsed). Empty = use only git tag on tag push.
   VERSION_TAG_UPSTREAM_API: "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest"
@@ -66,8 +66,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       IMAGE_TAG: ${{ steps.resolve.outputs.IMAGE_TAG }}
-      GHCR_IMAGE: ${{ steps.resolve.outputs.GHCR_IMAGE }}
-      DOCKERHUB_IMAGE: ${{ steps.resolve.outputs.DOCKERHUB_IMAGE }}
       GHIDRA_VERSION: ${{ steps.resolve.outputs.GHIDRA_VERSION }}
     steps:
       - name: "Checkout repository"
@@ -78,12 +76,8 @@ jobs:
       - name: "Resolve image tag and optional upstream version"
         id: resolve
         env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           VERSION_TAG_UPSTREAM_API: ${{ env.VERSION_TAG_UPSTREAM_API }}
         run: |
-          echo "GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_OUTPUT
-          echo "DOCKERHUB_IMAGE=docker.io/${{ github.repository_owner }}/${IMAGE_NAME}" >> $GITHUB_OUTPUT
-
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             GIT_TAG="${{ github.ref_name }}"
             GIT_TAG_STRIPPED="${GIT_TAG#v}"
@@ -105,19 +99,37 @@ jobs:
           fi
 
   build-push:
-    name: "Build ${{ matrix.arch }}"
+    name: "Build ${{ matrix.image_key }} ${{ matrix.arch }}"
     runs-on: ${{ matrix.runner }}
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
-          # amd64: standard x64 runner
-          - platform: linux/amd64
+          # AIO image (Docker.aio)
+          - image_key: aio
+            image_name: agentdecompile-aio
+            dockerfile: ./Docker.aio
+            platform: linux/amd64
             arch: amd64
             runner: ubuntu-latest
-          # arm64: native arm64 runner (no QEMU); free for public repos
-          - platform: linux/arm64
+          - image_key: aio
+            image_name: agentdecompile-aio
+            dockerfile: ./Docker.aio
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          # MCP-only image (Dockerfile)
+          - image_key: mcp
+            image_name: agentdecompile
+            dockerfile: ./Dockerfile
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - image_key: mcp
+            image_name: agentdecompile
+            dockerfile: ./Dockerfile
+            platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
@@ -129,8 +141,8 @@ jobs:
       - name: "Set env and outputs from prepare"
         id: resolve
         run: |
-          echo "GHCR_IMAGE=${{ needs.prepare.outputs.GHCR_IMAGE }}" >> $GITHUB_ENV
-          echo "DOCKERHUB_IMAGE=${{ needs.prepare.outputs.DOCKERHUB_IMAGE }}" >> $GITHUB_ENV
+          echo "GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}" >> $GITHUB_ENV
+          echo "DOCKERHUB_IMAGE=docker.io/${{ github.repository_owner }}/${{ matrix.image_name }}" >> $GITHUB_ENV
           echo "IMAGE_TAG=${{ needs.prepare.outputs.IMAGE_TAG }}" >> $GITHUB_OUTPUT
           echo "GHIDRA_VERSION=${{ needs.prepare.outputs.GHIDRA_VERSION }}" >> $GITHUB_OUTPUT
 
@@ -183,7 +195,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.BUILD_CONTEXT }}
-          file: ${{ env.DOCKERFILE_PATH }}
+          file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           build-args: |
             GHIDRA_VERSION=${{ steps.resolve.outputs.GHIDRA_VERSION }}
@@ -192,32 +204,40 @@ jobs:
             ${{ env.DOCKERHUB_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}
             ${{ env.GHCR_IMAGE }}:latest
             ${{ env.DOCKERHUB_IMAGE }}:latest
-          labels: ${{ steps.meta.outputs.labels }}
-          push: ${{ github.event_name == 'push' }}
-          provenance: false
-          sbom: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}  # Apply OCI labels (source, revision, created, etc.) from metadata-action
+          push: ${{ github.event_name == 'push' }}  # Push image only on push events; skip on pull_request and workflow_dispatch
+          provenance: false  # Disable SLSA provenance attestation (reduces image size)
+          sbom: false  # Disable software bill of materials generation (reduces metadata overhead)
+          cache-from: type=gha  # Load build cache from GitHub Actions cache backend for faster rebuilds
+          cache-to: type=gha,mode=max  # Save full layer cache to GitHub Actions for future builds (mode=max includes all layers)
 
       - name: "Upload image ref for manifest merge"
         if: success() && github.event_name == 'push'
         run: |
           REF="${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.IMAGE_TAG }}@${{ steps.build.outputs.digest }}"
           mkdir -p refs
-          echo "$REF" > "refs/ref-${{ matrix.arch }}.txt"
+          echo "$REF" > "refs/ref-${{ matrix.image_key }}-${{ matrix.arch }}.txt"
 
       - name: "Upload artifact ref-${{ matrix.arch }}"
         if: success() && github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: ref-${{ matrix.arch }}
+          name: ref-${{ matrix.image_key }}-${{ matrix.arch }}
           path: refs/
 
   merge-manifests:
-    name: "Merge manifests"
+    name: "Merge manifests (${{ matrix.image_key }})"
     runs-on: ubuntu-latest
     needs: [prepare, build-push]
     if: always() && github.event_name == 'push' && (needs.build-push.result == 'success' || needs.build-push.result == 'failure')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image_key: aio
+            image_name: agentdecompile-aio
+          - image_key: mcp
+            image_name: agentdecompile
     steps:
       - name: "Set up Docker Buildx"
         uses: docker/setup-buildx-action@v3
@@ -240,7 +260,7 @@ jobs:
       - name: "Download platform refs"
         uses: actions/download-artifact@v4
         with:
-          pattern: ref-*
+          pattern: ref-${{ matrix.image_key }}-*
           path: refs-downloaded
           merge-multiple: true
         continue-on-error: true
@@ -248,8 +268,8 @@ jobs:
       - name: "Create and push multi-arch manifests"
         run: |
           IMAGE_TAG="${{ needs.prepare.outputs.IMAGE_TAG }}"
-          GHCR_IMAGE="${{ needs.prepare.outputs.GHCR_IMAGE }}"
-          DOCKERHUB_IMAGE="${{ needs.prepare.outputs.DOCKERHUB_IMAGE }}"
+          GHCR_IMAGE="ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}"
+          DOCKERHUB_IMAGE="docker.io/${{ github.repository_owner }}/${{ matrix.image_name }}"
           if [[ -z "$IMAGE_TAG" || -z "$GHCR_IMAGE" ]]; then
             echo "Missing params, skipping manifest merge"
             exit 0
