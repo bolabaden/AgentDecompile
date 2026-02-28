@@ -99,7 +99,7 @@ RUN set -eux; \
             *) OSDIR="linux_${ARCH}" ;; \
         esac; \
         test -x "${GHIDRA_HOME}/Ghidra/Features/BSim/build/os/${OSDIR}/postgresql/bin/postgres"; \
-        python3 -m venv ${GHIDRA_HOME}/venv; \
+        python3 -m venv --system-site-packages ${GHIDRA_HOME}/venv; \
         ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
         apk del g++ gcc musl-dev make bison flex zlib-dev readline-dev perl || true; \
         mkdir ${GHIDRA_HOME}/repositories; \
@@ -158,13 +158,21 @@ ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     if [ "${ARCH}" = "aarch64" ]; then \
-        ONNXRUNTIME_APK_URL="$(curl -fsSL https://pkgs.alpinelinux.org/package/edge/community/aarch64/py3-onnxruntime | grep -Eo 'https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime[^" ]*\.apk' | head -n 1)"; \
-        test -n "${ONNXRUNTIME_APK_URL}"; \
-        apk add --no-cache \
+        if ! apk add --no-cache \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            "${ONNXRUNTIME_APK_URL}" \
-        ; \
+            py3-onnxruntime \
+        ; then \
+            INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/APKINDEX.tar.gz"; \
+            ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
+            test -n "${ONNXRUNTIME_VERSION}"; \
+            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
+            apk add --no-cache \
+                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+                "${ONNXRUNTIME_APK_URL}" \
+            ; \
+        fi; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \
         cargo \
