@@ -153,9 +153,21 @@ RUN set -eux; \
 # --- Layer 5: install AgentDecompile Python package into venv ---
 ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
+RUN set -eux; \
+    apk add --no-cache --virtual .chromadb-build \
+        cargo \
+        rust \
+        gcc \
+        g++ \
+        musl-dev \
+        python3-dev \
+        libffi-dev \
+        openssl-dev \
+    ; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir chromadb; \
+    apk del .chromadb-build || true
 RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
     anyio \
-    chromadb \
     click \
     fastapi \
     ghidra-stubs \
