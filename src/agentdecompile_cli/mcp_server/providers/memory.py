@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryToolProvider(ToolProvider):
-    HANDLERS = {"inspectmemory": "_handle"}
+    HANDLERS = {"inspectmemory": "_handle", "readbytes": "_handle_read_bytes"}
 
     def list_tools(self) -> list[types.Tool]:
         return [
@@ -40,7 +40,44 @@ class MemoryToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
+            types.Tool(
+                name="read-bytes",
+                description="Read bytes from memory at an address (compat alias for inspect-memory mode=read)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string"},
+                        "binaryName": {"type": "string"},
+                        "address": {"type": "string"},
+                        "addressOrSymbol": {"type": "string"},
+                        "size": {"type": "integer", "default": 32},
+                        "length": {"type": "integer"},
+                    },
+                    "required": ["address"],
+                },
+            ),
         ]
+
+    async def _handle_read_bytes(self, args: dict[str, Any]) -> list[types.TextContent]:
+        forwarded = dict(args)
+        forwarded.setdefault("mode", "read")
+
+        if forwarded.get("programPath") is None and forwarded.get("programpath") is None:
+            binary_name = forwarded.get("binaryname")
+            if binary_name is not None and str(binary_name).strip():
+                forwarded["programPath"] = str(binary_name)
+
+        if forwarded.get("addressOrSymbol") is None and forwarded.get("addressorsymbol") is None:
+            address = forwarded.get("address")
+            if address is not None and str(address).strip():
+                forwarded["addressOrSymbol"] = str(address)
+
+        if forwarded.get("length") is None:
+            size = forwarded.get("size")
+            if size is not None:
+                forwarded["length"] = size
+
+        return await self._handle(forwarded)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()

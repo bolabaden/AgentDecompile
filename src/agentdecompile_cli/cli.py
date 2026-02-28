@@ -123,7 +123,8 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
-    call_tool_name = to_snake_case(tool)
+    resolved_tool_name = tool_registry.resolve_tool_name(tool)
+    call_tool_name = resolved_tool_name or to_snake_case(tool)
 
     try:
         client = _client(ctx)
@@ -149,7 +150,8 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
-    call_tool_name = to_snake_case(tool)
+    resolved_tool_name = tool_registry.resolve_tool_name(tool)
+    call_tool_name = resolved_tool_name or to_snake_case(tool)
     try:
         client = _client(ctx)
         async with client:
@@ -1533,10 +1535,35 @@ def memory_run(
     "enable_version_control",
     default=True,
 )
-@click.option("--server_username", "--server-username", "server_username")
-@click.option("--server_password", "--server-password", "server_password")
-@click.option("--server_host", "--server-host", "server_host")
-@click.option("--server_port", "--server-port", "server_port", type=int)
+@click.option(
+    "--server_username",
+    "--server-username",
+    "server_username",
+    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME"],
+    show_envvar=True,
+)
+@click.option(
+    "--server_password",
+    "--server-password",
+    "server_password",
+    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD"],
+    show_envvar=True,
+)
+@click.option(
+    "--server_host",
+    "--server-host",
+    "server_host",
+    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "AGENTDECOMPILE_GHIDRA_SERVER_HOST"],
+    show_envvar=True,
+)
+@click.option(
+    "--server_port",
+    "--server-port",
+    "server_port",
+    type=int,
+    envvar=["AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "AGENTDECOMPILE_GHIDRA_SERVER_PORT"],
+    show_envvar=True,
+)
 @click.option("--force_ignore_lock", "--force-ignore-lock", "force_ignore_lock", is_flag=True)
 @click.pass_context
 def open_cmd(
@@ -2926,7 +2953,7 @@ def metadata_cmd(ctx: click.Context, program_path: str) -> None:
     "tool",
     help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
 )
-@click.argument("name", required=True)
+@click.argument("name", required=False, default="")
 @click.argument(
     "arguments",
     required=False,
@@ -2951,6 +2978,10 @@ def tool_cmd(
         for t in sorted(available_tools):
             click.echo(f"  {t}")
         return
+
+    if not name.strip():
+        click.echo("Missing tool NAME. Use 'agentdecompile-cli tool --list-tools' to discover valid tools.", err=True)
+        sys.exit(2)
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)
