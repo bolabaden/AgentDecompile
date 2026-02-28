@@ -153,6 +153,8 @@ RUN set -eux; \
 # --- Layer 5: install AgentDecompile Python package into venv ---
 ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
+ARG CHROMADB_VERSION=1.5.2
+ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     apk add --no-cache --virtual .chromadb-build \
         cargo \
@@ -163,21 +165,13 @@ RUN set -eux; \
         python3-dev \
         libffi-dev \
     ; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir chromadb; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
+        --prefer-binary \
+        chromadb==${CHROMADB_VERSION} \
+        /src/agentdecompile \
+    ; \
     apk del .chromadb-build || true
-RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
-    anyio \
-    click \
-    fastapi \
-    ghidra-stubs \
-    httpx \
-    httpx-sse \
-    mcp \
-    psutil \
-    pydantic \
-    starlette \
-    uvicorn
-RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --no-deps /src/agentdecompile
 
 FROM alpine:latest AS runtime
 
