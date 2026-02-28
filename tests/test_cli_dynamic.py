@@ -117,6 +117,25 @@ class TestCliCommandRegistration:
     def test_functions_command_registered(self):
         assert "functions" in main.commands
 
+    def test_missing_required_option_prints_subcommand_help(self):
+        """Missing required args should print contextual subcommand help."""
+        result = _runner().invoke(
+            main,
+            [
+                "references",
+                "to",
+                "--binary",
+                "/K1/k1_win_gog_swkotor.exe",
+                "--limit",
+                "25",
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "Error: Missing option '--target'" in result.output
+        assert "Usage: main references to [OPTIONS]" in result.output
+        assert "--target" in result.output
+
 
 class TestCliToolCommandObject:
     """Test the 'tool' command object structure without invoking."""
@@ -313,3 +332,57 @@ class TestCliDynamicDispatch:
 
         assert called_tool_name == "capture-agentdecompile-debug-info"
         assert called_payload["message"] == "hello"
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_references_alias_max_results_maps_to_limit(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(
+            main,
+            [
+                "references",
+                "to",
+                "--binary",
+                "dummy_program",
+                "--target",
+                "main",
+                "--max-results",
+                "25",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+
+        assert called_tool_name == "get-references"
+        assert called_payload["limit"] == 25
+        assert "maxResults" not in called_payload
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_strings_alias_max_results_maps_to_limit(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(
+            main,
+            [
+                "strings",
+                "list",
+                "--binary",
+                "dummy_program",
+                "--max-results",
+                "10",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+
+        assert called_tool_name == "manage-strings"
+        assert called_payload["limit"] == 10
+        assert "maxResults" not in called_payload

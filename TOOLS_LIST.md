@@ -681,8 +681,6 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
   - Synonyms: `offset`, `startIndex`, `start`, `index`, `from`, `skip`, `cursor`, `begin`, `position`.
 - `limit` (integer, optional): Max results.
   - Synonyms: `limit`, `maxResults`, `maxCount`, `count`, `size`, `max`, `take`, `cap`, `pageSize`.
-- `maxResults` (integer, optional): Alias for limit (default: 100).
-  - Synonyms: `maxResults`, `maxr`.
 - `libraryName` (string, optional): Library filter.
   - Synonyms: `libraryName`, `libraryn`.
 - `startIndex` (integer, optional): Start index.
@@ -1227,8 +1225,6 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
   - Synonyms: `offset`, `startIndex`, `start`, `index`, `from`, `skip`, `cursor`, `begin`, `position`.
 - `limit` (integer, optional): Limit.
   - Synonyms: `limit`, `maxResults`, `maxCount`, `count`, `size`, `max`, `take`, `cap`, `pageSize`.
-- `maxResults` (integer, optional): Max results.
-  - Synonyms: `maxResults`, `maxr`.
 - `includeReferencingFunctions` (boolean, optional): Include refs (default: false).
   - Synonyms: `action`, `query`, `str`, `pat`, `index`, `count`, `start`, `max`, `refs`, `includeReferencingFunctions`
 **Overloads**:
@@ -1332,8 +1328,6 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
   - Synonyms: `newName`, `newn`, `new_name`.
 - `libraryFilter` (string, optional): Library filter.
   - Synonyms: `libraryFilter`, `libraryf`.
-- `maxResults` (integer, optional): Max.
-  - Synonyms: `maxResults`, `maxr`.
 - `startIndex` (integer, optional): Start.
   - Synonyms: `startIndex`, `starti`.
 - `offset` (integer, optional): Offset.

@@ -300,7 +300,6 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "serverPassword",
         "serverHost",
         "serverPort",
-        "forceIgnoreLock",
     ),
     "open-program-in-code-browser": _params("programPath"),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),

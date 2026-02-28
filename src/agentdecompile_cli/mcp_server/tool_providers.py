@@ -70,7 +70,7 @@ _BOOL_FRAGMENTS = frozenset({
     "createifnotexists", "propagate", "propagatenames",
     "propagatetags", "propagatecomments", "untagged", "hastags",
     "openallprograms", "analyzeafterimport", "enableversioncontrol",
-    "exclusive", "forceignorelock", "removeall",
+    "exclusive", "removeall",
     "includesmallvalues", "includeparameters", "includevariables",
     "stripleadingpath", "stripallcontainerpath", "mirrorfs",
     "setasprimary", "keepcheckedout",

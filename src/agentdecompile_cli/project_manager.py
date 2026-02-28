@@ -9,9 +9,7 @@ within the current working directory, similar to how .git or .vscode work.
 
 from __future__ import annotations
 
-import os
 import sys
-import time
 
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -110,20 +108,6 @@ class ProjectManager:
 
         project_name, project_path = self.get_or_create_project()
 
-        # Check if we should force ignore lock files
-        # HACK: dumb idea, may keep for another time.
-        # force_ignore_lock: bool = os.getenv(
-        #    "AGENT_DECOMPILE_FORCE_IGNORE_LOCK",
-        #    "",
-        # ).lower().strip() in (
-        #    "true",
-        #    "1",
-        #    "yes",
-        #    "y",
-        # )
-        # if force_ignore_lock:
-        #    self._delete_lock_files(project_path, project_name)
-
         # Use GhidraProject (PyGhidra's approach) - handles protected constructor properly
         project_locator = ProjectLocator(str(project_path), project_name)
 
@@ -145,56 +129,6 @@ class ProjectManager:
             )
 
         return self.project
-
-    def _delete_lock_files(
-        self,
-        project_path: Path,
-        project_name: str,
-    ) -> None:
-        """Delete lock files for a project, using rename trick if file handle is in use.
-
-        Deletes both <projectName>.lock and <projectName>.lock~ files.
-        If direct deletion fails (file handle in use), attempts to rename the file
-        first, then delete it.
-
-        Args:
-        ----
-            project_path: Path to the Ghidra project directory
-            project_name: Name of the Ghidra project
-        """
-        lock_file: Path = project_path / f"{project_name}.lock"
-        lock_file_backup: Path = project_path / f"{project_name}.lock~"
-
-        # Delete main lock file
-        if lock_file.exists() and lock_file.is_file():
-            try:
-                lock_file.unlink(missing_ok=True)
-                sys.stderr.write(f"Deleted lock file: {lock_file.name}\n")
-            except (OSError, PermissionError):
-                # Try rename trick if direct delete fails (file handle in use)
-                try:
-                    temp_file = project_path / f"{project_name}.lock.tmp.{int(time.time() * 1000)}"
-                    os.rename(str(lock_file), str(temp_file))
-                    temp_file.unlink()
-                    sys.stderr.write(f"Deleted lock file using rename trick: {lock_file.name}\n")
-                except Exception as rename_error:
-                    sys.stderr.write(f"Warning: Could not delete lock file (may be in use): {lock_file.name} - {rename_error}\n")
-
-        # Delete backup lock file
-        if lock_file_backup.exists() and lock_file_backup.is_file():
-            try:
-                lock_file_backup.unlink(missing_ok=True)
-                sys.stderr.write(f"Deleted backup lock file: '{lock_file_backup.name}'\n")
-            except (OSError, PermissionError):
-                # Try rename trick if direct delete fails
-                try:
-                    temp_file = project_path / f"{project_name}.lock~.tmp.{int(time.time() * 1000)}"
-                    os.rename(str(lock_file_backup), str(temp_file))
-                    temp_file.unlink(missing_ok=True)
-                    sys.stderr.write(f"Deleted backup lock file using rename trick: '{lock_file_backup.name}'\n")
-                except Exception as rename_error:
-                    sys.stderr.write(f"Warning: Could not delete backup lock file (may be in use): '{lock_file_backup.name}' - {rename_error}\n")
-
     def import_binary(
         self,
         binary_path: Path,
