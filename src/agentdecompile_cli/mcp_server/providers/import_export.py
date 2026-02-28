@@ -174,7 +174,7 @@ class ImportExportToolProvider(ToolProvider):
                     "compiler": compiler or None,
                     "success": False,
                     "error": str(exc),
-                }
+                },
             )
 
         return create_success_response(
@@ -192,7 +192,7 @@ class ImportExportToolProvider(ToolProvider):
                 "compiler": compiler or None,
                 "success": len(imported_programs) > 0 and not errors,
                 "errors": errors,
-            }
+            },
         )
 
     async def _handle_export(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -221,7 +221,7 @@ class ImportExportToolProvider(ToolProvider):
                 "format": fmt,
                 "outputPath": output_path or "(stdout)",
                 "note": "No output path provided; returning metadata only",
-            }
+            },
         )
 
     async def _handle_analyze(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -249,14 +249,14 @@ class ImportExportToolProvider(ToolProvider):
                     "programName": program.getName(),
                     "analyzers": analyzers or "all",
                     "success": True,
-                }
+                },
             )
         except ImportError:
             return create_success_response(
                 {
                     "action": "analyze",
                     "note": "Auto-analysis requires full Ghidra environment",
-                }
+                },
             )
         except Exception as e:
             return create_success_response({"action": "analyze", "success": False, "error": str(e)})
@@ -291,7 +291,7 @@ class ImportExportToolProvider(ToolProvider):
                     "compiler": compiler or "(default)",
                     "success": False,
                     "error": str(exc),
-                }
+                },
             )
 
         return create_success_response({"action": "change_processor", "language": language, "compiler": compiler or "(default)", "success": False})
@@ -316,7 +316,7 @@ class ImportExportToolProvider(ToolProvider):
                     "keepCheckedOut": keep_checked_out,
                     "success": True,
                     "note": "Saved domain file; repository check-in API may vary by backend.",
-                }
+                },
             )
         except Exception as exc:
             return create_success_response(
@@ -327,7 +327,7 @@ class ImportExportToolProvider(ToolProvider):
                     "keepCheckedOut": keep_checked_out,
                     "success": False,
                     "error": str(exc),
-                }
+                },
             )
 
     async def _handle_list_processors(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -343,7 +343,7 @@ class ImportExportToolProvider(ToolProvider):
                     "action": "list_processors",
                     "note": "Processor listing requires Ghidra LanguageService",
                     "filter": filter_str,
-                }
+                },
             )
         except Exception:
             # Common processors
@@ -366,5 +366,5 @@ class ImportExportToolProvider(ToolProvider):
                     "processors": common,
                     "note": "Showing common processors; full list requires Ghidra environment",
                     "count": len(common),
-                }
+                },
             )

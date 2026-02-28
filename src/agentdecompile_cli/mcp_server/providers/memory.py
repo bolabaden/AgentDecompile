@@ -101,7 +101,7 @@ class MemoryToolProvider(ToolProvider):
                         "permissions": f"{'r' if blk.isRead() else '-'}{'w' if blk.isWrite() else '-'}{'x' if blk.isExecute() else '-'}",
                         "initialized": blk.isInitialized(),
                         "type": str(blk.getType()) if hasattr(blk, "getType") else "DEFAULT",
-                    }
+                    },
                 )
             return create_success_response({"mode": mode, "blocks": blocks, "count": len(blocks)})
 
@@ -136,7 +136,7 @@ class MemoryToolProvider(ToolProvider):
                     "length": actual,
                     "hex": hex_str,
                     "ascii": ascii_str,
-                }
+                },
             )
 
         if mode_n in ("dataat", "data"):
@@ -160,14 +160,14 @@ class MemoryToolProvider(ToolProvider):
                         "length": data.getLength(),
                         "value": str(data.getValue()) if data.getValue() else None,
                         "label": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else None,
-                    }
+                    },
                 )
             return create_success_response(
                 {
                     "mode": "data_at",
                     "address": str(addr),
                     "note": "No defined data at this address",
-                }
+                },
             )
 
         if mode_n == "dataitems":
@@ -189,7 +189,7 @@ class MemoryToolProvider(ToolProvider):
                         "dataType": str(data.getDataType()),
                         "length": data.getLength(),
                         "label": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else None,
-                    }
+                    },
                 )
                 count += 1
 
@@ -199,7 +199,7 @@ class MemoryToolProvider(ToolProvider):
                     "items": items,
                     "count": len(items),
                     "hasMore": count > offset + len(items),
-                }
+                },
             )
 
         raise ValueError(f"Unknown mode: {mode}")

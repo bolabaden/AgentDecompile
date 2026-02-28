@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 try:
     import chromadb
+
     from chromadb.config import Settings
 except Exception:
     chromadb = None  # type: ignore[assignment]
@@ -1209,6 +1210,7 @@ class ProjectManager:
             )
 
         return self.project
+
     def import_binary(
         self,
         binary_path: Path,

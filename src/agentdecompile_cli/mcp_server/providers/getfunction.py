@@ -284,7 +284,7 @@ class GetFunctionToolProvider(ToolProvider):
                     "mode": "callers",
                     "results": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers],
                     "count": len(callers),
-                }
+                },
             )
 
         if mode_n == "callees":
@@ -295,7 +295,7 @@ class GetFunctionToolProvider(ToolProvider):
                     "mode": "callees",
                     "results": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees],
                     "count": len(callees),
-                }
+                },
             )
 
         if mode_n == "signature":
@@ -317,7 +317,7 @@ class GetFunctionToolProvider(ToolProvider):
                     "referenceSignature": sig,
                     "results": similar,
                     "count": len(similar),
-                }
+                },
             )
 
         # similar
@@ -341,5 +341,5 @@ class GetFunctionToolProvider(ToolProvider):
                 "mode": "similar",
                 "results": similar,
                 "count": len(similar),
-            }
+            },
         )

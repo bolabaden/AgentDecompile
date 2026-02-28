@@ -50,7 +50,6 @@ from mcp.types import (
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
 
 if TYPE_CHECKING:
-    from contextlib import _AsyncGeneratorContextManager
 
     from mcp.server.lowlevel.helper_types import ReadResourceContents
     from mcp.server.lowlevel.server import (
@@ -211,17 +210,14 @@ class AgentDecompileMcpClient:
 
             # Re-raise as ServerNotRunningError for known connectivity issues.
             err = str(e)
-            is_conn = (
-                isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError))
-                or any(
-                    x in err
-                    for x in [
-                        "ConnectError",
-                        "connection",
-                        "ConnectionRefused",
-                        "All connection attempts failed",
-                    ]
-                )
+            is_conn = isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError)) or any(
+                x in err
+                for x in [
+                    "ConnectError",
+                    "connection",
+                    "ConnectionRefused",
+                    "All connection attempts failed",
+                ]
             )
             if not is_conn and hasattr(e, "exceptions"):
                 is_conn = any(

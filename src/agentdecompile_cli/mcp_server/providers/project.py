@@ -6,28 +6,28 @@ Handles project and program management operations.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import socket
 import time
 
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
-from agentdecompile_cli.mcp_server.tool_providers import (
-    ToolProvider,
-    create_success_response,
-)
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
+)
+from agentdecompile_cli.mcp_server.tool_providers import (
+    ToolProvider,
+    create_success_response,
 )
 
 if TYPE_CHECKING:
     ...
     from abc import ABC, abstractmethod
+
     class ProjectData(ABC):
         @abstractmethod
         def getFile(self, filePath: str) -> ProjectData: ...
@@ -49,7 +49,6 @@ if TYPE_CHECKING:
         def getItem(self, folderPath: str, itemName: str): ...
         @abstractmethod
         def getVersion(self): ...
-
 
 
 logger = logging.getLogger(__name__)
@@ -116,18 +115,66 @@ class ProjectToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="manage-files",
-                description="Manage project files (rename, delete, copy, move)",
+                description="Manage project and filesystem files (import/export/list/info/create/edit/move/version-control)",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["rename", "delete", "copy", "move", "info", "import", "export"]},
-                        "operation": {"type": "string", "enum": ["rename", "delete", "copy", "move", "info", "import", "export"]},
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "rename",
+                                "delete",
+                                "copy",
+                                "move",
+                                "info",
+                                "list",
+                                "mkdir",
+                                "touch",
+                                "read",
+                                "write",
+                                "append",
+                                "import",
+                                "export",
+                                "checkout",
+                                "uncheckout",
+                                "unhijack",
+                            ],
+                        },
+                        "operation": {
+                            "type": "string",
+                            "enum": [
+                                "rename",
+                                "delete",
+                                "copy",
+                                "move",
+                                "info",
+                                "list",
+                                "mkdir",
+                                "touch",
+                                "read",
+                                "write",
+                                "append",
+                                "import",
+                                "export",
+                                "checkout",
+                                "uncheckout",
+                                "unhijack",
+                            ],
+                        },
                         "filePath": {"type": "string"},
                         "path": {"type": "string"},
+                        "programPath": {"type": "string"},
                         "newPath": {"type": "string"},
                         "destinationPath": {"type": "string"},
                         "newName": {"type": "string"},
+                        "content": {"type": "string"},
+                        "encoding": {"type": "string", "default": "utf-8"},
+                        "createParents": {"type": "boolean", "default": True},
+                        "keep": {"type": "boolean", "default": False},
+                        "force": {"type": "boolean", "default": False},
+                        "exclusive": {"type": "boolean", "default": False},
                         "recursive": {"type": "boolean", "default": False},
+                        "maxResults": {"type": "integer", "default": 200},
                         "maxDepth": {"type": "integer", "default": 16},
                         "analyzeAfterImport": {"type": "boolean", "default": False},
                     },
@@ -165,11 +212,25 @@ class ProjectToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
-            types.Tool(name="list-open-programs", description="List open programs (GUI/headless compatible)", inputSchema={"type": "object", "properties": {}, "required": []}),
-            types.Tool(name="get-current-address", description="Get current address (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []}),
-            types.Tool(name="get-current-function", description="Get current function (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []}),
-            types.Tool(name="open-program-in-code-browser", description="Open program in Code Browser (GUI-only)", inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []}),
-            types.Tool(name="open-all-programs-in-code-browser", description="Open all project programs in Code Browser (GUI-only)", inputSchema={"type": "object", "properties": {}, "required": []}),
+            types.Tool(
+                name="list-open-programs", description="List open programs (GUI/headless compatible)", inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
+            types.Tool(
+                name="get-current-address", description="Get current address (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
+            types.Tool(
+                name="get-current-function", description="Get current function (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
+            types.Tool(
+                name="open-program-in-code-browser",
+                description="Open program in Code Browser (GUI-only)",
+                inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
+            ),
+            types.Tool(
+                name="open-all-programs-in-code-browser",
+                description="Open all project programs in Code Browser (GUI-only)",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
         ]
 
     async def _handle_open(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -201,7 +262,7 @@ class ProjectToolProvider(ToolProvider):
                         "authProvided": auth_provided,
                         "repository": path if path and "/" not in path else None,
                         "message": f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
-                    }
+                    },
                 )
 
             try:
@@ -221,7 +282,7 @@ class ProjectToolProvider(ToolProvider):
                         "programs": [],
                         "checkedOutProgram": None,
                         "message": "Connected to shared server endpoint, but local Ghidra runtime is unavailable for repository browsing.",
-                    }
+                    },
                 )
 
             if server_username and server_password:
@@ -302,9 +363,7 @@ class ProjectToolProvider(ToolProvider):
             try:
                 repository_names_raw = server_adapter.getRepositoryNames() or []
             except Exception as exc:
-                raise ValueError(
-                    f"Repository server connection failed for {server_host}:{server_port}: {exc}"
-                ) from exc
+                raise ValueError(f"Repository server connection failed for {server_host}:{server_port}: {exc}") from exc
             finally:
                 if server_username and original_user_name is not None:
                     try:
@@ -378,16 +437,13 @@ class ProjectToolProvider(ToolProvider):
                         break
                 if matched:
                     try:
-                        checked_out_program = await self._checkout_shared_program(
-                            repository_adapter, matched, session_id
-                        )
+                        checked_out_program = await self._checkout_shared_program(repository_adapter, matched, session_id)
                     except Exception as exc:
                         checkout_error = str(exc)
                         logger.warning("Checkout of '%s' failed: %s", matched, exc)
                 else:
                     logger.warning(
-                        "Program '%s' not found in repository '%s'. "
-                        "Available: %s",
+                        "Program '%s' not found in repository '%s'. Available: %s",
                         checkout_program_path,
                         repository_name,
                         [b.get("path") for b in binaries[:10]],
@@ -413,7 +469,7 @@ class ProjectToolProvider(ToolProvider):
                         f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
                         + (f" Checked out: {checked_out_program}" if checked_out_program else "")
                     ),
-                }
+                },
             )
 
         if not path:
@@ -446,7 +502,7 @@ class ProjectToolProvider(ToolProvider):
                 "isProject": resolved.suffix.lower() == ".gpr" or resolved.is_dir(),
                 "filesDiscovered": files_discovered,
                 "note": "Path resolved. Use manage-files operation=import for explicit binary imports.",
-            }
+            },
         )
 
     async def _handle_current(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -511,7 +567,7 @@ class ProjectToolProvider(ToolProvider):
                             "path": path,
                             "isDirectory": False,
                             "type": item.get("type", "Program"),
-                        }
+                        },
                     )
                 return create_success_response(
                     {
@@ -519,7 +575,7 @@ class ProjectToolProvider(ToolProvider):
                         "files": files,
                         "count": len(files),
                         "source": "shared-server-session",
-                    }
+                    },
                 )
             return create_success_response({"files": [], "note": "No project loaded"})
 
@@ -543,7 +599,7 @@ class ProjectToolProvider(ToolProvider):
                             "path": path,
                             "isDirectory": False,
                             "type": item.get("type", "Program"),
-                        }
+                        },
                     )
                 return create_success_response(
                     {
@@ -552,15 +608,20 @@ class ProjectToolProvider(ToolProvider):
                         "count": len(files),
                         "source": "shared-server-session",
                         "note": f"Fell back to shared repository index: {e}",
-                    }
+                    },
                 )
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation = self._require_str(args, "operation", "action", "mode", name="operation")
-        file_path = self._get_str(args, "filepath", "file", "path")
+        file_path = self._get_str(args, "filepath", "file", "path", "programpath")
+        program_path = self._get_str(args, "programpath", "filepath", "file", "path")
         destination = self._get_str(args, "newpath", "destinationpath")
         new_name = self._get_str(args, "newname")
+        content = self._get_str(args, "content", default="")
+        encoding = self._get_str(args, "encoding", default="utf-8")
+        create_parents = self._get_bool(args, "createparents", default=True)
+        max_results = self._get_int(args, "maxresults", default=200)
 
         op = operation.lower().replace("-", "_")
         if op == "import":
@@ -570,6 +631,111 @@ class ProjectToolProvider(ToolProvider):
 
         if op == "export":
             return await self._export_current_program(args)
+
+        if op in {"checkout", "uncheckout", "unhijack"}:
+            domain_file = self._resolve_domain_file(program_path)
+            if domain_file is None:
+                return create_success_response(
+                    {
+                        "operation": op,
+                        "programPath": program_path,
+                        "success": False,
+                        "error": "No project-backed domain file found for the requested programPath",
+                    },
+                )
+
+            try:
+                if op == "checkout":
+                    exclusive = self._get_bool(args, "exclusive", default=False)
+                    if hasattr(domain_file, "checkout"):
+                        domain_file.checkout(exclusive, False, None)
+                    return create_success_response(
+                        {
+                            "operation": "checkout",
+                            "programPath": program_path,
+                            "exclusive": exclusive,
+                            "success": True,
+                        },
+                    )
+
+                if op == "uncheckout":
+                    keep = self._get_bool(args, "keep", default=False)
+                    force = self._get_bool(args, "force", default=False)
+                    if hasattr(domain_file, "undoCheckout"):
+                        domain_file.undoCheckout(keep, force)
+                    return create_success_response(
+                        {
+                            "operation": "uncheckout",
+                            "programPath": program_path,
+                            "keep": keep,
+                            "force": force,
+                            "success": True,
+                        },
+                    )
+
+                force = self._get_bool(args, "force", default=False)
+                if hasattr(domain_file, "unhijack"):
+                    domain_file.unhijack(force)
+                return create_success_response(
+                    {
+                        "operation": "unhijack",
+                        "programPath": program_path,
+                        "force": force,
+                        "success": True,
+                    },
+                )
+            except Exception as exc:
+                return create_success_response(
+                    {
+                        "operation": op,
+                        "programPath": program_path,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+
+        if op == "mkdir":
+            if not file_path:
+                raise ValueError("path/filePath is required for mkdir")
+            target_dir = Path(file_path).expanduser().resolve()
+            target_dir.mkdir(parents=create_parents, exist_ok=True)
+            return create_success_response({"operation": "mkdir", "path": str(target_dir), "success": True})
+
+        if op == "touch":
+            if not file_path:
+                raise ValueError("path/filePath is required for touch")
+            target_file = Path(file_path).expanduser().resolve()
+            if create_parents:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+            target_file.touch(exist_ok=True)
+            return create_success_response({"operation": "touch", "path": str(target_file), "success": True})
+
+        if op == "list":
+            base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
+            if not base_path.exists():
+                raise ValueError(f"Path not found: {base_path}")
+            if not base_path.is_dir():
+                raise ValueError(f"Path is not a directory: {base_path}")
+
+            entries: list[dict[str, Any]] = []
+            for item in sorted(base_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))[:max_results]:
+                entries.append(
+                    {
+                        "name": item.name,
+                        "path": str(item),
+                        "isDirectory": item.is_dir(),
+                        "size": None if item.is_dir() else item.stat().st_size,
+                    },
+                )
+            return create_success_response(
+                {
+                    "operation": "list",
+                    "path": str(base_path),
+                    "entries": entries,
+                    "count": len(entries),
+                    "maxResults": max_results,
+                },
+            )
 
         if not file_path:
             raise ValueError("path/filePath is required")
@@ -583,7 +749,50 @@ class ProjectToolProvider(ToolProvider):
                     "exists": target.exists(),
                     "isDirectory": target.is_dir() if target.exists() else False,
                     "size": None if (not target.exists() or target.is_dir()) else target.stat().st_size,
-                }
+                },
+            )
+
+        if op == "read":
+            if not target.exists() or target.is_dir():
+                raise ValueError(f"Path is not a readable file: {target}")
+            file_text = target.read_text(encoding=encoding)
+            return create_success_response(
+                {
+                    "operation": "read",
+                    "path": str(target),
+                    "encoding": encoding,
+                    "content": file_text,
+                    "size": len(file_text),
+                },
+            )
+
+        if op == "write":
+            if create_parents:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding=encoding)
+            return create_success_response(
+                {
+                    "operation": "write",
+                    "path": str(target),
+                    "encoding": encoding,
+                    "written": len(content),
+                    "success": True,
+                },
+            )
+
+        if op == "append":
+            if create_parents:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding=encoding) as handle:
+                handle.write(content)
+            return create_success_response(
+                {
+                    "operation": "append",
+                    "path": str(target),
+                    "encoding": encoding,
+                    "appended": len(content),
+                    "success": True,
+                },
             )
 
         if not target.exists():
@@ -627,6 +836,30 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"operation": "move", "path": str(target), "newPath": str(dst), "success": True})
 
         raise ValueError(f"Unsupported manage-files operation: {operation}")
+
+    def _resolve_domain_file(self, program_path: str | None):
+        if not program_path:
+            if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+                try:
+                    return self.program_info.program.getDomainFile()
+                except Exception:
+                    return None
+            return None
+
+        try:
+            normalized = str(program_path).strip()
+            if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+                current_df = self.program_info.program.getDomainFile()
+                if current_df is not None and str(current_df.getPathname()) == normalized:
+                    return current_df
+
+            if self.program_info is None or getattr(self.program_info, "program", None) is None:
+                return None
+
+            project_data = self.program_info.program.getDomainFile().getProjectData()
+            return project_data.getFile(normalized)
+        except Exception:
+            return None
 
     async def _import_file(self, file_path: str, args: dict[str, Any]) -> list[types.TextContent]:
         session_id = get_current_mcp_session_id()
@@ -721,7 +954,7 @@ class ProjectToolProvider(ToolProvider):
                 "wasRecursive": recursive,
                 "analysisRequested": analyze,
                 "errors": errors,
-            }
+            },
         )
 
     async def _export_current_program(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -829,7 +1062,7 @@ class ProjectToolProvider(ToolProvider):
 
         # Use the manager's GhidraProject (set from launcher) to get project data.
         project_data: ProjectData | None = None
-        ghidra_project = getattr(self._manager, 'ghidra_project', None) if self._manager else None
+        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             try:
                 project_data = ghidra_project.getProject().getProjectData()
@@ -853,8 +1086,7 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 # Many versions of Ghidra don't support getDomainObject on RepositoryItem
                 raise ValueError(
-                    f"Cannot checkout '{program_path}': direct RepositoryItem.getDomainObject not supported. "
-                    "Import the binary locally first using 'import-binary'."
+                    f"Cannot checkout '{program_path}': direct RepositoryItem.getDomainObject not supported. Import the binary locally first using 'import-binary'.",
                 )
             if domain_obj is None:
                 raise ValueError(f"Failed to open '{program_path}' from repository")
@@ -894,8 +1126,9 @@ class ProjectToolProvider(ToolProvider):
             program = domain_obj
 
         # Build ProgramInfo
-        from agentdecompile_cli.launcher import ProgramInfo
         from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+        from agentdecompile_cli.launcher import ProgramInfo
 
         decompiler = DecompInterface()
         decompiler.openProgram(program)
@@ -941,7 +1174,7 @@ class ProjectToolProvider(ToolProvider):
                         "name": name,
                         "path": path,
                         "type": item_type,
-                    }
+                    },
                 )
 
         _walk("/")
@@ -1005,10 +1238,10 @@ class ProjectToolProvider(ToolProvider):
                     {
                         "name": program.getName(),
                         "path": str(program.getDomainFile().getPathname()) if program.getDomainFile() else None,
-                    }
+                    },
                 ],
                 "count": 1,
-            }
+            },
         )
 
     async def _handle_get_current_address(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -1017,7 +1250,7 @@ class ProjectToolProvider(ToolProvider):
                 "success": False,
                 "error": "get-current-address requires GUI mode (Code Browser context)",
                 "headless": True,
-            }
+            },
         )
 
     async def _handle_get_current_function(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -1040,7 +1273,7 @@ class ProjectToolProvider(ToolProvider):
                 "headless": True,
                 "note": "Headless mode fallback returns first available function",
                 "function": {"name": first.getName(), "address": str(first.getEntryPoint())},
-            }
+            },
         )
 
     async def _handle_gui_unsupported(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -1049,7 +1282,7 @@ class ProjectToolProvider(ToolProvider):
                 "success": False,
                 "error": "This operation requires GUI mode (Code Browser)",
                 "headless": True,
-            }
+            },
         )
 
     async def _handle_import_file_alias(self, args: dict[str, Any]) -> list[types.TextContent]:

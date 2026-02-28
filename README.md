@@ -1,4 +1,4 @@
-# AgentDecompile - Your AI Companion for Ghidra
+# AgentDecompile - Your Decompilation Companion for Ghidra
 
 > AI-powered code analysis and reverse engineering, directly inside Ghidra.
 
@@ -122,6 +122,39 @@ For a command-line interface to a **running** server (no new Ghidra process per 
    ```
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
+
+#### Repository and File Management
+
+Use `manage-files` (or `files run`) for end-to-end repository/file/program lifecycle operations:
+
+- Files/folders: `list`, `info`, `mkdir`, `touch`, `read`, `write`, `append`, `rename`, `move`, `copy`, `delete`
+- Program flows: `import`, `export`
+- Shared-project versioning flows: `checkout`, `uncheckout`, `unhijack`
+
+Examples:
+
+```bash
+# List a folder
+agentdecompile-cli files run --operation list --path ./analysis --max-results 100
+
+# Create folder + write/append/read note file
+agentdecompile-cli files run --operation mkdir --path ./analysis/case_001 --create-parents
+agentdecompile-cli files run --operation write --path ./analysis/case_001/notes.txt --content "initial notes"
+agentdecompile-cli files run --operation append --path ./analysis/case_001/notes.txt --content "\nsecond line"
+agentdecompile-cli files run --operation read --path ./analysis/case_001/notes.txt
+
+# Move/rename/copy/delete
+agentdecompile-cli files run --operation move --path ./analysis/case_001/notes.txt --new-path ./analysis/archive/notes.txt
+agentdecompile-cli files run --operation rename --path ./analysis/archive/notes.txt --new-name notes-final.txt
+agentdecompile-cli files run --operation copy --path ./analysis/archive/notes-final.txt --new-path ./analysis/copy/notes-final.txt
+agentdecompile-cli files run --operation delete --path ./analysis/copy/notes-final.txt
+
+# Program import/export and checkout lifecycle
+agentdecompile-cli files run --operation import --path /binaries --recursive --max-depth 4
+agentdecompile-cli files run --operation checkout --binary /K1/k1_win_gog_swkotor.exe --exclusive
+agentdecompile-cli files run --operation uncheckout --binary /K1/k1_win_gog_swkotor.exe --force
+agentdecompile-cli files run --operation unhijack --binary /K1/k1_win_gog_swkotor.exe --force
+```
 
 #### Shared server quick usage (concise)
 

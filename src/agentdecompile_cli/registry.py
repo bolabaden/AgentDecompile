@@ -425,7 +425,7 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
     except Exception:
         return {}, {}, {}
 
-    parts: list[str] = re.split(r"^### `([^`]+)`(?: \(forwards to `([^`]+)`\))?\n", text, flags=re.M)
+    parts: list[str] = re.split(r"^### `([^`]+)`(?: \(forwards to `([^`]+)`\))?\n", text, flags=re.MULTILINE)
     if len(parts) < 3:
         return {}, {}, {}
 
@@ -446,7 +446,7 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
         params_match: re.Match[str] | None = re.search(
             r"\*\*Parameters\*\*:\n(.*?)(?:\n\*\*Overloads\*\*|\n\*\*Synonyms\*\*|\n\*\*Examples\*\*)",
             body,
-            flags=re.S,
+            flags=re.DOTALL,
         )
         if params_match is not None:
             block: str = params_match.group(1)
@@ -486,7 +486,7 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
         overload_match: re.Match[str] | None = re.search(
             r"\*\*Overloads\*\*:\n(.*?)(?:\n\*\*Synonyms\*\*|\n\*\*Examples\*\*)",
             body,
-            flags=re.S,
+            flags=re.DOTALL,
         )
         if overload_match is not None:
             for alias, target in re.findall(r"- `([^`(]+)\([^`]*\)`.*?forwards to `([^`]+)`", overload_match.group(1)):
@@ -495,7 +495,7 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
         synonyms_match: re.Match[str] | None = re.search(
             r"\*\*Synonyms\*\*:\s*(.*?)(?:\n\*\*Examples\*\*|\n\*\*API References\*\*|\Z)",
             body,
-            flags=re.S,
+            flags=re.DOTALL,
         )
         if synonyms_match is not None:
             for alias in re.findall(r"`([^`]+)`", synonyms_match.group(1)):
@@ -567,7 +567,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
         changed = False
         for prefix in _TOOL_PREFIXES:
             if stripped.startswith(prefix) and len(stripped) > len(prefix):
-                stripped = stripped[len(prefix):]
+                stripped = stripped[len(prefix) :]
                 changed = True
                 break
     changed = True

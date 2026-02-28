@@ -179,7 +179,7 @@ class SymbolToolProvider(ToolProvider):
                         "count": len(paginated),
                         "total": len(results),
                         "hasMore": offset + len(paginated) < len(results),
-                    }
+                    },
                 )
             except Exception:
                 pass
@@ -208,7 +208,7 @@ class SymbolToolProvider(ToolProvider):
                     "type": str(sym.getSymbolType()),
                     "namespace": str(sym.getParentNamespace()),
                     "source": str(sym.getSource()),
-                }
+                },
             )
             count += 1
 
@@ -219,7 +219,7 @@ class SymbolToolProvider(ToolProvider):
                 "count": len(results),
                 "totalMatched": count,
                 "hasMore": count > offset + len(results),
-            }
+            },
         )
 
     async def _list_symbols(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -245,7 +245,7 @@ class SymbolToolProvider(ToolProvider):
                         "count": len(paginated),
                         "total": len(all_syms),
                         "hasMore": offset + len(paginated) < len(all_syms),
-                    }
+                    },
                 )
             except Exception:
                 pass
@@ -414,7 +414,7 @@ class SymbolToolProvider(ToolProvider):
                                 "original": name,
                                 "demangled": str(demangled),
                                 "address": str(sym.getAddress()),
-                            }
+                            },
                         )
                 except Exception:
                     continue

@@ -73,7 +73,7 @@ class DataTypeToolProvider(ToolProvider):
                     "type": "program",
                     "categoryCount": dtm.getCategoryCount(),
                     "dataTypeCount": dtm.getDataTypeCount(True),
-                }
+                },
             )
             # Try to get source archives
             for sa in dtm.getSourceArchives():
@@ -82,7 +82,7 @@ class DataTypeToolProvider(ToolProvider):
                         "name": sa.getName(),
                         "type": "source",
                         "id": str(sa.getSourceArchiveID()),
-                    }
+                    },
                 )
         except Exception as e:
             logger.warning(f"Archive listing error: {e}")
@@ -115,7 +115,7 @@ class DataTypeToolProvider(ToolProvider):
                         "path": str(dt.getCategoryPath()),
                         "length": dt.getLength(),
                         "description": dt.getDescription() or "",
-                    }
+                    },
                 )
         else:
             # List root categories
@@ -131,7 +131,7 @@ class DataTypeToolProvider(ToolProvider):
                         "name": sc.getName(),
                         "path": str(sc.getCategoryPath()),
                         "isCategory": True,
-                    }
+                    },
                 )
             # Also list root-level types
             for dt in root.getDataTypes():
@@ -142,7 +142,7 @@ class DataTypeToolProvider(ToolProvider):
                         "name": dt.getName(),
                         "path": "/",
                         "length": dt.getLength(),
-                    }
+                    },
                 )
 
         return create_success_response(
@@ -151,7 +151,7 @@ class DataTypeToolProvider(ToolProvider):
                 "category": cat_path or "/",
                 "results": results,
                 "count": len(results),
-            }
+            },
         )
 
     async def _by_string(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -175,7 +175,7 @@ class DataTypeToolProvider(ToolProvider):
                         "description": dt.getDescription() or "",
                         "displayName": dt.getDisplayName(),
                     },
-                }
+                },
             )
         except Exception as e:
             raise ValueError(f"Could not parse data type '{dt_str}': {e}")
@@ -238,5 +238,5 @@ class DataTypeToolProvider(ToolProvider):
                 "address": str(addr),
                 "dataType": dt_str,
                 "success": True,
-            }
+            },
         )

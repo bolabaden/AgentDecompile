@@ -53,6 +53,7 @@ class BookmarkToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         from agentdecompile_cli.registry import normalize_identifier as n
+
         action = n(self._get_str(args, "action", "mode"))
         if not action:
             raise ValueError("action/mode is required")

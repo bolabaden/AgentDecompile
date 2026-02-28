@@ -98,7 +98,7 @@ class FunctionToolProvider(ToolProvider):
                     "isExternal": func.isExternal(),
                     "isThunk": func.isThunk(),
                     "parameterCount": func.getParameterCount(),
-                }
+                },
             )
             count += 1
 
@@ -109,13 +109,14 @@ class FunctionToolProvider(ToolProvider):
                 "totalMatched": count,
                 "offset": offset,
                 "hasMore": count > offset + len(functions),
-            }
+            },
         )
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
         from agentdecompile_cli.registry import normalize_identifier as _n
+
         view = _n(self._get_str(args, "view", "mode", default="info"))
         max_results = self._get_int(args, "limit", "maxresults", default=100)
 
@@ -165,7 +166,7 @@ class FunctionToolProvider(ToolProvider):
                     "returnType": str(target_func.getReturnType()),
                     "callingConvention": target_func.getCallingConventionName(),
                     "hasVarArgs": target_func.hasVarArgs(),
-                }
+                },
             )
         elif view in ("calls",):
             callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
@@ -200,7 +201,7 @@ class FunctionToolProvider(ToolProvider):
                             "mnemonic": instr.getMnemonicString(),
                             "operands": str(instr),
                             "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
-                        }
+                        },
                     )
             result["instructions"] = instructions
             result["instructionCount"] = len(instructions)

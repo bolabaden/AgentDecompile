@@ -105,20 +105,13 @@ class AgentDecompileMcpClient:
             self._session = None
 
             err = str(e)
-            is_conn = (
-                isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError))
-                or any(
-                    x in err
-                    for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"]
-                )
+            is_conn = isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError)) or any(
+                x in err for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"]
             )
             if not is_conn and hasattr(e, "exceptions"):
                 is_conn = any(
                     isinstance(sub, (ConnectionError, OSError))
-                    or any(
-                        x in str(sub)
-                        for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"]
-                    )
+                    or any(x in str(sub) for x in ["ConnectError", "connection", "ConnectionRefused", "All connection attempts failed"])
                     for sub in e.exceptions  # type: ignore[union-attr]
                 )
 

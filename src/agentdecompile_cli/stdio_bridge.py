@@ -51,9 +51,6 @@ from mcp.types import (
 
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
 
-if TYPE_CHECKING:
-    from contextlib import _AsyncGeneratorContextManager
-
 
 class ClientError(Exception):
     """Custom exception for client errors."""
