@@ -48,6 +48,7 @@ from mcp.types import (
 )
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
+from agentdecompile_cli.registry import resolve_tool_name, to_snake_case
 
 if TYPE_CHECKING:
 
@@ -188,10 +189,11 @@ class AgentDecompileMcpClient:
 
         self._exit_stack = contextlib.AsyncExitStack()
         await self._exit_stack.__aenter__()
+        request_url = self._url if self._url.endswith("/") else f"{self._url}/"
 
         try:
             read, write, _ = await self._exit_stack.enter_async_context(
-                streamablehttp_client(self._url, timeout=5),
+                streamablehttp_client(request_url, timeout=5),
             )
             self._session = await self._exit_stack.enter_async_context(
                 _ClientSession(read, write),
@@ -562,10 +564,11 @@ class AgentDecompileStdioBridge:
                     headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
                     timeout=BACKEND_OP_TIMEOUT,
                 )
+                request_url = self.url if self.url.endswith("/") else f"{self.url}/"
                 read_stream, write_stream, _ = await asyncio.wait_for(
                     exit_stack.enter_async_context(
                         streamable_http_client(
-                            url=self.url,
+                            url=request_url,
                             http_client=client,
                         ),
                     ),
@@ -623,7 +626,45 @@ class AgentDecompileStdioBridge:
             try:
                 async with self._with_backend_session("list_tools") as session:
                     result = await session.list_tools()
-                    return [] if result is None else result.tools
+                    if not result:
+                        return []
+
+                    advertised_tools: list[Tool] = []
+                    for tool in result.tools:
+                        name = getattr(tool, "name", None)
+                        if not isinstance(name, str):
+                            advertised_tools.append(tool)
+                            continue
+
+                        resolved_name = resolve_tool_name(name)
+                        kebab_name = resolved_name if resolved_name is not None else to_snake_case(name).replace("_", "-")
+                        if kebab_name == name:
+                            advertised_tools.append(tool)
+                            continue
+
+                        copied_tool = None
+
+                        model_copy = getattr(tool, "model_copy", None)
+                        if callable(model_copy):
+                            try:
+                                copied_tool = model_copy(update={"name": kebab_name})
+                            except Exception:
+                                copied_tool = None
+
+                        if copied_tool is None:
+                            copy_method = getattr(tool, "copy", None)
+                            if callable(copy_method):
+                                try:
+                                    copied_tool = copy_method(update={"name": kebab_name})
+                                except Exception:
+                                    copied_tool = None
+
+                        if copied_tool is None and isinstance(tool, dict):
+                            copied_tool = {**tool, "name": kebab_name}
+
+                        advertised_tools.append(copied_tool if copied_tool is not None else tool)
+
+                    return advertised_tools
             except RuntimeError:
                 return []
             except Exception as e:
@@ -637,8 +678,9 @@ class AgentDecompileStdioBridge:
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
             try:
                 async with self._with_backend_session("call_tool") as session:
+                    backend_name = name.replace("-", "_") if isinstance(name, str) else name
                     result = await asyncio.wait_for(
-                        session.call_tool(name, arguments),
+                        session.call_tool(backend_name, arguments),
                         timeout=BACKEND_OP_TIMEOUT,
                     )
                     return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")] if result is None else result.content

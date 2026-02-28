@@ -23,6 +23,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import normalize_identifier
 
 if TYPE_CHECKING:
     ...
@@ -623,7 +624,26 @@ class ProjectToolProvider(ToolProvider):
         create_parents = self._get_bool(args, "createparents", default=True)
         max_results = self._get_int(args, "maxresults", default=200)
 
-        op = operation.lower().replace("-", "_")
+        normalized_operation = normalize_identifier(operation)
+        operation_aliases = {
+            "import": "import",
+            "export": "export",
+            "checkout": "checkout",
+            "uncheckout": "uncheckout",
+            "unhijack": "unhijack",
+            "mkdir": "mkdir",
+            "touch": "touch",
+            "list": "list",
+            "info": "info",
+            "read": "read",
+            "write": "write",
+            "append": "append",
+            "rename": "rename",
+            "delete": "delete",
+            "copy": "copy",
+            "move": "move",
+        }
+        op = operation_aliases.get(normalized_operation, normalized_operation)
         if op == "import":
             if not file_path:
                 raise ValueError("path/filePath is required for import")
