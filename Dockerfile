@@ -5,7 +5,7 @@
 #   Cmd:        set DOCKER_BUILDKIT=1
 #
 # MCP-only image: one container runs only AgentDecompile MCP (8080).
-# For the all-in-one (Ghidra server + BSim + MCP) image, use Docker.aio.
+# For the all-in-one (Ghidra server + BSim + MCP) image, use Dockerfile.aio.
 FROM alpine:latest AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
@@ -162,7 +162,6 @@ RUN set -eux; \
         musl-dev \
         python3-dev \
         libffi-dev \
-        openssl-dev \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir chromadb; \
     apk del .chromadb-build || true

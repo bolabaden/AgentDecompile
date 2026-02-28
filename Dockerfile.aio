@@ -156,7 +156,6 @@ RUN set -eux; \
         musl-dev \
         python3-dev \
         libffi-dev \
-        openssl-dev \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir chromadb; \
     apk del .chromadb-build || true
