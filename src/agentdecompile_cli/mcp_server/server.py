@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 import threading
 import time
 
@@ -195,6 +196,16 @@ class PythonMcpServer:
             logger.warning("Server is already running")
             return self.config.port
 
+        if not self._is_port_available(self.config.host, self.config.port):
+            requested_port = self.config.port
+            self.config.port = self._find_free_port(self.config.host)
+            logger.warning(
+                "Port %s is in use on %s; falling back to free port %s",
+                requested_port,
+                self.config.host,
+                self.config.port,
+            )
+
         self._running = True
         self._shutdown_event.clear()
 
@@ -221,6 +232,21 @@ class PythonMcpServer:
         logger.info(f"MCP server started on {self.config.host}:{self.config.port}")
         DebugLogger.debug_tool_execution(self, "server_startup", "SUCCESS", f"Server ready on port {self.config.port}")
         return self.config.port
+
+    def _is_port_available(self, host: str, port: int) -> bool:
+        """Return True when host:port can be bound by this process."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind((host, int(port)))
+                return True
+        except OSError:
+            return False
+
+    def _find_free_port(self, host: str) -> int:
+        """Find an ephemeral free port bound to host."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, 0))
+            return int(sock.getsockname()[1])
 
     def _run_server(self) -> None:
         """Run the FastAPI server in a background thread."""

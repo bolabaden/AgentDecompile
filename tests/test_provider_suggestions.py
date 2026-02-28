@@ -37,5 +37,7 @@ class TestSuggestionProviderValidation:
     @pytest.mark.asyncio
     async def test_no_program_returns_error(self):
         p = _make_provider(with_program=False)
-        with pytest.raises(ValueError):
-            await p.call_tool("suggest", {"suggestionType": "function_name", "function": "main"})
+        response = await p.call_tool("suggest", {"suggestionType": "function_name", "function": "main"})
+        payload = _parse(response)
+        assert payload["success"] is False
+        assert "program_path" in payload["error"]

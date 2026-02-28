@@ -16,7 +16,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.helpers import assert_mapping_invariants, assert_string_invariants
+from tests.helpers import (
+    assert_mapping_invariants,
+    assert_string_invariants,
+    assert_text_block_invariants,
+)
 
 # Mark all tests in this file as CLI unit tests
 pytestmark = [pytest.mark.cli, pytest.mark.unit]
@@ -192,4 +196,4 @@ class TestProjectManagerCleanup:
         # Should have printed error to stderr
         captured = capsys.readouterr()
         assert "error" in captured.err.lower() or "Error" in captured.err
-        assert_string_invariants(captured.err.strip() or "Error")
+        assert_text_block_invariants(captured.err.strip() or "Error")

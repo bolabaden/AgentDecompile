@@ -49,7 +49,7 @@ from mcp.types import (
 )
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
-from agentdecompile_cli.registry import resolve_tool_name, to_snake_case
+from agentdecompile_cli.registry import resolve_tool_name
 
 if TYPE_CHECKING:
 
@@ -638,8 +638,8 @@ class AgentDecompileStdioBridge:
                             continue
 
                         resolved_name = resolve_tool_name(name)
-                        kebab_name = resolved_name if resolved_name is not None else to_snake_case(name).replace("_", "-")
-                        if kebab_name == name:
+                        canonical_name = resolved_name if resolved_name is not None else name
+                        if canonical_name == name:
                             advertised_tools.append(tool)
                             continue
 
@@ -648,7 +648,7 @@ class AgentDecompileStdioBridge:
                         model_copy = getattr(tool, "model_copy", None)
                         if callable(model_copy):
                             try:
-                                copied_tool = model_copy(update={"name": kebab_name})
+                                copied_tool = model_copy(update={"name": canonical_name})
                             except Exception:
                                 copied_tool = None
 
@@ -656,12 +656,12 @@ class AgentDecompileStdioBridge:
                             copy_method = getattr(tool, "copy", None)
                             if callable(copy_method):
                                 try:
-                                    copied_tool = copy_method(update={"name": kebab_name})
+                                    copied_tool = copy_method(update={"name": canonical_name})
                                 except Exception:
                                     copied_tool = None
 
                         if copied_tool is None and isinstance(tool, dict):
-                            copied_tool = {**tool, "name": kebab_name}
+                            copied_tool = {**tool, "name": canonical_name}
 
                         advertised_tools.append(copied_tool if copied_tool is not None else tool)
 

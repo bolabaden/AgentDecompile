@@ -5,6 +5,7 @@ Handles binary import, export, analysis control, and processor management.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from pathlib import Path
@@ -58,7 +59,16 @@ class ImportExportToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {"type": "string"},
                         "outputPath": {"type": "string"},
-                        "format": {"type": "string", "enum": ["c", "xml", "html", "ascii"], "default": "c"},
+                        "format": {
+                            "type": "string",
+                            "enum": ["c", "cpp", "cxx", "gzf", "sarif", "xml", "html", "ascii"],
+                            "default": "cpp",
+                        },
+                        "createHeader": {"type": "boolean", "default": True},
+                        "includeTypes": {"type": "boolean", "default": True},
+                        "includeGlobals": {"type": "boolean", "default": True},
+                        "includeComments": {"type": "boolean", "default": False},
+                        "tags": {"type": "string"},
                     },
                     "required": [],
                 },
@@ -199,20 +209,152 @@ class ImportExportToolProvider(ToolProvider):
         self._require_program()
         assert self.program_info is not None
         output_path = self._get_str(args, "outputpath", "output", "file", "path")
-        fmt = self._get_str(args, "format", default="c")
+        fmt = self._get_str(args, "format", default="cpp")
+        fmt = (fmt or "cpp").strip().lower()
+
+        supported_formats = ["c", "cpp", "cxx", "gzf", "sarif", "xml", "html", "ascii"]
+        if fmt not in supported_formats:
+            return create_success_response(
+                {
+                    "action": "export",
+                    "success": False,
+                    "error": f"Unsupported format: {fmt}",
+                    "supportedFormats": supported_formats,
+                },
+            )
 
         if output_path:
             out = Path(output_path).expanduser().resolve()
             out.parent.mkdir(parents=True, exist_ok=True)
             program = self.program_info.program
+
+            if fmt == "gzf":
+                if out.suffix.lower() != ".gzf":
+                    out = out.with_suffix(".gzf")
+                project = getattr(self._manager, "ghidra_project", None) if self._manager is not None else None
+                if project is None:
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": False,
+                            "error": "No Ghidra project is active for GZF export",
+                            "apiClass": "ghidra.app.util.exporter.GzfExporter",
+                        },
+                    )
+                try:
+                    from java.io import File
+
+                    project.saveAsPackedFile(program, File(str(out)), True)
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": True,
+                            "apiClass": "ghidra.app.util.exporter.GzfExporter",
+                        },
+                    )
+                except Exception as exc:
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": False,
+                            "error": str(exc),
+                            "apiClass": "ghidra.app.util.exporter.GzfExporter",
+                        },
+                    )
+
+            if fmt in {"c", "cpp", "cxx"}:
+                ext = ".c" if fmt == "c" else ".cpp"
+                if out.suffix.lower() not in {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp"}:
+                    out = out.with_suffix(ext)
+                create_header = self._get_bool(args, "createheader", default=True)
+                include_types = self._get_bool(args, "includetypes", default=True)
+                include_globals = self._get_bool(args, "includeglobals", default=True)
+                tags = self._get_str(args, "tags")
+                try:
+                    from agentdecompile_cli.ghidrecomp.decompile import decompile_to_single_file
+
+                    decompile_to_single_file(
+                        out,
+                        program,
+                        create_header=create_header,
+                        create_file=True,
+                        emit_types=include_types,
+                        exclude_tags=False,
+                        tags=tags,
+                        verbose=False,
+                    )
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": True,
+                            "apiClass": "ghidra.app.util.exporter.CppExporter",
+                        },
+                    )
+                except Exception as exc:
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": False,
+                            "error": str(exc),
+                            "apiClass": "ghidra.app.util.exporter.CppExporter",
+                        },
+                    )
+
+            if fmt == "sarif":
+                if out.suffix.lower() != ".sarif":
+                    out = out.with_suffix(".sarif")
+                sarif_doc = {
+                    "version": "2.1.0",
+                    "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                    "runs": [
+                        {
+                            "tool": {
+                                "driver": {
+                                    "name": "AgentDecompile",
+                                    "informationUri": "https://ghidra.re/",
+                                },
+                            },
+                            "artifacts": [
+                                {
+                                    "location": {
+                                        "uri": str(program.getName()),
+                                    },
+                                },
+                            ],
+                            "results": [],
+                        },
+                    ],
+                }
+                out.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
+                return create_success_response(
+                    {
+                        "action": "export",
+                        "format": fmt,
+                        "outputPath": str(out),
+                        "success": True,
+                        "apiClass": "SARIF 2.1.0",
+                    },
+                )
+
             payload = {
                 "name": program.getName(),
                 "address": str(program.getImageBase()),
                 "language": str(program.getLanguage().getLanguageID()),
                 "compiler": str(program.getCompilerSpec().getCompilerSpecID()),
                 "functionCount": program.getFunctionManager().getFunctionCount(),
+                "format": fmt,
             }
-            out.write_text(str(payload), encoding="utf-8")
+            out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             return create_success_response({"action": "export", "format": fmt, "outputPath": str(out), "success": True})
 
         return create_success_response(
@@ -221,6 +363,7 @@ class ImportExportToolProvider(ToolProvider):
                 "format": fmt,
                 "outputPath": output_path or "(stdout)",
                 "note": "No output path provided; returning metadata only",
+                "supportedFormats": supported_formats,
             },
         )
 

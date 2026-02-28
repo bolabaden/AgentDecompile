@@ -372,6 +372,32 @@ class TestCliDynamicDispatch:
         assert called_payload["serverPassword"] == "MuchaShakaPaka"
 
     @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_export_dispatches_with_sarif_format(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+        result = _runner().invoke(
+            main,
+            [
+                "export",
+                "--program_path",
+                "dummy_program",
+                "--output_path",
+                "out.sarif",
+                "--format",
+                "sarif",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+        assert called_tool_name == "export"
+        assert called_payload.get("programPath", called_payload.get("program_path")) == "dummy_program"
+        assert called_payload.get("outputPath", called_payload.get("output_path")) == "out.sarif"
+        assert called_payload["format"] == "sarif"
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
     def test_dynamic_canonical_alias_dispatches(self, mocked_call: AsyncMock):
         mocked_call.return_value = _SUCCESS
 

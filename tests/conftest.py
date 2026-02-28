@@ -21,9 +21,10 @@ _apply_mcp_session_fix()
 
 import os
 import subprocess
+import importlib.util
 
-from pathlib import Path
 from collections.abc import AsyncGenerator, Generator, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -33,13 +34,44 @@ from tests.helpers import (
     assert_bool_invariants,
     assert_int_invariants,
     assert_mapping_invariants,
-    assert_string_invariants,
     assert_text_block_invariants,
 )
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import AgentDecompileLauncher
     from mcp.client.session import ClientSession
+
+
+# ---------------------------------------------------------------------------
+# Global timeout policy (pytest-timeout)
+# ---------------------------------------------------------------------------
+_DEFAULT_HARD_TIMEOUT = 120  # seconds
+_HAS_PYTEST_TIMEOUT = importlib.util.find_spec("pytest_timeout") is not None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register timeout marker and warn if plugin is unavailable."""
+    config.addinivalue_line(
+        "markers",
+        "timeout(timeout): fail test if it exceeds timeout seconds",
+    )
+    if not _HAS_PYTEST_TIMEOUT:
+        config.issue_config_time_warning(
+            pytest.PytestConfigWarning(
+                "pytest-timeout plugin is not installed; global 120s timeout policy is inactive.",
+            ),
+            stacklevel=2,
+        )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Apply a default 120s timeout marker to tests lacking explicit timeout."""
+    if not _HAS_PYTEST_TIMEOUT:
+        return
+
+    for item in items:
+        if item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(_DEFAULT_HARD_TIMEOUT))
 
 
 def _assert_node_invariants(node: pytest.Item) -> None:
@@ -449,6 +481,22 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
+    def _free_port_8080_windows() -> None:
+        """Best-effort cleanup of stale listeners on 8080 to avoid bind collisions in subprocess tests."""
+        if sys.platform != "win32":
+            return
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "$pids = @(Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); if ($pids.Count -gt 0) { $pids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
     # Configure mcp-agentdecompile as stdio server
     # cwd must be repo root so uv run finds pyproject.toml; launcher uses temp project
     repo_root = Path(__file__).resolve().parent.parent
@@ -460,6 +508,7 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
     )
 
     print(f"\n[Fixture] Starting mcp-agentdecompile via stdio_client in {isolated_workspace}...")
+    _free_port_8080_windows()
 
     try:
         # Connect to mcp-agentdecompile via stdio
@@ -507,3 +556,5 @@ async def mcp_stdio_client(isolated_workspace: Path) -> AsyncGenerator[ClientSes
         if "cancel scope" not in str(e):
             raise
         print("[Fixture] Suppressed expected cancel scope error during stdio_client cleanup")
+    finally:
+        _free_port_8080_windows()
