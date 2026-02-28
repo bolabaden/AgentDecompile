@@ -39,6 +39,11 @@ Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 
 This project intentionally accepts messy client input so humans and agents can use intuitive names without memorizing exact punctuation or casing. We do this to maximize compatibility across MCP clients, CLI usage styles, legacy vendor naming, and ad-hoc agent output. If the alphabetic characters match, we treat it as the same intent. This avoids brittle UX and prevents accidental "unknown tool/arg" failures caused only by separators or case.
 
+**Intent hierarchy (in order):**
+1. Accept user intent if alphabetic core matches.
+2. Preserve one canonical implementation path.
+3. Reject only when no normalized canonical/alias match exists.
+
 **Advertisement Layer (External-Facing)**:
 - **CLI commands/options**: advertise canonical names in `snake_case` (example: `manage_symbols`, `program_path`).
 - **MCP tool schemas**: advertise canonical names in `snake_case`.
@@ -51,6 +56,20 @@ This project intentionally accepts messy client input so humans and agents can u
 - **Canonical normalizer**: `normalize_identifier(s) = re.sub(r"[^a-z]", "", s.lower().strip())`.
 - **Interpretation**: strip EVERYTHING except letters, lowercase, then compare.
 
+**Single Pipeline Flow (REQUIRED):**
+1. Resolve tool name via `registry.resolve_tool_name()`.
+2. Normalize tool/argument keys via `tool_providers.n` (alias of `registry.normalize_identifier`).
+3. Apply `TOOL_PARAM_ALIASES` using normalized keys only.
+4. Dispatch through `ToolProviderManager.call_tool()` and provider `ToolProvider.call_tool()`.
+5. Read arguments inside handlers via `_get/_get_str/_get_int/_get_bool/_require*` only.
+
+**Enforcement Scope (must follow contract):**
+- `registry.py` (canonical normalizer + alias/resolve tables)
+- `mcp_server/tool_providers.py` (authoritative dispatch + arg normalization)
+- `mcp_server/providers/*.py` (handlers only; no custom dispatch/normalization)
+- `mcp_server/server.py` (must keep `validate_input=False` and delegate to unified manager)
+- `bridge.py` / transport adapters (must resolve forwarded tool names via registry resolver; no ad-hoc rewrites)
+
 **Examples (all MUST resolve identically)**:
 - Tool name examples: `manage-symbols`, `Manage_Symbols`, `MANAGESYMBOLS`, `@@manage symbols@@`, `manage symbols!!!` → `managesymbols`.
 - Parameter examples: `programPath`, `program_path`, `PROGRAM PATH`, `__program-path__`, `program.path`, `program/path`, `program:path` → `programpath`.
@@ -62,6 +81,26 @@ This project intentionally accepts messy client input so humans and agents can u
 4. **Normalize before any comparison**: never compare raw tool/arg names.
 5. **Alias bridging after normalization**: apply `TOOL_PARAM_ALIASES` only on normalized keys.
 6. **User-intent first**: if alphabetic core matches a known tool/arg, accept it.
+
+**Forbidden Patterns (DO NOT ADD):**
+- Local `operation_aliases` / per-provider alias dictionaries for tool/action normalization.
+- Direct imports of `normalize_identifier` inside provider methods.
+- Provider-level `call_tool()` overrides that re-implement dispatch/arg normalization.
+- Tool-name rewriting via punctuation transforms (example: manual `replace("-", "_")`) instead of resolver.
+- Raw string comparisons on unnormalized tool/arg names.
+
+**Provider Authoring Standard:**
+- `HANDLERS` keys must be normalized canonical names only.
+- Normalize mode/action values with `n(...)` only when comparing semantic mode/action input.
+- Use argument helpers (`_get*`, `_require*`) and never manually parse key style variants.
+- If new synonyms are needed, add them to `TOOLS_LIST.md` and rely on generated alias maps.
+
+**Change Checklist (must pass before merge):**
+- No provider contains custom tool/argument dispatch normalization.
+- No `from agentdecompile_cli.registry import normalize_identifier` inside `providers/*.py` methods.
+- Bridge/server forwarding uses resolver path, not ad-hoc conversion logic.
+- `tests/test_normalization_combinatorial.py` passes.
+- Affected provider tests pass.
 
 ## Vendor Source Integration
 

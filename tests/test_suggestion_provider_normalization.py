@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 
+from typing import Any
+
 import pytest
 
 from agentdecompile_cli.mcp_server.providers.suggestions import SuggestionToolProvider
+
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
 pytestmark = pytest.mark.unit
 
 
-def _parse_text_content_payload(text_contents):
+def _parse_text_content_payload(text_contents: list[Any]) -> Any:
     assert text_contents, "Expected non-empty MCP text content"
     assert text_contents[0].type == "text"
     payload = json.loads(text_contents[0].text)
@@ -25,14 +28,14 @@ class TestSuggestionToolSchema:
 
     def test_advertises_snake_case_tool_and_parameters(self):
         provider = SuggestionToolProvider()
-        tools = provider.list_tools()
+        tools: list[Any] = provider.list_tools()
         assert len(tools) == 1
 
-        tool = tools[0]
+        tool: Any = tools[0]
         assert tool.name == "suggest"
 
-        properties = tool.inputSchema["properties"]
-        expected_snake_case_keys = {
+        properties: dict[str, Any] = tool.inputSchema["properties"]
+        expected_snake_case_keys: set[str] = {
             "program_path",
             "suggestion_type",
             "address",
@@ -45,7 +48,7 @@ class TestSuggestionToolSchema:
         }
         assert expected_snake_case_keys.issubset(set(properties.keys()))
 
-        enum_values = properties["suggestion_type"]["enum"]
+        enum_values: list[str] = properties["suggestion_type"]["enum"]
         assert "comment_type" in enum_values
         assert "comment_text" in enum_values
         assert "function_name" in enum_values
@@ -61,7 +64,7 @@ class TestSuggestionToolArgumentNormalization:
     async def test_accepts_camel_case_and_kebab_case_and_uppercase(self):
         provider = SuggestionToolProvider()
 
-        response = await provider.call_tool(
+        response: list[Any] = await provider.call_tool(
             "SUGGEST",
             {
                 "Program-Path": "/tmp/test.bin",
@@ -71,7 +74,7 @@ class TestSuggestionToolArgumentNormalization:
                 "MAX_CONTEXT": "7",
             },
         )
-        payload = _parse_text_content_payload(response)
+        payload: dict[str, Any] = _parse_text_content_payload(response)
 
         assert payload["suggestionType"] == "commenttext"
         assert payload["address"] == "FUN_401000"
@@ -87,7 +90,7 @@ class TestSuggestionToolArgumentNormalization:
     async def test_accepts_no_separator_forms_for_primary_keys(self):
         provider = SuggestionToolProvider()
 
-        response = await provider.call_tool(
+        response: list[Any] = await provider.call_tool(
             "s u g g e s t",
             {
                 "programpath": "/tmp/no-sep.bin",
@@ -96,7 +99,7 @@ class TestSuggestionToolArgumentNormalization:
                 "maxcontext": 3,
             },
         )
-        payload = _parse_text_content_payload(response)
+        payload: dict[str, Any] = _parse_text_content_payload(response)
 
         assert payload["suggestionType"] == "functiontags"
         assert payload["address"] == "entry"
@@ -107,12 +110,13 @@ class TestSuggestionToolArgumentNormalization:
     @pytest.mark.asyncio
     async def test_rejects_unknown_suggestion_type_even_with_noise(self):
         provider = SuggestionToolProvider()
-
-        with pytest.raises(ValueError, match="Invalid suggestion_type"):
-            await provider.call_tool(
-                "suggest",
-                {
-                    "suggestion_type": "unknown-type",
-                    "program_path": "/tmp/x",
-                },
-            )
+        response: list[Any] = await provider.call_tool(
+            "suggest",
+            {
+                "suggestion_type": "unknown-type",
+                "program_path": "/tmp/x",
+            },
+        )
+        payload: dict[str, Any] = _parse_text_content_payload(response)
+        assert payload["success"] is False
+        assert "Invalid suggestion_type" in payload["error"]

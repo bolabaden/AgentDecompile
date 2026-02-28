@@ -1,6 +1,6 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 49 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, reverse-engineering-assistant, and the plan in `.github/prompts/plan-exhaustivePythonMcpImplementation.prompt.md`. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all 50 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
@@ -8,7 +8,7 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
   - [Table of Contents](#table-of-contents)
-  - [Canonical Tools (49)](#canonical-tools-49)
+  - [Canonical Tools (50)](#canonical-tools-50)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
@@ -18,6 +18,7 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
+    - [`export`](#export)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
     - [`get-call-graph`](#get-call-graph)
@@ -153,7 +154,7 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
 
-## Canonical Tools (49)
+## Canonical Tools (50)
 
 ### `analyze-data-flow`
 
@@ -474,6 +475,42 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
 
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
+
+### `export`
+
+**Description**: Exports the current program using Ghidra exporter APIs to generate project/program artifacts such as packed `.gzf`, C/C++ source output, and SARIF reports. For C/C++ source, this uses Ghidra's `CppExporter` pipeline. For packed project snapshots, it uses Ghidra project packed-file export (`.gzf`). SARIF output is emitted in SARIF 2.1.0 JSON format for downstream tooling.
+
+**Parameters**:
+- `programPath` (string, optional): Program path (optional in GUI mode if active program is set).
+  - Synonyms: `programPath`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
+- `outputPath` (string, required): Output file path.
+  - Synonyms: `outputPath`, `output`, `file`, `path`.
+- `format` (string, optional): Export format (`gzf`, `c`, `cpp`, `cxx`, `sarif`, `xml`, `html`, `ascii`; default: `cpp`).
+  - Synonyms: `format`, `exportType`.
+- `createHeader` (boolean, optional): Emit header output for C/C++ export when supported (default: true).
+  - Synonyms: `createHeader`.
+- `includeTypes` (boolean, optional): Emit type declarations for C/C++ export (default: true).
+  - Synonyms: `includeTypes`, `emitTypes`.
+- `includeGlobals` (boolean, optional): Emit globals for C/C++ export (default: true).
+  - Synonyms: `includeGlobals`, `emitGlobals`.
+- `includeComments` (boolean, optional): Include comments in generated output when supported (default: false).
+  - Synonyms: `includeComments`.
+- `tags` (string, optional): Optional tag filter string for C/C++ export.
+  - Synonyms: `tags`.
+**Overloads**:
+- `export(programPath, outputPath, format, createHeader, includeTypes, includeGlobals, includeComments, tags)` canonical signature.
+
+**Synonyms**: `export`, `tool_export`, `export_tool`, `cmd_export`, `run_export`, `do_export`, `api_export`, `mcp_export`, `ghidra_export`, `agentdecompile_export`, `export_command`, `export_action`
+
+**Examples**:
+- Export packed project archive: `export programPath="/bin.exe" outputPath="./out/program.gzf" format="gzf"`.
+- Export C++ source: `export programPath="/bin.exe" outputPath="./out/decomp.cpp" format="cpp" includeTypes=true includeGlobals=true`.
+- Export SARIF: `export programPath="/bin.exe" outputPath="./out/findings.sarif" format="sarif"`.
+
+**API References**:
+- **`ghidra.app.util.exporter.Exporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/Exporter)
+- **`ghidra.app.util.exporter.GzfExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/GzfExporter)
+- **`ghidra.app.util.exporter.CppExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/CppExporter)
 
 ### `delete-project-binary`
 
@@ -1393,6 +1430,21 @@ This document provides an exhaustive, consolidated reference for all 49 canonica
 
 **Examples**:
 - Match function: `match-function programPath="/bin1.exe" functionIdentifier="main" targetProgramPaths=["/bin2.exe"] minSimilarity=0.9 propagateNames=true`.
+### `execute-script`
+
+**Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.
+
+**Parameters**:
+- None.
+
+**Overloads**:
+- `execute-script()` canonical signature.
+
+**Synonyms**: `execute-script`
+
+**Examples**:
+- `execute-script`
+
 ### `open-all-programs-in-code-browser`
 
 **Description**: Opens all project programs in the CodeBrowser tool (GUI mode), for bulk viewing.

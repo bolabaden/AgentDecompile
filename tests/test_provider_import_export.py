@@ -55,7 +55,7 @@ class TestImportExportProviderSchema:
         props = tool.inputSchema["properties"]
         assert "format" in props
         formats = props["format"]["enum"]
-        for f in ("c", "xml"):
+        for f in ("c", "cpp", "gzf", "sarif", "xml"):
             assert f in formats
 
     def test_analyze_program_schema(self):

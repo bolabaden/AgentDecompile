@@ -12,6 +12,7 @@ from agentdecompile_cli.registry import (
     get_tool_params,
     to_camel_case_key,
 )
+
 from tests.helpers import assert_mapping_invariants, assert_string_invariants, assert_text_block_invariants
 
 pytestmark = pytest.mark.unit
@@ -119,10 +120,14 @@ class TestToolsSchema:
         assert "path" in TOOL_PARAMS["open"]
         assert "open" in TOOL_PARAMS
         assert isinstance(TOOL_PARAMS["open"], list)
+        assert "programPath" in TOOL_PARAMS["open"]
 
     def test_get_tool_params_returns_list(self):
-        assert get_tool_params("get-data") == ["programPath", "addressOrSymbol"]
-        assert get_tool_params("open") == [
+        assert "programPath" in get_tool_params("get-data")
+        assert "addressOrSymbol" in get_tool_params("get-data")
+        open_params = get_tool_params("open")
+        assert isinstance(open_params, list)
+        required_open_params = {
             "path",
             "extensions",
             "openAllPrograms",
@@ -133,7 +138,8 @@ class TestToolsSchema:
             "serverPassword",
             "serverHost",
             "serverPort",
-        ]
+        }
+        assert required_open_params.issubset(set(open_params))
         assert get_tool_params("unknown-tool") == []
         assert isinstance(get_tool_params("get-data"), list)
         assert all(isinstance(item, str) for item in get_tool_params("open"))

@@ -1366,12 +1366,20 @@ class AgentDecompileLauncher:
             RuntimeError: If server fails to start
         """
         try:
-            use_random = port is None
-            if port is not None:
-                os.environ["AGENT_DECOMPILE_PORT"] = str(port)
             if host is not None:
                 os.environ["AGENT_DECOMPILE_HOST"] = host
-            self.use_random_port = use_random
+
+            selected_host = host or os.getenv("AGENT_DECOMPILE_HOST") or "127.0.0.1"
+            selected_port: int | None = None
+            if port is not None:
+                selected_port = int(port)
+            elif self.use_random_port:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as temp_sock:
+                    temp_sock.bind((selected_host, 0))
+                    selected_port = int(temp_sock.getsockname()[1])
+
+            if selected_port is not None:
+                os.environ["AGENT_DECOMPILE_PORT"] = str(selected_port)
 
             # Check for AGENT_DECOMPILE_PROJECT_PATH environment variable
             project_gpr_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH")
@@ -1440,10 +1448,9 @@ class AgentDecompileLauncher:
             from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: PLC0415
 
             server_config = ServerConfig()
-            if host:
-                server_config.host = host
-            if port:
-                server_config.port = port
+            server_config.host = selected_host
+            if selected_port is not None:
+                server_config.port = selected_port
 
             # Create and start MCP server
             self.mcp_server = PythonMcpServer(server_config)
