@@ -192,7 +192,7 @@ class CommentToolProvider(ToolProvider):
                                 "results": results,
                                 "count": len(results),
                                 "hasMore": True,
-                            }
+                            },
                         )
         return create_success_response(
             {
@@ -201,7 +201,7 @@ class CommentToolProvider(ToolProvider):
                 "results": results,
                 "count": len(results),
                 "hasMore": False,
-            }
+            },
         )
 
     async def _search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -230,7 +230,7 @@ class CommentToolProvider(ToolProvider):
                                     "function": func.getName(),
                                     "address": str(func.getEntryPoint()),
                                     "snippet": code[:500],
-                                }
+                                },
                             )
                 except Exception:
                     continue

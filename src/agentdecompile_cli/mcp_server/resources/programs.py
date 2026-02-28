@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 from urllib.parse import urlsplit
 
 from mcp import types
@@ -66,9 +67,7 @@ class ProgramListResource(ResourceProvider):
         if program is not None:
             try:
                 domain_file = program.getDomainFile()
-                program_path_str = (
-                    str(domain_file.getPathname()) if domain_file else self.program_info.name
-                )
+                program_path_str = str(domain_file.getPathname()) if domain_file else self.program_info.name
                 programs.append(
                     {
                         "programPath": program_path_str,

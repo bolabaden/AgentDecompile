@@ -111,7 +111,7 @@ class StructureToolProvider(ToolProvider):
                     "length": dt.getLength(),
                     "numComponents": dt.getNumComponents(),
                     "isUnion": hasattr(dt, "isUnion") and dt.isUnion(),
-                }
+                },
             )
         return create_success_response({"action": "list", "structures": results, "count": len(results)})
 
@@ -138,7 +138,7 @@ class StructureToolProvider(ToolProvider):
                     "type": str(comp.getDataType()),
                     "length": comp.getLength(),
                     "comment": comp.getComment() or "",
-                }
+                },
             )
 
         return create_success_response(
@@ -149,7 +149,7 @@ class StructureToolProvider(ToolProvider):
                 "numComponents": dt.getNumComponents(),
                 "fields": fields,
                 "description": dt.getDescription() or "",
-            }
+            },
         )
 
     async def _create(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -300,7 +300,7 @@ class StructureToolProvider(ToolProvider):
                         "parsed": True,
                         "name": dt.getName() if hasattr(dt, "getName") else str(dt),
                         "success": True,
-                    }
+                    },
                 )
             except Exception:
                 program.endTransaction(tx, False)

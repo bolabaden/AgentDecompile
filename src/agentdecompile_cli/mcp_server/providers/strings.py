@@ -152,7 +152,7 @@ class StringToolProvider(ToolProvider):
                     "function": function_name,
                     "address": str(func.getEntryPoint()),
                     "match": "name",
-                }
+                },
             )
 
         return create_success_response(
@@ -163,7 +163,7 @@ class StringToolProvider(ToolProvider):
                 "offset": offset,
                 "limit": limit,
                 "results": matches,
-            }
+            },
         )
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -199,7 +199,7 @@ class StringToolProvider(ToolProvider):
                         "value": val,
                         "length": len(val),
                         "dataType": str(data.getDataType()),
-                    }
+                    },
                 )
         except Exception as e:
             logger.warning(f"String iteration error: {e}")
@@ -269,5 +269,5 @@ class StringToolProvider(ToolProvider):
                 "total": total,
                 "offset": offset,
                 "hasMore": offset + len(strings) < total,
-            }
+            },
         )

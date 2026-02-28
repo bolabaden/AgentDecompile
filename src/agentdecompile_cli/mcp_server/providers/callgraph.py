@@ -117,7 +117,7 @@ class CallGraphToolProvider(ToolProvider):
                         "displayType": result.display_type.value if hasattr(result.display_type, "value") else str(result.display_type),
                         "graph": result.graph if hasattr(result, "graph") else {},
                         "mermaidUrl": getattr(result, "mermaid_url", None),
-                    }
+                    },
                 )
             except Exception as e:
                 logger.warning(f"CallGraphTool failed, using Ghidra API: {e}")
@@ -149,6 +149,7 @@ class CallGraphToolProvider(ToolProvider):
                 raise ValueError(f"Function not found: {func}")
 
             from agentdecompile_cli.registry import normalize_identifier as _n
+
             mode_n = _n(mode)
             if mode_n in ("callers", "callersdecomp", "commoncallers"):
                 callers = list(target_func.getCallingFunctions(None))[:max_nodes]
@@ -170,7 +171,7 @@ class CallGraphToolProvider(ToolProvider):
                                 "mode": mode,
                                 "commonCallers": common,
                                 "count": len(common),
-                            }
+                            },
                         )
 
                 return create_success_response(
@@ -179,7 +180,7 @@ class CallGraphToolProvider(ToolProvider):
                         "mode": mode,
                         "callers": caller_info,
                         "count": len(caller_info),
-                    }
+                    },
                 )
             if mode_n == "callees":
                 callees = list(target_func.getCalledFunctions(None))[:max_nodes]
@@ -190,7 +191,7 @@ class CallGraphToolProvider(ToolProvider):
                         "mode": mode,
                         "callees": callee_info,
                         "count": len(callee_info),
-                    }
+                    },
                 )
             # graph/tree mode
             callers = list(target_func.getCallingFunctions(None))[:max_nodes]
@@ -203,7 +204,7 @@ class CallGraphToolProvider(ToolProvider):
                     "callees": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees],
                     "callerCount": len(callers),
                     "calleeCount": len(callees),
-                }
+                },
             )
         except ValueError:
             raise
@@ -214,5 +215,5 @@ class CallGraphToolProvider(ToolProvider):
                     "mode": mode,
                     "note": f"Call graph generation incomplete: {e}",
                     "graph": {},
-                }
+                },
             )

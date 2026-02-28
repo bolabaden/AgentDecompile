@@ -177,7 +177,7 @@ def _parse_tool_payload(arguments: str) -> dict[str, Any]:
     arguments = arguments.strip()
     if arguments and arguments[0] in ('"', "'") and arguments[-1] == arguments[0]:
         arguments = arguments[1:-1]
-    
+
     try:
         payload = json.loads(arguments) if arguments else {}
     except json.JSONDecodeError as e:
@@ -524,8 +524,16 @@ def list_grp() -> None:
     "binaries",
     help="List all programs in the project (ghidra://programs)",
 )
+@click.option(
+    "-f",
+    "--format",
+    "local_format",
+    type=click.Choice(["json", "table", "text"]),
+    default=None,
+    help="Output format override for this command",
+)
 @click.pass_context
-def list_binaries(ctx: click.Context) -> None:
+def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     async def _run():
         client = _client(ctx)
         async with client:
@@ -542,7 +550,7 @@ def list_binaries(ctx: click.Context) -> None:
                     break
         if programs:
             names = [p.get("programPath", p.get("name", p)) if isinstance(p, dict) else p for p in programs]
-            click.echo(format_output(names, _fmt(ctx)))
+            click.echo(format_output(names, local_format or _fmt(ctx)))
         else:
             click.echo("No programs in project.")
 
@@ -963,6 +971,7 @@ def symbols_run(
 
 # --- Convenience subcommands (``symbols classes``, ``symbols imports``, …) ---
 
+
 def _symbols_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``symbols <mode>`` shorthand subcommands."""
 
@@ -1067,6 +1076,7 @@ def strings_run(
 
 
 # --- Convenience subcommands (``strings list``, ``strings regex``, …) ---
+
 
 def _strings_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``strings <mode>`` shorthand subcommands."""
@@ -1198,6 +1208,7 @@ def list_functions_run(
 
 
 # --- Convenience subcommands (``list-functions all``, ``list-functions search``, …) ---
+
 
 def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``list-functions <mode>`` shorthand subcommands."""
@@ -1665,6 +1676,7 @@ def references_run(
 
 # --- Convenience subcommands (``references to``, ``references from``, …) ---
 
+
 def _references_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``references <mode>`` shorthand subcommands."""
 
@@ -1760,6 +1772,7 @@ def datatypes_run(
 
 
 # --- Convenience subcommands (``datatypes archives``, ``datatypes list``, …) ---
+
 
 def _datatypes_action_command(action_name: str, help_text: str | None = None):
     """Factory for ``datatypes <action>`` shorthand subcommands."""
@@ -1913,6 +1926,7 @@ def structures_run(
 
 
 # --- Convenience subcommands (``structures parse``, ``structures create``, …) ---
+
 
 def _structures_action_command(action_name: str, help_text: str | None = None):
     """Factory for ``structures <action>`` shorthand subcommands."""
@@ -2072,6 +2086,7 @@ def comments_run(
 
 # --- Convenience subcommands (``comments set``, ``comments get``, …) ---
 
+
 def _comments_action_command(action_name: str, help_text: str | None = None):
     """Factory for ``comments <action>`` shorthand subcommands."""
 
@@ -2189,6 +2204,7 @@ def bookmarks_run(
 
 
 # --- Convenience subcommands (``bookmarks set``, ``bookmarks get``, …) ---
+
 
 def _bookmarks_action_command(action_name: str, help_text: str | None = None):
     """Factory for ``bookmarks <action>`` shorthand subcommands."""
@@ -2349,6 +2365,7 @@ def callgraph_run(
 
 # --- Convenience subcommands (``callgraph callers``, ``callgraph callees``, …) ---
 
+
 def _callgraph_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``callgraph <mode>`` shorthand subcommands."""
 
@@ -2442,6 +2459,7 @@ def constants_run(
 
 # --- Convenience subcommands (``constants specific``, ``constants range``, …) ---
 
+
 def _constants_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``constants <mode>`` shorthand subcommands."""
 
@@ -2533,6 +2551,7 @@ def vtables_run(
 
 
 # --- Convenience subcommands (``vtables analyze``, ``vtables callers``, …) ---
+
 
 def _vtables_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``vtables <mode>`` shorthand subcommands."""
@@ -2692,7 +2711,7 @@ def files_grp() -> None:
             "delete",
             "copy",
             "move",
-        ]
+        ],
     ),
     required=True,
 )
@@ -3046,10 +3065,7 @@ def tool_cmd(
 
 @main.command(
     "tool-seq",
-    help=(
-        "Run a sequence of MCP tool calls from JSON. "
-        "Format: [{\"name\":\"open\",\"arguments\":{...}}, ...]"
-    ),
+    help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]'),
 )
 @click.argument("steps", required=True)
 @click.option("--continue-on-error", is_flag=True, help="Continue remaining steps after a tool failure")
@@ -3084,11 +3100,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
             step_result = {
                 "index": index,
                 "name": name,
-                "success": not (
-                    isinstance(data, dict)
-                    and data.get("success") is False
-                    and "error" in data
-                ),
+                "success": not (isinstance(data, dict) and data.get("success") is False and "error" in data),
                 "result": data,
             }
             results.append(step_result)

@@ -91,7 +91,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "count": len(paginated),
                         "total": len(results),
                         "hasMore": offset + len(paginated) < len(results),
-                    }
+                    },
                 )
             except Exception:
                 pass
@@ -115,7 +115,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "toAddress": str(ref.getToAddress()),
                         "type": str(ref.getReferenceType()),
                         "function": func.getName() if func else None,
-                    }
+                    },
                 )
 
         if mode_n in ("from", "both"):
@@ -128,7 +128,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "fromAddress": str(ref.getFromAddress()),
                         "toAddress": str(ref.getToAddress()),
                         "type": str(ref.getReferenceType()),
-                    }
+                    },
                 )
 
         if mode_n == "to":
@@ -157,7 +157,7 @@ class CrossReferencesToolProvider(ToolProvider):
                                     "fromAddress": str(ref.getFromAddress()),
                                     "toAddress": str(ref.getToAddress()),
                                     "type": str(ref.getReferenceType()),
-                                }
+                                },
                             )
                             if len(refs) >= max_results:
                                 break
@@ -190,7 +190,7 @@ class CrossReferencesToolProvider(ToolProvider):
                                     "function": func.getName(),
                                     "address": str(func.getEntryPoint()),
                                     "decompilation": code[:2000],
-                                }
+                                },
                             )
                         except Exception:
                             results.append({"function": func.getName(), "decompilation": "// error"})
@@ -212,7 +212,7 @@ class CrossReferencesToolProvider(ToolProvider):
                             "importName": sym.getName(),
                             "fromAddress": str(ref.getFromAddress()),
                             "function": func.getName() if func else None,
-                        }
+                        },
                     )
                     if len(refs) >= max_results:
                         break
@@ -233,7 +233,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "thunkAddress": str(func.getEntryPoint()),
                         "target": thunked.getName() if thunked else "unknown",
                         "targetAddress": str(thunked.getEntryPoint()) if thunked else "unknown",
-                    }
+                    },
                 )
             return create_success_response({"mode": "thunk", "results": results, "count": len(results)})
 

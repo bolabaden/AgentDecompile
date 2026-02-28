@@ -49,6 +49,7 @@ class ConstantSearchToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         from agentdecompile_cli.registry import normalize_identifier as n
+
         mode = n(self._get_str(args, "mode", default="common"))
         max_results = self._get_int(args, "maxresults", "limit", default=1000)
         offset = self._get_int(args, "offset", "startindex", default=0)
@@ -95,7 +96,7 @@ class ConstantSearchToolProvider(ToolProvider):
                                     {
                                         "address": str(instr.getAddress()),
                                         "instruction": str(instr),
-                                    }
+                                    },
                                 )
                         except Exception:
                             continue
@@ -118,7 +119,7 @@ class ConstantSearchToolProvider(ToolProvider):
                     "hex": hex(val),
                     "occurrences": len(constants[val]),
                     "samples": constants[val],
-                }
+                },
             )
             count += 1
 
@@ -129,5 +130,5 @@ class ConstantSearchToolProvider(ToolProvider):
                 "count": len(results),
                 "instructionsScanned": instr_count,
                 "hasMore": count < len(sorted_vals),
-            }
+            },
         )

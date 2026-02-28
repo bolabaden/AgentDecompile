@@ -14,7 +14,7 @@ import time
 
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from mcp import types
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager

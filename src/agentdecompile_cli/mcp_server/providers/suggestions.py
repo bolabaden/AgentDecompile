@@ -120,5 +120,5 @@ class SuggestionToolProvider(ToolProvider):
                 "address": address,
                 "variableName": variable_name,
                 "context": response_context,
-            }
+            },
         )

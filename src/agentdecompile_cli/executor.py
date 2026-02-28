@@ -953,7 +953,7 @@ class DynamicToolExecutor:
                     "searchcode",
                     "searchstrings",
                     "searchsymbolsbyname",
-                }
+                },
             )
             if normalized_tool_name in _PYGHIDRA_MCP_TOOLS:
                 # Tools from pyghidra-mcp - placeholder implementations

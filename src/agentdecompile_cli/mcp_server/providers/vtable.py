@@ -72,7 +72,7 @@ class VtableToolProvider(ToolProvider):
                             "name": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else dt_name,
                             "type": str(dt),
                             "size": data.getLength(),
-                        }
+                        },
                     )
             return create_success_response({"mode": "containing", "vtables": results, "count": len(results)})
 
@@ -105,7 +105,7 @@ class VtableToolProvider(ToolProvider):
                             "address": str(entry_addr),
                             "target": hex(ptr_val),
                             "function": func.getName() if func else None,
-                        }
+                        },
                     )
                 except Exception:
                     break
@@ -117,7 +117,7 @@ class VtableToolProvider(ToolProvider):
                     "entries": entries,
                     "count": len(entries),
                     "pointerSize": ptr_size,
-                }
+                },
             )
 
         if mode_n == "callers":
@@ -133,7 +133,7 @@ class VtableToolProvider(ToolProvider):
                         "fromAddress": str(from_addr),
                         "function": func.getName() if func else None,
                         "refType": str(ref.getReferenceType()),
-                    }
+                    },
                 )
             return create_success_response(
                 {
@@ -141,7 +141,7 @@ class VtableToolProvider(ToolProvider):
                     "vtableAddress": str(addr),
                     "callers": callers,
                     "count": len(callers),
-                }
+                },
             )
 
         raise ValueError(f"Unknown mode: {mode}")

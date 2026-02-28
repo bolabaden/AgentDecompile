@@ -121,7 +121,7 @@ class DecompilerToolProvider(ToolProvider):
                     "address": str(target_func.getEntryPoint()),
                     "signature": sig,
                     "decompilation": c_code,
-                }
+                },
             )
         except ImportError:
             return create_success_response(
@@ -129,5 +129,5 @@ class DecompilerToolProvider(ToolProvider):
                     "function": target_func.getName(),
                     "address": str(target_func.getEntryPoint()),
                     "note": "DecompInterface not available in this environment",
-                }
+                },
             )

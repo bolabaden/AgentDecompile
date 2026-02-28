@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import logging
-import sys
 import traceback
 
 from contextlib import redirect_stderr, redirect_stdout
@@ -19,7 +18,6 @@ from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
-    create_error_response,
     create_success_response,
 )
 
@@ -46,10 +44,7 @@ class ScriptToolProvider(ToolProvider):
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": (
-                                "Python code to execute in the Ghidra JVM context. "
-                                "Assign to __result__ to return a value."
-                            ),
+                            "description": ("Python code to execute in the Ghidra JVM context. Assign to __result__ to return a value."),
                         },
                         "programPath": {
                             "type": "string",
@@ -97,6 +92,7 @@ class ScriptToolProvider(ToolProvider):
         # Try to get a real monitor
         try:
             from ghidra.util.task import ConsoleTaskMonitor  # type: ignore[import-not-found]
+
             ns["monitor"] = ConsoleTaskMonitor()
         except Exception:
             pass
@@ -130,19 +126,49 @@ class ScriptToolProvider(ToolProvider):
         # FlatProgramAPI helpers
         if flat_api is not None:
             for name in (
-                "getFirstFunction", "getFunctionAfter", "getFunctionAt",
-                "getFunctionBefore", "getFunctionContaining", "getGlobalFunctions",
-                "getInstructionAt", "getInstructionAfter", "getInstructionBefore",
-                "getDataAt", "getDataAfter", "getDataBefore", "getDataContaining",
-                "getBytes", "getByte", "getShort", "getInt", "getLong",
-                "setBytes", "setByte", "setShort", "setInt", "setLong",
-                "createFunction", "disassemble", "clearListing",
-                "createData", "createLabel", "removeDataAt",
-                "findBytes", "find", "getReferencesTo", "getReferencesFrom",
-                "getSymbolAt", "getSymbolsAt",
-                "createBookmark", "removeBookmark",
-                "start", "end", "analyzeAll", "analyzeChanges",
-                "openProgram", "closeProgram",
+                "getFirstFunction",
+                "getFunctionAfter",
+                "getFunctionAt",
+                "getFunctionBefore",
+                "getFunctionContaining",
+                "getGlobalFunctions",
+                "getInstructionAt",
+                "getInstructionAfter",
+                "getInstructionBefore",
+                "getDataAt",
+                "getDataAfter",
+                "getDataBefore",
+                "getDataContaining",
+                "getBytes",
+                "getByte",
+                "getShort",
+                "getInt",
+                "getLong",
+                "setBytes",
+                "setByte",
+                "setShort",
+                "setInt",
+                "setLong",
+                "createFunction",
+                "disassemble",
+                "clearListing",
+                "createData",
+                "createLabel",
+                "removeDataAt",
+                "findBytes",
+                "find",
+                "getReferencesTo",
+                "getReferencesFrom",
+                "getSymbolAt",
+                "getSymbolsAt",
+                "createBookmark",
+                "removeBookmark",
+                "start",
+                "end",
+                "analyzeAll",
+                "analyzeChanges",
+                "openProgram",
+                "closeProgram",
                 "toAddr",
             ):
                 fn = getattr(flat_api, name, None)
@@ -152,10 +178,17 @@ class ScriptToolProvider(ToolProvider):
         # Common Ghidra imports (best-effort)
         _safe_imports = [
             ("ghidra.program.model.symbol", ["SourceType", "SymbolType", "RefType"]),
-            ("ghidra.program.model.data", [
-                "DataType", "PointerDataType", "ArrayDataType",
-                "StructureDataType", "CategoryPath", "DataTypeConflictHandler",
-            ]),
+            (
+                "ghidra.program.model.data",
+                [
+                    "DataType",
+                    "PointerDataType",
+                    "ArrayDataType",
+                    "StructureDataType",
+                    "CategoryPath",
+                    "DataTypeConflictHandler",
+                ],
+            ),
             ("ghidra.program.model.listing", ["CodeUnit", "Function", "Program", "Instruction"]),
             ("ghidra.program.model.address", ["Address", "AddressSet", "AddressSpace"]),
             ("ghidra.program.model.mem", ["MemoryAccessException"]),

@@ -51,6 +51,7 @@ class DataFlowToolProvider(ToolProvider):
             raise ValueError("addressOrSymbol or functionIdentifier required")
 
         from agentdecompile_cli.registry import normalize_identifier as n
+
         direction = n(self._get_str(args, "direction", "mode", default="backward"))
         max_ops = self._get_int(args, "maxops", default=500)
         timeout_s = self._get_int(args, "timeout", default=30)
@@ -81,7 +82,7 @@ class DataFlowToolProvider(ToolProvider):
                         "function": func.getName(),
                         "note": "Decompilation failed or timed out",
                         "pcode": [],
-                    }
+                    },
                 )
 
             hfunc = result.getHighFunction()
@@ -94,7 +95,7 @@ class DataFlowToolProvider(ToolProvider):
                         "function": func.getName(),
                         "note": "No high-level function available",
                         "pcode": [],
-                    }
+                    },
                 )
 
             pcode_ops = []
@@ -108,7 +109,7 @@ class DataFlowToolProvider(ToolProvider):
                         "mnemonic": str(op.getMnemonic()),
                         "output": str(op.getOutput()) if op.getOutput() else None,
                         "inputs": [str(inp) for inp in op.getInputs()],
-                    }
+                    },
                 )
                 count += 1
 
@@ -126,7 +127,7 @@ class DataFlowToolProvider(ToolProvider):
                                 "dataType": str(hv.getDataType()),
                                 "storage": str(hv.getRepresentative()),
                                 "size": hv.getSize(),
-                            }
+                            },
                         )
                 return create_success_response(
                     {
@@ -135,7 +136,7 @@ class DataFlowToolProvider(ToolProvider):
                         "function": func.getName(),
                         "variables": variables,
                         "count": len(variables),
-                    }
+                    },
                 )
 
             return create_success_response(
@@ -146,7 +147,7 @@ class DataFlowToolProvider(ToolProvider):
                     "pcode": pcode_ops,
                     "count": len(pcode_ops),
                     "hasMore": count >= max_ops,
-                }
+                },
             )
 
         except ImportError:
@@ -156,7 +157,7 @@ class DataFlowToolProvider(ToolProvider):
                     "address": str(addr),
                     "note": "DecompInterface not available in this environment",
                     "pcode": [],
-                }
+                },
             )
         except Exception as e:
             logger.error(f"Data flow analysis error: {e}")
@@ -166,5 +167,5 @@ class DataFlowToolProvider(ToolProvider):
                     "address": str(addr),
                     "error": str(e),
                     "pcode": [],
-                }
+                },
             )

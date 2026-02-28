@@ -26,8 +26,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
-from agentdecompile_cli.registry import TOOL_PARAMS, TOOLS, normalize_identifier, to_snake_case
-from agentdecompile_cli.registry import TOOL_PARAM_ALIASES, resolve_tool_name
+from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import ProgramInfo
@@ -47,47 +46,114 @@ n = normalize_identifier  # short alias used throughout providers
 
 # Normalized param-name fragments → JSON schema type.
 # Used when a TOOL_PARAMS entry doesn't match any provider property.
-_INT_FRAGMENTS = frozenset({
-    "limit", "offset", "count", "index", "results", "length", "size",
-    "depth", "entries", "callers", "width", "height", "max", "min",
-    "referencecount", "maxcount", "maxresults", "startindex",
-    "maxdepth", "maxcallers", "maxentries", "topn", "maxfunctions",
-    "batchsize", "maxinstructions", "linenumber", "maxreferencers",
-    "maxruntime", "condensethreshold", "toplayers", "bottomlayers",
-    "propagatemaxcandidates", "propagatemaxinstructions", "minvalue",
-    "maxvalue", "value", "serverport", "minreferencecount",
-    "minsimilarity",
-})
-_BOOL_FRAGMENTS = frozenset({
-    "include", "recursive", "verbose", "packed", "force",
-    "clearexisting", "casesensitive", "demangleall",
-    "groupbylibrary", "includeexternal", "filterdefaultnames",
-    "includesubcategories", "includebuiltin", "includerefs",
-    "overridemaxfunctionslimit", "includereferencingfunctions",
-    "includerefcontext", "includedatarefs", "includecallers",
-    "includecallees", "includecomments", "includeincomingreferences",
-    "includereferencecontext", "includecallcontext",
-    "createifnotexists", "propagate", "propagatenames",
-    "propagatetags", "propagatecomments", "untagged", "hastags",
-    "openallprograms", "analyzeafterimport", "enableversioncontrol",
-    "exclusive", "removeall",
-    "includesmallvalues", "includeparameters", "includevariables",
-    "stripleadingpath", "stripallcontainerpath", "mirrorfs",
-    "setasprimary", "keepcheckedout",
-})
+_INT_FRAGMENTS = frozenset(
+    {
+        "limit",
+        "offset",
+        "count",
+        "index",
+        "results",
+        "length",
+        "size",
+        "depth",
+        "entries",
+        "callers",
+        "width",
+        "height",
+        "max",
+        "min",
+        "referencecount",
+        "maxcount",
+        "maxresults",
+        "startindex",
+        "maxdepth",
+        "maxcallers",
+        "maxentries",
+        "topn",
+        "maxfunctions",
+        "batchsize",
+        "maxinstructions",
+        "linenumber",
+        "maxreferencers",
+        "maxruntime",
+        "condensethreshold",
+        "toplayers",
+        "bottomlayers",
+        "propagatemaxcandidates",
+        "propagatemaxinstructions",
+        "minvalue",
+        "maxvalue",
+        "value",
+        "serverport",
+        "minreferencecount",
+        "minsimilarity",
+    },
+)
+_BOOL_FRAGMENTS = frozenset(
+    {
+        "include",
+        "recursive",
+        "verbose",
+        "packed",
+        "force",
+        "clearexisting",
+        "casesensitive",
+        "demangleall",
+        "groupbylibrary",
+        "includeexternal",
+        "filterdefaultnames",
+        "includesubcategories",
+        "includebuiltin",
+        "includerefs",
+        "overridemaxfunctionslimit",
+        "includereferencingfunctions",
+        "includerefcontext",
+        "includedatarefs",
+        "includecallers",
+        "includecallees",
+        "includecomments",
+        "includeincomingreferences",
+        "includereferencecontext",
+        "includecallcontext",
+        "createifnotexists",
+        "propagate",
+        "propagatenames",
+        "propagatetags",
+        "propagatecomments",
+        "untagged",
+        "hastags",
+        "openallprograms",
+        "analyzeafterimport",
+        "enableversioncontrol",
+        "exclusive",
+        "removeall",
+        "includesmallvalues",
+        "includeparameters",
+        "includevariables",
+        "stripleadingpath",
+        "stripallcontainerpath",
+        "mirrorfs",
+        "setasprimary",
+        "keepcheckedout",
+    },
+)
 
 
 # Params that look like booleans by prefix but are actually strings/arrays.
-_BOOL_PREFIX_EXCEPTIONS = frozenset({
-    "filterbytag",  # tag name string, not a boolean
-})
+_BOOL_PREFIX_EXCEPTIONS = frozenset(
+    {
+        "filterbytag",  # tag name string, not a boolean
+    },
+)
 # Params that should be arrays, not strings.
-_ARRAY_PARAMS = frozenset({
-    "propagateprogrampaths",
-    "functionaddresses",
-    "identifiers",
-    "tags",
-})
+_ARRAY_PARAMS = frozenset(
+    {
+        "propagateprogrampaths",
+        "functionaddresses",
+        "identifiers",
+        "tags",
+    },
+)
 
 
 def _infer_param_schema(param_name: str) -> dict[str, Any]:
@@ -466,26 +532,18 @@ class ToolProviderManager:
                 )
 
             required_norm = {n(str(item)) for item in required}
-            advertised_required = [
-                to_snake_case(param)
-                for param in canonical_params
-                if n(param) in required_norm
-            ]
+            advertised_required = [to_snake_case(param) for param in canonical_params if n(param) in required_norm]
 
             advertised_tools.append(
                 types.Tool(
                     name=to_snake_case(canonical_name),
-                    description=(
-                        provider_tool.description
-                        if provider_tool is not None and getattr(provider_tool, "description", None)
-                        else canonical_name
-                    ),
+                    description=(provider_tool.description if provider_tool is not None and getattr(provider_tool, "description", None) else canonical_name),
                     inputSchema={
                         "type": "object",
                         "properties": advertised_properties,
                         "required": advertised_required,
                     },
-                )
+                ),
             )
 
         return advertised_tools
@@ -520,11 +578,7 @@ class ToolProviderManager:
                 requested_program_key = value_s
                 break
 
-        requested_program_info = (
-            SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
-            if requested_program_key
-            else None
-        )
+        requested_program_info = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 
         session_program_info = SESSION_CONTEXTS.get_active_program_info(session_id)
         effective_program_info = requested_program_info or session_program_info or self.program_info

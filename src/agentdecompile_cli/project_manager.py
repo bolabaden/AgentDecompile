@@ -129,6 +129,7 @@ class ProjectManager:
             )
 
         return self.project
+
     def import_binary(
         self,
         binary_path: Path,
