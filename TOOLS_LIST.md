@@ -1006,13 +1006,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Description**: Lists all files in the project, including folders and non-binary files. This tool is for project navigation and cleanup.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-
-- `folderPath` (string, optional): Folder path to list (default: root).
-  - Synonyms: `folderPath`, `folder`, `directory`, `dir`.
-- `recursive` (boolean, optional): List recursively (default: false).
-  - Synonyms: `recursive`, `recurse`.
+- None.
 **Overloads**:
 - `list-project-files(folderPath, recursive)` from `vendor_reva` → forwards to `list-project-files`.
 
@@ -1047,8 +1041,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `action` (string, required): Action (`create`, `list`, `remove`, `search`, `removeAll`).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, required): Mode (`create`, `list`, `remove`, `search`, `removeAll`).
+  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `addressOrSymbol` (string, optional): Bookmark target.
   - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
 - `type` (string, optional): Type (`Note`, `Warning`, `TODO`, `Bug`, `Analysis`).
@@ -1081,8 +1075,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Synonyms**: `set-bookmark`, `get-bookmarks`, `remove-bookmark`, `search-bookmarks`, `list-bookmark-categories`, `manage-bookmarks`, `tool_manage_bookmarks`, `manage_bookmarks_tool`, `cmd_manage_bookmarks`, `run_manage_bookmarks`, `do_manage_bookmarks`, `api_manage_bookmarks`, `mcp_manage_bookmarks`, `ghidra_manage_bookmarks`, `agentdecompile_manage_bookmarks`
 
 **Examples**:
-- Create bookmark: `manage-bookmarks programPath="/bin.exe" action="create" addressOrSymbol="0x401000" type="Analysis" comment="Crypto function"`.
-- Search bookmarks: `manage-bookmarks programPath="/bin.exe" action="search" searchText="crypto" maxResults=20`.
+- Create bookmark: `manage-bookmarks programPath="/bin.exe" mode="create" addressOrSymbol="0x401000" type="Analysis" comment="Crypto function"`.
+- Search bookmarks: `manage-bookmarks programPath="/bin.exe" mode="search" searchText="crypto" maxResults=20`.
 
 ### `manage-comments`
 
@@ -1091,8 +1085,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `action` (string, required): Action (`set`, `get`, `remove`, `search`).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, required): Mode (`set`, `get`, `remove`, `search`).
+  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `addressOrSymbol` (string, optional): Comment location.
   - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
 - `function` (string, optional): Function for function-level comments.
@@ -1135,8 +1129,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Synonyms**: `set-comment`, `get-comments`, `search-comments`, `manage-comments`, `tool_manage_comments`, `manage_comments_tool`, `cmd_manage_comments`, `run_manage_comments`, `do_manage_comments`, `api_manage_comments`, `mcp_manage_comments`, `ghidra_manage_comments`, `agentdecompile_manage_comments`, `manage_comments_command`, `manage_comments_action`, `set_decompiler_comment`, `set_disassembly_comment`, `remove-comment`, `set-decompilation-comment`
 
 **Examples**:
-- Set comment: `manage-comments programPath="/bin.exe" action="set" addressOrSymbol="0x401000" commentType="pre" comment="Entry point"`.
-- Search comments: `manage-comments programPath="/bin.exe" action="search" searchText="crypto" caseSensitive=false`.
+- Set comment: `manage-comments programPath="/bin.exe" mode="set" addressOrSymbol="0x401000" commentType="pre" comment="Entry point"`.
+- Search comments: `manage-comments programPath="/bin.exe" mode="search" searchText="crypto" caseSensitive=false`.
 
 ### `manage-data-types`
 
@@ -1145,8 +1139,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `action` (string, required): Action (`list`, `apply`, `create`).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, required): Mode (`list`, `apply`, `create`).
+  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `archiveName` (string, optional): Archive name.
   - Synonyms: `archiveName`, `archiven`.
 - `categoryPath` (string, optional): Category path.
@@ -1169,16 +1163,18 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Synonyms**: `manage-data-types`, `tool_manage_data_types`, `manage_data_types_tool`, `cmd_manage_data_types`, `run_manage_data_types`, `do_manage_data_types`, `api_manage_data_types`, `mcp_manage_data_types`, `ghidra_manage_data_types`, `agentdecompile_manage_data_types`, `manage_data_types_command`, `manage_data_types_action`, `manage_data_types_op`, `manage_data_types_task`, `execute_manage_data_types`, `get-data-type-archives`, `get-data-type-by-string`, `get-data-types`
 
 **Examples**:
-- List types: `manage-data-types programPath="/bin.exe" action="list" categoryPath="/structs" includeSubcategories=true`.
+- List types: `manage-data-types programPath="/bin.exe" mode="list" categoryPath="/structs" includeSubcategories=true`.
 ### `manage-files`
 
-**Description**: Manages project files, including import/export, local filesystem operations, project version-control helpers, and shared-repository transfer orchestration. Shared flows support pull/push/sync modes via action aliases.
+**Description**: Manages project files, including import/export, local filesystem operations, project version-control helpers, and shared-repository transfer orchestration.
 
 **Parameters**:
-- `action` (string, required): Action (`import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, plus local file actions).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `mode` (string, optional): Shared transfer mode override (`pull`, `push`, `bidirectional`) for shared actions.
-  - Synonyms: `mode`, `direction`, `syncMode`.
+- `action` (string, required): File operation selector (`rename`, `delete`, `copy`, `move`, `info`, `list`, `mkdir`, `touch`, `read`, `write`, `append`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`).
+  - Synonyms: `action`, `operation`, `mode`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `operation` (string, optional): Compatibility alias for `action`.
+  - Synonyms: `operation`, `action`, `mode`.
+- `mode` (string, optional): Shared-sync direction when using shared actions (`pull`, `push`, `bidirectional`).
+  - Synonyms: `mode`, `direction`, `syncMode`, `syncDirection`.
 - `filePath` (string, required for import/export): File path.
   - Synonyms: `filePath`, `filep`.
 - `path` (string, optional): Primary source/scope path.
@@ -1186,19 +1182,19 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 - `destination` (string, optional): Project destination.
   - Synonyms: `destination`
 - `recursive` (boolean, optional): Recursive (default: false).
-  - Synonyms: `mode`, `path`, `dest`, `recurse`, `recursive`
+  - Synonyms: `recurse`, `recursive`
 - `dryRun` (boolean, optional): Plan changes without mutating project/shared data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `manage-files(action, mode, filePath, path, destination, recursive, dryRun)` canonical signature.
+- `manage-files(action, operation, mode, filePath, path, destination, recursive, dryRun)` canonical signature.
 
 
 **Synonyms**: `manage-files`, `tool_manage_files`, `manage_files_tool`, `cmd_manage_files`, `run_manage_files`, `do_manage_files`, `api_manage_files`, `mcp_manage_files`, `ghidra_manage_files`, `agentdecompile_manage_files`, `manage_files_command`, `manage_files_action`, `manage_files_op`, `manage_files_task`, `execute_manage_files`
 
 **Examples**:
 - Manage import: `manage-files action="import" filePath="/newfile.exe" destination="/imports"`.
-- Pull shared scope via manage-files: `manage-files action="pull-shared" path="/K1" newPath="/K1" recursive=true`.
-- Push local changes via manage-files: `manage-files action="push-shared" path="/K1" recursive=true`.
+- Pull shared scope via manage-files: `manage-files action="pull-shared" mode="pull" path="/K1" newPath="/K1" recursive=true`.
+- Push local changes via manage-files: `manage-files action="push-shared" mode="push" path="/K1" recursive=true`.
 - Plan bidirectional sync via manage-files: `manage-files action="sync-shared" mode="bidirectional" path="/K1" dryRun=true`.
 ### `manage-function-tags`
 
@@ -1227,8 +1223,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `action` (string, required): Action (`rename`, `setPrototype`, `setVarType`, `create`).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, required): Mode (`rename`, `setPrototype`, `setVarType`, `create`).
+  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `address` (string, optional): Function address.
   - Synonyms: `address`, `addr`, `startAddress`, `targetAddress`, `location`, `offsetAddress`, `addressValue`, `memAddress`, `va`.
 - `functionIdentifier` (string, optional): Identifier.
@@ -1277,7 +1273,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Synonyms**: `rename-function`, `rename-function-by-address`, `set-function-prototype`, `set-local-variable-type`, `rename-variable`, `manage-function`, `tool_manage_function`, `manage_function_tool`, `cmd_manage_function`, `run_manage_function`, `do_manage_function`, `api_manage_function`, `mcp_manage_function`, `ghidra_manage_function`, `agentdecompile_manage_function`, `change-variable-datatypes`, `create-function`, `rename-variables`, `rename_function`, `rename_function_by_address`, `set_function_prototype`, `set_local_variable_type`, `rename_variable`
 
 **Examples**:
-- Rename function: `manage-function programPath="/bin.exe" action="rename" functionIdentifier="0x401000" newName="main"`.
+- Rename function: `manage-function programPath="/bin.exe" mode="rename" functionIdentifier="0x401000" newName="main"`.
 
 ### `manage-strings`
 
@@ -1321,8 +1317,8 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `action` (string, required): Action (`create`, `apply`, `list`).
-  - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, required): Mode (`create`, `apply`, `list`).
+  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `cDefinition` (string, optional): C struct definition.
   - Synonyms: `cDefinition`, `cd`.
 - `headerContent` (string, optional): Header content.
@@ -1387,7 +1383,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Synonyms**: `manage-structures`, `tool_manage_structures`, `manage_structures_tool`, `cmd_manage_structures`, `run_manage_structures`, `do_manage_structures`, `api_manage_structures`, `mcp_manage_structures`, `ghidra_manage_structures`, `agentdecompile_manage_structures`, `manage_structures_command`, `manage_structures_action`, `manage_structures_op`, `manage_structures_task`, `execute_manage_structures`, `add-structure-field`, `apply-structure`, `create-structure`, `delete-structure`, `get-structure-info`, `list-structures`, `modify-structure-field`, `modify-structure-from-c`, `parse-c-header`, `parse-c-structure`, `validate-c-structure`
 
 **Examples**:
-- Create struct: `manage-structures programPath="/bin.exe" action="create" cDefinition="struct MyStruct { int x; char y; };"`.
+- Create struct: `manage-structures programPath="/bin.exe" mode="create" cDefinition="struct MyStruct { int x; char y; };"`.
 ### `manage-symbols`
 
 **Description**: Manages symbols, including listing classes/namespaces/imports/exports, renaming, creating labels, and demangling. This tool groups by library, filters defaults, and supports pagination for large symbol tables.
