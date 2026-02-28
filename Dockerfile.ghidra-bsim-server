@@ -41,6 +41,7 @@ RUN set -eux; \
         jq \
         python3 \
         py3-pip \
+        py3-packaging \
         python3-dev \
         perl \
     ; \
@@ -131,6 +132,7 @@ RUN set -eux; \
         openjdk21 \
         bash \
         gcompat \
+        py3-packaging \
         libstdc++ \
     ; \
     addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
