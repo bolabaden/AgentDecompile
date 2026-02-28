@@ -121,13 +121,13 @@ jobs:
             runner: ubuntu-24.04-arm
           # MCP-only image (Dockerfile)
           - image_key: mcp
-            image_name: agentdecompile
+            image_name: agentdecompile-mcp
             dockerfile: ./Dockerfile
             platform: linux/amd64
             arch: amd64
             runner: ubuntu-latest
           - image_key: mcp
-            image_name: agentdecompile
+            image_name: agentdecompile-mcp
             dockerfile: ./Dockerfile
             platform: linux/arm64
             arch: arm64
@@ -237,7 +237,7 @@ jobs:
           - image_key: aio
             image_name: agentdecompile-aio
           - image_key: mcp
-            image_name: agentdecompile
+            image_name: agentdecompile-mcp
     steps:
       - name: "Set up Docker Buildx"
         uses: docker/setup-buildx-action@v3
