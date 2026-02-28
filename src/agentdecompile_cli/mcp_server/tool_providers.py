@@ -26,7 +26,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOL_PARAMS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
+from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import ProgramInfo
@@ -48,93 +48,93 @@ n = normalize_identifier  # short alias used throughout providers
 # Used when a TOOL_PARAMS entry doesn't match any provider property.
 _INT_FRAGMENTS = frozenset(
     {
-        "limit",
-        "offset",
+        "batchsize",
+        "bottomlayers",
+        "callers",
+        "condensethreshold",
         "count",
-        "index",
-        "results",
-        "length",
-        "size",
         "depth",
         "entries",
-        "callers",
-        "width",
         "height",
-        "max",
-        "min",
-        "referencecount",
-        "maxcount",
-        "maxresults",
-        "startindex",
-        "maxdepth",
-        "maxcallers",
-        "maxentries",
-        "topn",
-        "maxfunctions",
-        "batchsize",
-        "maxinstructions",
+        "index",
+        "length",
+        "limit",
         "linenumber",
+        "max",
+        "maxcallers",
+        "maxcount",
+        "maxdepth",
+        "maxentries",
+        "maxfunctions",
+        "maxinstructions",
         "maxreferencers",
+        "maxresults",
         "maxruntime",
-        "condensethreshold",
-        "toplayers",
-        "bottomlayers",
-        "propagatemaxcandidates",
-        "propagatemaxinstructions",
-        "minvalue",
         "maxvalue",
-        "value",
-        "serverport",
+        "min",
         "minreferencecount",
         "minsimilarity",
+        "minvalue",
+        "offset",
+        "propagatemaxcandidates",
+        "propagatemaxinstructions",
+        "referencecount",
+        "results",
+        "serverport",
+        "size",
+        "startindex",
+        "toplayers",
+        "topn",
+        "value",
+        "width",
     },
 )
 _BOOL_FRAGMENTS = frozenset(
     {
-        "include",
-        "recursive",
-        "verbose",
-        "packed",
-        "force",
-        "clearexisting",
-        "casesensitive",
-        "demangleall",
-        "groupbylibrary",
-        "includeexternal",
-        "filterdefaultnames",
-        "includesubcategories",
-        "includebuiltin",
-        "includerefs",
-        "overridemaxfunctionslimit",
-        "includereferencingfunctions",
-        "includerefcontext",
-        "includedatarefs",
-        "includecallers",
-        "includecallees",
-        "includecomments",
-        "includeincomingreferences",
-        "includereferencecontext",
-        "includecallcontext",
-        "createifnotexists",
-        "propagate",
-        "propagatenames",
-        "propagatetags",
-        "propagatecomments",
-        "untagged",
-        "hastags",
-        "openallprograms",
         "analyzeafterimport",
+        "casesensitive",
+        "clearexisting",
+        "createifnotexists",
+        "demangleall",
         "enableversioncontrol",
         "exclusive",
-        "removeall",
-        "includesmallvalues",
+        "filterdefaultnames",
+        "force",
+        "groupbylibrary",
+        "hastags",
+        "include",
+        "includebuiltin",
+        "includecallcontext",
+        "includecallees",
+        "includecallers",
+        "includecomments",
+        "includedatarefs",
+        "includeexternal",
+        "includeincomingreferences",
         "includeparameters",
+        "includerefcontext",
+        "includereferencecontext",
+        "includereferencingfunctions",
+        "includerefs",
+        "includesmallvalues",
+        "includesubcategories",
         "includevariables",
-        "stripleadingpath",
-        "stripallcontainerpath",
-        "mirrorfs",
-        "setasprimary",
         "keepcheckedout",
+        "mirrorfs",
+        "openallprograms",
+        "overridemaxfunctionslimit",
+        "packed",
+        "propagate",
+        "propagatecomments",
+        "propagatenames",
+        "propagatetags",
+        "recursive",
+        "removeall",
+        "setasprimary",
+        "stripallcontainerpath",
+        "stripleadingpath",
+        "untagged",
+        "verbose",
     },
 )
 
@@ -148,10 +148,26 @@ _BOOL_PREFIX_EXCEPTIONS = frozenset(
 # Params that should be arrays, not strings.
 _ARRAY_PARAMS = frozenset(
     {
-        "propagateprogrampaths",
         "functionaddresses",
         "identifiers",
+        "propagateprogrampaths",
         "tags",
+    },
+)
+
+_SELECTOR_PARAM_ALIASES = frozenset(
+    {
+        "mode",
+        "action",
+        "operation",
+        "command",
+        "op",
+        "task",
+        "intent",
+        "verb",
+        "actiontype",
+        "method",
+        "type",
     },
 )
 
@@ -509,7 +525,7 @@ class ToolProviderManager:
 
         advertised_tools: list[types.Tool] = []
         for canonical_name in ADVERTISED_TOOLS:
-            canonical_params = TOOL_PARAMS.get(canonical_name, [])
+            canonical_params = ADVERTISED_TOOL_PARAMS.get(canonical_name, [])
 
             normalized_name = n(canonical_name)
             provider_tool = by_norm.get(normalized_name)
@@ -526,13 +542,24 @@ class ToolProviderManager:
             for param in canonical_params:
                 snake_param = to_snake_case(param)
                 normalized_param = n(param)
-                advertised_properties[snake_param] = props_by_norm.get(
-                    normalized_param,
-                    _infer_param_schema(param),
-                )
+                provider_param_schema = props_by_norm.get(normalized_param)
+                if provider_param_schema is None and normalized_param in _SELECTOR_PARAM_ALIASES:
+                    for selector_alias in _SELECTOR_PARAM_ALIASES:
+                        provider_param_schema = props_by_norm.get(selector_alias)
+                        if provider_param_schema is not None:
+                            break
+
+                advertised_properties[snake_param] = provider_param_schema or _infer_param_schema(param)
 
             required_norm = {n(str(item)) for item in required}
-            advertised_required = [to_snake_case(param) for param in canonical_params if n(param) in required_norm]
+            advertised_required: list[str] = []
+            for param in canonical_params:
+                normalized_param = n(param)
+                is_required = normalized_param in required_norm
+                if not is_required and normalized_param == "mode":
+                    is_required = any(selector_alias in required_norm for selector_alias in _SELECTOR_PARAM_ALIASES)
+                if is_required:
+                    advertised_required.append(to_snake_case(param))
 
             advertised_tools.append(
                 types.Tool(

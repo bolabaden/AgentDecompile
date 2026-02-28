@@ -97,7 +97,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._require_str(args, "action", "mode", name="action")
+        action = self._require_str(args, "mode", "action", name="mode")
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "name", "addr", "symbol")
         program = self.program_info.program
 
@@ -195,7 +195,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "action", "mode", default="list")
+        action = self._get_str(args, "mode", "action", default="list")
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier")
         tag_name = self._get_str(args, "tag", "tagname", "tags", "name")
         program = self.program_info.program
