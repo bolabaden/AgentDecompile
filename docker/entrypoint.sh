@@ -18,9 +18,34 @@ GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
 GHIDRA_IP="${GHIDRA_IP:-}"
 export GHIDRA_HOME
 
+if [[ -z "${GHIDRA_IP}" ]]; then
+	GHIDRA_IP="$({
+		python3 - <<'PY'
+import socket
+import urllib.request
+
+for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
+	try:
+		with urllib.request.urlopen(url, timeout=2.5) as response:
+			value = response.read().decode().strip()
+			if value:
+				print(value)
+				break
+	except Exception:
+		pass
+else:
+	try:
+		print(socket.gethostbyname(socket.gethostname()))
+	except Exception:
+		pass
+PY
+	} | tr -d '\r')"
+fi
+
 mkdir -p "${PROJECT_DIR}" /work "${GHIDRA_REPOS_DIR}"
 
 if [[ -n "${GHIDRA_IP}" ]]; then
+	echo "[supervisor] Using GHIDRA_IP=${GHIDRA_IP} for repository server remote address"
 	SERVER_CONF="${GHIDRA_HOME}/server/server.conf"
 	if [[ -f "${SERVER_CONF}" ]]; then
 		sed -i 's|^wrapper.app.parameter.1=.*|wrapper.app.parameter.1=-a0|' "${SERVER_CONF}"
