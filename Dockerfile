@@ -54,6 +54,7 @@ RUN \
     jq \
     python3 \
     py3-pip \
+    py3-packaging \
     python3-dev \
     git \
     gradle \
@@ -162,6 +163,7 @@ RUN \
     bash \
     gcompat \
     python3 \
+    py3-packaging \
     openssl \
     libstdc++ \
     musl-locales \
