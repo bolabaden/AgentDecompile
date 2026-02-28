@@ -17,6 +17,8 @@ ENV GHIDRA_OWNER=${GHIDRA_OWNER}
 ARG GHIDRA_REPO="ghidra"
 ENV GHIDRA_REPO=${GHIDRA_REPO}
 ENV GHIDRA_GITHUB_API="https://api.github.com/repos/${GHIDRA_OWNER}/${GHIDRA_REPO}"
+ARG TARGETARCH
+ENV TARGETARCH=${TARGETARCH}
 
 ARG GHIDRA_USER="ghidra"
 ENV GHIDRA_USER=${GHIDRA_USER}
@@ -65,6 +67,37 @@ RUN set -eux; \
 RUN set -eux; \
     apk add --no-cache --virtual .build-tools g++ gcc musl-dev make bison flex zlib-dev readline-dev perl python3-dev; \
     ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
+    BSIM_OS_ROOT="${GHIDRA_HOME}/Ghidra/Features/BSim/build/os"; \
+    case "${TARGETARCH:-}" in \
+        amd64) EXPECTED_OSDIR="linux_x86_64" ;; \
+        arm64) EXPECTED_OSDIR="linux_arm_64" ;; \
+        *) \
+            ARCH="$(uname -m)"; \
+            case "${ARCH}" in \
+                x86_64) EXPECTED_OSDIR="linux_x86_64" ;; \
+                aarch64) EXPECTED_OSDIR="linux_arm_64" ;; \
+                *) EXPECTED_OSDIR="linux_${ARCH}" ;; \
+            esac; \
+            ;; \
+    esac; \
+    EXPECTED_PG_BIN="${BSIM_OS_ROOT}/${EXPECTED_OSDIR}/postgresql/bin"; \
+    FOUND_PG_BIN="$(find "${BSIM_OS_ROOT}" -maxdepth 4 -type f -name pg_ctl -path '*/postgresql/bin/pg_ctl' | head -n 1 || true)"; \
+    if [ -z "${FOUND_PG_BIN}" ]; then \
+        echo "ERROR: make-postgres.sh did not produce PostgreSQL binaries under ${BSIM_OS_ROOT}"; \
+        exit 1; \
+    fi; \
+    FOUND_PG_DIR="$(dirname "${FOUND_PG_BIN}")"; \
+    FOUND_OSDIR="$(basename "$(dirname "$(dirname "${FOUND_PG_DIR}")")")"; \
+    if [ ! -d "${EXPECTED_PG_BIN}" ] || [ ! -x "${EXPECTED_PG_BIN}/pg_ctl" ]; then \
+        mkdir -p "${BSIM_OS_ROOT}"; \
+        if [ ! -e "${BSIM_OS_ROOT}/${EXPECTED_OSDIR}" ]; then \
+            ln -s "${BSIM_OS_ROOT}/${FOUND_OSDIR}" "${BSIM_OS_ROOT}/${EXPECTED_OSDIR}"; \
+        fi; \
+    fi; \
+    if [ ! -d "${EXPECTED_PG_BIN}" ] || [ ! -x "${EXPECTED_PG_BIN}/pg_ctl" ]; then \
+        echo "ERROR: PostgreSQL binaries missing for expected path ${EXPECTED_PG_BIN}"; \
+        exit 1; \
+    fi; \
     apk del .build-tools; \
     mkdir -p ${GHIDRA_HOME}/bsim_datadir
 
