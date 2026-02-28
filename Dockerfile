@@ -119,10 +119,9 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_V
 RUN set -eux; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
-    /src/agentdecompile \
+    /src/agentdecompile
 
-
-    FROM alpine:latest AS runtime
+FROM alpine:latest AS runtime
 
 # --- Runtime env/args ---
 ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
