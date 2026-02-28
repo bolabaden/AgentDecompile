@@ -22,7 +22,6 @@ all anyio cancel-scope lifetime issues.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import importlib.util
 import json
 import sys
@@ -55,6 +54,7 @@ from mcp.types import (
     LoggingCapability,
     ServerCapabilities,
     TextContent,
+    Tool,
 )
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
@@ -72,7 +72,6 @@ if TYPE_CHECKING:
         CallToolResult,
         Prompt,
         Resource,
-        Tool,
     )
     from pydantic import AnyUrl
 
@@ -129,6 +128,162 @@ class NotFoundError(ClientError):
 
 
 # ---------------------------------------------------------------------------
+# RawMcpHttpBackend – plain httpx JSON-RPC client (no anyio / no MCP SDK client)
+# ---------------------------------------------------------------------------
+
+MCP_PROTOCOL_VERSION = "2025-03-26"
+
+# Timeout for initial transport connect
+CONNECT_TIMEOUT = 10.0
+# Timeout for backend operations (tool calls, list_resources, etc.)
+BACKEND_OP_TIMEOUT = 120.0
+
+
+class RawMcpHttpBackend:
+    """Speaks the MCP Streamable-HTTP transport using plain httpx.
+
+    This intentionally avoids ``streamable_http_client`` and ``ClientSession``
+    which rely on anyio task groups.  Instead it makes ordinary HTTP POST
+    requests, parses JSON or SSE responses, and tracks ``Mcp-Session-Id``.
+
+    Safe to call from **any** asyncio task — no anyio cancel scopes are created.
+    """
+
+    def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT):
+        self._url = url if url.endswith("/") else f"{url}/"
+        self._session_id: str | None = None
+        self._request_counter = 0
+        self._initialized = False
+        self._client = AsyncClient(
+            timeout=Timeout(op_timeout, connect=connect_timeout),
+            follow_redirects=True,
+        )
+
+    # -- helpers -------------------------------------------------------------
+
+    def _next_id(self) -> int:
+        self._request_counter += 1
+        return self._request_counter
+
+    def _headers(self) -> dict[str, str]:
+        h: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._session_id:
+            h["Mcp-Session-Id"] = self._session_id
+        return h
+
+    @staticmethod
+    def _parse_sse_data(text: str) -> dict[str, Any] | None:
+        """Extract the last ``data:`` payload from an SSE stream.
+
+        MCP Streamable HTTP may return multiple SSE events; the final one
+        with ``"result"`` or ``"error"`` is the JSON-RPC response.
+        """
+        last_payload: dict[str, Any] | None = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("data:"):
+                raw = stripped[len("data:"):].strip()
+                if raw:
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            last_payload = parsed
+                    except json.JSONDecodeError:
+                        continue
+        return last_payload
+
+    async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST a JSON-RPC envelope and return the parsed response dict."""
+        resp = await self._client.post(self._url, json=body, headers=self._headers())
+
+        # Capture session id.
+        sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+        if sid:
+            self._session_id = sid
+
+        resp.raise_for_status()
+
+        ct = (resp.headers.get("content-type") or "").lower()
+        if "text/event-stream" in ct:
+            parsed = self._parse_sse_data(resp.text)
+            if parsed is not None:
+                return parsed
+            # Fallback: try parsing whole body as JSON.
+            try:
+                return resp.json()  # type: ignore[return-value]
+            except Exception:
+                return {"error": {"code": -32600, "message": f"Unparseable SSE response ({len(resp.text)} bytes)"}}
+        return resp.json()  # type: ignore[return-value]
+
+    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        """Send a JSON-RPC notification (no id, no response expected)."""
+        body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params:
+            body["params"] = params
+        try:
+            await self._client.post(self._url, json=body, headers=self._headers())
+        except Exception:
+            pass  # notifications are fire-and-forget
+
+    async def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Send a JSON-RPC request and return the ``result`` dict."""
+        rid = self._next_id()
+        body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "id": rid}
+        if params is not None:
+            body["params"] = params
+        response = await self._post(body)
+
+        if "error" in response:
+            err = response["error"]
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            raise ClientError(f"JSON-RPC error: {msg}")
+        return response.get("result", response)
+
+    # -- public API ----------------------------------------------------------
+
+    async def initialize(self) -> dict[str, Any]:
+        """Send ``initialize`` + ``notifications/initialized``."""
+        result = await self._request("initialize", {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "AgentDecompile-Bridge", "version": "1.0.0"},
+        })
+        await self._notify("notifications/initialized")
+        self._initialized = True
+        return result
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Return the raw tool list from ``tools/list``."""
+        result = await self._request("tools/list")
+        return result.get("tools", []) if isinstance(result, dict) else []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool and return the raw result dict."""
+        return await self._request("tools/call", {"name": name, "arguments": arguments or {}})
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        result = await self._request("resources/list")
+        return result.get("resources", []) if isinstance(result, dict) else []
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        return await self._request("resources/read", {"uri": uri})
+
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        result = await self._request("prompts/list")
+        return result.get("prompts", []) if isinstance(result, dict) else []
+
+    async def close(self) -> None:
+        """Close the underlying httpx client."""
+        try:
+            await self._client.aclose()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # AgentDecompileMcpClient  (formerly client.py)
 # ---------------------------------------------------------------------------
 
@@ -136,8 +291,9 @@ class NotFoundError(ClientError):
 class AgentDecompileMcpClient:
     """MCP client for the AgentDecompile server.
 
-    Connects via Streamable HTTP and provides async methods for
-    list_tools, call_tool, list_resources, read_resource, list_prompts.
+    Uses ``RawMcpHttpBackend`` (plain httpx) instead of the MCP SDK's
+    ``streamable_http_client`` / ``ClientSession`` to avoid anyio cancel-scope
+    crashes.
 
     Usage::
 
@@ -166,8 +322,7 @@ class AgentDecompileMcpClient:
             if not base.endswith("/mcp/message"):
                 base = f"{base.rstrip('/')}/mcp/message"
             self._url = base
-        self._session: Any = None
-        self._exit_stack: contextlib.AsyncExitStack | None = None
+        self._backend: RawMcpHttpBackend | None = None
         self._connected: bool = False
 
     async def __aenter__(self) -> AgentDecompileMcpClient:
@@ -180,97 +335,42 @@ class AgentDecompileMcpClient:
         await self._close_internal()
 
     async def _connect_internal(self) -> None:
-        """Establish connection to the AgentDecompile MCP server.
-
-        Uses ``contextlib.AsyncExitStack`` to manage the transport and session
-        context managers.  This guarantees that anyio task-groups spawned inside
-        ``streamablehttp_client`` are always cancelled and cleaned up in the
-        *same task* that entered them – avoiding the ``RuntimeError: Attempted
-        to exit cancel scope in a different task`` that occurred when we
-        manually called ``__aenter__``/``__aexit__`` with ``asyncio.wait_for``.
-
-        The ``timeout`` parameter of ``streamablehttp_client`` (passed straight
-        to the underlying ``httpx.AsyncClient``) replaces the old
-        ``asyncio.wait_for`` wrapper so the connection still fails fast when
-        the backend is unreachable.
-        """
-        from mcp.client.session import ClientSession as _ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
-        self._exit_stack = contextlib.AsyncExitStack()
-        await self._exit_stack.__aenter__()
-        request_url = self._url if self._url.endswith("/") else f"{self._url}/"
-
+        """Connect to the backend using plain httpx."""
+        self._backend = RawMcpHttpBackend(self._url)
         try:
-            read, write, _ = await self._exit_stack.enter_async_context(
-                streamablehttp_client(request_url, timeout=5),
-            )
-            self._session = await self._exit_stack.enter_async_context(
-                _ClientSession(read, write),
-            )
-            await self._session.initialize()
+            await self._backend.initialize()
             self._connected = True
-        except BaseException as e:
-            # Deterministically tear down every entered CM so the anyio
-            # task-group and its cancel-scope are exited in the correct task.
-            try:
-                await self._exit_stack.__aexit__(None, None, None)
-            except BaseException:
-                pass  # cleanup errors must not mask the original exception
-            self._exit_stack = None
-            self._session = None
-
-            # Re-raise as ServerNotRunningError for known connectivity issues.
+        except Exception as e:
+            if self._backend:
+                await self._backend.close()
+            self._backend = None
             err = str(e)
             is_conn = isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError)) or any(
-                x in err
-                for x in [
-                    "ConnectError",
-                    "connection",
-                    "ConnectionRefused",
-                    "All connection attempts failed",
-                ]
+                x in err for x in ["ConnectError", "connection", "ConnectionRefused", "ConnectTimeout"]
             )
-            if not is_conn and hasattr(e, "exceptions"):
-                is_conn = any(
-                    isinstance(sub, (ConnectionError, OSError))
-                    or any(
-                        x in str(sub)
-                        for x in [
-                            "ConnectError",
-                            "connection",
-                            "ConnectionRefused",
-                            "All connection attempts failed",
-                        ]
-                    )
-                    for sub in e.exceptions  # type: ignore[union-attr]
-                )
-
             if is_conn:
                 raise ServerNotRunningError(
                     f"Cannot connect to AgentDecompile server at {self._url}\n\n{get_server_start_message()}",
                 ) from e
-
-            if isinstance(e, Exception):
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n{get_server_start_message()}",
-                ) from e
-            raise  # re-raise KeyboardInterrupt / SystemExit as-is
+            raise ServerNotRunningError(
+                f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n{get_server_start_message()}",
+            ) from e
 
     async def _close_internal(self) -> None:
         """Close connection and release resources."""
         self._connected = False
-        self._session = None
-        if self._exit_stack is not None:
-            try:
-                await self._exit_stack.__aexit__(None, None, None)
-            except BaseException:
-                pass
-            self._exit_stack = None
+        if self._backend:
+            await self._backend.close()
+            self._backend = None
 
     def _extract_result(self, result: Any) -> dict[str, Any]:
-        """Extract data from MCP CallToolResult; raise on error or not-found."""
-        result_dict = result.model_dump()
+        """Extract data from raw result dict; raise on error or not-found."""
+        if isinstance(result, dict):
+            result_dict = result
+        elif hasattr(result, "model_dump"):
+            result_dict = result.model_dump()
+        else:
+            result_dict = dict(result) if result else {}
 
         if result_dict.get("isError"):
             content = result_dict.get("content", [])
@@ -304,53 +404,39 @@ class AgentDecompileMcpClient:
 
     async def list_tools(self) -> list[Any]:
         """List tools offered by the server."""
-        if not self._connected or self._session is None:
+        if not self._connected or self._backend is None:
             raise ClientError("Not connected")
-        result = await self._session.list_tools()
-        return list(result.tools) if result and result.tools else []
+        return await self._backend.list_tools()
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Call a tool by name with optional arguments.
-
-        Returns the extracted JSON from the server. The server may return a
-        error result: a dict with success=false and an "error" key; check for that
-        if you need to handle errors programmatically (the CLI exits non-zero on such results).
-        """
-        if not self._connected or self._session is None:
+        """Call a tool by name with optional arguments."""
+        if not self._connected or self._backend is None:
             raise ClientError("Not connected")
-        result = await self._session.call_tool(name, arguments or {})
+        result = await self._backend.call_tool(name, arguments or {})
         return self._extract_result(result)
 
     async def list_resources(self) -> list[Any]:
         """List resources offered by the server."""
-        if not self._connected or self._session is None:
+        if not self._connected or self._backend is None:
             raise ClientError("Not connected")
-        result = await self._session.list_resources()
-        return list(result.resources) if result and result.resources else []
+        return await self._backend.list_resources()
 
     async def read_resource(self, uri: str) -> Any:
         """Read a resource by URI."""
-        if not self._connected or self._session is None:
+        if not self._connected or self._backend is None:
             raise ClientError("Not connected")
-        result = await self._session.read_resource(uri)
-        return result
+        return await self._backend.read_resource(uri)
 
     async def list_prompts(self) -> list[Any]:
         """List prompts offered by the server."""
-        if not self._connected or self._session is None:
+        if not self._connected or self._backend is None:
             raise ClientError("Not connected")
-        result = await self._session.list_prompts()
-        return list(result.prompts) if result and result.prompts else []
+        return await self._backend.list_prompts()
 
 
 # ---------------------------------------------------------------------------
 # Stdio bridge helpers  (formerly stdio_bridge.py)
 # ---------------------------------------------------------------------------
-
-# Timeout for initial transport connect (separate from long-running operation timeouts)
-CONNECT_TIMEOUT = 5.0
-# Timeout for backend operations (tool calls, list_resources, etc.)
-BACKEND_OP_TIMEOUT = 90.0
 
 
 def _is_jsonrpc_request(msg: SessionMessage) -> bool:
@@ -510,15 +596,17 @@ class JsonEnvelopeStream:
 
 
 # ---------------------------------------------------------------------------
-# AgentDecompileStdioBridge  (main bridge class, formerly stdio_bridge.py)
+# AgentDecompileStdioBridge  (main bridge class)
 # ---------------------------------------------------------------------------
 
 
 class AgentDecompileStdioBridge:
     """MCP Server that bridges stdio to AgentDecompile's Python StreamableHTTP endpoint.
 
-    Acts as a transparent proxy - forwards all MCP requests to the Python AgentDecompile
-    backend and returns responses.
+    Uses ``RawMcpHttpBackend`` (plain httpx POST requests) for all backend
+    communication.  This avoids anyio cancel-scope crashes that occur with the
+    MCP SDK's ``streamable_http_client`` / ``ClientSession`` when called from
+    handler tasks spawned by ``Server.run()``.
     """
 
     def __init__(self, backend: int | str):
@@ -534,32 +622,72 @@ class AgentDecompileStdioBridge:
             self.port = None
             self.url = normalize_backend_url(backend)
 
-        self._streamable_http_headers: dict[str, str] | None = None
-
         self.server: Server = Server("AgentDecompile")
-        self._backend_exit_stack: contextlib.AsyncExitStack | None = None
-        self._backend_session: ClientSession | None = None
-        self._backend_connected: bool = False
-        self._reconnect_event: asyncio.Event | None = None
+        self._backend: RawMcpHttpBackend | None = None
+        self._backend_lock = asyncio.Lock()
 
         self._register_handlers()
 
-    def _is_connection_error(self, exc: BaseException) -> bool:
-        """Return True if *exc* indicates a broken/lost backend connection.
+    async def _ensure_backend(self) -> RawMcpHttpBackend:
+        """Return (or lazily create) the backend connection.
 
-        Protocol-level errors (e.g. ``McpError: Method not found``) are **not**
-        connection errors.  Only transport failures that make the session
-        unusable should return ``True``.
+        Uses an ``asyncio.Lock`` so only one handler initializes the backend.
+        Subsequent callers get the cached instance.
         """
+        if self._backend is not None and self._backend._initialized:
+            return self._backend
+
+        async with self._backend_lock:
+            # Double-check after acquiring lock.
+            if self._backend is not None and self._backend._initialized:
+                return self._backend
+
+            # Close stale client if any.
+            if self._backend is not None:
+                await self._backend.close()
+
+            backend = RawMcpHttpBackend(self.url)
+            await backend.initialize()
+            self._backend = backend
+            sys.stderr.write(f"Backend session established to {self.url}\n")
+            return backend
+
+    async def _backend_request(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Convenience: ensure backend, call *method*, retry once on connection errors."""
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                backend = await self._ensure_backend()
+                func = getattr(backend, method)
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0 and self._is_connection_error(exc):
+                    sys.stderr.write(
+                        f"Backend connection error on {method}, reconnecting... "
+                        f"({type(exc).__name__}: {exc})\n",
+                    )
+                    # Invalidate the session so _ensure_backend creates a fresh one.
+                    if self._backend is not None:
+                        await self._backend.close()
+                    self._backend = None
+                    continue
+                break
+        raise last_exc  # type: ignore[misc]
+
+    @staticmethod
+    def _is_connection_error(exc: BaseException) -> bool:
+        """Return True if *exc* is a transport/connection failure."""
         if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
             return True
         if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
             return True
         err_str = str(exc)
         return any(
-            keyword in err_str
-            for keyword in (
+            kw in err_str
+            for kw in (
                 "ConnectError",
+                "ConnectTimeout",
                 "ConnectionRefused",
                 "BrokenResource",
                 "ClosedResource",
@@ -569,97 +697,10 @@ class AgentDecompileStdioBridge:
             )
         )
 
-    async def _reset_backend_session(self) -> None:
-        """Close and clear any existing backend session state."""
-        self._backend_connected = False
-        self._backend_session = None
-        if self._backend_exit_stack is not None:
-            try:
-                await self._backend_exit_stack.__aexit__(None, None, None)
-            except Exception:
-                pass
-            self._backend_exit_stack = None
-
-    async def _connect_backend(self) -> ClientSession:
-        """Create the backend MCP session (transport + initialize).
-
-        IMPORTANT: this must be called from the **main bridge task** (the one
-        running ``run()``), never from a handler task.  ``streamable_http_client``
-        and ``ClientSession`` push anyio cancel scopes onto the *calling* task's
-        scope stack; if those scopes live in a handler task they prevent the
-        handler's ``responder`` cancel scope from exiting cleanly, crashing the
-        bridge with ``RuntimeError: Attempted to exit a cancel scope …``.
-
-        The ``run()`` method calls this once eagerly before entering
-        ``self.server.run()``.  If a handler detects a dead session it sets
-        ``self._reconnect_event`` and the reconnection loop in ``run()``
-        calls this again — still in the main task.
-        """
-        await self._reset_backend_session()
-
-        exit_stack = contextlib.AsyncExitStack()
-        await exit_stack.__aenter__()
-
-        client = AsyncClient(
-            headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
-            timeout=Timeout(BACKEND_OP_TIMEOUT, connect=CONNECT_TIMEOUT),
-        )
-        request_url = self.url if self.url.endswith("/") else f"{self.url}/"
-        read_stream, write_stream, _ = await exit_stack.enter_async_context(
-            streamable_http_client(
-                url=request_url,
-                http_client=client,
-            ),
-        )
-
-        json_stream = JsonEnvelopeStream(read_stream)
-        session = await exit_stack.enter_async_context(ClientSession(json_stream, write_stream))
-        await session.initialize()
-
-        try:
-            await session.list_tools()
-        except Exception:
-            pass  # non-critical: tool calls still work without the cache
-
-        self._backend_exit_stack = exit_stack
-        self._backend_session = session
-        self._backend_connected = True
-        sys.stderr.write(f"Backend session established to {self.url}\n")
-        return session
-
-    def _get_backend_session(self) -> ClientSession:
-        """Return the live backend session or raise.
-
-        Handlers call this to obtain the session created by ``run()``.
-        If the session is dead they should call ``_request_reconnect()``
-        and raise so the retry loop can reconnect in the main task.
-        """
-        if self._backend_connected and self._backend_session is not None:
-            return self._backend_session
-        raise ServerNotRunningError("Backend session not available")
-
-    def _request_reconnect(self) -> None:
-        """Signal the main task to reconnect the backend session."""
-        self._backend_connected = False
-        self._backend_session = None
-        if self._reconnect_event is not None:
-            self._reconnect_event.set()
-
-    @contextlib.asynccontextmanager
-    async def _with_backend_session(self, _op_name: str):
-        """Context manager over the persistent backend MCP session.
-
-        Reuses the session created eagerly by ``run()``.  On connection-level
-        failures it marks the session as dead and signals the main task to
-        reconnect.
-        """
-        session = self._get_backend_session()
-        try:
-            yield session
-        except Exception as exc:
-            if self._is_connection_error(exc):
-                self._request_reconnect()
-            raise
+    @staticmethod
+    def _raw_tool_to_mcp(raw: dict[str, Any]) -> Tool:
+        """Convert a raw tool dict from the backend to an MCP ``Tool`` object."""
+        return Tool.model_validate(raw)
 
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
@@ -667,49 +708,24 @@ class AgentDecompileStdioBridge:
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:  # type: ignore[name-defined]
             try:
-                async with self._with_backend_session("list_tools") as session:
-                    result = await session.list_tools()
-                    if not result:
-                        return []
+                raw_tools: list[dict[str, Any]] = await self._backend_request("list_tools")
+                advertised: list[Tool] = []
+                for raw in raw_tools:
+                    try:
+                        tool = self._raw_tool_to_mcp(raw)
+                    except Exception:
+                        continue  # skip non-parseable tools
 
-                    advertised_tools: list[Tool] = []
-                    for tool in result.tools:
-                        name = getattr(tool, "name", None)
-                        if not isinstance(name, str):
-                            advertised_tools.append(tool)
-                            continue
-
-                        resolved_name = resolve_tool_name(name)
-                        canonical_name = resolved_name if resolved_name is not None else name
-                        if canonical_name == name:
-                            advertised_tools.append(tool)
-                            continue
-
-                        copied_tool = None
-
-                        model_copy = getattr(tool, "model_copy", None)
-                        if callable(model_copy):
-                            try:
-                                copied_tool = model_copy(update={"name": canonical_name})
-                            except Exception:
-                                copied_tool = None
-
-                        if copied_tool is None:
-                            copy_method = getattr(tool, "copy", None)
-                            if callable(copy_method):
-                                try:
-                                    copied_tool = copy_method(update={"name": canonical_name})
-                                except Exception:
-                                    copied_tool = None
-
-                        if copied_tool is None and isinstance(tool, dict):
-                            copied_tool = {**tool, "name": canonical_name}
-
-                        advertised_tools.append(copied_tool if copied_tool is not None else tool)
-
-                    return advertised_tools
-            except RuntimeError:
-                return []
+                    # Normalize name via registry.
+                    resolved = resolve_tool_name(tool.name)
+                    canonical = resolved if resolved is not None else tool.name
+                    if canonical != tool.name:
+                        try:
+                            tool = tool.model_copy(update={"name": canonical})
+                        except Exception:
+                            pass
+                    advertised.append(tool)
+                return advertised
             except Exception as e:
                 sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
                 return []
@@ -723,57 +739,31 @@ class AgentDecompileStdioBridge:
             if backend_name is None:
                 backend_name = name
 
-            # Retry once on stale/broken backend session.  The first attempt
-            # detects the dead session and signals the main task to reconnect;
-            # we wait briefly then retry with the fresh session.
-            last_exc: Exception | None = None
-            for _attempt in range(2):
-                try:
-                    async with self._with_backend_session("call_tool") as session:
-                        result = await session.call_tool(backend_name, arguments)
-                        if result is None:
-                            return CallToolResult(
-                                content=[TextContent(type="text", text=f"Error: Tool '{name}' returned no result")],
-                                isError=True,
-                            )
-                        return result
-                except Exception as exc:
-                    last_exc = exc
-                    if _attempt == 0 and self._is_connection_error(exc):
-                        sys.stderr.write(
-                            f"Backend session stale, requesting reconnect... ({type(exc).__name__})\n",
-                        )
-                        self._request_reconnect()
-                        # Wait for the main task's reconnect loop to
-                        # re-establish the session.
-                        await asyncio.sleep(2.0)
-                        if self._backend_connected:
-                            continue
-                    break
-
-            # Exhausted retries.
-            exc = last_exc
-            if exc is None:
-                exc = RuntimeError("Unexpected retry exhaustion")
-            if isinstance(exc, RuntimeError):
+            try:
+                raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, arguments)
+                # raw_result is the JSON-RPC "result" value which should be
+                # a CallToolResult-shaped dict: {content: [...], isError: bool}
+                return CallToolResult.model_validate(raw_result)
+            except ClientError as exc:
+                sys.stderr.write(f"ERROR: call_tool {name}: {exc}\n")
                 return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: Backend connection lost: {exc}")],
+                    content=[TextContent(type="text", text=f"Error: {exc}")],
                     isError=True,
                 )
-            sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
-            return CallToolResult(
-                content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
-                isError=True,
-            )
+            except Exception as exc:
+                sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
+                    isError=True,
+                )
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]
             try:
-                async with self._with_backend_session("list_resources") as session:
-                    result = await session.list_resources()
-                    return [] if result is None else result.resources
-            except RuntimeError:
-                return []
+                from mcp.types import Resource as _Resource
+
+                raw: list[dict[str, Any]] = await self._backend_request("list_resources")
+                return [_Resource.model_validate(r) for r in raw]
             except Exception as e:
                 sys.stderr.write(f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n")
                 return []
@@ -783,17 +773,12 @@ class AgentDecompileStdioBridge:
             uri: AnyUrl,  # type: ignore[name-defined]
         ) -> str | bytes | Iterable[ReadResourceContents]:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
             try:
-                async with self._with_backend_session("read_resource") as session:
-                    result = await session.read_resource(uri)
-                    if result is None or not result.contents:
-                        return ""
-                    content = result.contents[0]
-                    if hasattr(content, "text") and content.text:  # pyright: ignore[reportAttributeAccessIssue]
-                        return content.text  # pyright: ignore[reportAttributeAccessIssue]
-                    if hasattr(content, "blob") and content.blob:  # pyright: ignore[reportAttributeAccessIssue]
-                        return content.blob  # pyright: ignore[reportAttributeAccessIssue]
-                    return ""
-            except RuntimeError:
+                raw: dict[str, Any] = await self._backend_request("read_resource", str(uri))
+                contents = raw.get("contents", [])
+                if contents:
+                    c0 = contents[0] if isinstance(contents, list) else contents
+                    if isinstance(c0, dict):
+                        return c0.get("text", c0.get("blob", ""))
                 return ""
             except Exception as e:
                 sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
@@ -802,11 +787,10 @@ class AgentDecompileStdioBridge:
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
             try:
-                async with self._with_backend_session("list_prompts") as session:
-                    result = await session.list_prompts()
-                    return [] if result is None else result.prompts
-            except RuntimeError:
-                return []
+                from mcp.types import Prompt as _Prompt
+
+                raw: list[dict[str, Any]] = await self._backend_request("list_prompts")
+                return [_Prompt.model_validate(p) for p in raw]
             except Exception as e:
                 sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
                 return []
@@ -830,44 +814,12 @@ class AgentDecompileStdioBridge:
     async def run(self):
         """Run the stdio bridge.
 
-        Connects to the AgentDecompile backend **eagerly** in the main task
-        before starting the MCP server.  This is critical because
-        ``streamable_http_client`` and ``ClientSession`` push anyio cancel
-        scopes onto the *calling* task's scope stack.  Running them here
-        (the main task) keeps those scopes out of handler tasks, preventing
-        ``RuntimeError: Attempted to exit a cancel scope …`` crashes.
-
-        If the backend session dies mid-flight, handlers signal via
-        ``_reconnect_event`` and a background reconnection loop in the
-        main task re-establishes the session.
+        The backend connection is established lazily on the first handler
+        request.  All backend communication uses ``RawMcpHttpBackend`` (plain
+        httpx POST) so no anyio cancel scopes are involved.
         """
         sys.stderr.write("Bridge ready - stdio transport active\n")
 
-        # Eagerly connect to the backend in the main task.
-        try:
-            await self._connect_backend()
-        except Exception as exc:
-            sys.stderr.write(
-                f"WARNING: eager backend connect failed ({type(exc).__name__}: {exc}), "
-                "will retry on first request\n",
-            )
-
-        self._reconnect_event = asyncio.Event()
-
-        async def _reconnect_loop() -> None:
-            """Wait for handlers to signal a dead session, then reconnect."""
-            while True:
-                assert self._reconnect_event is not None
-                await self._reconnect_event.wait()
-                self._reconnect_event.clear()
-                try:
-                    await self._connect_backend()
-                except Exception as exc:
-                    sys.stderr.write(
-                        f"Reconnect failed: {type(exc).__name__}: {exc}\n",
-                    )
-
-        reconnect_task = asyncio.create_task(_reconnect_loop())
         try:
             async with stdio_server() as (stdio_read, stdio_write):
                 await self.server.run(
@@ -882,8 +834,8 @@ class AgentDecompileStdioBridge:
         except Exception:
             raise
         finally:
-            reconnect_task.cancel()
-            await self._reset_backend_session()
+            if self._backend:
+                await self._backend.close()
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
@@ -891,4 +843,5 @@ class AgentDecompileStdioBridge:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._reset_backend_session())
+        if self._backend:
+            loop.create_task(self._backend.close())
