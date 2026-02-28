@@ -5,6 +5,7 @@ set -euo pipefail
 GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
 # Ghidra server default port (see https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md)
 GHIDRA_SERVER_PORT="${GHIDRA_SERVER_PORT1:-13100}"
+GHIDRA_BSIM_PORT="${GHIDRA_BSIM_PORT:-5432}"
 MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
 VMARG_LIST="${AGENT_DECOMPILE_VMARG_LIST:=${VMARG_LIST:=-Djava.awt.headless=true}}"
 CONFIG_FILE="${AGENT_DECOMPILE_CONFIG_FILE:-}"
@@ -36,6 +37,10 @@ wait_for_ghidra() {
 
 if ! wait_for_ghidra "$GHIDRA_SERVER_PORT" 60 2>/dev/null; then
   echo "WARNING: Ghidra server port $GHIDRA_SERVER_PORT not ready after 60s; starting MCP anyway."
+fi
+
+if ! wait_for_ghidra "$GHIDRA_BSIM_PORT" 60 2>/dev/null; then
+  echo "WARNING: BSim server port $GHIDRA_BSIM_PORT not ready after 60s; starting MCP anyway."
 fi
 
 # Start Python MCP server (streamable-http) from project venv.

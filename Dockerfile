@@ -155,6 +155,7 @@ ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 RUN ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
     anyio \
+    chromadb \
     click \
     fastapi \
     ghidra-stubs \
