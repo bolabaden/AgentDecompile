@@ -4,8 +4,8 @@
 #   PowerShell: $Env:DOCKER_BUILDKIT="1"
 #   Cmd:        set DOCKER_BUILDKIT=1
 #
-# MCP-only image: one container runs only AgentDecompile MCP (8080).
-# For the all-in-one (Ghidra server + BSim + MCP) image, use Docker.aio.
+# AIO image: one container runs Ghidra server (13100,13101,13102), BSim server (5432), and AgentDecompile MCP (8080).
+# PyGhidra headless and Ghidra AnalyzeHeadless: docker exec -it <container> bash, then run there.
 FROM alpine:latest AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
@@ -196,7 +196,9 @@ ARG PGID="1001"
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# MCP-only runtime: Java + Python venv artifacts + shell.
+# Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
+# BSim PostgreSQL is built against LibreSSL in build stage; runtime needs libressl for libssl.so.60/libcrypto.so.57
+#( grep -qE '^[^#].*community' /etc/apk/repositories ) || echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
 RUN \
     set -eux; \
     run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
@@ -207,45 +209,55 @@ RUN \
         openjdk21 \
         bash \
         gcompat \
+        openssl \
+        openssh-client \
+        xhost \
         musl-locales \
-                musl-locales-lang \
+        musl-locales-lang \
+        supervisor \
+        netcat-openbsd \
+        readline \
+        zlib \
+        libressl \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
 WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
+# BSim PostgreSQL was linked against LibreSSL in build stage; copy exact libs so pg_ctl/initdb find libssl.so.60/libcrypto.so.57
+RUN mkdir -p /opt/bsim-libs
+COPY --from=build /usr/lib/libssl.so* /usr/lib/libcrypto.so* /opt/bsim-libs/
 RUN set -eux; \
-    mkdir -p ${GHIDRA_HOME}/docker; \
-    printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'set -euo pipefail' \
-    '' \
-    'ARGS=(' \
-    '    -t streamable-http' \
-    '    --host "${AGENT_DECOMPILE_HOST:-0.0.0.0}"' \
-    '    --port "${AGENT_DECOMPILE_PORT:-8080}"' \
-    ')' \
-    '' \
-    'if [[ -n "${AGENT_DECOMPILE_PROJECT_PATH:-}" ]]; then' \
-    '    ARGS+=(--project-path "${AGENT_DECOMPILE_PROJECT_PATH}")' \
-    'fi' \
-    '' \
-    'if [[ -n "${AGENT_DECOMPILE_CONFIG_FILE:-}" ]]; then' \
-    '    ARGS+=(--config "${AGENT_DECOMPILE_CONFIG_FILE}")' \
-    'fi' \
-    '' \
-    'exec /ghidra/venv/bin/agentdecompile-server "${ARGS[@]}"' \
-    > ${GHIDRA_HOME}/docker/start-mcp.sh; \
-    sed -i 's/\r$//' ${GHIDRA_HOME}/docker/start-mcp.sh; \
-    chmod +x ${GHIDRA_HOME}/docker/start-mcp.sh; \
-    mkdir -p /work /projects; \
-    chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
+    cp -f /opt/bsim-libs/libssl.so.60* /usr/lib/; \
+    cp -f /opt/bsim-libs/libcrypto.so.57* /usr/lib/; \
+    test -f /usr/lib/libssl.so.60; \
+    test -f /usr/lib/libcrypto.so.57
+COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
+COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
+COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/run-bsim.sh ${GHIDRA_HOME}/docker/
+
+RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
+    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
+    && mkdir -p /work /projects \
+    && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
 
 USER ${GHIDRA_USER}
 
 ARG AGENT_DECOMPILE_PORT="8080"
 ENV AGENT_DECOMPILE_PORT=${AGENT_DECOMPILE_PORT}
 EXPOSE ${AGENT_DECOMPILE_PORT}
+ARG GHIDRA_BSIM_PORT="5432"
+ENV GHIDRA_BSIM_PORT=${GHIDRA_BSIM_PORT}
+EXPOSE ${GHIDRA_BSIM_PORT}
+ARG GHIDRA_SERVER_PORT1="13100"
+ENV GHIDRA_SERVER_PORT1=${GHIDRA_SERVER_PORT1}
+EXPOSE ${GHIDRA_SERVER_PORT1}
+ARG GHIDRA_SERVER_PORT2="13101"
+ENV GHIDRA_SERVER_PORT2=${GHIDRA_SERVER_PORT2}
+EXPOSE ${GHIDRA_SERVER_PORT2}
+ARG GHIDRA_SERVER_PORT3="13102"
+ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
+EXPOSE ${GHIDRA_SERVER_PORT3}
 
-ENTRYPOINT ["/bin/bash", "/ghidra/docker/start-mcp.sh"]
+ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]
