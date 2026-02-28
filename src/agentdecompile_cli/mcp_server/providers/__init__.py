@@ -17,6 +17,7 @@ from .import_export import ImportExportToolProvider
 from .dataflow import DataFlowToolProvider
 from .constants import ConstantSearchToolProvider
 from .vtable import VtableToolProvider
+from .script import ScriptToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
 
@@ -35,6 +36,7 @@ __all__ = [
     "ImportExportToolProvider",
     "MemoryToolProvider",
     "ProjectToolProvider",
+    "ScriptToolProvider",
     "StringToolProvider",
     "StructureToolProvider",
     "SuggestionToolProvider",
