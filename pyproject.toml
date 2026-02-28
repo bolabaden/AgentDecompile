@@ -42,7 +42,7 @@ classifiers = [
 
 dependencies = [
     "click>=8.3.1",
-    "fastapi>=0.131.0",
+    "fastapi>=0.134.0",
     "httpx-sse>=0.4.3",
     "httpx>=0.28.1,<1.0",
     "mcp>=1.26.0",
@@ -75,7 +75,7 @@ agentdecompile-server = "agentdecompile_cli.server:main"
 
 [project.optional-dependencies]
 semantic = [
-  "chromadb>=1.5.1",
+  "chromadb>=1.5.2",
 ]
 test = [
     "pytest>=9.0.2",
