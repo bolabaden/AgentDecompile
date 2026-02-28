@@ -35,24 +35,33 @@ Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 
 ### Normalization Contract (CRITICAL)
 
+**Absolute Rule: all tool and argument routing MUST go through the unified normalization pipeline.**
+
+This project intentionally accepts messy client input so humans and agents can use intuitive names without memorizing exact punctuation or casing. We do this to maximize compatibility across MCP clients, CLI usage styles, legacy vendor naming, and ad-hoc agent output. If the alphabetic characters match, we treat it as the same intent. This avoids brittle UX and prevents accidental "unknown tool/arg" failures caused only by separators or case.
+
 **Advertisement Layer (External-Facing)**:
-- **CLI commands/options**: Advertise in `snake_case` (`manage_symbols`, `program_path`)
-- **MCP tool schemas**: Use `snake_case` (`manage_symbols`, `program_path`)
-- **Important**: Normalize and flexibly handle variants like `managesymbols`, `manageSymbols`, `programPath`, etc. - all should work fully.
+- **CLI commands/options**: advertise canonical names in `snake_case` (example: `manage_symbols`, `program_path`).
+- **MCP tool schemas**: advertise canonical names in `snake_case`.
+- **Docs/examples**: may show kebab/snake/camel forms, but canonical display should remain `snake_case`.
 
-**Execution Layer (Internal Matching)**:
-- **Tool name matching**: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
-- **Argument name matching**: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
-- **Normalization**: `normalize_identifier(s)` = `re.sub(r"[^a-z]", "", s.lower().strip())` (alpha-only lowercase)
-- **Examples**:
-  - Tool names: `manage-symbols`, `Manage_Symbols`, `MANAGESYMBOLS`, `@@manage symbols@@` → all resolve to `managesymbols` internally
-  - Arguments: `programPath`, `program_path`, `PROGRAM PATH`, `__program-path__` → all resolve to `programpath` internally
+**Execution Layer (Internal Matching, NON-NEGOTIABLE)**:
+- **Tool names**: accept any case and any symbols/separators.
+- **Argument names**: accept any case and any symbols/separators.
+- **Matching rule**: alphabetic-only, case-insensitive equivalence.
+- **Canonical normalizer**: `normalize_identifier(s) = re.sub(r"[^a-z]", "", s.lower().strip())`.
+- **Interpretation**: strip EVERYTHING except letters, lowercase, then compare.
 
-**Implementation Rules**:
-1. **Single normalization function**: `registry.normalize_identifier()` (aliased as `n()` in tool_providers.py)
-2. **Single advertisement function**: `registry.to_snake_case()` converts any format to snake_case for display
-3. **No hardcoded case matching**: Never check exact strings; always normalize first
-4. **User-friendly**: If it looks like the tool/arg name, accept it
+**Examples (all MUST resolve identically)**:
+- Tool name examples: `manage-symbols`, `Manage_Symbols`, `MANAGESYMBOLS`, `@@manage symbols@@`, `manage symbols!!!` → `managesymbols`.
+- Parameter examples: `programPath`, `program_path`, `PROGRAM PATH`, `__program-path__`, `program.path`, `program/path`, `program:path` → `programpath`.
+
+**Implementation Rules (MANDATORY)**:
+1. **Single normalization function**: use `registry.normalize_identifier()` everywhere (aliased as `n()` in `tool_providers.py`).
+2. **Single dispatch pipeline**: all tool calls must route through unified provider dispatch (`ToolProviderManager.call_tool` / provider `call_tool`), never ad-hoc name matching.
+3. **No bypass matching**: do not add alternate exact-match logic, manual case branches, or punctuation-specific routing.
+4. **Normalize before any comparison**: never compare raw tool/arg names.
+5. **Alias bridging after normalization**: apply `TOOL_PARAM_ALIASES` only on normalized keys.
+6. **User-intent first**: if alphabetic core matches a known tool/arg, accept it.
 
 ## Vendor Source Integration
 
