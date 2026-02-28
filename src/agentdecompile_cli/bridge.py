@@ -573,17 +573,23 @@ class AgentDecompileStdioBridge:
                 pass
             self._backend_exit_stack = None
 
-    async def _create_backend_session(self) -> ClientSession:
-        """Create the backend MCP session (transport + init).
+    async def _connect_backend(self) -> ClientSession:
+        """Create the backend MCP session (transport + initialize).
 
-        This coroutine is always run inside its own ``asyncio.Task`` (via
-        ``_ensure_backend_session``) so that the anyio cancel scopes pushed by
-        ``streamable_http_client`` and ``ClientSession`` live in that task's
-        scope stack — **not** in the calling handler task's stack.  Without
-        this isolation the handler's ``responder`` cancel scope cannot exit
-        cleanly and the bridge crashes with
-        ``RuntimeError: Attempted to exit a cancel scope …``.
+        IMPORTANT: this must be called from the **main bridge task** (the one
+        running ``run()``), never from a handler task.  ``streamable_http_client``
+        and ``ClientSession`` push anyio cancel scopes onto the *calling* task's
+        scope stack; if those scopes live in a handler task they prevent the
+        handler's ``responder`` cancel scope from exiting cleanly, crashing the
+        bridge with ``RuntimeError: Attempted to exit a cancel scope …``.
+
+        The ``run()`` method calls this once eagerly before entering
+        ``self.server.run()``.  If a handler detects a dead session it sets
+        ``self._reconnect_event`` and the reconnection loop in ``run()``
+        calls this again — still in the main task.
         """
+        await self._reset_backend_session()
+
         exit_stack = contextlib.AsyncExitStack()
         await exit_stack.__aenter__()
 
@@ -611,69 +617,41 @@ class AgentDecompileStdioBridge:
         self._backend_exit_stack = exit_stack
         self._backend_session = session
         self._backend_connected = True
+        sys.stderr.write(f"Backend session established to {self.url}\n")
         return session
 
-    async def _ensure_backend_session(self) -> ClientSession:
-        """Ensure there is a live backend MCP session and return it.
+    def _get_backend_session(self) -> ClientSession:
+        """Return the live backend session or raise.
 
-        Session creation is delegated to an isolated ``asyncio.Task`` so that
-        the anyio cancel scopes from ``streamable_http_client`` and
-        ``ClientSession`` do not pollute the calling handler task's scope
-        stack.  See ``_create_backend_session`` for details.
+        Handlers call this to obtain the session created by ``run()``.
+        If the session is dead they should call ``_request_reconnect()``
+        and raise so the retry loop can reconnect in the main task.
         """
         if self._backend_connected and self._backend_session is not None:
             return self._backend_session
+        raise ServerNotRunningError("Backend session not available")
 
-        async with self._backend_connect_lock:
-            if self._backend_connected and self._backend_session is not None:
-                return self._backend_session
-
-            await self._reset_backend_session()
-
-            try:
-                # Run session creation in an isolated asyncio Task.
-                # streamable_http_client and ClientSession push anyio cancel
-                # scopes onto the *calling* task's scope stack.  If we ran
-                # this inline inside a handler task, those persistent scopes
-                # would prevent the handler's responder cancel scope from
-                # exiting, crashing the bridge.
-                session = await asyncio.ensure_future(self._create_backend_session())
-                return session
-            except (ConnectionError, OSError, asyncio.TimeoutError) as e:
-                await self._reset_backend_session()
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
-                ) from e
-            except Exception as e:
-                await self._reset_backend_session()
-                err = str(e)
-                if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused", "Timed out"]):
-                    raise ServerNotRunningError(
-                        f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
-                    ) from e
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile backend at {self.url}: {e}\n\n{get_server_start_message()}",
-                ) from e
+    def _request_reconnect(self) -> None:
+        """Signal the main task to reconnect the backend session."""
+        self._backend_connected = False
+        self._backend_session = None
+        if self._reconnect_event is not None:
+            self._reconnect_event.set()
 
     @contextlib.asynccontextmanager
     async def _with_backend_session(self, _op_name: str):
-        """Context manager over a persistent backend MCP session.
+        """Context manager over the persistent backend MCP session.
 
-        Reuses a single initialized session for all requests so server-side
-        session context (open program/project state) survives across commands.
-
-        Only resets the shared session on connection-level failures (timeouts,
-        broken pipe, etc.).  Protocol errors (e.g. ``McpError: Method not
-        found``) do **not** reset the session — concurrent callers sharing the
-        same session must not be disrupted by a non-fatal error in another
-        handler.
+        Reuses the session created eagerly by ``run()``.  On connection-level
+        failures it marks the session as dead and signals the main task to
+        reconnect.
         """
-        session = await self._ensure_backend_session()
+        session = self._get_backend_session()
         try:
             yield session
         except Exception as exc:
             if self._is_connection_error(exc):
-                await self._reset_backend_session()
+                self._request_reconnect()
             raise
 
     def _register_handlers(self):
