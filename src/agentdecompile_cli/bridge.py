@@ -8,6 +8,15 @@ Merged from:
 The MCP session fix is applied once at import time.
 AgentDecompileMcpClient provides an async HTTP client to an existing server.
 AgentDecompileStdioBridge proxies stdio MCP transport to the HTTP backend.
+
+**Bridge Architecture (v5 – raw httpx)**:
+The stdio bridge NO LONGER uses the MCP Python SDK's ``streamable_http_client``
+or ``ClientSession`` for backend communication.  Those classes rely on anyio
+task groups internally, and their cancel scopes are incompatible with asyncio
+Tasks spawned by ``Server.run()`` for request handling.  Instead the bridge
+makes plain httpx POST requests carrying JSON-RPC payloads, parses JSON or SSE
+responses, and tracks the ``Mcp-Session-Id`` header manually.  This eliminates
+all anyio cancel-scope lifetime issues.
 """
 
 from __future__ import annotations
@@ -36,8 +45,6 @@ except ImportError:
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from httpx import AsyncClient, Timeout
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
@@ -530,10 +537,10 @@ class AgentDecompileStdioBridge:
         self._streamable_http_headers: dict[str, str] | None = None
 
         self.server: Server = Server("AgentDecompile")
-        self._backend_connect_lock: asyncio.Lock = asyncio.Lock()
         self._backend_exit_stack: contextlib.AsyncExitStack | None = None
         self._backend_session: ClientSession | None = None
         self._backend_connected: bool = False
+        self._reconnect_event: asyncio.Event | None = None
 
         self._register_handlers()
 
@@ -716,19 +723,13 @@ class AgentDecompileStdioBridge:
             if backend_name is None:
                 backend_name = name
 
-            # Retry once on stale/broken backend session.  After ~60-90s of
-            # inactivity the backend SSE connection can close silently; the
-            # first attempt detects the dead session, resets it, and the
-            # second attempt creates a fresh connection.
+            # Retry once on stale/broken backend session.  The first attempt
+            # detects the dead session and signals the main task to reconnect;
+            # we wait briefly then retry with the fresh session.
             last_exc: Exception | None = None
             for _attempt in range(2):
                 try:
                     async with self._with_backend_session("call_tool") as session:
-                        # Do NOT use asyncio.wait_for here — the MCP SDK
-                        # uses anyio internally and asyncio.wait_for
-                        # corrupts anyio cancel scopes, crashing the
-                        # bridge.  The httpx client timeout already
-                        # bounds the wait.
                         result = await session.call_tool(backend_name, arguments)
                         if result is None:
                             return CallToolResult(
@@ -740,11 +741,14 @@ class AgentDecompileStdioBridge:
                     last_exc = exc
                     if _attempt == 0 and self._is_connection_error(exc):
                         sys.stderr.write(
-                            f"Backend session stale, reconnecting... ({type(exc).__name__})\n",
+                            f"Backend session stale, requesting reconnect... ({type(exc).__name__})\n",
                         )
-                        # _with_backend_session already reset on connection
-                        # error; next iteration creates a fresh session.
-                        continue
+                        self._request_reconnect()
+                        # Wait for the main task's reconnect loop to
+                        # re-establish the session.
+                        await asyncio.sleep(2.0)
+                        if self._backend_connected:
+                            continue
                     break
 
             # Exhausted retries.
@@ -826,11 +830,44 @@ class AgentDecompileStdioBridge:
     async def run(self):
         """Run the stdio bridge.
 
-        Starts the MCP server on stdio immediately. Connects to the AgentDecompile
-        backend lazily on first tool/resource/prompt request to avoid MCP streamable
-        HTTP race conditions during the initialize handshake.
+        Connects to the AgentDecompile backend **eagerly** in the main task
+        before starting the MCP server.  This is critical because
+        ``streamable_http_client`` and ``ClientSession`` push anyio cancel
+        scopes onto the *calling* task's scope stack.  Running them here
+        (the main task) keeps those scopes out of handler tasks, preventing
+        ``RuntimeError: Attempted to exit a cancel scope …`` crashes.
+
+        If the backend session dies mid-flight, handlers signal via
+        ``_reconnect_event`` and a background reconnection loop in the
+        main task re-establishes the session.
         """
         sys.stderr.write("Bridge ready - stdio transport active\n")
+
+        # Eagerly connect to the backend in the main task.
+        try:
+            await self._connect_backend()
+        except Exception as exc:
+            sys.stderr.write(
+                f"WARNING: eager backend connect failed ({type(exc).__name__}: {exc}), "
+                "will retry on first request\n",
+            )
+
+        self._reconnect_event = asyncio.Event()
+
+        async def _reconnect_loop() -> None:
+            """Wait for handlers to signal a dead session, then reconnect."""
+            while True:
+                assert self._reconnect_event is not None
+                await self._reconnect_event.wait()
+                self._reconnect_event.clear()
+                try:
+                    await self._connect_backend()
+                except Exception as exc:
+                    sys.stderr.write(
+                        f"Reconnect failed: {type(exc).__name__}: {exc}\n",
+                    )
+
+        reconnect_task = asyncio.create_task(_reconnect_loop())
         try:
             async with stdio_server() as (stdio_read, stdio_write):
                 await self.server.run(
@@ -845,6 +882,7 @@ class AgentDecompileStdioBridge:
         except Exception:
             raise
         finally:
+            reconnect_task.cancel()
             await self._reset_backend_session()
 
     def stop(self):
