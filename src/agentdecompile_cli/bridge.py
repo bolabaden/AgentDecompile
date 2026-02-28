@@ -45,6 +45,8 @@ from mcp.types import (
     CallToolResult,
     JSONRPCMessage,
     JSONRPCNotification,
+    LoggingCapability,
+    ServerCapabilities,
     TextContent,
 )
 
@@ -535,6 +537,29 @@ class AgentDecompileStdioBridge:
 
         self._register_handlers()
 
+    def _is_connection_error(self, exc: BaseException) -> bool:
+        """Return True if *exc* indicates a broken/lost backend connection.
+
+        Protocol-level errors (e.g. ``McpError: Method not found``) are **not**
+        connection errors.  Only transport failures that make the session
+        unusable should return ``True``.
+        """
+        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
+            return True
+        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
+            return True
+        err_str = str(exc)
+        return any(
+            keyword in err_str
+            for keyword in (
+                "ConnectError",
+                "ConnectionRefused",
+                "BrokenResource",
+                "ClosedResource",
+                "connection reset",
+            )
+        )
+
     async def _reset_backend_session(self) -> None:
         """Close and clear any existing backend session state."""
         self._backend_connected = False
@@ -580,6 +605,16 @@ class AgentDecompileStdioBridge:
                 session = await exit_stack.enter_async_context(ClientSession(json_stream, write_stream))
                 await session.initialize()
 
+                # Populate the client-side tool-list cache so that subsequent
+                # session.call_tool() invocations can validate tool names and
+                # arguments against the backend schema.  Without this, the MCP
+                # SDK logs spurious "Tool X not listed by server" warnings for
+                # every call_tool forwarded through the bridge.
+                try:
+                    await session.list_tools()
+                except Exception:
+                    pass  # non-critical: tool calls still work without the cache
+
                 self._backend_exit_stack = exit_stack
                 self._backend_session = session
                 self._backend_connected = True
@@ -611,12 +646,19 @@ class AgentDecompileStdioBridge:
 
         Reuses a single initialized session for all requests so server-side
         session context (open program/project state) survives across commands.
+
+        Only resets the shared session on connection-level failures (timeouts,
+        broken pipe, etc.).  Protocol errors (e.g. ``McpError: Method not
+        found``) do **not** reset the session — concurrent callers sharing the
+        same session must not be disrupted by a non-fatal error in another
+        handler.
         """
         session = await self._ensure_backend_session()
         try:
             yield session
-        except Exception:
-            await self._reset_backend_session()
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                await self._reset_backend_session()
             raise
 
     def _register_handlers(self):
@@ -749,6 +791,22 @@ class AgentDecompileStdioBridge:
                 sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
                 return []
 
+    def _create_initialization_options(self):
+        """Create MCP initialization options with explicit logging capability.
+
+        Some MCP clients attempt to set the server log level during/after
+        initialize and expect `capabilities.logging` to be present.
+        """
+        options = self.server.create_initialization_options()
+        capabilities = getattr(options, "capabilities", None)
+        if capabilities is None:
+            capabilities = ServerCapabilities()
+
+        if getattr(capabilities, "logging", None) is None:
+            capabilities = capabilities.model_copy(update={"logging": LoggingCapability()})
+
+        return options.model_copy(update={"capabilities": capabilities})
+
     async def run(self):
         """Run the stdio bridge.
 
@@ -762,7 +820,7 @@ class AgentDecompileStdioBridge:
                 await self.server.run(
                     stdio_read,  # pyright: ignore[reportArgumentType]
                     stdio_write,  # pyright: ignore[reportArgumentType]
-                    self.server.create_initialization_options(),
+                    self._create_initialization_options(),
                 )
         except ClosedResourceError:
             sys.stderr.write("Client disconnected\n")
