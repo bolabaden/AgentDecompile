@@ -4,7 +4,8 @@
 #   PowerShell: $Env:DOCKER_BUILDKIT="1"
 #   Cmd:        set DOCKER_BUILDKIT=1
 #
-# AIO image: one container runs Ghidra server (13100,13101,13102), BSim server (5432), and AgentDecompile MCP (8080).
+# AIO image: one container runs Ghidra server (13100-13102) and AgentDecompile MCP (8080).
+# BSim: use an external PostgreSQL 15 server (see docker-compose.yml).
 # PyGhidra headless and Ghidra AnalyzeHeadless: docker exec -it <container> bash, then run there.
 FROM alpine:latest AS build
 
@@ -88,22 +89,14 @@ RUN set -eux; \
     rm -f /tmp/ghidra.zip; \
     rm -rf /tmp/ghidra_extract
 
-# build postgres and install pyghidra
+# install pyghidra into venv (BSim PostgreSQL is now external; see docker-compose.yml)
+# JPype1 is bundled as a source tarball and needs g++ to compile its C++ extension.
 RUN set -eux; \
-        apk add --no-cache g++ gcc musl-dev make bison flex zlib-dev readline-dev perl; \
-        ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
-        ARCH="$(uname -m)"; \
-        case "${ARCH}" in \
-            x86_64) OSDIR="linux_x86_64" ;; \
-            aarch64) OSDIR="linux_arm_64" ;; \
-            *) OSDIR="linux_${ARCH}" ;; \
-        esac; \
-        test -x "${GHIDRA_HOME}/Ghidra/Features/BSim/build/os/${OSDIR}/postgresql/bin/postgres"; \
+        apk add --no-cache --virtual .jpype-build g++ python3-dev; \
         python3 -m venv ${GHIDRA_HOME}/venv; \
         ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
-        apk del g++ gcc musl-dev make bison flex zlib-dev readline-dev perl || true; \
-        mkdir ${GHIDRA_HOME}/repositories; \
-        mkdir ${GHIDRA_HOME}/bsim_datadir
+        apk del .jpype-build; \
+        mkdir -p ${GHIDRA_HOME}/repositories
 
 # --- Layer 3b: build native decompiler/sleigh ONLY on arm64 (x86_64 ships prebuilt) ---
 # The Ghidra PUBLIC release includes prebuilt linux_x86_64 binaries but NOT linux_arm_64.
@@ -196,9 +189,6 @@ ARG PGID="1001"
 ENV PGID=${PGID}
 
 # --- Runtime packages (cached unless this RUN or above changes) ---
-# Use dl.alpinelinux.org to avoid QEMU fetch issues; install packages then create user/group
-# BSim PostgreSQL is built against LibreSSL in build stage; runtime needs libressl for libssl.so.60/libcrypto.so.57
-#( grep -qE '^[^#].*community' /etc/apk/repositories ) || echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
 RUN \
     set -eux; \
     run() { echo "\n\nSTEP: $*"; "$@"; _r=$?; if [ "$_r" -ne 0 ]; then echo "FAILED (exit $_r): $*"; exit "$_r"; fi; }; \
@@ -212,34 +202,22 @@ RUN \
         python3 \
         openssl \
         openssh-client \
-        xhost \
         musl-locales \
         musl-locales-lang \
         supervisor \
         netcat-openbsd \
-        readline \
-        zlib \
-        libressl \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
 WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
-# BSim PostgreSQL was linked against LibreSSL in build stage; copy exact libs so pg_ctl/initdb find libssl.so.60/libcrypto.so.57
-RUN mkdir -p /opt/bsim-libs
-COPY --from=build /usr/lib/libssl.so* /usr/lib/libcrypto.so* /opt/bsim-libs/
-RUN set -eux; \
-    cp -f /opt/bsim-libs/libssl.so.60* /usr/lib/; \
-    cp -f /opt/bsim-libs/libcrypto.so.57* /usr/lib/; \
-    test -f /usr/lib/libssl.so.60; \
-    test -f /usr/lib/libcrypto.so.57
 COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
 COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
-COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/run-bsim.sh ${GHIDRA_HOME}/docker/
+COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/
 
-RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
-    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh ${GHIDRA_HOME}/docker/run-bsim.sh \
+RUN sed -i 's/\r$//' ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh \
+    && chmod +x ${GHIDRA_HOME}/docker/entrypoint.sh ${GHIDRA_HOME}/docker/supervisor-wrap.sh ${GHIDRA_HOME}/docker/supervisor-wait-then-mcp.sh \
     && mkdir -p /work /projects \
     && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
 
@@ -248,9 +226,6 @@ USER ${GHIDRA_USER}
 ARG AGENT_DECOMPILE_PORT="8080"
 ENV AGENT_DECOMPILE_PORT=${AGENT_DECOMPILE_PORT}
 EXPOSE ${AGENT_DECOMPILE_PORT}
-ARG GHIDRA_BSIM_PORT="5432"
-ENV GHIDRA_BSIM_PORT=${GHIDRA_BSIM_PORT}
-EXPOSE ${GHIDRA_BSIM_PORT}
 ARG GHIDRA_SERVER_PORT1="13100"
 ENV GHIDRA_SERVER_PORT1=${GHIDRA_SERVER_PORT1}
 EXPOSE ${GHIDRA_SERVER_PORT1}
