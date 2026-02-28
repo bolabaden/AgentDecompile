@@ -258,7 +258,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_ACCESS_TOKEN || secrets.DOCKER_HUB_TOKEN || secrets.DOCKER_TOKEN }}
 
       - name: "Download platform refs"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: ref-${{ matrix.image_key }}-*
           path: refs-downloaded
