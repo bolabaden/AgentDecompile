@@ -55,7 +55,7 @@ on:
 # ------------------------------------------------------------------------------
 env:
   IMAGE_NAME: agentdecompile-aio
-  DOCKERFILE_PATH: "./Docker.aio"
+  DOCKERFILE_PATH: "./Dockerfile.aio"
   BUILD_CONTEXT: "."
   # Optional: GitHub API URL for "latest" release (tag_name parsed). Empty = use only git tag on tag push.
   VERSION_TAG_UPSTREAM_API: "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest"
@@ -106,16 +106,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # AIO image (Docker.aio)
+          # AIO image (Dockerfile.aio)
           - image_key: aio
             image_name: agentdecompile-aio
-            dockerfile: ./Docker.aio
+            dockerfile: ./Dockerfile.aio
             platform: linux/amd64
             arch: amd64
             runner: ubuntu-latest
           - image_key: aio
             image_name: agentdecompile-aio
-            dockerfile: ./Docker.aio
+            dockerfile: ./Dockerfile.aio
             platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
