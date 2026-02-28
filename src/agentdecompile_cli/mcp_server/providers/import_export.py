@@ -313,38 +313,183 @@ class ImportExportToolProvider(ToolProvider):
             if fmt == "sarif":
                 if out.suffix.lower() != ".sarif":
                     out = out.with_suffix(".sarif")
-                sarif_doc = {
-                    "version": "2.1.0",
-                    "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-                    "runs": [
-                        {
-                            "tool": {
-                                "driver": {
-                                    "name": "AgentDecompile",
-                                    "informationUri": "https://ghidra.re/",
-                                },
-                            },
-                            "artifacts": [
-                                {
-                                    "location": {
-                                        "uri": str(program.getName()),
+                try:
+                    from datetime import datetime
+
+                    # Generate comprehensive SARIF report with actual analysis data
+                    results: list[dict[str, Any]] = []
+                    
+                    # Collect undefined references
+                    try:
+                        ref_mgr: Any = program.getReferenceManager()
+                        for ref in list(ref_mgr.getExternalReferences())[:50]:
+                            if ref and ref.getToAddress():
+                                results.append(
+                                    {
+                                        "ruleId": "undefined-reference",
+                                        "kind": "fail",
+                                        "level": "warning",
+                                        "message": {
+                                            "text": f"External reference at {hex(ref.getFromAddress().getOffset())} to {ref.getLabel()}",
+                                        },
+                                        "locations": [
+                                            {
+                                                "physicalLocation": {
+                                                    "artifactIndex": 0,
+                                                    "address": hex(ref.getFromAddress().getOffset()),
+                                                },
+                                            },
+                                        ],
+                                    },
+                                )
+                    except Exception as e:
+                        logger.debug(f"Error collecting external references: {e}")
+                    
+                    # Collect bookmarks
+                    try:
+                        bookmark_mgr: Any = program.getBookmarkManager()
+                        bookmarks: list[Any] = bookmark_mgr.getBookmarks("Analysis")
+                        if bookmarks:
+                            for bookmark in list(bookmarks)[:30]:
+                                if bookmark:
+                                    results.append(
+                                        {
+                                            "ruleId": "analysis-bookmark",
+                                            "kind": "informational",
+                                            "level": "note",
+                                            "message": {
+                                                "text": f"Bookmark: {bookmark.getComment() or bookmark.getCategory()}",
+                                            },
+                                            "locations": [
+                                                {
+                                                    "physicalLocation": {
+                                                        "artifactIndex": 0,
+                                                        "address": hex(bookmark.getAddress().getOffset()),
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    )
+                    except Exception as e:
+                        logger.debug(f"Error collecting bookmarks: {e}")
+                    
+                    # Collect analysis warnings (thunk/external functions)
+                    try:
+                        func_mgr: Any = program.getFunctionManager()
+                        for i, func in enumerate(func_mgr.getFunctions(True)):
+                            if i > 50:
+                                break
+                            if func.isThunk():
+                                results.append(
+                                    {
+                                        "ruleId": "analysis-warning",
+                                        "kind": "pass",
+                                        "level": "note",
+                                        "message": {"text": f"Thunk function: {func.getName()}"},
+                                        "locations": [
+                                            {
+                                                "physicalLocation": {
+                                                    "artifactIndex": 0,
+                                                    "address": hex(func.getEntryPoint().getOffset()),
+                                                },
+                                            },
+                                        ],
+                                    },
+                                )
+                            if func.isExternal():
+                                results.append(
+                                    {
+                                        "ruleId": "analysis-warning",
+                                        "kind": "pass",
+                                        "level": "note",
+                                        "message": {"text": f"External function: {func.getName()}"},
+                                        "locations": [
+                                            {
+                                                "physicalLocation": {
+                                                    "artifactIndex": 0,
+                                                    "address": hex(func.getEntryPoint().getOffset()),
+                                                },
+                                            },
+                                        ],
+                                    },
+                                )
+                    except Exception as e:
+                        logger.debug(f"Error collecting function analysis: {e}")
+                    
+                    now = datetime.utcnow().isoformat() + "Z"
+                    sarif_doc = {
+                        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+                        "version": "2.1.0",
+                        "runs": [
+                            {
+                                "tool": {
+                                    "driver": {
+                                        "name": "AgentDecompile",
+                                        "version": "1.0.0",
+                                        "informationUri": "https://github.com/bolabaden/agentdecompile",
+                                        "rules": [
+                                            {
+                                                "id": "undefined-reference",
+                                                "name": "Undefined Reference",
+                                                "shortDescription": {"text": "Reference to undefined function or symbol"},
+                                                "defaultConfiguration": {"level": "warning"},
+                                            },
+                                            {
+                                                "id": "analysis-bookmark",
+                                                "name": "Analysis Bookmark",
+                                                "shortDescription": {"text": "Code location marked with bookmark during analysis"},
+                                                "defaultConfiguration": {"level": "note"},
+                                            },
+                                            {
+                                                "id": "analysis-warning",
+                                                "name": "Analysis Warning",
+                                                "shortDescription": {"text": "Warning generated during program analysis"},
+                                                "defaultConfiguration": {"level": "warning"},
+                                            },
+                                        ],
                                     },
                                 },
-                            ],
-                            "results": [],
+                                "artifacts": [
+                                    {
+                                        "uri": str(program.getName()),
+                                        "sourceLanguage": "asm",
+                                        "properties": {
+                                            "imageBase": hex(program.getImageBase().getOffset()),
+                                        },
+                                    },
+                                ],
+                                "results": results,
+                                "properties": {
+                                    "analysisComplete": program.getAnalysisState().isDone(),
+                                    "generatedAt": now,
+                                    "resultsCount": len(results),
+                                },
+                            },
+                        ],
+                    }
+                    out.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": True,
+                            "resultsCollected": len(results),
+                            "apiClass": "SARIF 2.1.0",
                         },
-                    ],
-                }
-                out.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
-                return create_success_response(
-                    {
-                        "action": "export",
-                        "format": fmt,
-                        "outputPath": str(out),
-                        "success": True,
-                        "apiClass": "SARIF 2.1.0",
-                    },
-                )
+                    )
+                except Exception as exc:
+                    logger.error(f"Error generating SARIF report: {exc}")
+                    return create_success_response(
+                        {
+                            "action": "export",
+                            "format": fmt,
+                            "outputPath": str(out),
+                            "success": False,
+                            "error": str(exc),
+                            "apiClass": "SARIF 2.1.0",
+                        },
+                    )
 
             payload = {
                 "name": program.getName(),

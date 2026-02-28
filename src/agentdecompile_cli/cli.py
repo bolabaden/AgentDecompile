@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import multiprocessing
 import os
 import sys
@@ -58,6 +59,8 @@ from agentdecompile_cli.registry import (
     to_snake_case,
     tool_registry,
 )
+
+logger = logging.getLogger(__name__)
 
 THREAD_COUNT = multiprocessing.cpu_count()
 _dynamic_commands_registered = False
@@ -1100,9 +1103,41 @@ def resource_grp() -> None:
 
 
 async def _read_resource(ctx: click.Context, uri: str) -> None:
+    """Read a resource with auto-recovery for program loading."""
     client = _client(ctx)
-    async with client:
-        result = await client.read_resource(uri)
+    
+    try:
+        async with client:
+            result = await client.read_resource(uri)
+    except Exception as e:
+        error_msg = str(e).lower()
+        
+        # Check if error is program-related
+        if "no program loaded" in error_msg or "no active program" in error_msg:
+            # Try to recover by opening a program from environment
+            try:
+                # Try to auto-open from cache or environment
+                cached_prog = _get_cached_program(ctx)
+                if cached_prog:
+                    # Open the cached program
+                    await _call_raw(
+                        ctx,
+                        "open",
+                        {"path": cached_prog, "local": True},
+                    )
+                    # Retry resource read
+                    async with client:
+                        result = await client.read_resource(uri)
+                else:
+                    # No cached program, raise original error
+                    raise e
+            except Exception as recovery_error:
+                logger.debug(f"Resource recovery failed: {recovery_error}")
+                raise e
+        else:
+            # Not a program-loading error, re-raise
+            raise
+    
     data = _parse_json(result)
     click.echo(format_output(data or result, _fmt(ctx)))
 
