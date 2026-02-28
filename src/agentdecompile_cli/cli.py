@@ -3216,25 +3216,28 @@ def current_program(ctx: click.Context, program_path: str | None) -> None:
     _run_async(_call(ctx, "get-current-program", **payload))
 
 
+# TODO: GUI Only tools/commands
 @main.command("current-address", help="Get current address (get-current-address, GUI)")
 @click.pass_context
 def current_address(ctx: click.Context) -> None:
-    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    # TODO: GUI Only tools/commands
     click.echo("Tool 'get-current-address' is disabled (GUI-only).", err=True)
     sys.exit(1)
 
 
+# TODO: GUI Only tools/commands
 @main.command(
     "current-function",
     help="Get current function (get-current-function, GUI)",
 )
 @click.pass_context
 def current_function(ctx: click.Context) -> None:
-    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    # TODO: GUI Only tools/commands
     click.echo("Tool 'get-current-function' is disabled (GUI-only).", err=True)
     sys.exit(1)
 
 
+# TODO: GUI Only tools/commands
 @main.command(
     "open-in-code-browser",
     help="Open program in Code Browser (open-program-in-code-browser, GUI)",
@@ -3242,11 +3245,12 @@ def current_function(ctx: click.Context) -> None:
 @click.option("-b", "--binary", "program_path", required=True)
 @click.pass_context
 def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
-    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    # TODO: GUI Only tools/commands
     click.echo("Tool 'open-program-in-code-browser' is disabled (GUI-only).", err=True)
     sys.exit(1)
 
 
+# TODO: GUI Only tools/commands
 @main.command(
     "open-all-in-code-browser",
     help="Open all programs matching extensions in Code Browser (open-all-programs-in-code-browser, GUI)",
@@ -3268,7 +3272,7 @@ def open_all_in_code_browser(
     extensions: str,
     folder_path: str,
 ) -> None:
-    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    # TODO: GUI Only tools/commands
     click.echo("Tool 'open-all-programs-in-code-browser' is disabled (GUI-only).", err=True)
     sys.exit(1)
 
