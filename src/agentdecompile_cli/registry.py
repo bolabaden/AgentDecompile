@@ -33,7 +33,7 @@ TOOLS = [
     "checkin-program",
     "create-label",
     "decompile-function",
-    "download-shared-repository",
+    "sync-shared-project",
     "export",
     "delete-project-binary",
     "gen-callgraph",
@@ -270,7 +270,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "get-current-function": _params("programPath"),
     "list-project-files": [],
     "list-open-programs": [],
-    "download-shared-repository": _params(
+    "sync-shared-project": _params(
         "mode",
         "path",
         "sourcePath",
@@ -288,7 +288,9 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "manage-files": _params(
         "operation",
         "action",
+        "mode",
         "path",
+        "sourcePath",
         "filePath",
         "programPath",
         "newPath",
@@ -300,6 +302,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "keep",
         "force",
         "exclusive",
+        "dryRun",
         "maxResults",
         "destinationFolder",
         "recursive",
@@ -381,9 +384,11 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "create-label": "manage-symbols",
-    "sync-shared-repository": "download-shared-repository",
-    "pull-shared-repository": "download-shared-repository",
-    "push-shared-repository": "download-shared-repository",
+    "download-shared-repository": "sync-shared-project",
+    "sync-shared-repository": "sync-shared-project",
+    "pull-shared-repository": "sync-shared-project",
+    "push-shared-repository": "sync-shared-project",
+    "download-shared-project": "sync-shared-project",
     "gen-callgraph": "get-call-graph",
     "list-cross-references": "get-references",
     "list-exports": "manage-symbols",

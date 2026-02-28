@@ -58,6 +58,7 @@ class ProjectToolProvider(ToolProvider):
         "open": "_handle_open",
         "getcurrentprogram": "_handle_current",
         "listprojectfiles": "_handle_list",
+        "syncsharedproject": "_handle_sync_shared_project",
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "listprojectbinaries": "_handle_list_project_binaries",
@@ -114,8 +115,8 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="download-shared-repository",
-                description="Transfer or sync files between active shared repository session and local project storage",
+                name="sync-shared-project",
+                description="Synchronize active shared repository content with the local Ghidra project",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -195,9 +196,15 @@ class ProjectToolProvider(ToolProvider):
                         },
                         "filePath": {"type": "string"},
                         "path": {"type": "string"},
+                        "sourcePath": {"type": "string"},
                         "programPath": {"type": "string"},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["pull", "push", "bidirectional"],
+                        },
                         "newPath": {"type": "string"},
                         "destinationPath": {"type": "string"},
+                        "destinationFolder": {"type": "string"},
                         "newName": {"type": "string"},
                         "content": {"type": "string"},
                         "encoding": {"type": "string", "default": "utf-8"},
@@ -206,6 +213,7 @@ class ProjectToolProvider(ToolProvider):
                         "force": {"type": "boolean", "default": False},
                         "exclusive": {"type": "boolean", "default": False},
                         "recursive": {"type": "boolean", "default": False},
+                        "dryRun": {"type": "boolean", "default": False},
                         "maxResults": {"type": "integer", "default": 200},
                         "maxDepth": {"type": "integer", "default": 16},
                         "analyzeAfterImport": {"type": "boolean", "default": False},
@@ -905,8 +913,11 @@ class ProjectToolProvider(ToolProvider):
 
         raise ValueError(f"Unsupported manage-files operation: {operation}")
 
-    async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_sync_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")
+
+    async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_sync_shared_project(args)
 
     def _resolve_domain_file(self, program_path: str | None):
         if not program_path:
@@ -1250,15 +1261,9 @@ class ProjectToolProvider(ToolProvider):
         source_folder = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
-        destination_folder = self._normalize_repo_path(
-            self._get_str(args, "newpath", "destinationpath", "destinationfolder", default="/"),
-        )
         recursive = self._get_bool(args, "recursive", default=True)
         max_results = self._get_int(args, "maxresults", "limit", default=100000)
-        force = self._get_bool(args, "force", default=False)
         dry_run = self._get_bool(args, "dryrun", default=False)
-
-        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         root = project_data.getRootFolder()
         local_items = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
@@ -1272,7 +1277,6 @@ class ProjectToolProvider(ToolProvider):
         if max_results > 0:
             candidates = candidates[:max_results]
 
-        monitor = TaskMonitor.DUMMY
         transferred: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -1282,18 +1286,8 @@ class ProjectToolProvider(ToolProvider):
             if not source_path or source_path == "/":
                 continue
 
-            target_path = self._map_repo_path_to_local(source_path, source_folder, destination_folder)
-            if source_path == target_path:
-                skipped.append({"sourcePath": source_path, "targetPath": target_path, "reason": "same-path"})
-                continue
-
-            existing = project_data.getFile(target_path)
-            if existing is not None and not force:
-                skipped.append({"sourcePath": source_path, "targetPath": target_path, "reason": "already-exists"})
-                continue
-
             if dry_run:
-                transferred.append({"sourcePath": source_path, "targetPath": target_path, "planned": True})
+                transferred.append({"sourcePath": source_path, "planned": True})
                 continue
 
             try:
@@ -1301,34 +1295,20 @@ class ProjectToolProvider(ToolProvider):
                 if source_file is None:
                     raise ValueError(f"Local project item not found: {source_path}")
 
-                if existing is not None and force and hasattr(existing, "delete"):
-                    existing.delete()
+                if hasattr(source_file, "save"):
+                    source_file.save()
+                else:
+                    skipped.append({"sourcePath": source_path, "reason": "save-not-supported"})
+                    continue
 
-                target_parent_path = target_path.rsplit("/", 1)[0] or "/"
-                parent_folder = self._ensure_project_folder(project_data, target_parent_path)
-                item_name = target_path.rsplit("/", 1)[-1]
-
-                source_domain_obj = source_file.getDomainObject(self, True, False, monitor)
-                if source_domain_obj is None:
-                    raise ValueError(f"Unable to open local project item: {source_path}")
-
-                try:
-                    parent_folder.createFile(item_name, source_domain_obj, monitor)
-                finally:
-                    try:
-                        source_domain_obj.release(self)
-                    except Exception:
-                        pass
-
-                transferred.append({"sourcePath": source_path, "targetPath": target_path})
+                transferred.append({"sourcePath": source_path})
             except Exception as exc:
-                errors.append({"sourcePath": source_path, "targetPath": target_path, "error": str(exc)})
+                errors.append({"sourcePath": source_path, "error": str(exc)})
 
         return {
             "direction": "push",
             "repository": repository_name,
             "sourceFolder": source_folder,
-            "destinationFolder": destination_folder,
             "recursive": recursive,
             "requested": len(candidates),
             "transferred": len(transferred),
@@ -1337,7 +1317,7 @@ class ProjectToolProvider(ToolProvider):
             "items": transferred,
             "skippedItems": skipped,
             "dryRun": dry_run,
-            "note": "Push uses local project domain files; if the project is shared-backed, created items are synchronized through that backend.",
+            "note": "Push syncs local project domain files by saving scoped items. For shared-backed files, this persists local modifications to the backing shared project workflow.",
         }
 
     async def _sync_shared_repository(self, args: dict[str, Any], default_mode: str = "pull") -> list[types.TextContent]:

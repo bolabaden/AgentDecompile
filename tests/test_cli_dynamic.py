@@ -497,7 +497,7 @@ class TestCliDynamicDispatch:
         assert mocked_call.await_args is not None
         called_tool_name = mocked_call.await_args.args[1]
         called_payload = mocked_call.await_args.kwargs
-        assert called_tool_name == "download-shared-repository"
+        assert called_tool_name == "sync-shared-project"
         assert called_payload["mode"] == "pull"
 
     @patch(_CALL_PATH, new_callable=AsyncMock)
@@ -511,7 +511,7 @@ class TestCliDynamicDispatch:
         assert mocked_call.await_args is not None
         called_tool_name = mocked_call.await_args.args[1]
         called_payload = mocked_call.await_args.kwargs
-        assert called_tool_name == "download-shared-repository"
+        assert called_tool_name == "sync-shared-project"
         assert called_payload["mode"] == "push"
         assert called_payload["dryRun"] is True
 
@@ -526,5 +526,39 @@ class TestCliDynamicDispatch:
         assert mocked_call.await_args is not None
         called_tool_name = mocked_call.await_args.args[1]
         called_payload = mocked_call.await_args.kwargs
-        assert called_tool_name == "download-shared-repository"
+        assert called_tool_name == "sync-shared-project"
         assert called_payload["mode"] == "bidirectional"
+
+    @patch(_CALL_PATH, new_callable=AsyncMock)
+    def test_files_run_shared_options_dispatch_to_manage_files(self, mocked_call: AsyncMock):
+        mocked_call.return_value = _SUCCESS
+
+        result = _runner().invoke(
+            main,
+            [
+                "files",
+                "run",
+                "--operation",
+                "sync-shared",
+                "--path",
+                "/K1",
+                "--source-path",
+                "/K1",
+                "--new-path",
+                "/K1",
+                "--mode",
+                "bidirectional",
+                "--dry-run",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mocked_call.assert_awaited_once()
+        assert mocked_call.await_args is not None
+        called_tool_name = mocked_call.await_args.args[1]
+        called_payload = mocked_call.await_args.kwargs
+        assert called_tool_name == "manage-files"
+        assert called_payload["operation"] == "sync-shared"
+        assert called_payload["sourcePath"] == "/K1"
+        assert called_payload["mode"] == "bidirectional"
+        assert called_payload["dryRun"] is True

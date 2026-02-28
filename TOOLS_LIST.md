@@ -18,7 +18,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
-    - [`download-shared-repository`](#download-shared-repository)
+    - [`sync-shared-project`](#sync-shared-project)
     - [`export`](#export)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
@@ -478,7 +478,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
 
-### `download-shared-repository`
+### `sync-shared-project`
 
 **Description**: Transfers and synchronizes content between an active Ghidra shared repository session and the local project. It supports explicit pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning.
 
@@ -498,14 +498,14 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 - `dryRun` (boolean, optional): Preview planned transfers without writing data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `download-shared-repository(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
+- `sync-shared-project(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
 
-**Synonyms**: `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`, `sync-shared-project`
+**Synonyms**: `sync-shared-project`, `sync_shared_project`, `syncsharedproject`, `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`
 
 **Examples**:
-- Pull all repository files: `download-shared-repository mode="pull" path="/" newPath="/" recursive=true`.
-- Push local scope mapping: `download-shared-repository mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
-- Plan bidirectional sync: `download-shared-repository mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
+- Pull all repository files: `sync-shared-project mode="pull" path="/" newPath="/" recursive=true`.
+- Push local scope mapping: `sync-shared-project mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
+- Plan bidirectional sync: `sync-shared-project mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
 
 ### `export`
 
@@ -1177,20 +1177,29 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 **Parameters**:
 - `action` (string, required): Action (`import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, plus local file actions).
   - Synonyms: `action`, `mode`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
+- `mode` (string, optional): Shared transfer mode override (`pull`, `push`, `bidirectional`) for shared actions.
+  - Synonyms: `mode`, `direction`, `syncMode`.
 - `filePath` (string, required for import/export): File path.
   - Synonyms: `filePath`, `filep`.
+- `path` (string, optional): Primary source/scope path.
+  - Synonyms: `path`, `sourcePath`, `folder`.
 - `destination` (string, optional): Project destination.
   - Synonyms: `destination`
 - `recursive` (boolean, optional): Recursive (default: false).
   - Synonyms: `mode`, `path`, `dest`, `recurse`, `recursive`
+- `dryRun` (boolean, optional): Plan changes without mutating project/shared data.
+  - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `manage-files(action, filePath, destination, recursive)` canonical signature.
+- `manage-files(action, mode, filePath, path, destination, recursive, dryRun)` canonical signature.
 
 
 **Synonyms**: `manage-files`, `tool_manage_files`, `manage_files_tool`, `cmd_manage_files`, `run_manage_files`, `do_manage_files`, `api_manage_files`, `mcp_manage_files`, `ghidra_manage_files`, `agentdecompile_manage_files`, `manage_files_command`, `manage_files_action`, `manage_files_op`, `manage_files_task`, `execute_manage_files`
 
 **Examples**:
 - Manage import: `manage-files action="import" filePath="/newfile.exe" destination="/imports"`.
+- Pull shared scope via manage-files: `manage-files action="pull-shared" path="/K1" newPath="/K1" recursive=true`.
+- Push local changes via manage-files: `manage-files action="push-shared" path="/K1" recursive=true`.
+- Plan bidirectional sync via manage-files: `manage-files action="sync-shared" mode="bidirectional" path="/K1" dryRun=true`.
 ### `manage-function-tags`
 
 **Description**: Manages tags on functions for categorization, such as "crypto" or "network". This tool supports adding, removing, or listing tags, aiding in organization and querying.
