@@ -156,6 +156,14 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_V
 ARG CHROMADB_VERSION=1.5.2
 ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    if [ "${ARCH}" = "aarch64" ]; then \
+        apk add --no-cache \
+            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+            py3-onnxruntime \
+        ; \
+    fi; \
     apk add --no-cache --virtual .chromadb-build \
         cargo \
         rust \
