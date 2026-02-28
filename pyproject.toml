@@ -41,7 +41,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "chromadb>=1.5.1",
     "click>=8.3.1",
     "fastapi>=0.131.0",
     "httpx-sse>=0.4.3",
@@ -75,6 +74,9 @@ mcp-agentdecompile    = "agentdecompile_cli.__main__:main"
 agentdecompile-server = "agentdecompile_cli.server:main"
 
 [project.optional-dependencies]
+semantic = [
+  "chromadb>=1.5.1",
+]
 test = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
