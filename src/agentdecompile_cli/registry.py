@@ -364,6 +364,32 @@ TOOL_PARAM_ALIASES: dict[str, dict[str, set[str]]] = {}
 # Key: normalized alias tool name -> canonical kebab-case tool name
 TOOL_ALIASES: dict[str, str] = {}
 
+# Alias tools accepted for compatibility but intentionally not advertised.
+# TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
+NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
+    "create-label": "manage-symbols",
+    "gen-callgraph": "get-call-graph",
+    "list-cross-references": "get-references",
+    "list-exports": "manage-symbols",
+    "list-imports": "manage-symbols",
+    "list-strings": "manage-strings",
+    "read-bytes": "inspect-memory",
+    "search-strings": "manage-strings",
+    "search-symbols": "manage-symbols",
+    "search-symbols-by-name": "manage-symbols",
+}
+
+# GUI-only tools are disabled for MCP/CLI usage in this headless-focused surface.
+# TODO(gui-only): Re-enable when a GUI capability flag is introduced.
+DISABLED_GUI_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "get-current-address",
+        "get-current-function",
+        "open-program-in-code-browser",
+        "open-all-programs-in-code-browser",
+    },
+)
+
 
 def to_camel_case_key(key: str) -> str:
     """Convert snake_case to camelCase for MCP payload keys."""
@@ -535,6 +561,20 @@ _tools_list_params, _tools_list_param_aliases, _tools_list_tool_aliases = _extra
 TOOL_PARAMS = _merge_tools_list_params(TOOL_PARAMS, _tools_list_params)
 TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
+TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
+
+# Canonical advertised tools only (exclude aliases + disabled GUI-only entries).
+ADVERTISED_TOOLS: list[str] = [
+    tool
+    for tool in TOOLS
+    if tool not in DISABLED_GUI_ONLY_TOOLS and tool not in NON_ADVERTISED_TOOL_ALIASES
+]
+
+ADVERTISED_TOOL_PARAMS: dict[str, list[str]] = {
+    tool: params
+    for tool, params in TOOL_PARAMS.items()
+    if tool in set(ADVERTISED_TOOLS)
+}
 
 
 _TOOL_PREFIXES = (
@@ -627,7 +667,7 @@ class ToolRegistry:
 
     def __init__(self):
         self._tool_params: dict[str, list[str]] = TOOL_PARAMS.copy()
-        self._tools: list[str] = TOOLS.copy()
+        self._tools: list[str] = ADVERTISED_TOOLS.copy()
         self._tool_aliases: dict[str, str] = TOOL_ALIASES.copy()
         # Pre-computed normalized (alpha-only, lowercase) lookups so that
         # callers using alpha-only keys (e.g. "getdata") resolve correctly

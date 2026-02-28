@@ -26,7 +26,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOL_PARAMS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import ProgramInfo
@@ -508,7 +508,7 @@ class ToolProviderManager:
             by_norm.setdefault(n(tool.name), tool)
 
         advertised_tools: list[types.Tool] = []
-        for canonical_name in TOOLS:
+        for canonical_name in ADVERTISED_TOOLS:
             canonical_params = TOOL_PARAMS.get(canonical_name, [])
 
             normalized_name = n(canonical_name)
@@ -558,6 +558,10 @@ class ToolProviderManager:
             self.set_program_info(program_info)
 
         resolved_name = resolve_tool_name(name) or name
+        if resolved_name in DISABLED_GUI_ONLY_TOOLS:
+            return create_error_response(
+                f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",
+            )
         session_id = get_current_mcp_session_id()
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 

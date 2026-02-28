@@ -11,7 +11,7 @@ import socket
 import time
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectToolProvider(ToolProvider):
-    HANDLERS = {
+    HANDLERS: ClassVar[dict[str, str]] = {
         "open": "_handle_open",
         "getcurrentprogram": "_handle_current",
         "listprojectfiles": "_handle_list",
@@ -214,13 +214,19 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="list-open-programs", description="List open programs (GUI/headless compatible)", inputSchema={"type": "object", "properties": {}, "required": []},
+                name="list-open-programs",
+                description="List open programs (GUI/headless compatible)",
+                inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name="get-current-address", description="Get current address (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []},
+                name="get-current-address",
+                description="Get current address (GUI-only, headless-safe)",
+                inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name="get-current-function", description="Get current function (GUI-only, headless-safe)", inputSchema={"type": "object", "properties": {}, "required": []},
+                name="get-current-function",
+                description="Get current function (GUI-only, headless-safe)",
+                inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
                 name="open-program-in-code-browser",
@@ -267,7 +273,7 @@ class ProjectToolProvider(ToolProvider):
                 )
 
             try:
-                from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingImports]
+                from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
             except Exception:
                 return create_success_response(
                     {
@@ -373,7 +379,7 @@ class ProjectToolProvider(ToolProvider):
                         JavaSystem.setProperty("user.name", original_user_name)
                     except Exception:
                         pass
-            repository_names = [str(name) for name in repository_names_raw]
+            repository_names: list[str] = [str(name) for name in repository_names_raw]
             if not repository_names:
                 raise ValueError(f"No repositories found on {server_host}:{server_port}")
 
@@ -385,7 +391,7 @@ class ProjectToolProvider(ToolProvider):
             repository_name: str | None = None
             checkout_program_path: str | None = None
 
-            if path:
+            if path and path.strip():
                 # Check if ``path`` is an exact repo name first
                 if path in repository_names:
                     repository_name = path
@@ -398,14 +404,14 @@ class ProjectToolProvider(ToolProvider):
             else:
                 repository_name = repository_names[0]
 
-            repository_adapter = server_adapter.getRepository(repository_name)
+            repository_adapter: Any = server_adapter.getRepository(repository_name)
             if repository_adapter is None:
                 raise ValueError(f"Failed to get repository handle for '{repository_name}'")
 
             if not repository_adapter.isConnected():
                 repository_adapter.connect()
 
-            binaries = self._list_repository_items(repository_adapter)
+            binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
 
             SESSION_CONTEXTS.set_project_handle(
                 session_id,
@@ -425,8 +431,8 @@ class ProjectToolProvider(ToolProvider):
             checkout_error: str | None = None
             if checkout_program_path:
                 # Try to find the matching binary in the discovered items.
-                norm_target = checkout_program_path.strip().rstrip("/")
-                matched = None
+                norm_target: str = checkout_program_path.strip().rstrip("/")
+                matched: str | None = None
                 for b in binaries:
                     bp = (b.get("path") or "").strip()
                     if bp == norm_target or bp.lstrip("/") == norm_target.lstrip("/"):
@@ -473,17 +479,17 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
-        if not path:
+        if not path or not path.strip():
             raise ValueError("programPath or filePath required (or provide --server-host for shared-server mode)")
 
-        resolved = Path(path).expanduser().resolve()
+        resolved: Path = Path(path).expanduser().resolve()
         if not resolved.exists():
             raise ValueError(f"Path does not exist: {resolved}")
 
         if resolved.is_file() and resolved.suffix.lower() not in (".gpr",):
             return await self._import_file(str(resolved), args)
 
-        files_discovered = 0
+        files_discovered: int = 0
         if resolved.is_dir():
             extensions = self._get_list(args, "extensions")
             patterns = [e.lower() for e in extensions] if extensions else []
@@ -510,7 +516,7 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"loaded": False, "note": "No program currently loaded"})
 
-        program = getattr(self.program_info, "program", None)
+        program: Any = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getName"):
             return create_success_response({"loaded": False, "note": "No program currently loaded"})
         info: dict[str, Any] = {"loaded": True}
@@ -539,16 +545,16 @@ class ProjectToolProvider(ToolProvider):
         return create_success_response(info)
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
-        folder = self._get_str(args, "folder", "path", default="/")
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
-        session_id = get_current_mcp_session_id()
+        folder: str  = self._get_str(args, "folder", "path", default="/")
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        session_id: str = get_current_mcp_session_id()
 
         fs_path = self._get_str(args, "path")
         if fs_path:
-            base = Path(fs_path).expanduser().resolve()
+            base: Path = Path(fs_path).expanduser().resolve()
             if not base.exists() or not base.is_dir():
                 raise ValueError(f"Invalid folder path: {base}")
-            files = []
+            files: list[dict[str, Any]] = []
             for item in base.rglob("*"):
                 if len(files) >= max_results:
                     break
@@ -556,7 +562,7 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": str(base), "files": files, "count": len(files)})
 
         if self.program_info is None or getattr(self.program_info, "program", None) is None or not hasattr(getattr(self.program_info, "program", None), "getDomainFile"):
-            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
             if session_binaries:
                 files = []
                 for item in session_binaries[:max_results]:
@@ -581,14 +587,14 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"files": [], "note": "No project loaded"})
 
         try:
-            program = self.program_info.program
+            program: Any = self.program_info.program
             if program is None or not hasattr(program, "getDomainFile"):
                 raise ValueError("No active program available")
-            root = program.getDomainFile().getProjectData().getRootFolder()
+            root: Any = program.getDomainFile().getProjectData().getRootFolder()
             files = self._list_domain_files(root, max_results)
             return create_success_response({"folder": folder, "files": files, "count": len(files)})
         except Exception as e:
-            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
             if session_binaries:
                 files = []
                 for item in session_binaries[:max_results]:
@@ -614,17 +620,17 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
-        operation = self._require_str(args, "operation", "action", "mode", name="operation")
-        file_path = self._get_str(args, "filepath", "file", "path", "programpath")
-        program_path = self._get_str(args, "programpath", "filepath", "file", "path")
-        destination = self._get_str(args, "newpath", "destinationpath")
-        new_name = self._get_str(args, "newname")
-        content = self._get_str(args, "content", default="")
-        encoding = self._get_str(args, "encoding", default="utf-8")
-        create_parents = self._get_bool(args, "createparents", default=True)
-        max_results = self._get_int(args, "maxresults", default=200)
+        operation: str = self._require_str(args, "operation", "action", "mode", name="operation")
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        destination: str | None = self._get_str(args, "newpath", "destinationpath")
+        new_name: str | None = self._get_str(args, "newname")
+        content: str = self._get_str(args, "content", default="")
+        encoding: str = self._get_str(args, "encoding", default="utf-8")
+        create_parents: bool = self._get_bool(args, "createparents", default=True)
+        max_results: int = self._get_int(args, "maxresults", default=200)
 
-        op = n(operation)
+        op: str = n(operation)
         if op == "import":
             if not file_path:
                 raise ValueError("path/filePath is required for import")
