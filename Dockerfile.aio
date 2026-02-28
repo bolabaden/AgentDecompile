@@ -221,6 +221,8 @@ RUN \
 
 WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
+COPY --from=build /usr/lib/libssl.so.* /usr/lib/
+COPY --from=build /usr/lib/libcrypto.so.* /usr/lib/
 COPY docker/entrypoint.sh ${GHIDRA_HOME}/docker/entrypoint.sh
 COPY docker/supervisord.conf ${GHIDRA_HOME}/docker/supervisord.conf
 COPY docker/supervisor-wrap.sh docker/supervisor-wait-then-mcp.sh docker/supervisor-start-bsim.sh ${GHIDRA_HOME}/docker/
