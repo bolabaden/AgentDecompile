@@ -120,16 +120,16 @@ def handle_noisy_mcp_errors(error_msg: str) -> bool:
 
     Returns True if the error was handled (was noisy), False otherwise.
     """
-    noisy_patterns = [
-        "async_generator",
-        "GeneratorExit",
+    noisy_patterns: list[str] = [
         "aclose()",
-        "unhandled errors in a TaskGroup",
-        "Attempted to exit cancel scope",
-        "asynchronous generator is already running",
-        "Exception Group",
-        "CancelledError: Cancelled by cancel scope",
         "anyio.WouldBlock",
+        "async_generator",
+        "asynchronous generator is already running",
+        "Attempted to exit cancel scope",
+        "CancelledError: Cancelled by cancel scope",
+        "Exception Group",
+        "GeneratorExit",
+        "unhandled errors in a TaskGroup",
     ]
     if not any(pattern in error_msg for pattern in noisy_patterns):
         return False
@@ -165,9 +165,9 @@ def handle_command_error(error: BaseException) -> None:
     error_msg = str(error)
     if (
         isinstance(error, (ConnectionRefusedError, ConnectionError, OSError))
+        or "all connection attempts failed" in error_msg.lower()
         or "ConnectError" in error_msg
         or "connection refused" in error_msg.lower()
-        or "all connection attempts failed" in error_msg.lower()
     ):
         show_connection_error()
         return

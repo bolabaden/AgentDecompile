@@ -573,8 +573,54 @@ class AgentDecompileStdioBridge:
                 pass
             self._backend_exit_stack = None
 
+    async def _create_backend_session(self) -> ClientSession:
+        """Create the backend MCP session (transport + init).
+
+        This coroutine is always run inside its own ``asyncio.Task`` (via
+        ``_ensure_backend_session``) so that the anyio cancel scopes pushed by
+        ``streamable_http_client`` and ``ClientSession`` live in that task's
+        scope stack — **not** in the calling handler task's stack.  Without
+        this isolation the handler's ``responder`` cancel scope cannot exit
+        cleanly and the bridge crashes with
+        ``RuntimeError: Attempted to exit a cancel scope …``.
+        """
+        exit_stack = contextlib.AsyncExitStack()
+        await exit_stack.__aenter__()
+
+        client = AsyncClient(
+            headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
+            timeout=Timeout(BACKEND_OP_TIMEOUT, connect=CONNECT_TIMEOUT),
+        )
+        request_url = self.url if self.url.endswith("/") else f"{self.url}/"
+        read_stream, write_stream, _ = await exit_stack.enter_async_context(
+            streamable_http_client(
+                url=request_url,
+                http_client=client,
+            ),
+        )
+
+        json_stream = JsonEnvelopeStream(read_stream)
+        session = await exit_stack.enter_async_context(ClientSession(json_stream, write_stream))
+        await session.initialize()
+
+        try:
+            await session.list_tools()
+        except Exception:
+            pass  # non-critical: tool calls still work without the cache
+
+        self._backend_exit_stack = exit_stack
+        self._backend_session = session
+        self._backend_connected = True
+        return session
+
     async def _ensure_backend_session(self) -> ClientSession:
-        """Ensure there is a live backend MCP session and return it."""
+        """Ensure there is a live backend MCP session and return it.
+
+        Session creation is delegated to an isolated ``asyncio.Task`` so that
+        the anyio cancel scopes from ``streamable_http_client`` and
+        ``ClientSession`` do not pollute the calling handler task's scope
+        stack.  See ``_create_backend_session`` for details.
+        """
         if self._backend_connected and self._backend_session is not None:
             return self._backend_session
 
@@ -585,42 +631,13 @@ class AgentDecompileStdioBridge:
             await self._reset_backend_session()
 
             try:
-                exit_stack = contextlib.AsyncExitStack()
-                await exit_stack.__aenter__()
-
-                client = AsyncClient(
-                    headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
-                    # Use httpx Timeout with a fast connect deadline but generous
-                    # read deadline.  Do NOT wrap with asyncio.wait_for — the MCP
-                    # SDK uses anyio internally and asyncio.wait_for corrupts
-                    # anyio cancel scopes, crashing the bridge process.
-                    timeout=Timeout(BACKEND_OP_TIMEOUT, connect=CONNECT_TIMEOUT),
-                )
-                request_url = self.url if self.url.endswith("/") else f"{self.url}/"
-                read_stream, write_stream, _ = await exit_stack.enter_async_context(
-                    streamable_http_client(
-                        url=request_url,
-                        http_client=client,
-                    ),
-                )
-
-                json_stream = JsonEnvelopeStream(read_stream)
-                session = await exit_stack.enter_async_context(ClientSession(json_stream, write_stream))
-                await session.initialize()
-
-                # Populate the client-side tool-list cache so that subsequent
-                # session.call_tool() invocations can validate tool names and
-                # arguments against the backend schema.  Without this, the MCP
-                # SDK logs spurious "Tool X not listed by server" warnings for
-                # every call_tool forwarded through the bridge.
-                try:
-                    await session.list_tools()
-                except Exception:
-                    pass  # non-critical: tool calls still work without the cache
-
-                self._backend_exit_stack = exit_stack
-                self._backend_session = session
-                self._backend_connected = True
+                # Run session creation in an isolated asyncio Task.
+                # streamable_http_client and ClientSession push anyio cancel
+                # scopes onto the *calling* task's scope stack.  If we ran
+                # this inline inside a handler task, those persistent scopes
+                # would prevent the handler's responder cancel scope from
+                # exiting, crashing the bridge.
+                session = await asyncio.ensure_future(self._create_backend_session())
                 return session
             except (ConnectionError, OSError, asyncio.TimeoutError) as e:
                 await self._reset_backend_session()
