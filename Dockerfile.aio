@@ -159,12 +159,14 @@ RUN set -eux; \
         python3-dev \
         libffi-dev \
     ; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
-        --prefer-binary \
-        chromadb==${CHROMADB_VERSION} \
-        /src/agentdecompile \
-    ; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade setuptools wheel; \
+    if ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --prefer-binary chromadb==${CHROMADB_VERSION}; then \
+        echo "chromadb installed"; \
+    else \
+        echo "chromadb unavailable on this platform; continuing without semantic collections"; \
+    fi; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir /src/agentdecompile; \
     apk del .chromadb-build || true
 
 FROM alpine:latest AS runtime
