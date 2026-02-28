@@ -1,4 +1,4 @@
-# AgentDecompile - Your Decompilation Companion for Ghidra
+# AgentDecompile - Your AI Companion for Ghidra
 
 > AI-powered code analysis and reverse engineering, directly inside Ghidra.
 
@@ -123,83 +123,66 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
-#### Repository and File Management
-
-Use `manage-files` (or `files run`) for end-to-end repository/file/program lifecycle operations:
-
-- Files/folders: `list`, `info`, `mkdir`, `touch`, `read`, `write`, `append`, `rename`, `move`, `copy`, `delete`
-- Program flows: `import`, `export`
-- Shared-project versioning flows: `checkout`, `uncheckout`, `unhijack`
-
-Examples:
-
-```bash
-# List a folder
-agentdecompile-cli files run --operation list --path ./analysis --max-results 100
-
-# Create folder + write/append/read note file
-agentdecompile-cli files run --operation mkdir --path ./analysis/case_001 --create-parents
-agentdecompile-cli files run --operation write --path ./analysis/case_001/notes.txt --content "initial notes"
-agentdecompile-cli files run --operation append --path ./analysis/case_001/notes.txt --content "\nsecond line"
-agentdecompile-cli files run --operation read --path ./analysis/case_001/notes.txt
-
-# Move/rename/copy/delete
-agentdecompile-cli files run --operation move --path ./analysis/case_001/notes.txt --new-path ./analysis/archive/notes.txt
-agentdecompile-cli files run --operation rename --path ./analysis/archive/notes.txt --new-name notes-final.txt
-agentdecompile-cli files run --operation copy --path ./analysis/archive/notes-final.txt --new-path ./analysis/copy/notes-final.txt
-agentdecompile-cli files run --operation delete --path ./analysis/copy/notes-final.txt
-
-# Program import/export and checkout lifecycle
-agentdecompile-cli files run --operation import --path /binaries --recursive --max-depth 4
-agentdecompile-cli files run --operation checkout --binary /K1/k1_win_gog_swkotor.exe --exclusive
-agentdecompile-cli files run --operation uncheckout --binary /K1/k1_win_gog_swkotor.exe --force
-agentdecompile-cli files run --operation unhijack --binary /K1/k1_win_gog_swkotor.exe --force
-```
-
 #### Shared server quick usage (concise)
 
 The examples below use the published Git source install form and redact sensitive values.
 
 ```powershell
-# 1) List a small function sample
+# 1) Open a program from a Ghidra shared repository
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 open --server_host 170.9.241.140 --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+
+# concise output
+mode: shared-server
+serverConnected: True
+repository: Odyssey
+programCount: 26
+checkedOutProgram: /K1/k1_win_gog_swkotor.exe
+
+# 2) List files in the shared repository
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 list project-files
+
+# concise output
+folder: /
+count: 26
+source: shared-server-session
+
+# 3) List a small function sample
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
 
-functions: [{'name': '~CSWReentrantServerStats', 'address': '00401000', 'size': 90, 'isExternal': False, 'isThunk': False, 'parameterCount': 1}, {'name': 'GetObjectTableManager', 'address': '00401060', 'size': 30, 'isExternal': False, 'isThunk': False, 'parameterCount': 2}, {'name': 'DoSaveGameScreenShot', 'address': '00401080', 'size': 30, 'isExternal': False, 'isThunk': False, 'parameterCount': 3}, {'name': 'AllocLargeTempBuffer', 'address': '004010a0', 'size': 25, 'isExternal': False, 'isThunk': False, 'parameterCount': 1}, {'name': 'CSWReentrantServerStats', 'address': '004010c0', 'size': 101, 'isExternal': False, 'isThunk': False, 'parameterCount': 1}]
+# concise output
 count: 5
 totalMatched: 24242
-offset: 0
 hasMore: True
 
-# 2) Search symbols by name
+# 4) Search symbols by name
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
 
+# concise output
 query: main
-results: [{'name': 'WinMain', 'address': '004041f0', 'type': 'Function', 'namespace': 'Global', 'source': 'USER_DEFINED'}, {'name': 'MainLoop', 'address': '004ae860', 'type': 'Function', 'namespace': 'CServerExoApp (GhidraClass)', 'source': 'USER_DEFINED'}, {'name': 'MainLoop', 'address': '004babb0', 'type': 'Function', 'namespace': 'CServerExoAppInternal (GhidraClass)', 'source': 'USER_DEFINED'}, {'name': 'WriteGameObjUpdate_WorkRemaining', 'address': '00567ba0', 'type': 'Function', 'namespace': 'CSWSMessage (GhidraClass)', 'source': 'USER_DEFINED'}, {'name': 'GetFeatRemainingUses', 'address': '005a6680', 'type': 'Function', 'namespace': 'CSWSCreatureStats (GhidraClass)', 'source': 'USER_DEFINED'}]
 count: 5
 totalMatched: 58
 hasMore: True
 
-# 3) Find references to a symbol
+# 5) Find references to a symbol
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
 
+# concise output
 mode: to
 target: 004041f0
-references: [{'fromAddress': '006fb509', 'toAddress': '004041f0', 'type': 'UNCONDITIONAL_CALL', 'function': 'entry'}]
 count: 1
 
-# 4) Raw tool mode examples
+# 6) Raw tool mode examples
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 
+# concise output
 mode: imports
-results: [{'name': 'glGetFloatv', 'address': 'EXTERNAL:00000001', 'namespace': 'OPENGL32.DLL'}, {'name': 'glClear', 'address': 'EXTERNAL:00000002', 'namespace': 'OPENGL32.DLL'}, {'name': 'glClearColor', 'address': 'EXTERNAL:00000003', 'namespace': 'OPENGL32.DLL'}, {'name': 'glColor4f', 'address': 'EXTERNAL:00000004', 'namespace': 'OPENGL32.DLL'}, {'name': 'glMatrixMode', 'address': 'EXTERNAL:00000005', 'namespace': 'OPENGL32.DLL'}]
 count: 5
 mode: exports
-results: [{'name': 'entry', 'address': '006fb38d'}]
 count: 1
 ```
 
-Tip: use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
+Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
 
 For shared Ghidra server workflows (`open --server-host ... --server-port ...`), you can set defaults once with environment variables:
 
@@ -310,6 +293,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). |
 | `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). |
 | `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). |
+| `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` | If `true`, delete project lock files before opening (risky; see Project locking below). |
 
 ### Shared project authentication
 
@@ -317,7 +301,7 @@ When opening a `.gpr` file connected to a Ghidra Server, authentication may be r
 
 ### Project locking
 
-Ghidra allows only one process to open a project at a time (file-based locks). If you see "Project 'X' is locked", close the project in the other process or use a different project. For shared access, use Ghidra Server.
+Ghidra allows only one process to open a project at a time (file-based locks). If you see "Project 'X' is locked", close the project in the other process or use a different project. For shared access, use Ghidra Server. **Workaround:** `AGENT_DECOMPILE_FORCE_IGNORE_LOCK=true` (or `forceIgnoreLock: true` on `open`) deletes lock files before opening—**risky**; can cause data corruption if multiple processes write. Use only when you are sure only one process will write and you have backups.
 
 ### Structure size (manage-structures)
 

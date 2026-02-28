@@ -59,21 +59,6 @@ class SuggestionToolProvider(ToolProvider):
             ),
         ]
 
-    async def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any],
-    ) -> list[types.TextContent]:
-        """Override base call_tool to preserve explicit ValueError behavior for invalid inputs."""
-        norm_name = n(name)
-        handler_method_name = self.HANDLERS.get(norm_name)
-        if handler_method_name is None:
-            raise NotImplementedError(f"Unknown tool: {name}")
-
-        handler = getattr(self, handler_method_name)
-        norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
-        return await handler(norm_args)
-
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
         suggestion_type_raw = self._require_str(args, "suggestiontype", "type", name="suggestion_type")

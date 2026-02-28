@@ -51,6 +51,9 @@ from mcp.types import (
 
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
 
+if TYPE_CHECKING:
+    from contextlib import _AsyncGeneratorContextManager
+
 
 class ClientError(Exception):
     """Custom exception for client errors."""
@@ -64,6 +67,11 @@ class ServerNotRunningError(ClientError):
 CONNECT_TIMEOUT = 5.0
 # Timeout for backend operations (tool calls, list_resources, etc.)
 BACKEND_OP_TIMEOUT = 90.0
+
+
+def _canonical_streamable_http_url(url: str) -> str:
+    """Return canonical MCP streamable HTTP endpoint URL with trailing slash."""
+    return f"{url}/" if url.endswith("/mcp/message") else url
 
 
 def _is_jsonrpc_request(msg: SessionMessage) -> bool:
@@ -308,7 +316,7 @@ class AgentDecompileStdioBridge:
                 read_stream, write_stream, _ = await asyncio.wait_for(
                     exit_stack.enter_async_context(
                         streamable_http_client(
-                            url=self.url,
+                            url=_canonical_streamable_http_url(self.url),
                             http_client=client,
                         ),
                     ),

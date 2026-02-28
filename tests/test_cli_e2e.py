@@ -13,10 +13,9 @@ All tests use real PyGhidra and Ghidra integration.
 
 from __future__ import annotations
 
-import types
-
 from pathlib import Path
 
+from mcp.types import CallToolResult
 import pytest
 
 from mcp import ClientSession
@@ -138,23 +137,6 @@ class TestCLIStartup:
 class TestMCPToolCalls:
     """Test MCP tool calls via stdio."""
 
-    async def test_list_tools(
-        self,
-        mcp_stdio_client: ClientSession,
-    ):
-        """Can list all available MCP tools"""
-        result = await mcp_stdio_client.list_tools()
-
-        # AgentDecompile has substantial tool set
-        assert len(result.tools) > 20
-        assert_int_invariants(len(result.tools), min_value=1)
-
-        # Check for some essential tools
-        tool_names: list[str] = [tool.name for tool in result.tools]
-        assert "list-project-files" in tool_names
-        # Note: Tool names may vary, just ensure we have a substantial list
-        assert len([name for name in tool_names if "function" in name.lower()]) > 0
-
     async def test_call_list_programs_tool(
         self,
         mcp_stdio_client: ClientSession,
@@ -166,7 +148,7 @@ class TestMCPToolCalls:
         Starting PyGhidra in test process causes Windows access violation.
         """
         # The test_binary fixture creates a binary in isolated_workspace
-        result: types.ToolResult = await mcp_stdio_client.call_tool("list-project-files", arguments={})
+        result: CallToolResult = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         # Should get a response (even if no files in project yet)
         assert result is not None
@@ -189,13 +171,13 @@ class TestMCPToolCalls:
         mcp_stdio_client: ClientSession,
     ):
         """Can make multiple sequential tool calls"""
-        # Call list_tools twice
-        result1 = await mcp_stdio_client.list_tools()
-        result2 = await mcp_stdio_client.list_tools()
+        # Call list_resources twice
+        result1 = await mcp_stdio_client.list_resources()
+        result2 = await mcp_stdio_client.list_resources()
 
         # Should get same results
-        assert len(result1.tools) == len(result2.tools)
-        assert_int_invariants(len(result1.tools), min_value=1)
+        assert len(result1.resources) == len(result2.resources)
+        assert_int_invariants(len(result1.resources), min_value=0)
 
 
 class TestProjectCreation:

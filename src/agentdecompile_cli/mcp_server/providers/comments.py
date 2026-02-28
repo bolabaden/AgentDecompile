@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class CommentToolProvider(ToolProvider):
         ]
 
     def _resolve_comment_type(self, type_str: str) -> int:
-        return _COMMENT_TYPES.get(type_str.lower().strip(), 0)
+        return _COMMENT_TYPES.get(n(type_str), 0)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
@@ -71,8 +72,6 @@ class CommentToolProvider(ToolProvider):
             "search": self._search,
             "searchdecomp": self._search_decomp,
         }
-        from agentdecompile_cli.registry import normalize_identifier as n
-
         handler = dispatch.get(n(action))
         if handler is None:
             raise ValueError(f"Unknown action: {action}. Valid: {list(dispatch.keys())}")
@@ -89,8 +88,6 @@ class CommentToolProvider(ToolProvider):
             tx = program.startTransaction("batch-set-comments")
             try:
                 for item in batch:
-                    from agentdecompile_cli.registry import normalize_identifier as n
-
                     ni = {n(k): v for k, v in item.items()}
                     addr_str = self._get_str(ni, "addressorsymbol", "address", "addr")
                     text = self._get_str(ni, "comment", "text")

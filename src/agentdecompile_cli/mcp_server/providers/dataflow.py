@@ -15,6 +15,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,6 @@ class DataFlowToolProvider(ToolProvider):
         addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "functionidentifier", "functionaddress", "startaddress")
         if not addr_str:
             raise ValueError("addressOrSymbol or functionIdentifier required")
-
-        from agentdecompile_cli.registry import normalize_identifier as n
 
         direction = n(self._get_str(args, "direction", "mode", default="backward"))
         max_ops = self._get_int(args, "maxops", default=500)

@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,6 @@ class MemoryToolProvider(ToolProvider):
         mode = self._get_str(args, "mode", default="blocks")
         program = self.program_info.program
         memory = program.getMemory()
-
-        from agentdecompile_cli.registry import normalize_identifier as n
 
         mode_n = n(mode)
 
