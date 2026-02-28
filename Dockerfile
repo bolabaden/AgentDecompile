@@ -88,51 +88,11 @@ RUN set -eux; \
     rm -f /tmp/ghidra.zip; \
     rm -rf /tmp/ghidra_extract
 
-# build postgres and install pyghidra
+# install pyghidra into the image venv (MCP-only image does not build BSim/Postgres)
 RUN set -eux; \
-        apk add --no-cache g++ gcc musl-dev make bison flex zlib-dev readline-dev perl; \
-        ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
-        ARCH="$(uname -m)"; \
-        case "${ARCH}" in \
-            x86_64) OSDIR="linux_x86_64" ;; \
-            aarch64) OSDIR="linux_arm_64" ;; \
-            *) OSDIR="linux_${ARCH}" ;; \
-        esac; \
-        test -x "${GHIDRA_HOME}/Ghidra/Features/BSim/build/os/${OSDIR}/postgresql/bin/postgres"; \
         python3 -m venv --system-site-packages ${GHIDRA_HOME}/venv; \
         ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
-        apk del g++ gcc musl-dev make bison flex zlib-dev readline-dev perl || true; \
-        mkdir ${GHIDRA_HOME}/repositories; \
-        mkdir ${GHIDRA_HOME}/bsim_datadir
-
-# --- Layer 3b: build native decompiler/sleigh ONLY on arm64 (x86_64 ships prebuilt) ---
-# The Ghidra PUBLIC release includes prebuilt linux_x86_64 binaries but NOT linux_arm_64.
-# On arm64: install C++ toolchain, build from source, then remove toolchain to shrink layer.
-# On x86_64: no-op — the release zip already has the binaries.
-RUN set -eux; \
-    ARCH="$(uname -m)"; \
-    OSDIR="linux_$(echo "${ARCH}" | sed 's/aarch64/arm_64/' | sed 's/x86_64/x86_64/')"; \
-    NATIVE_DIR="${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${OSDIR}"; \
-    if [ -d "${NATIVE_DIR}" ] && [ -f "${NATIVE_DIR}/decompile" ]; then \
-        echo "Native decompiler already present at ${NATIVE_DIR} — skipping build (${ARCH})"; \
-    elif [ "${ARCH}" = "x86_64" ]; then \
-        echo "ERROR: x86_64 prebuilt binaries missing from Ghidra release — this should not happen"; \
-        exit 1; \
-    else \
-        echo "Platform ${ARCH} (${OSDIR}): prebuilt binaries not included in Ghidra release — building from source..."; \
-        apk add --no-cache g++ gcc musl-dev bison flex make zlib-dev readline-dev; \
-        cd ${GHIDRA_HOME}/Ghidra/Features/Decompiler/src/decompile/cpp; \
-        mkdir -p ghi_opt sla_opt; \
-        make OSDIR="${OSDIR}" ARCH_TYPE="" ghidra_opt sleigh_opt; \
-        mkdir -p "${NATIVE_DIR}"; \
-        cp ghidra_opt "${NATIVE_DIR}/decompile"; \
-        cp sleigh_opt "${NATIVE_DIR}/sleigh"; \
-        chmod +x "${NATIVE_DIR}/decompile" "${NATIVE_DIR}/sleigh"; \
-        echo "Native binaries installed to ${NATIVE_DIR}"; \
-        make clean; \
-        echo "Removing C++ build toolchain to reduce image size..."; \
-        apk del g++ gcc musl-dev bison flex make zlib-dev readline-dev || true; \
-    fi
+        mkdir ${GHIDRA_HOME}/repositories
 
 # --- Layer 4: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
@@ -155,6 +115,8 @@ ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 ARG CHROMADB_VERSION=1.5.2
 ENV CHROMADB_VERSION=${CHROMADB_VERSION}
+# NOTE: .chromadb-build toolchain is only for Python package builds (e.g. chromadb) on Alpine;
+# MCP-only image no longer builds BSim/Postgres or native Ghidra decompiler binaries.
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     if [ "${ARCH}" = "aarch64" ]; then \
