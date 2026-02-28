@@ -18,7 +18,7 @@ except ImportError:
     _CLICK_AVAILABLE = False
 
 from tests.helpers import assert_text_block_invariants
-from agentdecompile_cli.registry import to_snake_case, tool_registry
+from agentdecompile_cli.registry import tool_registry
 
 pytestmark = pytest.mark.skipif(not _CLICK_AVAILABLE, reason="click CLI not available")
 
@@ -74,6 +74,10 @@ class TestCliCommandRegistration:
     def test_tool_seq_command_registered(self):
         """The 'tool-seq' command must be registered on the main group."""
         assert "tool-seq" in main.commands, "Expected 'tool-seq' command in main.commands"
+
+    def test_alias_command_registered(self):
+        """The 'alias' command must be registered on the main group."""
+        assert "alias" in main.commands, "Expected 'alias' command in main.commands"
 
     def test_callgraph_command_registered(self):
         assert "callgraph" in main.commands
@@ -309,16 +313,23 @@ class TestCliToolListIntegration:
         assert tool_registry.resolve_tool_name("gen-callgraph") == "gen-callgraph"
 
     def test_all_canonical_tools_have_direct_cli_commands(self):
-        """Every canonical tool should be available as a direct CLI command."""
-        missing = []
-        for tool_name in tool_registry.get_tools():
-            snake_name = to_snake_case(tool_name)
-            if snake_name not in main.commands:
-                missing.append(snake_name)
-            if tool_name != snake_name and tool_name not in main.commands:
-                missing.append(tool_name)
-
+        """Every canonical tool should be available via its canonical command name."""
+        missing = [tool_name for tool_name in tool_registry.get_tools() if tool_name not in main.commands]
         assert not missing, f"Missing direct CLI commands for tools: {sorted(set(missing))}"
+
+    def test_main_help_hides_redundant_snake_case_dynamic_aliases(self):
+        """Top-level help should not list duplicate snake_case dynamic aliases."""
+        result = _runner().invoke(main, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "analyze_data_flow" not in result.output
+        assert "manage_symbols" not in result.output
+
+    def test_alias_command_shows_signature_differences(self):
+        """`alias` should expose alias signatures outside top-level help output."""
+        result = _runner().invoke(main, ["alias", "manage-symbols"])
+        assert result.exit_code == 0, result.output
+        assert "Canonical: manage-symbols" in result.output
+        assert "Aliases with different signatures:" in result.output
         
 
 
