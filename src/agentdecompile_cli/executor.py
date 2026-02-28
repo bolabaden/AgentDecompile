@@ -87,11 +87,11 @@ def normalize_backend_url(value: str) -> str:
         )
     if not parsed.netloc:
         raise ValueError("Backend URL must include a host")
-    path = parsed.path or ""
-    if not path or path == "/":
+    path = (parsed.path or "").rstrip("/")
+    if not path or path == "":
         path = "/mcp/message"
     elif not path.endswith("/mcp/message"):
-        path = f"{path.rstrip('/')}/mcp/message"
+        path = f"{path}/mcp/message"
     return urlunparse(parsed._replace(path=path))
 
 
