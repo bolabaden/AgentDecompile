@@ -45,23 +45,23 @@ RUN \
     run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
-        shadow \
-        openjdk21 \
-        bash \
-        gcompat \
-        unzip \
-        curl \
-        jq \
-        python3 \
-        py3-pip \
-        python3-dev \
-        git \
-        gradle \
-        fontconfig \
-        msttcorefonts-installer \
-        linux-headers \
-        libressl-dev \
-        powershell \
+    shadow \
+    openjdk21 \
+    bash \
+    gcompat \
+    unzip \
+    curl \
+    jq \
+    python3 \
+    py3-pip \
+    python3-dev \
+    git \
+    gradle \
+    fontconfig \
+    msttcorefonts-installer \
+    linux-headers \
+    libressl-dev \
+    powershell \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}; \
@@ -71,15 +71,15 @@ RUN \
 # --- Layer 3: download Ghidra (cached unless GHIDRA_VERSION/API or above changes) ---
 RUN set -eux; \
     if [ -n "${GHIDRA_VERSION}" ]; then \
-        API_URL="${GHIDRA_GITHUB_API}/releases/tags/Ghidra_${GHIDRA_VERSION}_build"; \
+    API_URL="${GHIDRA_GITHUB_API}/releases/tags/Ghidra_${GHIDRA_VERSION}_build"; \
     else \
-        API_URL="${GHIDRA_GITHUB_API}/releases/latest"; \
+    API_URL="${GHIDRA_GITHUB_API}/releases/latest"; \
     fi; \
     echo "Fetching Ghidra release from ${API_URL}"; \
     BODY="$(curl -sSL -H 'Accept: application/vnd.github+json' "${API_URL}")"; \
     DOWNLOAD_URL="$(echo "${BODY}" | jq -r '.assets[] | select(.name | test("\\.zip$")) | select(.name | test("PUBLIC")) | .browser_download_url' | head -n 1)"; \
     if [ -z "${DOWNLOAD_URL}" ] || [ "${DOWNLOAD_URL}" = "null" ]; then \
-        echo "Could not determine Ghidra download URL from ${API_URL}"; exit 1; \
+    echo "Could not determine Ghidra download URL from ${API_URL}"; exit 1; \
     fi; \
     echo "Downloading ${DOWNLOAD_URL}"; \
     curl -sSL -o /tmp/ghidra.zip "${DOWNLOAD_URL}"; \
@@ -89,10 +89,13 @@ RUN set -eux; \
     rm -rf /tmp/ghidra_extract
 
 # install pyghidra into the image venv (MCP-only image does not build BSim/Postgres)
+# JPype1 from the bundled PyGhidra package is source-based on Alpine and needs a temporary C/C++ toolchain.
 RUN set -eux; \
-        python3 -m venv --system-site-packages ${GHIDRA_HOME}/venv; \
-        ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
-        mkdir ${GHIDRA_HOME}/repositories
+    apk add --no-cache --virtual .pyghidra-build g++ gcc musl-dev make python3-dev; \
+    python3 -m venv --system-site-packages ${GHIDRA_HOME}/venv; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-index -f ${GHIDRA_HOME}/Ghidra/Features/PyGhidra/pypkg/dist pyghidra; \
+    apk del .pyghidra-build || true; \
+    mkdir ${GHIDRA_HOME}/repositories
 
 # --- Layer 4: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
@@ -100,60 +103,26 @@ WORKDIR /src/agentdecompile
 
 # --- Layer 4b: build/install AgentDecompile Ghidra extension ---
 RUN set -eux; \
-        if [ -f ./build.gradle ] || [ -f ./build.gradle.kts ] || [ -f ./settings.gradle ] || [ -f ./settings.gradle.kts ]; then \
-            gradle clean buildExtension; \
-            EXTENSION_ZIP="$(find . -maxdepth 4 -type f -path '*/dist/*.zip' | head -n 1)"; \
-            test -n "${EXTENSION_ZIP}"; \
-            mkdir -p /ghidra/Ghidra/Extensions; \
-            unzip -q "${EXTENSION_ZIP}" -d /ghidra/Ghidra/Extensions/; \
-        else \
-            echo "No Gradle build files found; skipping extension build"; \
-        fi
+    if [ -f ./build.gradle ] || [ -f ./build.gradle.kts ] || [ -f ./settings.gradle ] || [ -f ./settings.gradle.kts ]; then \
+    gradle clean buildExtension; \
+    EXTENSION_ZIP="$(find . -maxdepth 4 -type f -path '*/dist/*.zip' | head -n 1)"; \
+    test -n "${EXTENSION_ZIP}"; \
+    mkdir -p /ghidra/Ghidra/Extensions; \
+    unzip -q "${EXTENSION_ZIP}" -d /ghidra/Ghidra/Extensions/; \
+    else \
+    echo "No Gradle build files found; skipping extension build"; \
+    fi
 
 # --- Layer 5: install AgentDecompile Python package into venv ---
 ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
-ARG CHROMADB_VERSION=1.5.2
-ENV CHROMADB_VERSION=${CHROMADB_VERSION}
-# NOTE: .chromadb-build toolchain is only for Python package builds (e.g. chromadb) on Alpine;
-# MCP-only image no longer builds BSim/Postgres or native Ghidra decompiler binaries.
 RUN set -eux; \
-    ARCH="$(uname -m)"; \
-    if [ "${ARCH}" = "aarch64" ]; then \
-        if ! apk add --no-cache \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            py3-onnxruntime \
-        ; then \
-            INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/APKINDEX.tar.gz"; \
-            ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
-            test -n "${ONNXRUNTIME_VERSION}"; \
-            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
-            apk add --no-cache \
-                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-                "${ONNXRUNTIME_APK_URL}" \
-            ; \
-        fi; \
-    fi; \
-    apk add --no-cache --virtual .chromadb-build \
-        cargo \
-        rust \
-        gcc \
-        g++ \
-        musl-dev \
-        python3-dev \
-        libffi-dev \
-    ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
-        --prefer-binary \
-        chromadb==${CHROMADB_VERSION} \
-        /src/agentdecompile \
-    ; \
-    apk del .chromadb-build || true
+    /src/agentdecompile \
 
-FROM alpine:latest AS runtime
+
+    FROM alpine:latest AS runtime
 
 # --- Runtime env/args ---
 ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
@@ -189,15 +158,15 @@ RUN \
     run cat /etc/apk/repositories; \
     run apk update; \
     run apk add --no-cache \
-        shadow \
-        openjdk21 \
-        bash \
-        gcompat \
+    shadow \
+    openjdk21 \
+    bash \
+    gcompat \
     python3 \
     openssl \
     libstdc++ \
-        musl-locales \
-                musl-locales-lang \
+    musl-locales \
+    musl-locales-lang \
     ; \
     run addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
