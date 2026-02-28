@@ -35,7 +35,7 @@ except ImportError:
     ClosedResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from httpx import AsyncClient
+from httpx import AsyncClient, Timeout
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server import Server
@@ -557,6 +557,8 @@ class AgentDecompileStdioBridge:
                 "BrokenResource",
                 "ClosedResource",
                 "connection reset",
+                "Timed out",
+                "TimeoutException",
             )
         )
 
@@ -588,17 +590,18 @@ class AgentDecompileStdioBridge:
 
                 client = AsyncClient(
                     headers={} if self._streamable_http_headers is None else self._streamable_http_headers,
-                    timeout=BACKEND_OP_TIMEOUT,
+                    # Use httpx Timeout with a fast connect deadline but generous
+                    # read deadline.  Do NOT wrap with asyncio.wait_for — the MCP
+                    # SDK uses anyio internally and asyncio.wait_for corrupts
+                    # anyio cancel scopes, crashing the bridge process.
+                    timeout=Timeout(BACKEND_OP_TIMEOUT, connect=CONNECT_TIMEOUT),
                 )
                 request_url = self.url if self.url.endswith("/") else f"{self.url}/"
-                read_stream, write_stream, _ = await asyncio.wait_for(
-                    exit_stack.enter_async_context(
-                        streamable_http_client(
-                            url=request_url,
-                            http_client=client,
-                        ),
+                read_stream, write_stream, _ = await exit_stack.enter_async_context(
+                    streamable_http_client(
+                        url=request_url,
+                        http_client=client,
                     ),
-                    timeout=CONNECT_TIMEOUT,
                 )
 
                 json_stream = JsonEnvelopeStream(read_stream)
@@ -619,12 +622,7 @@ class AgentDecompileStdioBridge:
                 self._backend_session = session
                 self._backend_connected = True
                 return session
-            except asyncio.TimeoutError:
-                await self._reset_backend_session()
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
-                ) from None
-            except (ConnectionError, OSError) as e:
+            except (ConnectionError, OSError, asyncio.TimeoutError) as e:
                 await self._reset_backend_session()
                 raise ServerNotRunningError(
                     f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
@@ -632,7 +630,7 @@ class AgentDecompileStdioBridge:
             except Exception as e:
                 await self._reset_backend_session()
                 err = str(e)
-                if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused"]):
+                if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused", "Timed out"]):
                     raise ServerNotRunningError(
                         f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}",
                     ) from e
@@ -719,32 +717,55 @@ class AgentDecompileStdioBridge:
             name: str,
             arguments: dict[str, Any],
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
-            try:
-                async with self._with_backend_session("call_tool") as session:
-                    backend_name = resolve_tool_name(name) if isinstance(name, str) else None
-                    if backend_name is None:
-                        backend_name = name
-                    result = await asyncio.wait_for(
-                        session.call_tool(backend_name, arguments),
-                        timeout=BACKEND_OP_TIMEOUT,
-                    )
-                    if result is None:
-                        return CallToolResult(
-                            content=[TextContent(type="text", text=f"Error: Tool '{name}' returned no result")],
-                            isError=True,
+            backend_name = resolve_tool_name(name) if isinstance(name, str) else None
+            if backend_name is None:
+                backend_name = name
+
+            # Retry once on stale/broken backend session.  After ~60-90s of
+            # inactivity the backend SSE connection can close silently; the
+            # first attempt detects the dead session, resets it, and the
+            # second attempt creates a fresh connection.
+            last_exc: Exception | None = None
+            for _attempt in range(2):
+                try:
+                    async with self._with_backend_session("call_tool") as session:
+                        # Do NOT use asyncio.wait_for here — the MCP SDK
+                        # uses anyio internally and asyncio.wait_for
+                        # corrupts anyio cancel scopes, crashing the
+                        # bridge.  The httpx client timeout already
+                        # bounds the wait.
+                        result = await session.call_tool(backend_name, arguments)
+                        if result is None:
+                            return CallToolResult(
+                                content=[TextContent(type="text", text=f"Error: Tool '{name}' returned no result")],
+                                isError=True,
+                            )
+                        return result
+                except Exception as exc:
+                    last_exc = exc
+                    if _attempt == 0 and self._is_connection_error(exc):
+                        sys.stderr.write(
+                            f"Backend session stale, reconnecting... ({type(exc).__name__})\n",
                         )
-                    return result
-            except RuntimeError as e:
+                        # _with_backend_session already reset on connection
+                        # error; next iteration creates a fresh session.
+                        continue
+                    break
+
+            # Exhausted retries.
+            exc = last_exc
+            if exc is None:
+                exc = RuntimeError("Unexpected retry exhaustion")
+            if isinstance(exc, RuntimeError):
                 return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: Backend connection lost: {e}")],
+                    content=[TextContent(type="text", text=f"Error: Backend connection lost: {exc}")],
                     isError=True,
                 )
-            except Exception as e:
-                sys.stderr.write(f"ERROR: call_tool {name} failed: {e.__class__.__name__}: {e}\n")
-                return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: {e.__class__.__name__}: {e}")],
-                    isError=True,
-                )
+            sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
+                isError=True,
+            )
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]
