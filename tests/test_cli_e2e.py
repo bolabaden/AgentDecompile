@@ -13,12 +13,15 @@ All tests use real PyGhidra and Ghidra integration.
 
 from __future__ import annotations
 
+import types
+
 from pathlib import Path
 
 import pytest
 
 from mcp import ClientSession
-from tests.helpers import assert_bool_invariants, assert_int_invariants, assert_mapping_invariants, assert_tool_response_common
+
+from tests.helpers import assert_bool_invariants, assert_int_invariants, assert_tool_response_common
 
 # Mark all tests in this file
 # E2E tests need longer timeout due to PyGhidra initialization (10-30s) + server startup
@@ -147,7 +150,7 @@ class TestMCPToolCalls:
         assert_int_invariants(len(result.tools), min_value=1)
 
         # Check for some essential tools
-        tool_names = [tool.name for tool in result.tools]
+        tool_names: list[str] = [tool.name for tool in result.tools]
         assert "list-project-files" in tool_names
         # Note: Tool names may vary, just ensure we have a substantial list
         assert len([name for name in tool_names if "function" in name.lower()]) > 0
@@ -163,7 +166,7 @@ class TestMCPToolCalls:
         Starting PyGhidra in test process causes Windows access violation.
         """
         # The test_binary fixture creates a binary in isolated_workspace
-        result = await mcp_stdio_client.call_tool("list-project-files", arguments={})
+        result: types.ToolResult = await mcp_stdio_client.call_tool("list-project-files", arguments={})
 
         # Should get a response (even if no files in project yet)
         assert result is not None

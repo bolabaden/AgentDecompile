@@ -142,7 +142,9 @@ class PythonMcpServer:
                 await self._session_manager_cm.__aexit__(None, None, None)
                 self._session_manager_cm = None
 
-        self.app.mount("/mcp/message", _SessionContextASGI(self._session_manager.handle_request))
+        mcp_asgi = _SessionContextASGI(self._session_manager.handle_request)
+        self.app.mount("/mcp/message", mcp_asgi)
+        self.app.mount("/mcp/message/", mcp_asgi)
 
         @self.app.get("/health")
         async def health_check() -> dict[str, Any]:

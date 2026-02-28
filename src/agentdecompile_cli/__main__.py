@@ -384,6 +384,8 @@ def main():
         args.server_url,
         args.host,
         args.port,
+        env_host_key="AGENT_DECOMPILE_MCP_SERVER_HOST",
+        env_port_key="AGENT_DECOMPILE_MCP_SERVER_PORT",
     )
 
     # Validate config file if provided
