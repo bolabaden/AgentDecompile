@@ -2922,51 +2922,56 @@ def files_grp() -> None:
     required=True,
 )
 @click.option("--path")
+@click.option("--source-path", "source_path")
 @click.option("-b", "--binary", "program_path")
+@click.option("--mode", type=click.Choice(["pull", "push", "bidirectional"]))
 @click.option("--new-path", "new_path")
 @click.option("--new-name", "new_name")
 @click.option("--content")
 @click.option("--encoding", default="utf-8")
 @click.option("--create-parents/--no-create-parents", "create_parents", default=True)
-@click.option("--destination-folder", "destinationFolder", default="/")
+@click.option("--destination-folder", "destination_folder", default="/")
 @click.option("--recursive/--no-recursive", default=True)
 @click.option("--max-results", "max_results", type=int)
-@click.option("--max-depth", "maxDepth", type=int)
+@click.option("--max-depth", "max_depth", type=int)
 @click.option(
     "--analyze-after-import/--no-analyze-after-import",
-    "analyzeAfterImport",
+    "analyze_after_import",
     default=True,
 )
 @click.option(
     "--strip-leading-path/--no-strip-leading-path",
-    "stripLeadingPath",
+    "strip_leading_path",
     default=True,
 )
-@click.option("--strip-all-container-path", "stripAllContainerPath", is_flag=True)
-@click.option("--mirror-fs", "mirrorFs", is_flag=True)
+@click.option("--strip-all-container-path", "strip_all_container_path", is_flag=True)
+@click.option("--mirror-fs", "mirror_fs", is_flag=True)
 @click.option(
     "--enable-version-control/--no-enable-version-control",
-    "enableVersionControl",
+    "enable_version_control",
     default=True,
 )
 @click.option(
     "--export-type",
-    "exportType",
+    "export_type",
     type=click.Choice(["program", "function_info", "strings"]),
 )
 @click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
-@click.option("--include-parameters", "includeParameters", is_flag=True)
-@click.option("--include-variables", "includeVariables", is_flag=True)
-@click.option("--include-comments", "includeComments", is_flag=True)
+@click.option("--include-parameters", "include_parameters", is_flag=True)
+@click.option("--include-variables", "include_variables", is_flag=True)
+@click.option("--include-comments", "include_comments", is_flag=True)
 @click.option("--keep", is_flag=True)
 @click.option("--force", is_flag=True)
 @click.option("--exclusive", is_flag=True)
+@click.option("--dry-run", "dry_run", is_flag=True)
 @click.pass_context
 def files_run(
     ctx: click.Context,
     operation: str,
     path: str | None,
+    source_path: str | None,
     program_path: str | None,
+    mode: str | None,
     new_path: str | None,
     new_name: str | None,
     content: str | None,
@@ -2989,12 +2994,17 @@ def files_run(
     keep: bool,
     force: bool,
     exclusive: bool,
+    dry_run: bool,
 ) -> None:
     payload: dict[str, Any] = {"operation": operation}
     if path is not None:
         payload["path"] = path
+    if source_path is not None:
+        payload["sourcePath"] = source_path
     if program_path is not None:
         payload["programPath"] = program_path
+    if mode is not None:
+        payload["mode"] = mode
     if new_path is not None:
         payload["newPath"] = new_path
     if new_name is not None:
@@ -3024,6 +3034,7 @@ def files_run(
     payload["keep"] = keep
     payload["force"] = force
     payload["exclusive"] = exclusive
+    payload["dryRun"] = dry_run
     _run_async(_call(ctx, "manage-files", **payload))
 
 
@@ -3064,7 +3075,7 @@ def shared_download(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "download-shared-repository", **payload))
+    _run_async(_call(ctx, "sync-shared-project", **payload))
 
 
 @shared_grp.command(
@@ -3096,7 +3107,7 @@ def shared_push(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "download-shared-repository", **payload))
+    _run_async(_call(ctx, "sync-shared-project", **payload))
 
 
 @shared_grp.command(
@@ -3128,7 +3139,7 @@ def shared_sync(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "download-shared-repository", **payload))
+    _run_async(_call(ctx, "sync-shared-project", **payload))
 
 
 @main.command("current-program", help="Get current program (get-current-program, GUI)")
