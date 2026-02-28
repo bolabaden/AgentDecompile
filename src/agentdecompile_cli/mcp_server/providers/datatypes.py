@@ -35,7 +35,7 @@ class DataTypeToolProvider(ToolProvider):
                         "categoryPath": {"type": "string", "description": "Category path (e.g., /MyTypes)"},
                         "dataTypeString": {"type": "string", "description": "Data type as string (e.g., int, char*)"},
                         "addressOrSymbol": {"type": "string"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -93,7 +93,7 @@ class DataTypeToolProvider(ToolProvider):
         program = self.program_info.program
         dtm = program.getDataTypeManager()
         cat_path = self._get_str(args, "categorypath", "category", "path")
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        max_results = self._get_int(args, "maxresults", "limit", "maxcount", default=100)
         offset = self._get_int(args, "offset", "startindex", default=0)
 
         results = []

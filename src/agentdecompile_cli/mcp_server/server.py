@@ -86,9 +86,14 @@ class PythonMcpServer:
             """List all available MCP tools."""
             return self.tool_providers.list_tools()
 
-        @server.call_tool()
+        @server.call_tool(validate_input=False)
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-            """Call a tool by name with arguments."""
+            """Call a tool by name with arguments.
+
+            Input validation is disabled because we normalize all parameter names
+            (any case/separator variant accepted) before dispatch.  The MCP SDK's
+            jsonschema validation would reject valid aliased params.
+            """
             return await self.tool_providers.call_tool(name, arguments, self.program_info)
 
         @server.list_resources()

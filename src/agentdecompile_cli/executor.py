@@ -27,6 +27,7 @@ from mcp import types
 from agentdecompile_cli.registry import (
     ToolRegistry,
     normalize_identifier,
+    resolve_tool_name,
     tool_registry,
 )
 
@@ -594,13 +595,7 @@ class DynamicToolExecutor:
         -------
             Canonical registry tool name (kebab-case), or None if no match found.
         """
-        canonical_input = self._registry.canonicalize_tool_name(tool_name)
-
-        for tool_key in self._registry.get_tools():
-            if self._registry.canonicalize_tool_name(tool_key) == canonical_input:
-                return tool_key
-
-        return None
+        return resolve_tool_name(tool_name)
 
     def _parse_arguments_dynamically(
         self,
@@ -688,7 +683,7 @@ class DynamicToolExecutor:
         if param_name == "addressOrSymbol":
             variations.extend(["address", "symbol", "addr"])
         elif param_name == "programPath":
-            variations.extend(["program", "binary", "file"])
+            variations.extend(["path", "program", "binary", "file", "filepath"])
         elif param_name == "maxResults":
             variations.extend(["limit", "count", "max"])
         elif param_name == "startIndex":
@@ -770,16 +765,16 @@ class DynamicToolExecutor:
         if any(
             keyword in param_name.lower()
             for keyword in (
+                "count",
+                "depth",
+                "index",
+                "length",
+                "limit",
                 "max",
                 "min",
-                "limit",
-                "count",
-                "size",
-                "length",
-                "index",
                 "offset",
+                "size",
                 "timeout",
-                "depth",
             )
         ):
             if isinstance(value, int):
@@ -792,7 +787,20 @@ class DynamicToolExecutor:
             return int(value) if value else 0
 
         # String parameters (most common - checked last)
-        if any(keyword in param_name.lower() for keyword in ["path", "name", "address", "symbol", "text", "string", "mode", "type", "format"]):
+        if any(
+            keyword in param_name.lower()
+            for keyword in [
+                "address",
+                "format",
+                "mode",
+                "name",
+                "path",
+                "string",
+                "symbol",
+                "text",
+                "type",
+            ]
+        ):
             return str(value)
 
         # Default to string
@@ -807,41 +815,37 @@ class DynamicToolExecutor:
         normalized_tool_name = normalize_identifier(canonical_tool_name)
 
         required_params: dict[str, list[str]] = {
-            "getdata": ["programpath", "addressorsymbol"],
+            "analyzedataflow": ["programpath"],
+            "analyzeprogram": ["programpath"],
+            "analyzevtables": ["programpath", "mode"],
             "applydatatype": ["programpath", "addressorsymbol", "datatypestring"],
             "createlabel": ["programpath", "addressorsymbol", "labelname"],
-            "getreferences": ["programpath", "target"],
-            "managestructures": ["programpath", "action"],
-            "managecomments": ["programpath", "action"],
-            "managebookmarks": ["programpath", "action"],
-            "inspectmemory": ["programpath", "mode"],
-            "getcallgraph": ["programpath"],
-            "searchconstants": ["programpath", "mode"],
-            "analyzevtables": ["programpath", "mode"],
-            "analyzedataflow": ["programpath"],
             "decompile": ["programpath"],
-            "analyzeprogram": ["programpath"],
+            "getcallgraph": ["programpath"],
+            "getdata": ["programpath", "addressorsymbol"],
+            "getreferences": ["programpath", "target"],
+            "inspectmemory": ["programpath", "mode"],
+            "managebookmarks": ["programpath", "action"],
+            "managecomments": ["programpath", "action"],
+            "managestructures": ["programpath", "action"],
+            "searchconstants": ["programpath", "mode"],
             # pyghidra-mcp tools
-            "searchcode": ["binaryname", "query"],
-            "listcrossreferences": ["binaryname", "nameoraddress"],
-            "gencallgraph": ["binaryname", "functionnameoraddress"],
             "decompilefunction": ["binaryname", "name"],
+            "deleteprojectbinary": ["binaryname"],
+            "gencallgraph": ["binaryname", "functionnameoraddress"],
             "importbinary": ["binarypath"],
+            "listcrossreferences": ["binaryname", "nameoraddress"],
             "listexports": ["binaryname"],
             "listimports": ["binaryname"],
             "listprojectbinarymetadata": ["binaryname"],
-            "deleteprojectbinary": ["binaryname"],
             "readbytes": ["binaryname", "address"],
+            "searchcode": ["binaryname", "query"],
             "searchstrings": ["binaryname", "query"],
             "searchsymbolsbyname": ["binaryname", "query"],
         }
 
         required: list[str] = required_params.get(normalized_tool_name, [])
-        normalized_present: set[str] = {
-            normalize_identifier(param_name)
-            for param_name, value in parsed_args.items()
-            if value is not None
-        }
+        normalized_present: set[str] = {normalize_identifier(param_name) for param_name, value in parsed_args.items() if value is not None}
 
         for param in required:
             if normalize_identifier(param) in normalized_present:
@@ -936,17 +940,17 @@ class DynamicToolExecutor:
             # pyghidra-mcp tools (alpha-only internal names)
             _PYGHIDRA_MCP_TOOLS: frozenset[str] = frozenset(
                 {
-                    "searchcode",
-                    "listcrossreferences",
-                    "gencallgraph",
                     "decompilefunction",
+                    "deleteprojectbinary",
+                    "gencallgraph",
                     "importbinary",
+                    "listcrossreferences",
                     "listexports",
                     "listimports",
                     "listprojectbinaries",
                     "listprojectbinarymetadata",
-                    "deleteprojectbinary",
                     "readbytes",
+                    "searchcode",
                     "searchstrings",
                     "searchsymbolsbyname",
                 }

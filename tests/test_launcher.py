@@ -1,4 +1,4 @@
-"""Test AgentDecompileHeadlessLauncher lifecycle management.
+"""Test AgentDecompileLauncher lifecycle management.
 
 Verifies that:
 - Launcher can start and stop
@@ -13,19 +13,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
+    from agentdecompile_cli.launcher import AgentDecompileLauncher
 
 from tests.helpers import assert_bool_invariants, assert_int_invariants
 
 
 class TestLauncherLifecycle:
-    """Test AgentDecompile headless launcher lifecycle"""
+    """Test AgentDecompile launcher lifecycle"""
 
     def test_launcher_starts_and_stops(self, ghidra_initialized: bool):
         """Launcher can start and stop cleanly"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
-        launcher = AgentDecompileHeadlessLauncher()
+        launcher = AgentDecompileLauncher()
 
         # Should not be running initially
         assert not launcher.isRunning()
@@ -48,6 +48,7 @@ class TestLauncherLifecycle:
 
         # Should have valid port
         port = launcher.getPort()
+        assert port is not None
         assert 1024 < port < 65535
         assert_int_invariants(port, min_value=1, max_value=65535)
 
@@ -60,16 +61,16 @@ class TestLauncherLifecycle:
 
     def test_launcher_timeout_on_wait(self, ghidra_initialized: bool):
         """WaitForServer returns False if called before start"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
-        launcher = AgentDecompileHeadlessLauncher()
+        launcher = AgentDecompileLauncher()
 
         # Should timeout immediately since server not started
         ready = launcher.waitForServer(1000)
         assert not ready
         assert_bool_invariants(ready)
 
-    def test_server_fixture_provides_ready_server(self, server: AgentDecompileHeadlessLauncher):
+    def test_server_fixture_provides_ready_server(self, server: AgentDecompileLauncher):
         """Server fixture provides a running and ready server"""
         assert server.isRunning()
         assert server.isServerReady()
@@ -77,6 +78,7 @@ class TestLauncherLifecycle:
         assert_bool_invariants(server.isServerReady())
 
         port = server.getPort()
+        assert port is not None
         assert 1024 < port < 65535
         assert_int_invariants(port, min_value=1, max_value=65535)
 
@@ -89,9 +91,9 @@ class TestLauncherConfiguration:
         ghidra_initialized: bool,
     ):
         """Launcher works with default configuration"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
-        launcher = AgentDecompileHeadlessLauncher()
+        launcher = AgentDecompileLauncher()
         launcher.start()
 
         assert launcher.waitForServer(30000)
@@ -109,14 +111,14 @@ class TestLauncherConfiguration:
         tmp_path: Path,
     ):
         """Launcher respects configuration file"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
         # Create config file with custom port
         config_file = tmp_path / "test.properties"
         config_file.write_text("agentdecompile.server.options.server.port=9999\nagentdecompile.server.options.server.host=127.0.0.1\n")
 
         # Create launcher with config file
-        launcher = AgentDecompileHeadlessLauncher(str(config_file))
+        launcher = AgentDecompileLauncher(config_file)
         launcher.start()
 
         assert launcher.waitForServer(30000)
@@ -134,11 +136,11 @@ class TestLauncherConfiguration:
         tmp_path: Path,
     ):
         """Launcher handles missing config file gracefully with defaults"""
-        from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        from agentdecompile_cli.launcher import AgentDecompileLauncher
 
         # Create launcher with non-existent config - should use defaults
         nonexistent = tmp_path / "does_not_exist.properties"
-        launcher = AgentDecompileHeadlessLauncher(str(nonexistent))
+        launcher = AgentDecompileLauncher(nonexistent)
 
         # Should start successfully with default config
         launcher.start()

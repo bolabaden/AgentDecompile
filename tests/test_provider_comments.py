@@ -73,11 +73,11 @@ class TestCommentProviderSchema:
         assert_tool_schema_invariants(tool, expected_name="manage-comments")
         assert "comments" in tool.inputSchema["properties"]
 
-    def test_search_text_param(self):
+    def test_query_param(self):
         p = _make_provider()
         tool = p.list_tools()[0]
         assert_tool_schema_invariants(tool, expected_name="manage-comments")
-        assert "searchText" in tool.inputSchema["properties"]
+        assert "query" in tool.inputSchema["properties"]
 
 
 class TestCommentProviderHandlers:

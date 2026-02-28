@@ -1,284 +1,131 @@
-# Setting Up the Headless Test Workflow
+# GitHub Actions CI Workflows
 
-The headless test workflow file has been created but cannot be pushed automatically due to GitHub App permissions. This document explains how to add it manually.
+This document explains the CI/CD workflows for the AgentDecompile project.
 
-## Why Manual Setup is Needed
+## Workflow Files
 
-GitHub Apps require special `workflows` permission to create or modify workflow files (`.github/workflows/*.yml`). This is a security feature to prevent unauthorized CI/CD changes.
+The workflows are defined in `.github/workflows/`:
+- `test-ghidra.yml` - Extension build validation (Gradle)
+- `test-headless.yml` - Headless MCP server tests (PyGhidra + Python)
+- `publish-ghidra.yml` - Release publishing
+- `publish-pypi.yml` - PyPI package publishing
+- `docker-push.yml` - Docker image building
 
-## Option 1: Push from Local Machine (Recommended)
+## Main Workflow: `test-ghidra.yml`
 
-The workflow file exists in your local git repository. Simply push it from your machine:
+**Purpose**: Build the AgentDecompile extension across supported Ghidra versions.
 
+**Triggers**:
+- Push to `main` or `develop` branches
+- Pull requests to `main` or `develop` branches
+
+**What it does**:
+- Sets up Java 21 and Ghidra
+- Builds the extension using `gradle buildExtension`
+- Uploads extension build artifacts
+
+**Matrix**:
+- OS: ubuntu-latest
+- Ghidra: 12.0, latest
+
+**Total jobs**: 2 (matrix by Ghidra version)
+
+## Headless Workflow: `test-headless.yml`
+
+**Purpose**: Test AgentDecompile MCP server in headless mode with PyGhidra.
+
+**Triggers**:
+- Push to `main` or `develop` branches
+- Pull requests to `main` or `develop` branches
+- Manual workflow dispatch (Actions tab → "Run workflow")
+
+**What it does**:
+- Sets up Java 21 (required for PyGhidra)
+- Installs Ghidra
+- Builds the extension with Gradle
+- Sets up Python 3.10 and `uv`
+- Installs PyGhidra from the local Ghidra installation
+- Runs Python tests with `uv run pytest tests/`
+
+**Matrix**:
+- OS: [ubuntu-latest, macos-latest]
+- Ghidra: [12.0, latest]
+
+**Total jobs**: 4
+
+## Release Publishing Workflow (`publish-ghidra.yml`)
+
+Builds and publishes release artifacts.
+
+**Triggers**:
+- Manual workflow dispatch
+- Release tags
+## Running Tests Locally
+
+Before pushing, test locally:
+
+**Build extension (Gradle)**:
 ```bash
-# The file is at: .github/workflows/test-headless.yml
-git add .github/workflows/test-headless.yml
-git commit -m "Add headless test workflow"
-git push
+gradle clean buildExtension
+gradle buildExtension
 ```
 
-## Option 2: Copy from File Below
-
-Create the file `.github/workflows/test-headless.yml` with this content:
-
-```yaml
-name: Test Headless Mode 🤖
-
-on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'src/main/java/agentdecompile/headless/**'
-      - 'src/main/java/agentdecompile/plugin/config/**'
-      - 'src/main/java/agentdecompile/plugin/ConfigManager.java'
-      - 'src/main/java/agentdecompile/server/McpServerManager.java'
-      - 'scripts/**'
-      - 'config/**'
-      - '.github/workflows/test-headless.yml'
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'src/main/java/agentdecompile/headless/**'
-      - 'src/main/java/agentdecompile/plugin/config/**'
-      - 'src/main/java/agentdecompile/plugin/ConfigManager.java'
-      - 'src/main/java/agentdecompile/server/McpServerManager.java'
-      - 'scripts/**'
-      - 'config/**'
-      - '.github/workflows/test-headless.yml'
-  workflow_dispatch:  # Allow manual trigger
-
-permissions:
-  contents: read
-  actions: read
-  checks: write
-
-jobs:
-  test-headless:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        ghidra-version: ["12.0", "latest"]
-        python-version: ["3.9", "3.11", "3.12"]
-        exclude:
-          # Reduce matrix size - test latest Python on all, others on latest Ghidra only
-          - ghidra-version: "12.0"
-            python-version: "3.9"
-          - ghidra-version: "12.0"
-            python-version: "3.11"
-      fail-fast: false  # Continue other tests if one fails
-
-    name: Test on ${{ matrix.os }} / Ghidra ${{ matrix.ghidra-version }} / Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v5
-
-    - name: Set up Java 21
-      uses: actions/setup-java@v5
-      with:
-        java-version: "21"
-        distribution: "microsoft"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install Ghidra ${{ matrix.ghidra-version }}
-      uses: antoniovazquezblanco/setup-ghidra@v2.0.14
-      with:
-        version: ${{ matrix.ghidra-version }}
-
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        gradle-version: "8.14"
-
-    - name: Build AgentDecompile Extension
-      run: gradle buildExtension
-
-    - name: Install AgentDecompile Extension to Ghidra
-      run: |
-        EXTENSION_ZIP=$(ls -1 dist/*.zip | head -n 1)
-        echo "Installing extension: $EXTENSION_ZIP"
-        unzip -q "$EXTENSION_ZIP" -d "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/"
-        ls -la "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/"
-
-    - name: Install PyGhidra
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyghidra
-
-    - name: Verify PyGhidra Installation
-      run: |
-        python -c "import pyghidra; print(f'PyGhidra version: {pyghidra.__version__}')"
-        echo "GHIDRA_INSTALL_DIR: $GHIDRA_INSTALL_DIR"
-
-    - name: Make scripts executable
-      run: chmod +x scripts/*.py
-
-    - name: Run Headless Quick Test
-      id: headless_test
-      run: |
-        echo "::group::Running headless quick test"
-        python scripts/test_headless_quick.py
-        echo "::endgroup::"
-      timeout-minutes: 5
-      env:
-        GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
-
-    - name: Test with Custom Port
-      if: success()
-      run: |
-        echo "::group::Testing custom port configuration"
-        timeout 30s python scripts/agentdecompile_headless_server.py --port 9090 --timeout 20 || true
-        echo "::endgroup::"
-      timeout-minutes: 2
-      env:
-        GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
-
-    - name: Test with Configuration File
-      if: success()
-      run: |
-        echo "::group::Testing with configuration file"
-        # Create a test config
-        cat > test-config.properties << EOF
-        agentdecompile.server.options.server.port=8888
-        agentdecompile.server.options.server.host=127.0.0.1
-        agentdecompile.server.options.debug.mode=true
-        EOF
-        timeout 30s python scripts/agentdecompile_headless_server.py --config test-config.properties --timeout 20 || true
-        echo "::endgroup::"
-      timeout-minutes: 2
-      env:
-        GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
-
-    - name: Upload test artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: headless-test-logs-${{ matrix.os }}-ghidra-${{ matrix.ghidra-version }}-py-${{ matrix.python-version }}
-        path: |
-          *.log
-          test-config.properties
-        if-no-files-found: ignore
-
-  test-headless-windows:
-    # Separate job for Windows due to different environment setup
-    name: Test on Windows / Ghidra latest / Python 3.12
-    runs-on: windows-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v5
-
-    - name: Set up Java 21
-      uses: actions/setup-java@v5
-      with:
-        java-version: "21"
-        distribution: "microsoft"
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-
-    - name: Install Ghidra
-      uses: antoniovazquezblanco/setup-ghidra@v2.0.14
-      with:
-        version: "latest"
-
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        gradle-version: "8.14"
-
-    - name: Build AgentDecompile Extension
-      run: gradle buildExtension
-
-    - name: Install AgentDecompile Extension to Ghidra
-      shell: pwsh
-      run: |
-        $EXTENSION_ZIP = Get-ChildItem -Path dist\*.zip | Select-Object -First 1
-        Write-Host "Installing extension: $EXTENSION_ZIP"
-        Expand-Archive -Path $EXTENSION_ZIP -DestinationPath "$env:GHIDRA_INSTALL_DIR\Ghidra\Extensions\" -Force
-        Get-ChildItem -Path "$env:GHIDRA_INSTALL_DIR\Ghidra\Extensions\"
-
-    - name: Install PyGhidra
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyghidra
-
-    - name: Run Headless Quick Test
-      run: python scripts/test_headless_quick.py
-      timeout-minutes: 5
-      env:
-        GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
-
-  test-summary:
-    name: Test Summary
-    runs-on: ubuntu-latest
-    needs: [test-headless, test-headless-windows]
-    if: always()
-    steps:
-    - name: Check test results
-      run: |
-        echo "Headless tests completed"
-        echo "Unix/Mac tests: ${{ needs.test-headless.result }}"
-        echo "Windows tests: ${{ needs.test-headless-windows.result }}"
-
-        if [ "${{ needs.test-headless.result }}" != "success" ] || [ "${{ needs.test-headless-windows.result }}" != "success" ]; then
-          echo "❌ Some tests failed"
-          exit 1
-        else
-          echo "✅ All tests passed"
-        fi
+**Test headless server (Python/PyGhidra)**:
+```bash
+# Requires: GHIDRA_INSTALL_DIR set, Ghidra 12.0+
+uv sync
+uv run pytest tests/ -v
 ```
 
-## Option 3: Create via GitHub UI
+## Monitoring Workflows
 
-1. Go to your repository on GitHub
-2. Navigate to `.github/workflows/`
-3. Click "Add file" → "Create new file"
-4. Name it `test-headless.yml`
-5. Paste the content from Option 2
-6. Commit directly to your branch
+1. Go to Actions tab in GitHub
+2. Select a workflow name
+3. View recent runs
+4. Click on a run to see detailed logs
 
-## Verification
+## Troubleshooting
 
-Once added, you can verify the workflow is active:
+### Workflow doesn't trigger
 
-1. Go to the "Actions" tab in your repository
-2. Look for "Test Headless Mode 🤖" in the workflows list
-3. Click "Run workflow" to test manually
+Check:
+- Branch matches (main or develop)
+- Workflow file is valid YAML
+- GitHub Actions is enabled for the repository
 
-## What the Workflow Tests
+### Tests fail in CI but pass locally
 
-- **9 test jobs** across Ubuntu, macOS, and Windows
-- **Multiple versions**: Ghidra 12.0 & latest, Python 3.9/3.11/3.12
-- **Test coverage**:
-  - Server startup and shutdown
-  - Custom port configuration
-  - Configuration file loading
-  - Cross-platform compatibility
+Common causes:
+- Environment differences (Ghidra version, Java version, Python version)
+- Missing dependencies (GHIDRA_INSTALL_DIR not set)
+- Timeout too short (extension builds can take 10+ minutes)
 
-## Expected Behavior
+### Build fails in CI
 
-When the workflow is added:
-- It will run automatically on pushes/PRs to main or develop
-- It will only run when headless-related files change (path filtering)
-- Each job takes ~6-8 minutes
-- All jobs run in parallel
+- Check Gradle logs for extension packaging errors
+- Ensure Ghidra version matches (12.0+)
+- Verify Java 21 is available
 
-## Documentation
+## CI Best Practices
 
-See `.github/CI_WORKFLOWS.md` for complete documentation on all CI workflows including this one.
+1. **Run tests locally first** - both extension builds and headless tests
+2. **Maintain backwards compatibility** - changes should work with Ghidra 12.0 and latest
+3. **Keep extension builds fast** - avoid slow/large dependencies
+4. **Add markers to Python tests** - `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`, etc.
+5. **Handle Ghidra API changes carefully** - maintain compatibility across versions
+6. **Check CI status** before requesting review
 
-## Support
+## Build Environment
 
-If you have issues setting up the workflow:
-1. Check the syntax with a YAML validator
-2. Verify GitHub Actions is enabled for your repository
-3. Check that required Actions permissions are granted
-4. See the CI_WORKFLOWS.md troubleshooting section
+AgentDecompile is a hybrid Java/Python project:
+
+- **Ghidra Extension Packaging**: Gradle-built, requires Java 21, Ghidra 12.0+
+- **Python MCP Server**: Requires Python 3.10+, PyGhidra (depends on Ghidra installation)
+- **CI Testing**: Headless functional tests run in `test-headless.yml`; `test-ghidra.yml` validates extension builds
+
+## References
+
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Gradle Documentation](https://gradle.org/)
+- [Ghidra Documentation](https://ghidra-sre.org/)
+- [PyGhidra Documentation](https://github.com/dod-cyber-crime-center/pyghidra)

@@ -6,6 +6,8 @@ existing AgentDecompile tool names/parameters and the operations described there
 Usage:
   # Start server (in another terminal)
   mcp-agentdecompile-server -t streamable-http --project-path ./projects /path/to/binary
+  # Or docker:
+    docker run --rm -it -v /path/to/binary:/binary -v ./projects:/projects agentdecompile:latest \
 
   # Use CLI
   agentdecompile-cli list binaries
@@ -31,7 +33,7 @@ import sys
 
 from collections.abc import Coroutine
 from pathlib import Path
-from types import SimpleNamespace
+from types import FunctionType, SimpleNamespace
 from typing import Any
 
 import click
@@ -54,6 +56,7 @@ from agentdecompile_cli.registry import (
 )
 
 THREAD_COUNT = multiprocessing.cpu_count()
+_dynamic_commands_registered = False
 
 
 def _get_opts(ctx: click.Context) -> dict:
@@ -100,7 +103,7 @@ def _parse_json(result: Any) -> dict | list | None:
 
 
 def _get_error_result_message(data: Any) -> str | None:
-    """If data is a Java-style tool error result (success: false, error present), return the error message; else None."""
+    """If data is a tool error result (success: false, error present), return the error message; else None."""
     if not isinstance(data, dict):
         return None
     if data.get("success") is not False or "error" not in data:
@@ -120,15 +123,17 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
+    call_tool_name = to_snake_case(tool)
+
     try:
         client = _client(ctx)
         async with client:
-            data = await client.call_tool(tool, payload)
+            data = await client.call_tool(call_tool_name, payload)
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
     except Exception as exc:
-        click.echo(f"Error calling tool '{tool}': {exc}", err=True)
+        click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
         sys.exit(1)
 
     # data is already a dict from AgentDecompileMcpClient._extract_result()
@@ -137,6 +142,47 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
         click.echo(err_msg, err=True)
         sys.exit(1)
     click.echo(format_output(data, _fmt(ctx)))
+
+
+async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> Any:
+    """Call tool and return raw result for programmatic CLI workflows."""
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
+    call_tool_name = to_snake_case(tool)
+    try:
+        client = _client(ctx)
+        async with client:
+            return await client.call_tool(call_tool_name, safe_payload)
+    except ServerNotRunningError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
+        sys.exit(1)
+
+
+def _parse_tool_payload(arguments: str) -> dict[str, Any]:
+    """Parse CLI JSON argument payload for generic tool commands."""
+    try:
+        payload = json.loads(arguments) if arguments.strip() else {}
+    except json.JSONDecodeError as e:
+        click.echo(f"Invalid JSON arguments: {e}", err=True)
+        sys.exit(1)
+
+    if not isinstance(payload, dict):
+        click.echo("Arguments must be a JSON object.", err=True)
+        sys.exit(1)
+    return payload
+
+
+def _validate_known_tool(name: str) -> None:
+    if tool_registry.is_valid_tool(name):
+        return
+    click.echo(
+        f"Note: '{name}' is not in the known tool list (agentdecompile-cli tool --list-tools). Proceeding anyway.",
+        err=True,
+    )
 
 
 def _run_async(coro: Coroutine[Any, Any, None]) -> None:
@@ -152,7 +198,7 @@ def _run_async(coro: Coroutine[Any, Any, None]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_global_options(cmd: click.Command) -> click.Command:
+def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | FunctionType:
     cmd = click.option("--host", default="127.0.0.1", help="Server host")(cmd)
     cmd = click.option("--port", type=int, default=8080, help="Server port")(cmd)
     cmd = click.option(
@@ -175,8 +221,9 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
         tool_params = tool_registry.get_tool_params(tool_name)
 
         # Create parameter options for this tool
-        def tool_command(ctx: click.Context, _tool_name: str = tool_name, **kwargs: Any) -> None:
+        def tool_command(_tool_name: str = tool_name, **kwargs: Any) -> None:
             """Dynamically generated tool command."""
+            ctx = click.get_current_context()
             # Remove None values and format arguments
             args = {k: v for k, v in kwargs.items() if v is not None}
 
@@ -220,13 +267,26 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 
         command_name = to_snake_case(tool_name)
 
-        # Do not overwrite explicitly defined/manual commands.
-        if command_name in cli_group.commands:
-            continue
-
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
-        tool_command = cli_group.command(command_name)(tool_command)
+
+        # Register snake_case command unless an explicit command already exists.
+        if command_name not in cli_group.commands:
+            command_obj = cli_group.command(command_name)(tool_command)
+        else:
+            command_obj = cli_group.commands[command_name]
+
+        # Also register canonical kebab-case alias from TOOLS_LIST when distinct.
+        if tool_name != command_name and tool_name not in cli_group.commands:
+            cli_group.add_command(command_obj, tool_name)
+
+
+def _ensure_dynamic_commands_registered() -> None:
+    global _dynamic_commands_registered
+    if _dynamic_commands_registered:
+        return
+    _create_dynamic_commands(main)
+    _dynamic_commands_registered = True
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -257,8 +317,8 @@ def main(
         "format": format,
     }
 
-    # Dynamically create commands from the unified tool registry
-    _create_dynamic_commands(main)
+    # Ensure command surface includes canonical + snake_case tool commands.
+    _ensure_dynamic_commands_registered()
 
 
 @click.version_option(__version__, "--version", "-V")
@@ -548,7 +608,7 @@ def list_open_programs(ctx: click.Context) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Data (get-data, apply-data-type, create-label) – 1:1 Java DataToolProvider
+# Data (get-data, apply-data-type, create-label)
 # ---------------------------------------------------------------------------
 
 
@@ -624,7 +684,7 @@ def data_create_label(
 
 
 # ---------------------------------------------------------------------------
-# Resources (1:1 Java ProgramListResource, StaticAnalysisResultsResource, AgentDecompileDebugInfoResource)
+# Resources (program list, static analysis, debug info)
 # ---------------------------------------------------------------------------
 
 
@@ -1560,18 +1620,18 @@ def references_grp() -> None:
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
 @click.option("--limit", type=int)
-@click.option("--max-results", "maxResults", type=int)
-@click.option("--library-name", "libraryName")
-@click.option("--start-index", "startIndex", type=int)
-@click.option("--max-referencers", "maxReferencers", type=int)
+@click.option("--max-results", "max_results", type=int)
+@click.option("--library-name", "library_name")
+@click.option("--start-index", "start_index", type=int)
+@click.option("--max-referencers", "max_referencers", type=int)
 @click.option(
     "--include-ref-context/--no-include-ref-context",
-    "includeRefContext",
+    "include_ref_context",
     default=True,
 )
 @click.option(
     "--include-data-refs/--no-include-data-refs",
-    "includeDataRefs",
+    "include_data_refs",
     default=True,
 )
 @click.pass_context
@@ -1623,7 +1683,7 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--direction", type=click.Choice(["to", "from", "both"]))
     @click.option("--offset", type=int)
     @click.option("--limit", type=int)
-    @click.option("--max-results", "maxResults", type=int)
+    @click.option("--max-results", "max_results", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2526,7 +2586,7 @@ for _mode in ("analyze", "callers", "containing"):
 
 
 # ---------------------------------------------------------------------------
-# suggest (1:1 Java SuggestionToolProvider)
+# suggest
 # ---------------------------------------------------------------------------
 
 
@@ -2858,13 +2918,13 @@ def metadata_cmd(ctx: click.Context, program_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Generic tool call (1:1 any Java MCP tool by name + JSON args)
+# Generic tool call (any MCP tool by name + JSON args)
 # ---------------------------------------------------------------------------
 
 
 @main.command(
     "tool",
-    help='Call any MCP tool by name with JSON arguments (1:1 with Java tool names). Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
+    help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
 )
 @click.argument("name", required=True)
 @click.argument(
@@ -2887,27 +2947,72 @@ def tool_cmd(
     """Invoke any MCP tool by name; arguments as JSON object (camelCase keys)."""
     available_tools = tool_registry.get_tools()
     if list_tools:
-        click.echo("Valid tool names (1:1 Java):")
+        click.echo("Valid tool names:")
         for t in sorted(available_tools):
             click.echo(f"  {t}")
         return
 
-    try:
-        payload = json.loads(arguments) if arguments.strip() else {}
-    except json.JSONDecodeError as e:
-        click.echo(f"Invalid JSON arguments: {e}", err=True)
-        sys.exit(1)
-
-    if not isinstance(payload, dict):
-        click.echo("Arguments must be a JSON object.", err=True)
-        sys.exit(1)
-
-    if not tool_registry.is_valid_tool(name):
-        click.echo(
-            f"Note: '{name}' is not in the known tool list (agentdecompile-cli tool --list-tools). Proceeding anyway.",
-            err=True,
-        )
+    payload = _parse_tool_payload(arguments)
+    _validate_known_tool(name)
     _run_async(_call(ctx, name, **payload))
+
+
+@main.command(
+    "tool-seq",
+    help=(
+        "Run a sequence of MCP tool calls from JSON. "
+        "Format: [{\"name\":\"open\",\"arguments\":{...}}, ...]"
+    ),
+)
+@click.argument("steps", required=True)
+@click.option("--continue-on-error", is_flag=True, help="Continue remaining steps after a tool failure")
+@click.pass_context
+def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> None:
+    """Invoke a sequence of tools without using ad-hoc python scripts."""
+    try:
+        parsed_steps = json.loads(steps)
+    except json.JSONDecodeError as exc:
+        click.echo(f"Invalid JSON for steps: {exc}", err=True)
+        sys.exit(1)
+
+    if not isinstance(parsed_steps, list) or not all(isinstance(s, dict) for s in parsed_steps):
+        click.echo("Steps must be a JSON array of objects.", err=True)
+        sys.exit(1)
+
+    async def _run_sequence() -> None:
+        results: list[dict[str, Any]] = []
+        for index, step in enumerate(parsed_steps, start=1):
+            name = step.get("name")
+            arguments = step.get("arguments", {})
+
+            if not isinstance(name, str) or not name.strip():
+                click.echo(f"Step {index}: missing or invalid 'name'", err=True)
+                sys.exit(1)
+            if not isinstance(arguments, dict):
+                click.echo(f"Step {index}: 'arguments' must be a JSON object", err=True)
+                sys.exit(1)
+
+            _validate_known_tool(name)
+            data = await _call_raw(ctx, name, arguments)
+            step_result = {
+                "index": index,
+                "name": name,
+                "success": not (
+                    isinstance(data, dict)
+                    and data.get("success") is False
+                    and "error" in data
+                ),
+                "result": data,
+            }
+            results.append(step_result)
+
+            if not step_result["success"] and not continue_on_error:
+                click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
+                sys.exit(1)
+
+        click.echo(format_output({"success": True, "steps": results}, _fmt(ctx)))
+
+    _run_async(_run_sequence())
 
 
 # ---------------------------------------------------------------------------
@@ -2915,4 +3020,10 @@ def tool_cmd(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    _ensure_dynamic_commands_registered()
     main()
+
+
+# Register dynamic commands for normal CLI invocation paths as well
+# (important for subcommand resolution before main() callback runs).
+_ensure_dynamic_commands_registered()

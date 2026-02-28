@@ -1,5 +1,5 @@
-"""LEGACY: Content has been merged into bridge.py which is the single source of truth.
-This file is kept for backward-compatibility and will be removed by the project owner.
+"""Compatibility module mirrored in bridge.py as the primary implementation.
+This file is kept for backward-compatibility.
 Prefer importing from agentdecompile_cli.bridge.
 
 Stdio to HTTP MCP bridge using official MCP SDK Server abstraction.

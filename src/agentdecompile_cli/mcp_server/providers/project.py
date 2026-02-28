@@ -9,9 +9,10 @@ import logging
 import os
 import shutil
 import socket
+import time
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from mcp import types
 
@@ -23,6 +24,33 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
+
+if TYPE_CHECKING:
+    ...
+    from abc import ABC, abstractmethod
+    class ProjectData(ABC):
+        @abstractmethod
+        def getFile(self, filePath: str) -> ProjectData: ...
+        @abstractmethod
+        def getFolder(self, folderPath: str) -> ProjectData: ...
+        @abstractmethod
+        def getRootFolder(self) -> ProjectData: ...
+        @abstractmethod
+        def createFolder(self, folderPath: str) -> ProjectData: ...
+        @abstractmethod
+        def createFile(self, filePath: str, source: Path) -> ProjectData: ...
+
+    class RepoItem(ABC):
+        @abstractmethod
+        def getDomainFile(self): ...
+
+    class RepoAdapter(ABC):
+        @abstractmethod
+        def getItem(self, folderPath: str, itemName: str): ...
+        @abstractmethod
+        def getVersion(self): ...
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -199,14 +227,63 @@ class ProjectToolProvider(ToolProvider):
 
             if server_username and server_password:
                 ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
+                for setter_name in (
+                    "setUserName",
+                    "setUsername",
+                    "setUser",
+                    "setClientUserName",
+                    "setClientUsername",
+                    "setClientUser",
+                ):
+                    try:
+                        setter = getattr(ClientUtil, setter_name, None)
+                        if callable(setter):
+                            setter(server_username)
+                            break
+                    except Exception:
+                        continue
 
-            server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, False)
+            original_user_name: str | None = None
+            if server_username:
+                try:
+                    from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
+
+                    original_user_name = JavaSystem.getProperty("user.name")
+                    JavaSystem.setProperty("user.name", server_username)
+                except Exception:
+                    original_user_name = None
+
+            server_adapter = None
+            if server_username and server_password:
+                # Prefer authenticated overloads where available so the
+                # repository handshake doesn't default to the process user.
+                for overload_args in (
+                    (server_host, server_port, False, server_username, server_password),
+                    (server_host, server_port, server_username, server_password),
+                ):
+                    try:
+                        server_adapter = ClientUtil.getRepositoryServer(*overload_args)
+                        if server_adapter is not None:
+                            break
+                    except TypeError:
+                        continue
+                    except Exception:
+                        continue
+
+            if server_adapter is None:
+                server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, False)
             if server_adapter is None:
                 raise ValueError(f"Failed to connect to repository server: {server_host}:{server_port}")
 
             if not server_adapter.isConnected():
                 try:
-                    connected = bool(server_adapter.connect())
+                    if server_username and server_password:
+                        try:
+                            connected = bool(server_adapter.connect(server_username, server_password))
+                        except TypeError:
+                            connected = bool(server_adapter.connect())
+                    else:
+                        connected = bool(server_adapter.connect())
                     if not connected:
                         last_error = server_adapter.getLastConnectError()
                         logger.warning(
@@ -229,6 +306,14 @@ class ProjectToolProvider(ToolProvider):
                 raise ValueError(
                     f"Repository server connection failed for {server_host}:{server_port}: {exc}"
                 ) from exc
+            finally:
+                if server_username and original_user_name is not None:
+                    try:
+                        from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
+
+                        JavaSystem.setProperty("user.name", original_user_name)
+                    except Exception:
+                        pass
             repository_names = [str(name) for name in repository_names_raw]
             if not repository_names:
                 raise ValueError(f"No repositories found on {server_host}:{server_port}")
@@ -278,6 +363,7 @@ class ProjectToolProvider(ToolProvider):
 
             # If a specific program path was requested, attempt to check it out.
             checked_out_program: str | None = None
+            checkout_error: str | None = None
             if checkout_program_path:
                 # Try to find the matching binary in the discovered items.
                 norm_target = checkout_program_path.strip().rstrip("/")
@@ -297,6 +383,7 @@ class ProjectToolProvider(ToolProvider):
                             repository_adapter, matched, session_id
                         )
                     except Exception as exc:
+                        checkout_error = str(exc)
                         logger.warning("Checkout of '%s' failed: %s", matched, exc)
                 else:
                     logger.warning(
@@ -322,6 +409,7 @@ class ProjectToolProvider(ToolProvider):
                     "programCount": len(binaries),
                     "programs": binaries,
                     "checkedOutProgram": checked_out_program,
+                    "checkoutError": checkout_error,
                     "message": (
                         f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
                         + (f" Checked out: {checked_out_program}" if checked_out_program else "")
@@ -366,7 +454,9 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"loaded": False, "note": "No program currently loaded"})
 
-        program = self.program_info.program
+        program = getattr(self.program_info, "program", None)
+        if program is None or not hasattr(program, "getName"):
+            return create_success_response({"loaded": False, "note": "No program currently loaded"})
         info: dict[str, Any] = {"loaded": True}
 
         try:
@@ -395,6 +485,7 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
         folder = self._get_str(args, "folder", "path", default="/")
         max_results = self._get_int(args, "maxresults", "limit", default=100)
+        session_id = get_current_mcp_session_id()
 
         fs_path = self._get_str(args, "path")
         if fs_path:
@@ -408,15 +499,62 @@ class ProjectToolProvider(ToolProvider):
                 files.append({"name": item.name, "path": str(item), "isDirectory": item.is_dir(), "size": None if item.is_dir() else item.stat().st_size})
             return create_success_response({"folder": str(base), "files": files, "count": len(files)})
 
-        if self.program_info is None:
+        if self.program_info is None or getattr(self.program_info, "program", None) is None or not hasattr(getattr(self.program_info, "program", None), "getDomainFile"):
+            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            if session_binaries:
+                files = []
+                for item in session_binaries[:max_results]:
+                    path = str(item.get("path") or "")
+                    name = str(item.get("name") or Path(path).name)
+                    files.append(
+                        {
+                            "name": name,
+                            "path": path,
+                            "isDirectory": False,
+                            "type": item.get("type", "Program"),
+                        }
+                    )
+                return create_success_response(
+                    {
+                        "folder": folder,
+                        "files": files,
+                        "count": len(files),
+                        "source": "shared-server-session",
+                    }
+                )
             return create_success_response({"files": [], "note": "No project loaded"})
 
         try:
             program = self.program_info.program
+            if program is None or not hasattr(program, "getDomainFile"):
+                raise ValueError("No active program available")
             root = program.getDomainFile().getProjectData().getRootFolder()
             files = self._list_domain_files(root, max_results)
             return create_success_response({"folder": folder, "files": files, "count": len(files)})
         except Exception as e:
+            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            if session_binaries:
+                files = []
+                for item in session_binaries[:max_results]:
+                    path = str(item.get("path") or "")
+                    name = str(item.get("name") or Path(path).name)
+                    files.append(
+                        {
+                            "name": name,
+                            "path": path,
+                            "isDirectory": False,
+                            "type": item.get("type", "Program"),
+                        }
+                    )
+                return create_success_response(
+                    {
+                        "folder": folder,
+                        "files": files,
+                        "count": len(files),
+                        "source": "shared-server-session",
+                        "note": f"Fell back to shared repository index: {e}",
+                    }
+                )
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -620,7 +758,10 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"binaries": [], "count": 0, "note": "No project loaded"})
         try:
-            root = self.program_info.program.getDomainFile().getProjectData().getRootFolder()
+            program = getattr(self.program_info, "program", None)
+            if program is None or not hasattr(program, "getDomainFile"):
+                raise ValueError("No project loaded")
+            root = program.getDomainFile().getProjectData().getRootFolder()
             binaries = [f for f in self._list_domain_files(root, 100000) if f.get("type") == "Program"]
             return create_success_response({"binaries": binaries, "count": len(binaries)})
         except Exception as exc:
@@ -628,7 +769,7 @@ class ProjectToolProvider(ToolProvider):
 
     async def _checkout_shared_program(
         self,
-        repository_adapter: Any,
+        repository_adapter: RepoAdapter,
         program_path: str,
         session_id: str,
     ) -> str:
@@ -642,10 +783,12 @@ class ProjectToolProvider(ToolProvider):
         Returns the program path that was checked out.
         """
         import time
-        from ghidra.framework.client import RepositoryAdapter  # pyright: ignore[reportMissingImports]
-        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports]
+
+        from db import DBHandle  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.framework.data import OpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.program.database import ProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from java.lang import Object as JavaObject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         monitor = TaskMonitor.DUMMY
 
@@ -663,12 +806,30 @@ class ProjectToolProvider(ToolProvider):
         if repo_item is None:
             raise ValueError(f"Program '{program_path}' not found in repository folder '{folder_path}'")
 
+        # Preferred path for shared-server mode: open repository database directly
+        # in immutable mode and wrap it as ProgramDB. This avoids DomainFile
+        # assumptions that do not hold for remote RepositoryItem instances.
+        program = None
+        try:
+            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+            managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0)
+            db_handle = DBHandle(managed_db)
+            program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+        except Exception as exc:
+            logger.warning(
+                "Shared ProgramDB open failed for %s (repo item %s/%s): %s",
+                program_path,
+                folder_path,
+                item_name,
+                exc,
+            )
+
         # Open / checkout the file via the project data
         # We need to use the project's DomainFile which can be retrieved
         # from the project data after connecting.
 
         # Use the manager's GhidraProject (set from launcher) to get project data.
-        project_data = None
+        project_data: ProjectData | None = None
         ghidra_project = getattr(self._manager, 'ghidra_project', None) if self._manager else None
         if ghidra_project is not None:
             try:
@@ -686,7 +847,7 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        if project_data is None:
+        if program is None and project_data is None:
             # Fallback: open the item directly via low-level API
             try:
                 domain_obj = repo_item.getDomainObject(self, True, False, monitor)
@@ -699,7 +860,8 @@ class ProjectToolProvider(ToolProvider):
             if domain_obj is None:
                 raise ValueError(f"Failed to open '{program_path}' from repository")
             program = domain_obj
-        else:
+        elif program is None:
+            assert project_data is not None, "project_data should be available if program is None"
             # Check if the file is already in the local project
             domain_file = project_data.getFile(program_path)
             if domain_file is None:
@@ -734,7 +896,7 @@ class ProjectToolProvider(ToolProvider):
 
         # Build ProgramInfo
         from agentdecompile_cli.launcher import ProgramInfo
-        from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         decompiler = DecompInterface()
         decompiler.openProgram(program)
@@ -813,8 +975,8 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
 
-        binary_name = self._require_str(args, "binaryname", "programpath", "binary", name="binaryName")
-        program = self.program_info.program
+        binary_name: str = self._require_str(args, "binaryname", "programpath", "binary", name="binaryName")
+        program: Any = self.program_info.program
         domain_file = program.getDomainFile()
         if domain_file is None:
             return create_success_response({"success": False, "error": "No domain file associated with current program"})

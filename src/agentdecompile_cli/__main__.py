@@ -46,47 +46,19 @@ if TYPE_CHECKING:
 
 
 def _redirect_java_outputs():
-    """Redirect Java's System.out and System.err to Python stderr.
+    """Best-effort JVM output redirection setup.
 
-    Uses a Java callback interface (StderrWriter) so we do not extend Java's
-    OutputStream from Python (JPype does not allow extending Java classes).
-    This ensures Java log messages go through our Python stderr and the
-    JSON-RPC log filter without corrupting the MCP stdout stream.
+    The previous implementation depended on removed extension-side classes.
+    Stdout/stderr filters already protect the MCP stream, so this hook now
+    becomes a no-op when no redirect bridge is available.
     """
     try:
-        from agentdecompile.headless import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-            JavaOutputRedirect,
-            StderrWriter,
-        )
-        from jpype import (  # pyright: ignore[reportMissingImports]
-            JImplements,
-            JOverride,
-        )
+        from jpype import isJVMStarted  # pyright: ignore[reportMissingImports]
 
-        @JImplements(StderrWriter)
-        class PyStderrWriter:
-            """Implements Java StderrWriter interface; writes to Python sys.stderr."""
-
-            @JOverride
-            def write(self, b: bytes, off: int, len_val: int) -> None:
-                # Java byte[] b, int off, int len -> write slice to sys.stderr
-                if b is None or len_val <= 0:
-                    return
-                try:
-                    # Java byte is signed (-128..127); normalize to 0..255 for Python bytes
-                    chunk = bytes(int(b[i]) & 0xFF for i in range(off, off + len_val))
-                    sys.stderr.write(chunk.decode("utf-8", errors="replace"))
-                    sys.stderr.flush()
-                except Exception:
-                    sys.stderr.write(f"<write error: {len_val} bytes>\n")
-                    sys.stderr.flush()
-
-        writer = PyStderrWriter()
-        JavaOutputRedirect.redirectToWriter(writer)
-
+        if not isJVMStarted():
+            return
     except Exception as e:
-        # If redirection fails, the Python filters will handle it
-        sys.stderr.write(f"Warning: Java output redirection failed: {e}\n")
+        sys.stderr.write(f"Warning: JVM output redirection setup skipped: {e}\n")
 
 
 class StderrFilter:

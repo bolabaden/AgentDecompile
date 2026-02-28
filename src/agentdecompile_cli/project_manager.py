@@ -1,5 +1,5 @@
-"""LEGACY: Content has been merged into launcher.py which is the single source of truth.
-This file is kept for backward-compatibility and will be removed by the project owner.
+"""Compatibility module mirrored in launcher.py as the primary implementation.
+This file is kept for backward-compatibility.
 Prefer importing from agentdecompile_cli.launcher.
 
 Project management for AgentDecompile CLI.

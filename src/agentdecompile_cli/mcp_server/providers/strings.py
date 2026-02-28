@@ -37,10 +37,9 @@ class StringToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {"type": "string"},
                         "mode": {"type": "string", "enum": ["list", "regex", "count", "similarity"], "default": "list"},
-                        "pattern": {"type": "string", "description": "Regex pattern (regex mode) or search text (similarity)"},
-                        "query": {"type": "string", "description": "Search query (alt)"},
+                        "query": {"type": "string", "description": "Search query or regex pattern"},
                         "minLength": {"type": "integer", "default": 4},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                         "includeReferencingFunctions": {"type": "boolean", "default": False},
                     },
@@ -55,7 +54,7 @@ class StringToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {"type": "string"},
                         "minLength": {"type": "integer", "default": 4},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                         "includeReferencingFunctions": {"type": "boolean", "default": False},
                     },
@@ -70,9 +69,8 @@ class StringToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {"type": "string"},
                         "query": {"type": "string"},
-                        "pattern": {"type": "string"},
                         "mode": {"type": "string", "enum": ["regex", "similarity", "list"], "default": "list"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                         "includeReferencingFunctions": {"type": "boolean", "default": False},
                     },
@@ -95,9 +93,9 @@ class StringToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = self._get_str(args, "mode", default="list")
-        pattern = self._get_str(args, "pattern", "query", "search", "text", "regex")
+        pattern = self._get_str(args, "pattern", "query", "search", "text", "regex", "searchstring", "filter")
         min_len = self._get_int(args, "minlength", "minlen", default=4)
-        max_results = self._get_int(args, "maxresults", "limit", "max", default=100)
+        max_results = self._get_int(args, "maxresults", "limit", "max", "maxcount", default=100)
         offset = self._get_int(args, "offset", "startindex", default=0)
         include_refs = self._get_bool(args, "includereferencingfunctions", "includerefs", default=False)
 

@@ -1,7 +1,5 @@
 # AgentDecompile – Copilot/Claude Instructions
 
-**Current state (Feb 2026):** Python implementation (`src/agentdecompile_cli/`) is the **authoritative source**. Java (`src/main/java/agentdecompile/`) is **deprecated** but maintained for backwards compatibility.
-
 ## Planning and Documentation Diagram Policy
 
 - Every new or updated planning/design document must include at least one Mermaid diagram.
@@ -23,7 +21,7 @@ AgentDecompile provides a comprehensive Model Context Protocol (MCP) server that
 
 Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 
-## Python Implementation (Authoritative)
+## Python Implementation
 
 **Location:** `src/agentdecompile_cli/`
 
@@ -38,9 +36,9 @@ Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 ### Normalization Contract (CRITICAL)
 
 **Advertisement Layer (External-Facing)**:
-- **CLI commands/options**: SHOULD BE ADVERTISED in `snake_case` (`manage_symbols`, `program_path`) BUT OBVIOUSLY NORMALIZE AND FLEXIBLY HANDLE THINGS LIKE managesymbols/manageSymbols/programPath/program<anysymbolswhatsoeverhere> should work fully. Do not forget this!
-- **MCP tool schemas**: MUST use `snake_case` (`manage_symbols`, `program_path`)
-- **Purpose**: Provides consistent, idiomatic naming for user-facing interfaces
+- **CLI commands/options**: Advertise in `snake_case` (`manage_symbols`, `program_path`)
+- **MCP tool schemas**: Use `snake_case` (`manage_symbols`, `program_path`)
+- **Important**: Normalize and flexibly handle variants like `managesymbols`, `manageSymbols`, `programPath`, etc. - all should work fully.
 
 **Execution Layer (Internal Matching)**:
 - **Tool name matching**: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
@@ -55,12 +53,6 @@ Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 2. **Single advertisement function**: `registry.to_snake_case()` converts any format to snake_case for display
 3. **No hardcoded case matching**: Never check exact strings; always normalize first
 4. **User-friendly**: If it looks like the tool/arg name, accept it
-
-## Java Implementation (Deprecated)
-
-**Location:** `src/main/java/agentdecompile/`
-
-Kept for backwards compatibility with existing GUI workflows. Do not add new tools here. Extract implementation details, then rewrite in Python.
 
 ## Vendor Source Integration
 
@@ -77,7 +69,7 @@ Example: `manage-symbols` consolidates:
 
 All modes, all argument names, all response formats in one unified tool.
 
-## How to Work on This (Cross-references in code)
+## How to Work on This
 
 1. **Start with TOOLS_LIST.md** – Extract tool specification (modes, parameters, response shape)
 2. **Review vendor sources** – Check pyghidra-mcp, GhidraMCP, etc. for working implementations
@@ -85,6 +77,7 @@ All modes, all argument names, all response formats in one unified tool.
 4. **Extend `ToolProvider`** – Define `HANDLERS` dict, use `self._get()` helpers for normalized arg access
 5. **Test** – Verify all modes, argument forms, error cases
 
-For detailed architectural notes, see [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md).
+For detailed architectural notes, see [src/CLAUDE.md](../src/CLAUDE.md).
 
-ALWAYS keep [TOOLS_LIST.md](../TOOLS_LIST.md) as the source of truth for tool specifications and up to date!
+ALWAYS keep [TOOLS_LIST.md](../TOOLS_LIST.md) as the source of truth for tool specifications and keep it up to date!
+

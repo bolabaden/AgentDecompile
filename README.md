@@ -33,7 +33,7 @@ It works by giving the AI specific "tools" to interact with Ghidra—reading mem
 > **Note**: AgentDecompile requires Ghidra 12.0 or higher.
 
 ### Option 1: Release Installation (Recommended)
-1. Download the latest release from the [Releases page](../../releases).
+1. Download the latest release from the [Releases page](https://github.com/bolabaden/AgentDecompile/releases).
 2. Open Ghidra.
 3. Go to **File > Install Extensions**.
 4. Click the **+** (Plus) sign and select the downloaded zip file.
@@ -83,8 +83,8 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 
 ### Project creation and opening
 
-- **Basic:** Run `mcp-agentdecompile` or `mcp-agentdecompile-server` with no project options; a default project directory is used (see env `AGENT_DECOMPILE_PROJECT_PATH`).
-- **Custom path/name:** Use `--project-path` and `--project-name` with the server (e.g. `mcp-agentdecompile-server --project-path ~/analysis/my_study --project-name my_study`).
+- **Basic:** Run `mcp-agentdecompile` or `agentdecompile-server` with no project options; a default project directory is used (see env `AGENT_DECOMPILE_PROJECT_PATH`).
+- **Custom path/name:** Use `--project-path` and `--project-name` with the server (e.g. `agentdecompile-server --project-path ~/analysis/my_study --project-name my_study`).
 - **Multiple projects:** Use different `--project-path` / `--project-name` per run.
 - **Existing Ghidra project:** Pass a `.gpr` file: `--project-path /path/to/existing.gpr`. The server uses that project; name is derived from the file.
 
@@ -93,8 +93,8 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 | Transport | How to use | Typical use |
 |-----------|------------|-------------|
 | **stdio** | Default for `mcp-agentdecompile`; no `-t` needed. | Claude Desktop, IDE MCP clients that spawn a process. |
-| **streamable-http** | `mcp-agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
-| **sse** | `mcp-agentdecompile-server -t sse`. | Legacy SSE clients. |
+| **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
+| **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
 The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message`. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
@@ -105,34 +105,23 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 1. **Start the server** (one terminal), e.g. HTTP so the CLI can connect:
 
    ```bash
-   mcp-agentdecompile-server -t streamable-http --project-path ./projects /path/to/binary
+  agentdecompile-server -t streamable-http --project-path ./projects
    ```
 
 2. **Use the CLI** (another terminal):
 
    ```bash
-   # List binaries in the project
-   agentdecompile-cli list binaries
+  # Discover available commands
+  agentdecompile-cli --help
 
-   # Decompile a function
-   agentdecompile-cli decompile --binary /path/to/binary main
+  # List available MCP tools
+  agentdecompile-cli tool --list-tools
 
-   # Search symbols
-   agentdecompile-cli search symbols --binary /path/to/binary printf -l 10
-
-   # List imports / exports
-   agentdecompile-cli list imports --binary /path/to/binary
-   agentdecompile-cli list exports --binary /path/to/binary
-
-   # Cross-references, read bytes, call graph, import, metadata
-   agentdecompile-cli xref --binary /path/to/binary 0x401000
-   agentdecompile-cli read --binary /path/to/binary 0x1000 -s 64
-   agentdecompile-cli callgraph --binary /path/to/binary main
-   agentdecompile-cli import /path/to/other/binary
-   agentdecompile-cli metadata --binary /path/to/binary
+  # Call a tool directly by name
+  agentdecompile-cli tool open '{"path":"/path/to/binary"}'
    ```
 
-Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `mcp-agentdecompile-cli`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call any MCP tool by name: `agentdecompile-cli tool <name> '{"programPath":"/a",...}'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
+Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
 ### Docker and volume mapping
 
@@ -188,21 +177,12 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes MCP tools and resources that cover the same kinds of operations as a typical Ghidra MCP workflow:
+AgentDecompile exposes 49 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-| Operation | AgentDecompile tool / resource |
-|-----------|--------------------------------|
-| List project binaries | Resource `ghidra://programs` or tool `get-current-program` (current) |
-| Decompile function | `get-decompilation` (programPath, functionNameOrAddress) |
-| Search symbols by name | `list-functions` (nameFilter, maxCount) or `manage-symbols` (action, query) |
-| List imports / exports | `manage-symbols` (action: `imports` / `exports`, query) |
-| Cross-references | `get-references` (addressOrSymbol) |
-| Read bytes at address | `inspect-memory` (addressOrSymbol, size) |
-| Call graph | `get-call-graph` (functionIdentifier, mode) |
-| Import binary | `open` (path or programPath) |
-| Binary metadata | `get-current-program` or program list resource |
+- Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
+- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-references`, `inspect-memory`, `manage-symbols`, `manage-comments`, `get-call-graph`
 
-The CLI commands (`list binaries`, `decompile`, `search symbols`, `xref`, `read`, `callgraph`, `import`, `metadata`, `data get/apply-type/create-label`, `resource programs|static-analysis|debug-info`, `suggest`, etc.) call these tools/resources under the hood. Use `agentdecompile-cli tool --list-tools` to list all tool names.
+Use `agentdecompile-cli tool --list-tools` to view tool names available from your running server, and use [TOOLS_LIST.md](TOOLS_LIST.md) for the reference.
 
 ### Connection options
 
@@ -216,7 +196,7 @@ The CLI commands (`list binaries`, `decompile`, `search symbols`, `xref`, `read`
 **CLI (stdio):** Configure your MCP client to use `mcp-agentdecompile` (e.g. `claude mcp add AgentDecompile -- mcp-agentdecompile`).
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Python MCP server, then bridges stdio to it.
-- **Connect mode (no local Java/Ghidra required):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
+- **Connect mode (no local runtime startup):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
 
 ### Remote access
 
@@ -241,14 +221,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). |
 | `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). |
 | `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). |
-| `AGENT_DECOMPILE_AUTO_LABEL` | Enable auto-labeling for names/comments (default: true). |
-| `AGENT_DECOMPILE_AUTO_TAG` | Enable auto-tagging for functions (default: true). |
-| `AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE` | Auto-bookmark top N% by reference count (default: 97.0; range 95–99). |
 | `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` | If `true`, delete project lock files before opening (risky; see Project locking below). |
-
-### Intelligent features
-
-AgentDecompile can automatically **bookmark** frequently referenced addresses, **tag** functions (e.g. crypto, network), **label** functions and variables, and **comment** at addresses. These are controlled only by environment variables (no tool parameters): `AGENT_DECOMPILE_AUTO_LABEL`, `AGENT_DECOMPILE_AUTO_TAG`, `AGENT_DECOMPILE_AUTO_BOOKMARK_PERCENTILE`. They are on by default; explicit values in tool calls always take precedence.
 
 ### Shared project authentication
 

@@ -91,7 +91,7 @@ class TestBookmarkProviderSchema:
         tool = p.list_tools()[0]
         assert_tool_schema_invariants(tool, expected_name="manage-bookmarks")
         props = tool.inputSchema["properties"]
-        assert "maxResults" in props
+        assert "limit" in props
         assert "offset" in props
 
 

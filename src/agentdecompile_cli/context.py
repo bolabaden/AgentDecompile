@@ -1,5 +1,5 @@
-"""LEGACY: Content has been merged into launcher.py which is the single source of truth.
-This file is kept for backward-compatibility and will be removed by the project owner.
+"""Compatibility module mirrored in launcher.py as the primary implementation.
+This file is kept for backward-compatibility.
 Prefer importing from agentdecompile_cli.launcher.
 
 Original context: Ghidra project context (ProgramInfo, PyGhidraContext).
@@ -18,9 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import chromadb
-
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+except Exception:
+    chromadb = None  # type: ignore[assignment]
+    Settings = None  # type: ignore[assignment]
 
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
@@ -55,8 +58,8 @@ class ProgramInfo:
     ghidra_analysis_complete: bool
     file_path: Path | None = None
     load_time: float | None = None
-    code_collection: chromadb.Collection | None = None
-    strings_collection: chromadb.Collection | None = None
+    code_collection: Any | None = None
+    strings_collection: Any | None = None
 
     @property
     def analysis_complete(self) -> bool:
@@ -122,12 +125,16 @@ class PyGhidraContext:
             self.project_path / "pyghidra-mcp" if pyghidra_mcp_dir is None else Path(pyghidra_mcp_dir)  # Use provided pyghidra-mcp directory or create default
         )
 
-        chromadb_path: Path = self.pyghidra_mcp_dir / "chromadb"
-        chromadb_path.mkdir(parents=True, exist_ok=True)
-        self.chroma_client: chromadb.PersistentClient = chromadb.PersistentClient(
-            path=str(chromadb_path),
-            settings=Settings(anonymized_telemetry=False),
-        )
+        self.chroma_client: Any | None = None
+        if chromadb is not None and Settings is not None:
+            chromadb_path: Path = self.pyghidra_mcp_dir / "chromadb"
+            chromadb_path.mkdir(parents=True, exist_ok=True)
+            self.chroma_client = chromadb.PersistentClient(
+                path=str(chromadb_path),
+                settings=Settings(anonymized_telemetry=False),
+            )
+        else:
+            logger.warning("chromadb is unavailable; semantic collections are disabled")
 
         # From GhidraDiffEngine
         self.force_analysis: bool = force_analysis
@@ -557,9 +564,12 @@ class PyGhidraContext:
         """Initialize Chroma code collection for a single program."""
         from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports]
 
+        if self.chroma_client is None:
+            return
+
         logger.info(f"Initializing Chroma code collection for {program_info.name}")
         try:
-            collection: chromadb.Collection | None = self.chroma_client.get_collection(name=program_info.name)
+            collection = self.chroma_client.get_collection(name=program_info.name)
             logger.info(f"Collection '{program_info.name}' exists; skipping code ingest.")
             program_info.code_collection = collection
         except Exception:
@@ -603,10 +613,13 @@ class PyGhidraContext:
 
     def _init_chroma_strings_collection_for_program(self, program_info: ProgramInfo):
         """Initialize Chroma strings collection for a single program."""
+        if self.chroma_client is None:
+            return
+
         collection_name: str = f"{program_info.name}_strings"
         logger.info(f"Initializing Chroma strings collection for {program_info.name}")
         try:
-            strings_collection: chromadb.Collection | None = self.chroma_client.get_collection(name=collection_name)
+            strings_collection = self.chroma_client.get_collection(name=collection_name)
             logger.info(f"Collection '{collection_name}' exists; skipping strings ingest.")
             program_info.strings_collection = strings_collection
         except Exception:
@@ -643,6 +656,10 @@ class PyGhidraContext:
         If an executor is available, tasks are submitted asynchronously.
         Otherwise, initialization runs in the main thread.
         """
+        if self.chroma_client is None:
+            logger.info("Skipping Chroma collection initialization; chromadb unavailable")
+            return
+
         programs: list[ProgramInfo] = list(self.programs.values())
         mode: str = "background" if self.executor is not None else "main thread"
         logger.info("Initializing Chroma DB collections in %s...", mode)

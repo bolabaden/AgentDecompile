@@ -1,7 +1,7 @@
 """Canonical MCP tool and resource names for AgentDecompile.
 
-LEGACY: Content has been merged into registry.py which is the single source of truth.
-This file is kept for backward-compatibility and will be removed by the project owner.
+Content is mirrored in registry.py, which is the primary source of truth.
+This module is retained for compatibility with existing imports.
 Prefer importing from agentdecompile_cli.registry.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# MCP tool names (exact strings expected by Java server)
+# MCP tool names (canonical wire names)
 # ---------------------------------------------------------------------------
 
 TOOLS = [

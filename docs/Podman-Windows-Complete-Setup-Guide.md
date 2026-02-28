@@ -178,7 +178,7 @@ The AgentDecompile Dockerfile uses **layer caching** (same as Docker) and option
   set DOCKER_BUILDKIT=1
   ```
 
-Then run `podman compose build` or `docker compose build` as usual. With `DOCKER_BUILDKIT=1`, apk and Gradle caches are reused across builds so repeated builds are faster even when a step is re-run.
+Then run `podman compose build` or `docker compose build` as usual. With `DOCKER_BUILDKIT=1`, package and build caches are reused across builds so repeated builds are faster even when a step is re-run.
 
 ---
 

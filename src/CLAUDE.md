@@ -6,60 +6,44 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 
 | Item | Value |
 |------|-------|
-| **MCP SDK Version** | v0.17.0 |
-| **Jackson Version** | 2.20.x |
-| **Jetty Version** | 11.0.26 |
-| **PyGhidra Version** | 3.0.0+ |
-| **JUnit Version** | JUnit 4 (NOT JUnit 5) |
-| **Build Command** | `gradle` (NOT `./gradlew`) |
-| **Unit Tests** | `gradle test` |
-| **Integration Tests** | `gradle integrationTest` |
-| **Python Tests** | `uv run pytest` |
+| **Implementation Language** | Python 3.10+ |
+| **MCP SDK Version** | `mcp>=1.26.0` |
+| **PyGhidra Version** | `pyghidra>=3.0.2` |
+| **Ghidra Version** | 12.0 or higher |
+| **Primary Test Framework** | pytest |
+| **Test Command** | `uv run pytest` |
+| **Development Setup** | `uv` (Python environment manager) |
 
 ## Directory Structure
 
 ```
 src/
-├── agentdecompile_cli/          # Python CLI (authoritative implementation)
-│   ├── __init__.py              # Package init, version
-│   ├── __main__.py              # Entry point: mcp-agentdecompile command
-│   ├── launcher.py              # Wraps Java AgentDecompileHeadlessLauncher
-│   ├── mcp_server/              # MCP server implementation
-│   │   ├── server.py            # PythonMcpServer (FastAPI + MCP SDK)
-│   │   ├── tool_providers.py    # ToolProvider base class + ToolProviderManager
-│   │   └── providers/           # 19 tool provider implementations
-│   ├── mcp_utils/               # Shared utilities (AddressUtil, etc.)
-│   ├── tools/                   # GhidraTools wrapper class
-│   ├── registry.py              # Tool registry, normalize_identifier()
-│   ├── executor.py              # CLI utilities, DynamicToolExecutor
-│   ├── utils.py                 # Re-exports, backward compat
-│   ├── bridge.py                # MCP stdio ↔ HTTP bridge
-│   ├── mcp_session_patch.py     # Patches MCP SDK RuntimeError bug
-│   └── _version.py              # Version from git tags (setuptools_scm)
-├── main/java/agentdecompile/    # Java extension (deprecated)
-│   ├── server/                  # MCP server (McpServerManager, filters)
-│   ├── headless/                # Headless launcher, JavaOutputRedirect
-│   ├── tools/                   # MCP tool providers (17 tools)
-│   ├── resources/               # MCP resource providers
-│   ├── plugin/                  # Ghidra plugin integration
-│   ├── util/                    # AddressUtil, ProgramLookupUtil, etc.
-│   └── ui/                      # GUI components
-├── test/                        # Java unit tests (no Ghidra env)
-└── test.slow/                   # Java integration tests (GUI required)
+├── agentdecompile_cli/              # Python CLI package (authoritative implementation)
+│   ├── __init__.py                  # Package initialization, version
+│   ├── __main__.py                  # Entry point: `mcp-agentdecompile` command
+│   ├── launcher.py                  # Wraps Ghidra/PyGhidra initialization
+│   ├── mcp_server/                  # MCP server implementation
+│   │   ├── server.py                # MCP server (FastAPI + MCP SDK)
+│   │   ├── tool_providers.py        # ToolProvider base class + ToolProviderManager
+│   │   └── providers/               # Tool provider implementations (19 files)
+│   ├── mcp_utils/                   # Shared utilities for Ghidra API access
+│   ├── tools/                       # GhidraTools wrapper class
+│   ├── registry.py                  # Tool registry, normalize_identifier()
+│   ├── executor.py                  # CLI utilities, DynamicToolExecutor
+│   ├── utils.py                     # Re-exports, backward compatibility
+│   ├── bridge.py                    # MCP stdio ↔ HTTP bridge
+│   ├── stdio_bridge.py              # Standard input/output bridge
+│   ├── context.py                   # Session context management
+│   ├── mcp_session_patch.py         # Patches for MCP SDK compatibility
+│   └── _version.py                  # Version from git tags (setuptools_scm)
+└── CLAUDE.md                        # This file
 ```
 
-| Directory | Purpose | Documentation |
-|-----------|---------|---------------|
-| `main/java/agentdecompile/` | Java extension code | See package-level CLAUDE.md files |
-| `test/` | Java unit tests (no Ghidra env) | Fast tests for utilities/logic |
-| `test.slow/` | Java integration tests (GUI required) | [test.slow/CLAUDE.md](test.slow/CLAUDE.md) |
-| `agentdecompile_cli/` | Python CLI for stdio transport | Python package for `mcp-agentdecompile` |
+## Python Entry Point and Connection Flow
 
-### Python entry point and connection flow
-
-- **Entry point:** `mcp-agentdecompile` → `agentdecompile_cli.__main__:main` (see `pyproject.toml`).
-- **Startup (blocking, before asyncio):** Install stdout/stderr filters, initialize PyGhidra, redirect Java System.out/System.err, create ProjectManager (ephemeral temp project unless `AGENT_DECOMPILE_PROJECT_PATH`), create AgentDecompileLauncher, `launcher.start()` → Java MCP server starts.
-- **Async:** `AgentDecompileStdioBridge(port)` runs MCP server over stdio, connects to `http://localhost:{port}/mcp/message`, proxies list_tools, call_tool, list_resources, read_resource, list_prompts to the Java backend.
+- **Entry point:** `mcp-agentdecompile` → `agentdecompile_cli.__main__:main` (see `pyproject.toml`)
+- **Startup:** Initialize PyGhidra, create ProjectManager, setup MCP server
+- **Communication:** MCP server exposes tools via stdio or HTTP bridge, depending on connection mode
 
 ## Testing Guidelines
 
@@ -67,171 +51,185 @@ src/
 
 | Test Type | Location | Requirements | Command |
 |-----------|----------|--------------|---------|
-| Java Unit | `test/` | No Ghidra environment | `gradle test` |
-| Java Integration | `test.slow/` | GUI environment, fork=1 | `gradle integrationTest` |
-| Python Unit | `tests/` (marker: `unit`) | Mocked PyGhidra | `uv run pytest -m unit` |
-| Python Integration | `tests/` (marker: `integration`) | PyGhidra available | `uv run pytest -m integration` |
-| Python E2E | `tests/` (marker: `e2e`) | Full CLI subprocess | `uv run pytest -m e2e` |
+| Unit Tests | `tests/` (marker: `unit`) | Mocked PyGhidra | `uv run pytest -m unit` |
+| Integration Tests | `tests/` (marker: `integration`) | PyGhidra available | `uv run pytest -m integration` |
+| E2E Tests | `tests/` (marker: `e2e`) | Full CLI subprocess | `uv run pytest -m e2e` |
+| All Tests | `tests/` | Full environment | `uv run pytest` |
 
-### Critical Integration Test Requirements
+### Running Tests
 
-- **ALWAYS validate actual Ghidra program state changes**, not just MCP responses
-- Use `Function.getParameters()` and `Function.getAllVariables()` to verify variable changes
-- Use `DataType.isEquivalent()` to compare datatypes before/after modifications
-- Tests require `java.awt.headless=false` and `forkEvery=1`
-- **You are not finished until all tests pass!**
+```bash
+# Run all tests
+uv run pytest
 
-### JUnit Version
+# Run only unit tests (no Ghidra required)
+uv run pytest -m unit
 
-Use JUnit 4 for all Java tests:
-```java
-// CORRECT - JUnit 4
-import org.junit.Test;
-import org.junit.Before;
-import org.junit.After;
+# Run integration tests
+uv run pytest -m integration
 
-// WRONG - JUnit 5 (causes compilation errors)
-import org.junit.jupiter.api.Test;           // DO NOT USE
-import org.junit.jupiter.params.ParameterizedTest; // DO NOT USE
+# Run with verbose output
+uv run pytest -v
+
+# Run specific test file
+uv run pytest tests/test_provider_symbols.py
+
+# Run with coverage
+uv run pytest --cov=src/agentdecompile_cli
 ```
 
-## Address Formatting
+### Test Structure
 
-**ALWAYS use `AddressUtil.formatAddress(address)`** for consistent address formatting in JSON output:
+- **conftest.py** - Shared pytest fixtures
+- **helpers.py** - Test utility functions
+- **test_*.py** - Feature-specific test modules (providers, CLI, workflows, normalization)
 
-```java
-import agentdecompile.util.AddressUtil;
+### Testing Best Practices
 
-// CORRECT - Consistent "0x" prefix
-String formatted = AddressUtil.formatAddress(address);
-// Returns: "0x404000"
+- Always validate actual Ghidra program state changes, not just MCP responses
+- Use assertions to verify that operations persisted to the program database
+- Clean up temporary projects/files after tests complete
+- Mark slow tests with `@pytest.mark.slow` to allow optional skipping
 
-// WRONG - Inconsistent format
-String wrong = address.toString(); // May not have "0x" prefix
-```
+## Key Modules
 
-## Decompiler Tool Implementation
+### `mcp_server/tool_providers.py`
 
-### Adding New Tools to DecompilerToolProvider
+- **ToolProvider** - Base class for all tool implementations
+- **ToolProviderManager** - Centralized tool registry and dispatch
+- Normalization contract: `normalize_identifier()` accepts any variant (case-insensitive, ignores separators)
 
-| Step | Action |
-|------|--------|
-| 1 | Create `register[ToolName]Tool()` method following existing patterns |
-| 2 | Call it from `registerTools()` method |
-| 3 | Use `HighFunctionDBUtil.updateDBVariable()` for persisting variable changes |
-| 4 | Follow the `rename-variables` pattern for consistency |
-| 5 | Handle decompilation with proper error handling and transaction management |
+### `mcp_server/providers/`
 
-### Key Decompiler APIs
+19 tool provider implementations across functional domains:
+- **symbols.py** - Symbol management tools
+- **functions.py** - Function analysis tools  
+- **memory.py** - Memory inspection and data type tools
+- **callgraph.py** - Control flow and cross-reference analysis
+- **comments.py** - Comments and annotations
+- **bookmarks.py** - Bookmarks management
+- **project.py** - Project and file management
+- And 12 more...
 
-| API | Usage |
-|-----|-------|
-| `DataTypeParserUtil.parseDataTypeObjectFromString()` | Parse datatype strings ("char*", "int[10]") |
-| `HighFunctionDBUtil.updateDBVariable()` | Persist variable changes to database |
-| `DecompInterface` | Get decompiled function (ALWAYS dispose!) |
-| `LocalSymbolMap.getSymbols()` | Returns Iterator (use while loop, not for-each) |
+### `tools/wrappers.py`
 
-### Common Patterns
+- **GhidraTools** - Wrapper class providing comprehensive Ghidra API access
+- Methods for function analysis, memory access, symbol manipulation, etc.
 
-```java
-// Transaction management for all program modifications
-int txId = program.startTransaction("Tool operation");
-try {
-    // Perform modifications
-    program.endTransaction(txId, true);
-} catch (Exception e) {
-    program.endTransaction(txId, false);
-    throw e;
-}
+### `registry.py`
 
-// Decompiler disposal pattern
-DecompInterface decompiler = new DecompInterface();
-try {
-    decompiler.openProgram(program);
-    DecompileResults results = decompiler.decompileFunction(function, 30, null);
-    if (!results.decompileCompleted()) {
-        return createErrorResult("Decompilation failed: " + results.getErrorMessage());
+- **normalize_identifier()** - Converts any identifier format to normalized form (alpha-only, lowercase)
+- **to_snake_case()** - Converts identifiers to snake_case for display
+- Tool registry and canonical tool list
+
+## Normalization Contract
+
+**Advertisement Layer (User-Facing):**
+- Tool names: Advertise in `snake_case` (e.g., `manage_symbols`)
+- Parameter names: Advertise in `snake_case` (e.g., `program_path`)
+
+**Execution Layer (Internal):**
+- Tool and parameter matching: ALWAYS accepts ANY variant as long as alphabetic characters match (case-insensitive)
+- Normalization: `normalize_identifier(s)` = `re.sub(r"[^a-z]", "", s.lower().strip())`
+- Examples:
+  - Tool names: `manage-symbols`, `Manage_Symbols`, `MANAGESYMBOLS`, `@@manage symbols@@` → all resolve to `managesymbols`
+  - Arguments: `programPath`, `program_path`, `PROGRAM PATH`, `__program-path__` → all resolve to `programpath`
+
+## Tool Implementation Patterns
+
+### Adding a New Tool
+
+1. Create provider class extending `ToolProvider`
+2. Define `HANDLERS` dict mapping normalized tool names to handler functions
+3. Use `self._get()` helpers for normalized argument access
+4. Return structured responses matching `ToolResponse` schema
+
+### Example Pattern
+
+```python
+class MyToolProvider(ToolProvider):
+    HANDLERS = {
+        'mytool': 'handle_my_tool',
     }
-    // Process results...
-} finally {
-    decompiler.dispose(); // ALWAYS dispose to prevent memory leaks
-}
-
-// LocalSymbolMap iteration (NOT Iterable!)
-Iterator<HighSymbol> symbolIter = localSymMap.getSymbols();
-while (symbolIter.hasNext()) {
-    HighSymbol symbol = symbolIter.next();
-    // Process symbol
-}
+    
+    def handle_my_tool(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        program = self._get_program(args)
+        mode = self._get_optional_string(args, 'mode', 'default')
+        count = self._get_optional_int(args, 'count', 10)
+        
+        # Implementation here
+        return self.success({
+            'result': 'data',
+            'count': count
+        })
 ```
 
-### Parameter Handling
+### Using Ghidra APIs
 
-**Use AbstractToolProvider helper methods** for type conversion and validation:
+Access Ghidra functionality through `GhidraTools`:
 
-```java
-// Required parameters (auto-converts types)
-String programPath = getString(request, "programPath");
-int count = getInt(request, "maxCount");
+```python
+from agentdecompile_cli.tools.wrappers import GhidraTools
 
-// Optional parameters with defaults
-int startIndex = getOptionalInt(request, "startIndex", 0);
-boolean verbose = getOptionalBoolean(request, "verbose", false);
-
-// Exception handling is automatic - registerTool() wraps handlers
-// to catch IllegalArgumentException and ProgramValidationException
+tools = GhidraTools(program)
+functions = tools.get_functions()
+for func in functions:
+    print(f"Function: {func.getName()}")
 ```
 
-## Critical Utility Usage
+## Common Patterns
 
-**ALWAYS use AgentDecompile utilities instead of direct Ghidra APIs**:
+### Error Handling
 
-| Utility | Method | Purpose |
-|---------|--------|---------|
-| `AddressUtil` | `formatAddress()` | **REQUIRED** for all address formatting in JSON |
-| `ProgramLookupUtil` | `getValidatedProgram()` | **REQUIRED** for program resolution with helpful errors |
-| `AbstractToolProvider` | `getProgramFromArgs()` | **REQUIRED** for tool parameter extraction |
-| `DataTypeParserUtil` | `parseDataTypeObjectFromString()` | Parse datatype strings |
-| `HighFunctionDBUtil` | `updateDBVariable()` | **REQUIRED** for persisting variable changes |
-| `SymbolUtil` | `isDefaultSymbolName()` | Filter Ghidra-generated names |
+```python
+try:
+    program = self._get_program(args)
+    if not program:
+        return self.error("Program not found")
+    # Process...
+    return self.success(result)
+except Exception as e:
+    return self.error(f"Operation failed: {str(e)}")
+```
+
+### Address Formatting
+
+Use consistent address formatting in responses:
+
+```python
+address_str = f"0x{address.getOffset():x}"
+# Or use helper if available
+```
+
+## Command-Line Usage
+
+```bash
+# Start MCP server (stdio mode)
+mcp-agentdecompile
+
+# Start with custom project path
+AGENT_DECOMPILE_PROJECT_PATH=/path/to/project mcp-agentdecompile
+
+# Run tests
+uv run pytest
+
+# Build distribution
+uv build
+```
 
 ## Troubleshooting
 
-### Common Build Issues
+### Common Issues
 
 | Problem | Solution |
 |---------|----------|
-| Jackson conflicts | Run `rm lib/*.jar` and rebuild |
-| JUnit 5 compilation errors | Replace with JUnit 4 annotations |
-| Integration tests fail | Ensure `java.awt.headless=false` |
-| Tests interfere with each other | Ensure `forkEvery=1` in build.gradle |
-| Gradle wrapper not found | Use `gradle` directly, not `./gradlew` |
-
-### Common Runtime Issues
-
-| Problem | Solution |
-|---------|----------|
-| Memory leaks | Always dispose `DecompInterface` instances |
-| Program not found | Use `ProgramLookupUtil.getValidatedProgram()` for helpful errors |
-| Transaction errors | Always use try-finally for `startTransaction`/`endTransaction` |
-| Iterator exceptions | Check API - `LocalSymbolMap.getSymbols()` returns Iterator, not Iterable |
+| PyGhidra import fails | Ensure Ghidra is installed; set `GHIDRA_INSTALL_DIR` |
+| Tool not found | Check normalization: `normalize_identifier('tool-name')` should resolve |
+| Test failures | Run `uv run pytest -v` for detailed output; check markers |
+| Port already in use | Change `port` or kill process on port: `lsof -ti:PORT \| xargs kill` |
 
 ## Related Documentation
 
-### Essential Infrastructure
-- [util/CLAUDE.md](main/java/agentdecompile/util/CLAUDE.md) - Foundational utilities (AddressUtil, ProgramLookupUtil, etc.)
-- [plugin/CLAUDE.md](main/java/agentdecompile/plugin/CLAUDE.md) - ConfigManager, plugin lifecycle
-- [server/CLAUDE.md](main/java/agentdecompile/server/CLAUDE.md) - MCP server architecture
-
-### Tool Providers
-- [tools/CLAUDE.md](main/java/agentdecompile/tools/CLAUDE.md) - Tool provider patterns and base classes
-- [tools/decompiler/CLAUDE.md](main/java/agentdecompile/tools/decompiler/CLAUDE.md) - Decompiler tools
-- [tools/functions/CLAUDE.md](main/java/agentdecompile/tools/functions/CLAUDE.md) - Function analysis tools
-
-### Testing
-- [test.slow/CLAUDE.md](test.slow/CLAUDE.md) - Integration test base class and patterns
-
-### Supporting Systems
-- [resources/CLAUDE.md](main/java/agentdecompile/resources/CLAUDE.md) - MCP resource providers
-- [services/CLAUDE.md](main/java/agentdecompile/services/CLAUDE.md) - Service interfaces
-- [headless/CLAUDE.md](main/java/agentdecompile/headless/CLAUDE.md) - Headless mode support
+- [TOOLS_LIST.md](../TOOLS_LIST.md) - Canonical tool specifications
+- [vendor/](../vendor/) - Third-party tool source code references
+- [../tests/README.md](../tests/README.md) - Testing guide

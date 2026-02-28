@@ -4,7 +4,7 @@ This package provides a command-line interface that bridges stdio MCP transport
 to AgentDecompile's StreamableHTTP server, enabling seamless integration with Claude CLI.
 Programmatic use: AgentDecompileMcpClient for async HTTP access to an existing server.
 
-Tool and resource names (1:1 with Java): use agentdecompile_cli.tools_schema (TOOLS,
+Tool and resource names: use agentdecompile_cli.tools_schema (TOOLS,
 RESOURCE_URIS, build_tool_payload, RESOURCE_URI_*).
 """
 

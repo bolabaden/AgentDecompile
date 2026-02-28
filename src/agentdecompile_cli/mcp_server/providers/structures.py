@@ -282,7 +282,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "modify_field", "structure": struct_name, "offset": field_offset, "success": True})
 
     async def _modify_from_c(self, args: dict[str, Any]) -> list[types.TextContent]:
-        c_def = self._require_str(args, "cdefinition", "definition", "code", "c", name="cDefinition")
+        c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", "c", name="cDefinition")
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -315,7 +315,7 @@ class StructureToolProvider(ToolProvider):
         return await self._modify_from_c(args)
 
     async def _validate(self, args: dict[str, Any]) -> list[types.TextContent]:
-        c_def = self._require_str(args, "cdefinition", "definition", "code", name="cDefinition")
+        c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", name="cDefinition")
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 

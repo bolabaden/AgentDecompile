@@ -105,7 +105,7 @@ class DataToolProvider(ToolProvider):
     async def _handle_apply(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
-        dt_name = self._require_str(args, "datatype", "type", "typename", name="dataType")
+        dt_name = self._require_str(args, "datatype", "datatypestring", "type", "typename", name="dataType")
 
         program = self.program_info.program
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil

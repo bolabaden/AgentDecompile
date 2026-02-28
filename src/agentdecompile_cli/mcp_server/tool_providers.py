@@ -27,6 +27,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     get_current_mcp_session_id,
 )
 from agentdecompile_cli.registry import TOOL_PARAMS, TOOLS, normalize_identifier, to_snake_case
+from agentdecompile_cli.registry import TOOL_PARAM_ALIASES, resolve_tool_name
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import ProgramInfo
@@ -38,6 +39,78 @@ logger = logging.getLogger(__name__)
 # Imported from registry.py.  Everything else imports from HERE.
 # ---------------------------------------------------------------------------
 n = normalize_identifier  # short alias used throughout providers
+
+
+# ---------------------------------------------------------------------------
+# Parameter type inference for advertised schemas
+# ---------------------------------------------------------------------------
+
+# Normalized param-name fragments → JSON schema type.
+# Used when a TOOL_PARAMS entry doesn't match any provider property.
+_INT_FRAGMENTS = frozenset({
+    "limit", "offset", "count", "index", "results", "length", "size",
+    "depth", "entries", "callers", "width", "height", "max", "min",
+    "referencecount", "maxcount", "maxresults", "startindex",
+    "maxdepth", "maxcallers", "maxentries", "topn", "maxfunctions",
+    "batchsize", "maxinstructions", "linenumber", "maxreferencers",
+    "maxruntime", "condensethreshold", "toplayers", "bottomlayers",
+    "propagatemaxcandidates", "propagatemaxinstructions", "minvalue",
+    "maxvalue", "value", "serverport", "minreferencecount",
+    "minsimilarity",
+})
+_BOOL_FRAGMENTS = frozenset({
+    "include", "recursive", "verbose", "packed", "force",
+    "clearexisting", "casesensitive", "demangleall",
+    "groupbylibrary", "includeexternal", "filterdefaultnames",
+    "includesubcategories", "includebuiltin", "includerefs",
+    "overridemaxfunctionslimit", "includereferencingfunctions",
+    "includerefcontext", "includedatarefs", "includecallers",
+    "includecallees", "includecomments", "includeincomingreferences",
+    "includereferencecontext", "includecallcontext",
+    "createifnotexists", "propagate", "propagatenames",
+    "propagatetags", "propagatecomments", "untagged", "hastags",
+    "openallprograms", "analyzeafterimport", "enableversioncontrol",
+    "exclusive", "forceignorelock", "removeall",
+    "includesmallvalues", "includeparameters", "includevariables",
+    "stripleadingpath", "stripallcontainerpath", "mirrorfs",
+    "setasprimary", "keepcheckedout",
+})
+
+
+# Params that look like booleans by prefix but are actually strings/arrays.
+_BOOL_PREFIX_EXCEPTIONS = frozenset({
+    "filterbytag",  # tag name string, not a boolean
+})
+# Params that should be arrays, not strings.
+_ARRAY_PARAMS = frozenset({
+    "propagateprogrampaths",
+    "functionaddresses",
+    "identifiers",
+    "tags",
+})
+
+
+def _infer_param_schema(param_name: str) -> dict[str, Any]:
+    """Infer JSON schema type from a parameter name.
+
+    Uses common naming patterns to guess integer vs boolean vs string.
+    This is the fallback when a parameter from TOOL_PARAMS doesn't match
+    any property in the provider's input schema.
+    """
+    norm = n(param_name)
+    if norm in _ARRAY_PARAMS:
+        return {"type": "array", "items": {"type": "string"}}
+    if norm in _INT_FRAGMENTS:
+        return {"type": "integer"}
+    if norm in _BOOL_FRAGMENTS:
+        return {"type": "boolean"}
+    if norm in _BOOL_PREFIX_EXCEPTIONS:
+        return {"type": "string"}
+    # Check prefixes for booleans
+    for prefix in ("include", "filter", "enable", "propagate", "strip", "mirror", "override"):
+        if norm.startswith(prefix) and len(norm) > len(prefix) and norm not in _BOOL_PREFIX_EXCEPTIONS:
+            return {"type": "boolean"}
+    return {"type": "string"}
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +217,8 @@ class ToolProvider:
         arguments: dict[str, Any],
     ) -> list[types.TextContent]:
         """Normalize name + args, dispatch to handler, catch errors."""
-        norm_name = n(name)
+        resolved_name = resolve_tool_name(name) or name
+        norm_name = n(resolved_name)
 
         handler_method_name = self.HANDLERS.get(norm_name)
         if handler_method_name is None:
@@ -154,6 +228,25 @@ class ToolProvider:
 
         # Normalize ALL argument keys – the ONE place normalization happens.
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
+
+        # Tool-specific parameter synonym bridging from TOOLS_LIST.md.
+        alias_map = TOOL_PARAM_ALIASES.get(norm_name, {})
+        if alias_map:
+            for key, value in list(norm_args.items()):
+                targets = alias_map.get(key)
+                if not targets:
+                    continue
+                for target in targets:
+                    if norm_args.get(target) is None:
+                        norm_args[target] = value
+            for alias, canonicals in alias_map.items():
+                if norm_args.get(alias) is not None:
+                    continue
+                for canonical in canonicals:
+                    canonical_value = norm_args.get(canonical)
+                    if canonical_value is not None:
+                        norm_args[alias] = canonical_value
+                        break
 
         try:
             return await handler(norm_args)
@@ -230,7 +323,7 @@ class ToolProvider:
     # ------------------------------------------------------------------
 
     def _require_program(self) -> None:
-        if self.program_info is None:
+        if self.program_info is None or getattr(self.program_info, "program", None) is None:
             raise ValueError("No program loaded")
 
     def _require_ghidra(self) -> None:
@@ -367,7 +460,7 @@ class ToolProviderManager:
                 normalized_param = n(param)
                 advertised_properties[snake_param] = props_by_norm.get(
                     normalized_param,
-                    {"type": "string"},
+                    _infer_param_schema(param),
                 )
 
             required_norm = {n(str(item)) for item in required}
@@ -404,23 +497,42 @@ class ToolProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
+        resolved_name = resolve_tool_name(name) or name
         session_id = get_current_mcp_session_id()
-        SESSION_CONTEXTS.add_tool_history(session_id, n(name), arguments or {})
+        SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
-        norm_name = n(name)
+        norm_name = n(resolved_name)
         provider = self._tool_map.get(norm_name)
         if provider is None:
             return create_error_response(f"Unknown tool: {name}")
 
+        norm_args = {n(k): v for k, v in (arguments or {}).items()}
+
+        requested_program_key: str | None = None
+        for key in ("programpath", "binary", "binaryname", "path"):
+            value = norm_args.get(key)
+            if value is None:
+                continue
+            value_s = str(value).strip()
+            if value_s:
+                requested_program_key = value_s
+                break
+
+        requested_program_info = (
+            SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
+            if requested_program_key
+            else None
+        )
+
         session_program_info = SESSION_CONTEXTS.get_active_program_info(session_id)
-        effective_program_info = session_program_info or self.program_info
+        effective_program_info = requested_program_info or session_program_info or self.program_info
         if effective_program_info is not None and provider.program_info is not effective_program_info:
             try:
                 provider.set_program_info(effective_program_info)
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
 
-        return await provider.call_tool(name, arguments)
+        return await provider.call_tool(resolved_name, arguments)
 
     def program_opened(self, program_info_or_path: ProgramInfo | os.PathLike | str) -> None:
         if isinstance(program_info_or_path, str):

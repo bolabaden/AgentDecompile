@@ -36,7 +36,7 @@ class ConstantSearchToolProvider(ToolProvider):
                         "value": {"type": "integer", "description": "Specific value to search (specific mode)"},
                         "minValue": {"type": "integer", "description": "Min value (range mode)"},
                         "maxValue": {"type": "integer", "description": "Max value (range mode)"},
-                        "maxResults": {"type": "integer", "default": 1000},
+                        "limit": {"type": "integer", "default": 1000},
                         "offset": {"type": "integer", "default": 0},
                         "maxInstructions": {"type": "integer", "default": 2000000},
                         "samplesPerConstant": {"type": "integer", "default": 5},
@@ -48,7 +48,8 @@ class ConstantSearchToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        mode = self._get_str(args, "mode", default="common")
+        from agentdecompile_cli.registry import normalize_identifier as n
+        mode = n(self._get_str(args, "mode", default="common"))
         max_results = self._get_int(args, "maxresults", "limit", default=1000)
         offset = self._get_int(args, "offset", "startindex", default=0)
         max_instr = self._get_int(args, "maxinstructions", default=2000000)
@@ -77,11 +78,11 @@ class ConstantSearchToolProvider(ToolProvider):
                             if val == 0:
                                 continue  # Skip zero, too common
 
-                            if mode == "specific":
+                            if mode in ("specific",):
                                 target = self._get_int(args, "value", default=0)
                                 if val != target:
                                     continue
-                            elif mode == "range":
+                            elif mode in ("range",):
                                 min_v = self._get_int(args, "minvalue", default=0)
                                 max_v = self._get_int(args, "maxvalue", default=0xFFFFFFFF)
                                 if val < min_v or val > max_v:

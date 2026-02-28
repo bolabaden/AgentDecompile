@@ -45,8 +45,8 @@ class CommentToolProvider(ToolProvider):
                         "comment": {"type": "string", "description": "Comment text"},
                         "type": {"type": "string", "enum": ["eol", "pre", "post", "plate", "repeatable"], "default": "eol"},
                         "comments": {"type": "array", "description": "Batch comments", "items": {"type": "object"}},
-                        "searchText": {"type": "string", "description": "Search text in comments"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "query": {"type": "string", "description": "Search text or regex in comments"},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -94,7 +94,7 @@ class CommentToolProvider(ToolProvider):
                     ni = {n(k): v for k, v in item.items()}
                     addr_str = self._get_str(ni, "addressorsymbol", "address", "addr")
                     text = self._get_str(ni, "comment", "text")
-                    ctype = self._get_str(ni, "type", default="eol")
+                    ctype = self._get_str(ni, "type", "commenttype", default="eol")
                     try:
                         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
@@ -112,7 +112,7 @@ class CommentToolProvider(ToolProvider):
         # Single
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
         text = self._require_str(args, "comment", "text", name="comment")
-        ctype = self._get_str(args, "type", default="eol")
+        ctype = self._get_str(args, "type", "commenttype", default="eol")
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
@@ -129,7 +129,7 @@ class CommentToolProvider(ToolProvider):
     async def _get_comments(self, args: dict[str, Any]) -> list[types.TextContent]:
         program = self.program_info.program
         listing = program.getListing()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
+        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", "function", name="addressOrSymbol")
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
@@ -144,8 +144,8 @@ class CommentToolProvider(ToolProvider):
     async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
         program = self.program_info.program
         listing = program.getListing()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
-        ctype = self._get_str(args, "type", default="eol")
+        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", "function", name="addressOrSymbol")
+        ctype = self._get_str(args, "type", "commenttype", default="eol")
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
@@ -162,8 +162,8 @@ class CommentToolProvider(ToolProvider):
     async def _search(self, args: dict[str, Any]) -> list[types.TextContent]:
         program = self.program_info.program
         listing = program.getListing()
-        query = self._get_str(args, "searchtext", "query", "search", "text")
-        max_results = self._get_int(args, "maxresults", "limit", "max", default=100)
+        query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
+        max_results = self._get_int(args, "maxresults", "limit", "max", "maxcount", default=100)
         offset = self._get_int(args, "offset", "startindex", default=0)
         query_lower = query.lower() if query else ""
 
@@ -207,8 +207,8 @@ class CommentToolProvider(ToolProvider):
     async def _search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search comments in decompiled output."""
         program = self.program_info.program
-        query = self._get_str(args, "searchtext", "query", "search", "text")
-        max_results = self._get_int(args, "maxresults", "limit", default=50)
+        query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
+        max_results = self._get_int(args, "maxresults", "limit", "maxcount", default=50)
 
         results = []
         try:

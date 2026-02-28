@@ -1,9 +1,9 @@
-"""Pytest configuration and shared fixtures for AgentDecompile headless integration tests.
+"""Pytest configuration and shared fixtures for AgentDecompile integration tests.
 
 Fixtures:
 - ghidra_initialized: Initialize PyGhidra once for the entire test session
 - test_program: Create a test program with memory and strings (reused across tests)
-- server: Start and stop a AgentDecompile headless server for each test
+- server: Start and stop an AgentDecompile server for each test
 - mcp_client: Helper object for making MCP requests
 
 Fixture Scopes:
@@ -23,19 +23,6 @@ import os
 import subprocess
 
 from pathlib import Path
-
-# Set GHIDRA_INSTALL_DIR from gradle.properties if not set (enables local test runs)
-if not os.environ.get("GHIDRA_INSTALL_DIR"):
-    _repo_root = Path(__file__).resolve().parent.parent
-    _gradle_props = _repo_root / "gradle.properties"
-    if _gradle_props.exists():
-        for _gp_line in _gradle_props.read_text(encoding="utf-8").splitlines():
-            _gp_line = _gp_line.strip()
-            if _gp_line.startswith("GHIDRA_INSTALL_DIR=") and "=" in _gp_line:
-                _gid = _gp_line.split("=", 1)[1].strip()
-                if _gid and Path(_gid).exists():
-                    os.environ["GHIDRA_INSTALL_DIR"] = _gid
-                    break
 from collections.abc import AsyncGenerator, Generator, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +38,7 @@ from tests.helpers import (
 )
 
 if TYPE_CHECKING:
-    from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingImports]
+    from agentdecompile_cli.launcher import AgentDecompileLauncher
     from mcp.client.session import ClientSession
 
 
@@ -223,7 +210,7 @@ def test_program(ghidra_initialized: bool):
 
 @pytest.fixture
 def server(ghidra_initialized: bool):
-    """Start a AgentDecompile headless server for a test.
+    """Start an AgentDecompile server for a test.
 
     Creates a new server instance, starts it, waits for it to become ready,
     and automatically stops it after the test completes.
@@ -231,14 +218,14 @@ def server(ghidra_initialized: bool):
     Scope: function (new server for each test)
 
     Yields:
-        AgentDecompileHeadlessLauncher instance (running and ready)
+        AgentDecompileLauncher instance (running and ready)
 
     Raises:
         AssertionError: If server fails to start or become ready within 30 seconds
     """
-    from agentdecompile.headless import AgentDecompileHeadlessLauncher  # pyright: ignore[reportMissingImports]
+    from agentdecompile_cli.launcher import AgentDecompileLauncher
 
-    launcher = AgentDecompileHeadlessLauncher()
+    launcher = AgentDecompileLauncher()
 
     print("\n[Fixture] Starting AgentDecompile headless server...")
     launcher.start()
@@ -260,7 +247,7 @@ def server(ghidra_initialized: bool):
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def mcp_client(
-    server: AgentDecompileHeadlessLauncher,
+    server: AgentDecompileLauncher,
 ) -> AsyncGenerator[ClientSession, Any]:
     """Create an async MCP client helper for making requests.
 

@@ -37,7 +37,7 @@ class FunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "namePattern": {"type": "string", "description": "Regex filter on function name"},
                         "includeExternals": {"type": "boolean", "default": True},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -54,7 +54,7 @@ class FunctionToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string"},
                         "functionIdentifier": {"type": "string"},
                         "view": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "default": "info"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "limit": {"type": "integer", "default": 100},
                         "offset": {"type": "integer", "default": 0},
                     },
                     "required": [],
@@ -66,10 +66,12 @@ class FunctionToolProvider(ToolProvider):
         self._require_program()
         pattern = self._get_str(args, "namepattern", "pattern", "filter", "regex")
         include_ext = self._get_bool(args, "includeexternals", "externals", default=True)
-        max_results = self._get_int(args, "maxresults", "limit", "max", default=100)
+        max_results = self._get_int(args, "limit", "maxresults", "max", default=100)
         offset = self._get_int(args, "offset", "startindex", default=0)
 
-        program = self.program_info.program
+        program = getattr(self.program_info, "program", None)
+        if program is None or not hasattr(program, "getFunctionManager"):
+            raise ValueError("No program loaded")
         fm = program.getFunctionManager()
 
         pat = re.compile(pattern, re.IGNORECASE) if pattern else None
@@ -112,11 +114,14 @@ class FunctionToolProvider(ToolProvider):
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "name", "addr", "symbol")
-        view = self._get_str(args, "view", "mode", default="info")
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
+        from agentdecompile_cli.registry import normalize_identifier as _n
+        view = _n(self._get_str(args, "view", "mode", default="info"))
+        max_results = self._get_int(args, "limit", "maxresults", default=100)
 
-        program = self.program_info.program
+        program = getattr(self.program_info, "program", None)
+        if program is None or not hasattr(program, "getFunctionManager"):
+            raise ValueError("No program loaded")
         fm = program.getFunctionManager()
 
         # If no function specified, list all
@@ -149,7 +154,7 @@ class FunctionToolProvider(ToolProvider):
             "view": view,
         }
 
-        if view == "info":
+        if view in ("info",):
             result.update(
                 {
                     "size": target_func.getBody().getNumAddresses() if target_func.getBody() else 0,
@@ -162,11 +167,11 @@ class FunctionToolProvider(ToolProvider):
                     "hasVarArgs": target_func.hasVarArgs(),
                 }
             )
-        elif view == "calls":
+        elif view in ("calls",):
             callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
             callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
             result.update({"callers": callers, "callees": callees, "callerCount": len(callers), "calleeCount": len(callees)})
-        elif view == "decompile":
+        elif view in ("decompile",):
             try:
                 from ghidra.app.decompiler import DecompInterface
 
@@ -181,7 +186,7 @@ class FunctionToolProvider(ToolProvider):
                 decomp.dispose()
             except Exception as e:
                 result["decompilation"] = f"// Error: {e}"
-        elif view == "disassemble":
+        elif view in ("disassemble",):
             instructions = []
             listing = program.getListing()
             body = target_func.getBody()
