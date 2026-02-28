@@ -195,10 +195,11 @@ Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool na
 For shared Ghidra server workflows (`open --server-host ... --server-port ...`), you can set defaults once with environment variables:
 
 ```bash
-export AGENT_DECOMPILE_GHIDRA_SERVER_HOST=170.9.241.140
-export AGENT_DECOMPILE_GHIDRA_SERVER_PORT=13100
-export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME=OpenKotOR
-export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='***'
+export AGENT_DECOMPILE_SERVER_HOST=170.9.241.140
+export AGENT_DECOMPILE_SERVER_PORT=13100
+export AGENT_DECOMPILE_SERVER_USERNAME=OpenKotOR
+export AGENT_DECOMPILE_SERVER_PASSWORD='***'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY=Odyssey
 ```
 
 Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
@@ -277,7 +278,7 @@ Use `agentdecompile-cli tool --list-tools` to view tool names available from you
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Python MCP server, then bridges stdio to it.
 - **Connect mode (no local runtime startup):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
-- **Local proxy server mode:** run `agentdecompile-server --backend-url http://host:port` to host local MCP transports (`stdio`, `streamable-http`, `sse`) that forward to a remote MCP backend without starting local PyGhidra/JVM.
+- **Local proxy server mode:** run `agentdecompile-server --backend-url http://host:port` (or set `AGENT_DECOMPILE_BACKEND_URL`) to host local MCP transports (`stdio`, `streamable-http`, `sse`) that forward to a remote MCP backend without starting local PyGhidra/JVM.
 
 ### Remote access
 
@@ -293,6 +294,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 
 | Variable | Purpose |
 |----------|---------|
+| `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for `agentdecompile-server` proxy mode (`--backend-url`). |
 | `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). |
 | `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. |
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). |
@@ -302,6 +304,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). |
 | `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). |
 | `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. |
 | `AGENT_DECOMPILE_FORCE_IGNORE_LOCK` | If `true`, delete project lock files before opening (risky; see Project locking below). |
 
 ### Shared project authentication

@@ -3036,7 +3036,9 @@ def current_program(ctx: click.Context, program_path: str | None) -> None:
 @main.command("current-address", help="Get current address (get-current-address, GUI)")
 @click.pass_context
 def current_address(ctx: click.Context) -> None:
-    _run_async(_call(ctx, "get-current-address"))
+    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    click.echo("Tool 'get-current-address' is disabled (GUI-only).", err=True)
+    sys.exit(1)
 
 
 @main.command(
@@ -3045,7 +3047,9 @@ def current_address(ctx: click.Context) -> None:
 )
 @click.pass_context
 def current_function(ctx: click.Context) -> None:
-    _run_async(_call(ctx, "get-current-function"))
+    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    click.echo("Tool 'get-current-function' is disabled (GUI-only).", err=True)
+    sys.exit(1)
 
 
 @main.command(
@@ -3055,7 +3059,9 @@ def current_function(ctx: click.Context) -> None:
 @click.option("-b", "--binary", "program_path", required=True)
 @click.pass_context
 def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
-    _run_async(_call(ctx, "open-program-in-code-browser", programPath=program_path))
+    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    click.echo("Tool 'open-program-in-code-browser' is disabled (GUI-only).", err=True)
+    sys.exit(1)
 
 
 @main.command(
@@ -3079,14 +3085,9 @@ def open_all_in_code_browser(
     extensions: str,
     folder_path: str,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "open-all-programs-in-code-browser",
-            extensions=extensions,
-            folderPath=folder_path,
-        ),
-    )
+    # TODO(gui-only): Re-enable when GUI capability detection/negotiation is added.
+    click.echo("Tool 'open-all-programs-in-code-browser' is disabled (GUI-only).", err=True)
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

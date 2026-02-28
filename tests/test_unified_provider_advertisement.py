@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProvider
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, normalize_identifier, to_snake_case
+from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, TOOLS, normalize_identifier, to_snake_case
 from mcp import types
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
@@ -60,13 +60,13 @@ class TestUnifiedProviderAdvertisement:
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
 
-        expected_advertised_names = {to_snake_case(tool_name) for tool_name in TOOLS}
+        expected_advertised_names = {to_snake_case(tool_name) for tool_name in ADVERTISED_TOOLS}
         actual_advertised_names = {tool.name for tool in advertised_tools}
 
         assert actual_advertised_names == expected_advertised_names
         assert_mapping_invariants({"expected": list(expected_advertised_names), "actual": list(actual_advertised_names)})
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", [name for name, params in ADVERTISED_TOOL_PARAMS.items() if params])
     def test_advertised_argument_keys_are_snake_case_and_cover_schema(self, tool_name: str):
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
@@ -83,14 +83,14 @@ class TestUnifiedProviderAdvertisement:
             assert _is_snake_case(arg_name), f"Tool {tool_name!r} advertised arg {arg_name!r} should be snake_case"
             assert_string_invariants(arg_name)
 
-        expected_args = {to_snake_case(param_name) for param_name in TOOL_PARAMS[tool_name]}
+        expected_args = {to_snake_case(param_name) for param_name in ADVERTISED_TOOL_PARAMS[tool_name]}
         assert set(properties.keys()) == expected_args
         assert_mapping_invariants({"expected": list(expected_args), "actual": list(properties.keys())})
 
     def test_advertised_names_round_trip_to_canonical_schema_names(self):
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
-        canonical_tools_set = set(TOOLS)
+        canonical_tools_set = set(ADVERTISED_TOOLS)
 
         for advertised in advertised_tools:
             matched = [canonical for canonical in canonical_tools_set if normalize_identifier(canonical) == normalize_identifier(advertised.name)]
