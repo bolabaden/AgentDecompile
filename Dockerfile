@@ -158,10 +158,12 @@ ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     if [ "${ARCH}" = "aarch64" ]; then \
+        ONNXRUNTIME_APK_URL="$(curl -fsSL https://pkgs.alpinelinux.org/package/edge/community/aarch64/py3-onnxruntime | grep -Eo 'https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime[^" ]*\.apk' | head -n 1)"; \
+        test -n "${ONNXRUNTIME_APK_URL}"; \
         apk add --no-cache \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            py3-onnxruntime \
+            "${ONNXRUNTIME_APK_URL}" \
         ; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \

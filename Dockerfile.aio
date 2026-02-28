@@ -145,17 +145,17 @@ RUN set -eux; \
         fi
 
 # --- Layer 5: install AgentDecompile Python package into venv ---
-ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 ARG CHROMADB_VERSION=1.5.2
 ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     if [ "${ARCH}" = "aarch64" ]; then \
+        ONNXRUNTIME_APK_URL="$(curl -fsSL https://pkgs.alpinelinux.org/package/edge/community/aarch64/py3-onnxruntime | grep -Eo 'https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime[^" ]*\.apk' | head -n 1)"; \
+        test -n "${ONNXRUNTIME_APK_URL}"; \
         apk add --no-cache \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            py3-onnxruntime \
+            "${ONNXRUNTIME_APK_URL}" \
         ; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \
