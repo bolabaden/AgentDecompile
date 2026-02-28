@@ -123,6 +123,17 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
+For shared Ghidra server workflows (`open --server-host ... --server-port ...`), you can set defaults once with environment variables:
+
+```bash
+export AGENT_DECOMPILE_GHIDRA_SERVER_HOST=170.9.241.140
+export AGENT_DECOMPILE_GHIDRA_SERVER_PORT=13100
+export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME=OpenKotOR
+export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='***'
+```
+
+Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
+
 ### Docker and volume mapping
 
 Map a directory of binaries into the container so the server can import and analyze them:
