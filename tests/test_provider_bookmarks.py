@@ -10,6 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -236,26 +237,29 @@ class TestBookmarkProviderModeActionAlias:
         assert len(called) == 1
 
     @pytest.mark.asyncio
-    async def test_action_takes_precedence_over_mode(self):
-        """If both action and mode supplied, action wins (first key in _get_str)."""
-        p = _make_provider(with_program=True)
+    async def test_mode_takes_precedence_over_action(self):
+        """If both mode and action supplied, mode wins."""
+        p: BookmarkToolProvider = _make_provider(with_program=True)
         p._require_program = MagicMock()
-        list_called = []
-        cat_called = []
+        list_called: list[bool] = []
+        cat_called: list[bool] = []
 
-        async def fake_list(args):
+        async def fake_list(args: dict[str, Any]):
             list_called.append(True)
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"bookmarks": []})
 
-        async def fake_categories(args):
+        async def fake_categories(args: dict[str, Any]):
             cat_called.append(True)
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"categories": []})
 
         p._list = fake_list
         p._categories = fake_categories
-        # action=list should win over mode=categories since action is listed first in _get_str
-        await p.call_tool("manage-bookmarks", {"action": "list", "mode": "categories", "programPath": "/test/binary"})
-        assert len(list_called) == 1
-        assert len(cat_called) == 0
+        # mode=categories should win over action=list since mode is listed first in _get_str
+        await p.call_tool(
+            "manage-bookmarks",
+            {"action": "list", "mode": "categories", "programPath": "/test/binary"},
+        )
+        assert len(list_called) == 0
+        assert len(cat_called) == 1
