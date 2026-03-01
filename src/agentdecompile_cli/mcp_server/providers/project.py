@@ -359,38 +359,27 @@ class ProjectToolProvider(ToolProvider):
                 except Exception:
                     original_user_name = None
 
-            server_adapter = None
-            if server_username and server_password:
-                # Prefer authenticated overloads where available so the
-                # repository handshake doesn't default to the process user.
-                for overload_args in (
-                    (server_host, server_port, False, server_username, server_password),
-                    (server_host, server_port, server_username, server_password),
-                ):
-                    try:
-                        server_adapter = ClientUtil.getRepositoryServer(*overload_args)
-                        if server_adapter is not None:
-                            break
-                    except TypeError:
-                        continue
-                    except Exception:
-                        continue
+            # Clear any cached (possibly stale/disconnected) adapter for this
+            # host+port so that the next getRepositoryServer call creates a
+            # fresh connection with the authenticator we just configured.
+            try:
+                ClientUtil.clearRepositoryAdapter(server_host, server_port)
+            except Exception:
+                pass  # best-effort; method may not exist on older Ghidra builds
 
-            if server_adapter is None:
-                server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, False)
+            # Use forceConnect=True to avoid returning a cached disconnected
+            # adapter left over from a previous failed connection (e.g. the
+            # container's default "ghidra" user login).
+            server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, True)
             if server_adapter is None:
                 raise ValueError(f"Failed to connect to repository server: {server_host}:{server_port}")
 
             if not server_adapter.isConnected():
                 try:
                     # Java connect() returns void (None via PyGhidra); check isConnected() after.
-                    if server_username and server_password:
-                        try:
-                            server_adapter.connect(server_username, server_password)
-                        except TypeError:
-                            server_adapter.connect()
-                    else:
-                        server_adapter.connect()
+                    # Auth is handled by the PasswordClientAuthenticator set above;
+                    # connect() itself takes no credential arguments.
+                    server_adapter.connect()
                 except Exception as exc:
                     exc_text = str(exc)
                     if auth_provided:
