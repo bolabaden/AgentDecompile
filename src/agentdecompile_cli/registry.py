@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # MCP tool names (exact strings expected by Java server)
 # ---------------------------------------------------------------------------
-
 TOOLS = [
     "analyze-data-flow",
     "analyze-program",
@@ -148,365 +147,59 @@ def _canonical_param_name(param: str) -> str:
 
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
 TOOL_PARAMS: dict[str, list[str]] = {
-    "get-data": _params("programPath", "addressOrSymbol", "view"),
-    "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
-    "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
-    "manage-strings": _params(
-        "programPath",
-        "mode",
-        "pattern",
-        "searchString",
-        "filter",
-        "query",
-        "startIndex",
-        "maxCount",
-        "offset",
-        "limit",
-        "includeReferencingFunctions",
-    ),
-    "get-references": _params(
-        "programPath",
-        "target",
-        "mode",
-        "direction",
-        "offset",
-        "limit",
-        "libraryName",
-        "startIndex",
-        "maxReferencers",
-        "includeRefContext",
-        "includeDataRefs",
-        "contextLines",
-        "importName",
-        "includeFlow",
-    ),
-    "get-functions": _params(
-        "programPath",
-        "identifier",
-        "view",
-        "offset",
-        "limit",
-        "includeCallers",
-        "includeCallees",
-        "includeComments",
-        "includeIncomingReferences",
-        "includeReferenceContext",
-        "filterDefaultNames",
-        "filterByTag",
-        "untagged",
-        "verbose",
-    ),
-    "manage-symbols": _params(
-        "programPath",
-        "mode",
-        "address",
-        "labelName",
-        "newName",
-        "libraryFilter",
-        "startIndex",
-        "maxCount",
-        "offset",
-        "limit",
-        "groupByLibrary",
-        "includeExternal",
-        "filterDefaultNames",
-        "demangleAll",
-    ),
-    "manage-data-types": _params(
-        "programPath",
-        "mode",
-        "archiveName",
-        "categoryPath",
-        "includeSubcategories",
-        "startIndex",
-        "maxCount",
-        "offset",
-        "limit",
-        "dataTypeString",
-        "addressOrSymbol",
-    ),
-    "manage-structures": _params(
-        "programPath",
-        "mode",
-        "cDefinition",
-        "headerContent",
-        "structureName",
-        "name",
-        "size",
-        "type",
-        "category",
-        "packed",
-        "description",
-        "fields",
-        "addressOrSymbol",
-        "clearExisting",
-        "force",
-        "nameFilter",
-        "includeBuiltIn",
-        "fieldName",
-        "dataType",
-        "offset",
-        "comment",
-        "bitfield",
-        "newDataType",
-        "newFieldName",
-        "newComment",
-        "newLength",
-    ),
-    "manage-comments": _params(
-        "programPath",
-        "mode",
-        "addressOrSymbol",
-        "function",
-        "lineNumber",
-        "comment",
-        "commentType",
-        "comments",
-        "start",
-        "end",
-        "commentTypes",
-        "searchText",
-        "pattern",
-        "caseSensitive",
-        "maxResults",
-        "overrideMaxFunctionsLimit",
-        "addressRange",
-    ),
-    "manage-bookmarks": _params(
-        "programPath",
-        "mode",
-        "addressOrSymbol",
-        "type",
-        "category",
-        "comment",
-        "bookmarks",
-        "searchText",
-        "maxResults",
-        "removeAll",
-        "addressRange",
-        "categories",
-        "types",
-    ),
-    "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
-    "get-call-graph": _params(
-        "programPath",
-        "functionIdentifier",
-        "mode",
-        "depth",
-        "maxDepth",
-        "direction",
-        "startIndex",
-        "maxCallers",
-        "includeCallContext",
-        "functionAddresses",
-    ),
-    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
-    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
-    "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
-    "list-functions": _params(
-        "programPath",
-        "mode",
-        "query",
-        "searchString",
-        "minReferenceCount",
-        "startIndex",
-        "maxCount",
-        "offset",
-        "limit",
-        "filterDefaultNames",
-        "filterByTag",
-        "untagged",
-        "hasTags",
-        "verbose",
-        "identifiers",
-    ),
-    "manage-function": _params(
-        "programPath",
-        "mode",
-        "address",
-        "functionIdentifier",
-        "name",
-        "functions",
-        "oldName",
-        "newName",
-        "variableMappings",
-        "prototype",
-        "variableName",
-        "newType",
-        "datatypeMappings",
-        "archiveName",
-        "createIfNotExists",
-        "propagate",
-        "propagateProgramPaths",
-        "propagateMaxCandidates",
-        "propagateMaxInstructions",
-    ),
-    "manage-function-tags": _params("programPath", "function", "mode", "tags"),
-    "match-function": _params(
-        "programPath",
-        "functionIdentifier",
-        "targetProgramPaths",
-        "maxInstructions",
-        "minSimilarity",
-        "propagateNames",
-        "propagateTags",
-        "propagateComments",
-        "filterDefaultNames",
-        "filterByTag",
-        "maxFunctions",
-        "batchSize",
-    ),
-    "get-current-program": _params("programPath"),
+    "analyze-program": _params( "programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis" ),
+    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
+    "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
+    "capture-agentdecompile-debug-info": _params("message"),
+    "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
+    "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
+    "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
+    "decompile-function": _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
+    "delete-project-binary": _params("programPath", "confirm"),
+    "execute-script": _params("code", "programPath", "timeout"),
+    "export": _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
+    "gen-callgraph": _params( "programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers" ),
+    "get-call-graph": _params( "programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses" ),
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
-    "list-project-files": [],
-    "list-open-programs": [],
-    "sync-shared-project": _params(
-        "mode",
-        "path",
-        "sourcePath",
-        "newPath",
-        "destinationPath",
-        "destinationFolder",
-        "recursive",
-        "maxResults",
-        "force",
-        "dryRun",
-    ),
-    "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
-    "analyze-program": _params(
-        "programPath",
-        "forceAnalysis",
-        "verbose",
-        "noSymbols",
-        "gdts",
-        "programOptions",
-        "threaded",
-        "maxWorkers",
-        "waitForAnalysis",
-    ),
-    "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
-    "manage-files": _params(
-        "mode",
-        "path",
-        "sourcePath",
-        "filePath",
-        "programPath",
-        "newPath",
-        "destinationPath",
-        "newName",
-        "content",
-        "encoding",
-        "createParents",
-        "keep",
-        "force",
-        "exclusive",
-        "dryRun",
-        "maxResults",
-        "destinationFolder",
-        "recursive",
-        "maxDepth",
-        "analyzeAfterImport",
-        "stripLeadingPath",
-        "stripAllContainerPath",
-        "mirrorFs",
-        "enableVersionControl",
-        "exportType",
-        "format",
-        "includeParameters",
-        "includeVariables",
-        "includeComments",
-    ),
-    "open": _params(
-        "path",
-        "extensions",
-        "openAllPrograms",
-        "destinationFolder",
-        "analyzeAfterImport",
-        "enableVersionControl",
-        "serverUsername",
-        "serverPassword",
-        "serverHost",
-        "serverPort",
-    ),
-    "open-program-in-code-browser": _params("programPath"),
-    "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
-    "capture-agentdecompile-debug-info": _params("message"),
-    "search-code": _params(
-        "programPath",
-        "pattern",
-        "maxResults",
-        "offset",
-        "caseSensitive",
-        "searchMode",
-        "includeFullCode",
-        "previewLength",
-        "similarityThreshold",
-        "overrideMaxFunctionsLimit",
-    ),
+    "get-current-program": _params("programPath"),
+    "get-data": _params("programPath", "addressOrSymbol", "view"),
+    "get-functions": _params( "programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose" ),
+    "get-references": _params( "programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow" ),
+    "import-binary": _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
+    "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "list-cross-references": _params("programPath", "address", "direction", "maxResults"),
-    "gen-callgraph": _params(
-        "programPath",
-        "functionIdentifier",
-        "depth",
-        "direction",
-        "format",
-        "displayType",
-        "includeRefs",
-        "maxDepth",
-        "maxRunTime",
-        "condenseThreshold",
-        "topLayers",
-        "bottomLayers",
-    ),
-    "decompile-function": _params(
-        "programPath",
-        "functionIdentifier",
-        "offset",
-        "limit",
-        "includeComments",
-        "includeIncomingReferences",
-        "includeReferenceContext",
-        "includeDisassembly",
-        "includeCallers",
-        "includeCallees",
-        "signatureOnly",
-        "timeout",
-    ),
-    "export": _params(
-        "programPath",
-        "outputPath",
-        "format",
-        "createHeader",
-        "includeTypes",
-        "includeGlobals",
-        "includeComments",
-        "tags",
-    ),
-    "import-binary": _params(
-        "path",
-        "destinationFolder",
-        "recursive",
-        "maxDepth",
-        "analyzeAfterImport",
-        "stripLeadingPath",
-        "stripAllContainerPath",
-        "mirrorFs",
-        "enableVersionControl",
-    ),
     "list-exports": _params("programPath", "filter", "maxResults", "offset", "startIndex"),
+    "list-functions": _params( "programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers" ),
     "list-imports": _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
+    "list-open-programs": [],
+    "list-processors": _params("filter"),
     "list-project-binaries": [],
     "list-project-binary-metadata": _params("programPath"),
-    "delete-project-binary": _params("programPath", "confirm"),
-    "list-processors": _params("filter"),
+    "list-project-files": [],
+    "list-strings": _params("programPath", "filter", "maxResults", "offset"),
+    "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
+    "manage-comments": _params( "programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange" ),
+    "manage-data-types": _params( "programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol" ),
+    "manage-files": _params( "mode", "path", "sourcePath", "filePath", "programPath", "newPath", "destinationPath", "newName", "content", "encoding", "createParents", "keep", "force", "exclusive", "dryRun", "maxResults", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl", "exportType", "format", "includeParameters", "includeVariables", "includeComments" ),
+    "manage-function-tags": _params("programPath", "function", "mode", "tags"),
+    "manage-function": _params( "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions" ),
+    "manage-strings": _params( "programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions" ),
+    "manage-structures": _params( "programPath", "mode", "cDefinition", "headerContent", "structureName", "name", "size", "type", "category", "packed", "description", "fields", "addressOrSymbol", "clearExisting", "force", "nameFilter", "includeBuiltIn", "fieldName", "dataType", "offset", "comment", "bitfield", "newDataType", "newFieldName", "newComment", "newLength" ),
+    "manage-symbols": _params( "programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll" ),
+    "match-function": _params( "programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize" ),
+    "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
+    "open-program-in-code-browser": _params("programPath"),
+    "open": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort" ),
     "read-bytes": _params("programPath", "address", "length"),
+    "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
+    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
     "search-symbols-by-name": _params("programPath", "query", "maxResults", "offset"),
-    "list-strings": _params("programPath", "filter", "maxResults", "offset"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
-    "execute-script": _params("code", "programPath", "timeout"),
+    "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
+    "sync-shared-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
 }
 
 # Populated from TOOLS_LIST.md when available.
@@ -565,6 +258,7 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # inspect-memory overloads
     "get-memory-blocks": "inspect-memory",
     "read-memory": "inspect-memory",
+    "read-bytes": "inspect-memory",
     # list-functions overloads
     "get-function-count": "list-functions",
     "get-functions-by-similarity": "list-functions",
@@ -825,6 +519,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "analyze-vtables",
     "change-processor",
     "checkin-program",
+    "decompile-function",
     "execute-script",
     "get-call-graph",
     "get-functions",
@@ -843,7 +538,6 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "manage-symbols",
     "match-function",
     "open",
-    "read-bytes",
     "search-constants",
 )
 
@@ -1187,6 +881,19 @@ class ToolRegistry:
             if not isinstance(value, str) or not value.strip():
                 continue
 
+            # Avoid over-eager NL parsing for opaque scalar values passed via
+            # generic keys like "text" (e.g., alias-value tests).  Treat as
+            # natural language only when the payload looks sentence/kv-like.
+            compact_value = value.strip()
+            looks_nl = (
+                (" " in compact_value)
+                or any(token in compact_value for token in ("=", ":", ",", ";"))
+                or (" with " in compact_value.lower())
+                or (" and " in compact_value.lower())
+            )
+            if not looks_nl:
+                continue
+
             extracted = self._extract_natural_language_pairs(value, alias_map)
             for canonical_param, parsed_value in extracted.items():
                 # Preserve explicit caller-provided arguments over inferred values.
@@ -1235,24 +942,122 @@ class ToolRegistry:
         """
         extracted: dict[str, Any] = {}
 
+        value_pattern = r'"[^\"]*"|\'[^\']*\'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|/[^,;\n ]+|[^,;\n ]+'
+
         kv_pattern = re.compile(
-            r"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{1,80}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>\"[^\"]*\"|'[^']*'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|[^,;\n]+?)(?=\s+\band\b\s+[A-Za-z]|[,;\n]|$)",
-            flags=re.IGNORECASE,
-        )
-        with_pattern = re.compile(
-            r"(?:\bwith\b|\band\b)\s+(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{1,80}?)\s+(?P<value>\"[^\"]*\"|'[^']*'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|[^,;\n]+?)(?=\s+\band\b\s+[A-Za-z]|[,;\n]|$)",
+            rf"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{{1,80}}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>{value_pattern})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
             flags=re.IGNORECASE,
         )
 
-        for pattern in (kv_pattern, with_pattern):
-            for match in pattern.finditer(text):
-                key_raw = match.group("key").strip()
-                value_raw = match.group("value").strip()
-                key_norm = normalize_identifier(key_raw)
-                canonical_param = alias_map.get(key_norm)
-                if canonical_param is None:
+        for match in kv_pattern.finditer(text):
+            key_raw = match.group("key").strip()
+            value_raw = match.group("value").strip()
+            canonical_param = alias_map.get(normalize_identifier(key_raw))
+            if canonical_param is None:
+                continue
+            extracted[canonical_param] = self._coerce_natural_language_value(value_raw)
+
+        # Alias-driven phrase extraction handles natural forms like
+        # "with program path /tmp/a.bin and max results 10".
+        phrases_by_param: dict[str, set[str]] = {}
+        for alias_norm, canonical_param in alias_map.items():
+            phrase = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", canonical_param)
+            phrase = phrase.replace("_", " ").replace("-", " ").strip().lower()
+            phrases_by_param.setdefault(canonical_param, set()).add(phrase)
+            if alias_norm:
+                alias_phrase = " ".join(re.findall(r"[a-z]+", alias_norm))
+                if alias_phrase:
+                    phrases_by_param[canonical_param].add(alias_phrase)
+
+        for canonical_param, phrases in phrases_by_param.items():
+            for phrase in sorted(phrases, key=len, reverse=True):
+                if not phrase:
                     continue
-                extracted[canonical_param] = self._coerce_natural_language_value(value_raw)
+                phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
+                pattern = re.compile(
+                    rf"(?:\bwith\b|\band\b|^|[,;\n])\s*(?:{phrase_re})\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>{value_pattern})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
+                    flags=re.IGNORECASE,
+                )
+                for match in pattern.finditer(text):
+                    value_raw = match.group("value").strip()
+                    extracted[canonical_param] = self._coerce_natural_language_value(value_raw)
+
+        # Cleanup common NL artifacts for paths (e.g. "path '/tmp/a.bin'").
+        if "programPath" in extracted and isinstance(extracted["programPath"], str):
+            cleaned = re.sub(
+                r"^(?:program\s+path|program|path|_?path)\s*(?:is\b|[:=])?\s*",
+                "",
+                extracted["programPath"],
+                flags=re.IGNORECASE,
+            ).strip()
+            cleaned = re.split(r"\s+to\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            if (cleaned.startswith('"') and not cleaned.endswith('"')) or (cleaned.startswith("'") and not cleaned.endswith("'")):
+                quoted_path_match = re.search(r'"[^"]+"|\'[^\']+\'', text)
+                if quoted_path_match:
+                    cleaned = quoted_path_match.group(0)
+            extracted["programPath"] = self._coerce_natural_language_value(cleaned)
+
+        # Common phrase fallback extraction to improve NL robustness.
+        def _capture(name: str, pattern: str, *, flags: int = re.IGNORECASE, transform=None) -> None:
+            m = re.search(pattern, text, flags=flags)
+            if not m:
+                return
+            value_raw = m.group("value") if "value" in m.groupdict() else m.group(1)
+            value: Any = self._coerce_natural_language_value(value_raw.strip())
+            if transform is not None:
+                value = transform(value)
+            if name not in extracted or extracted.get(name) in (None, "", f"{name}"):
+                extracted[name] = value
+
+        # Path/program patterns
+        _capture(
+            "programPath",
+            r"\bprogram\s+path\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)",
+        )
+        _capture(
+            "programPath",
+            r"\bprogram\s+(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)",
+        )
+
+        # Address/target/function
+        _capture("addressOrSymbol", r"\baddress\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>0x[0-9a-fA-F]+)")
+        _capture("addressOrSymbol", r"\bat\s+(?P<value>0x[0-9a-fA-F]+)")
+        _capture("target", r"\btarget\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
+        _capture("function", r"\bfunction\s+(?P<value>[A-Za-z_][A-Za-z0-9_]*)")
+
+        # String/search patterns
+        _capture("pattern", r"\bpattern\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
+        _capture("query", r"\bquery\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
+        _capture("comment", r"\bcomment\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+')")
+        _capture("mode", r"\bmode\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)")
+
+        # Boolean flags
+        _capture("includeRefContext", r"\binclude\s+ref\s+context\s+(?P<value>true|false)")
+        _capture("includeDataRefs", r"\binclude\s+data\s+refs\s+(?P<value>true|false)")
+        _capture("skipAnalysis", r"\bskip\s+analysis\s+(?P<value>true|false)")
+
+        # Numeric options
+        _capture("limit", r"\blimit\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("maxResults", r"\bmax\s+results\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("maxCount", r"\bmax\s+count\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("startIndex", r"\bstart\s+index\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("minLength", r"\bmin\s+length\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("maxDepth", r"\bmax\s+depth\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        _capture("length", r"\blength\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+
+        # Cleanup common artifacts again after fallback.
+        if "programPath" in extracted and isinstance(extracted["programPath"], str):
+            cleaned = re.sub(
+                r"^(?:program\s+path|program|path|_?path)\s*(?:is\b|[:=])?\s*",
+                "",
+                extracted["programPath"],
+                flags=re.IGNORECASE,
+            ).strip()
+            cleaned = re.split(r"\s+to\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            extracted["programPath"] = self._coerce_natural_language_value(cleaned)
+
+        if "addressOrSymbol" in extracted and "address" not in extracted and "startAddress" not in extracted:
+            extracted["address"] = extracted["addressOrSymbol"]
 
         return extracted
 
@@ -1456,6 +1261,131 @@ class ToolRegistry:
             "name": self.resolve_tool_name(tool_name) or tool_name,
             "arguments": parsed_args,
         }
+
+    def parse_natural_language_tool_call(
+        self,
+        text: str,
+    ) -> tuple[str | None, dict[str, Any]]:
+        """Parse a complete free-form tool call sentence into tool name and arguments.
+
+        Accepts full natural language sentences like:
+        - "list all functions in program /path/to/binary"
+        - "manage symbols with program path '/tmp/a.bin' and mode list"
+        - "search strings in program /tmp/test with pattern http and max results 10"
+
+        The tool name is extracted from the beginning of the text (using fuzzy
+        matching via normalization), and the remaining text is parsed as
+        natural language arguments.
+
+        Args:
+        ----
+            text: Free-form natural language tool call sentence
+
+        Returns:
+        -------
+            Tuple of (resolved_tool_name, arguments_dict), or (None, {}) if no tool matched
+        """
+        if not text or not text.strip():
+            return None, {}
+
+        # Normalize the input text for comparison
+        text = text.strip()
+
+        # Try to match known tool names from the beginning
+        # Sort by length descending to match longer names first (e.g., "search-symbols-by-name" before "search-symbols")
+        sorted_tools = sorted(TOOLS, key=len, reverse=True)
+
+        matched_tool: str | None = None
+        remaining_text: str = text
+
+        for tool_name in sorted_tools:
+            # Create variations of the tool name to match
+            variations = [
+                tool_name,  # Original (kebab-case)
+                tool_name.replace("-", " "),  # Space-separated
+                tool_name.replace("-", "_"),  # Snake case
+                tool_name.replace("-", ""),  # No separators
+            ]
+
+            for variation in variations:
+                # Check if text starts with this variation (case-insensitive)
+                if text.lower().startswith(variation.lower()):
+                    matched_tool = tool_name
+                    remaining_text = text[len(variation) :].strip()
+                    break
+
+                # Also try with normalized (alpha-only) matching for extra flexibility
+                tool_norm = normalize_identifier(variation)
+                # Find how many characters at the start of text match the normalized tool name
+                text_prefix_norm = normalize_identifier(text[: len(variation)])
+                if text_prefix_norm == tool_norm:
+                    matched_tool = tool_name
+                    remaining_text = text[len(variation) :].strip()
+                    break
+
+            if matched_tool:
+                break
+
+        if not matched_tool:
+            return None, {}
+
+        # Preprocess common English phrases before parsing
+        # Convert natural language patterns to explicit key-value forms
+        remaining_text = self._preprocess_nl_phrases(remaining_text)
+
+        # Parse the remaining text as natural language arguments
+        # Use our existing NL extraction logic
+        expected_params = self.get_tool_params(matched_tool)
+        if not expected_params:
+            return matched_tool, {}
+
+        alias_map = self._build_natural_language_alias_map(matched_tool, expected_params)
+        arguments = self._extract_natural_language_pairs(remaining_text, alias_map)
+
+        return matched_tool, arguments
+
+    def _preprocess_nl_phrases(self, text: str) -> str:
+        """Preprocess common English phrases into explicit key-value forms.
+
+        Converts patterns like:
+        - "in program /path" → "with program path /path"
+        - "from program /path" → "with program path /path"
+        - "at address 0x1000" → "with address 0x1000"
+        - "for function main" → "with function main"
+        """
+        if not text or not text.strip():
+            return text
+
+        # Define common phrase patterns and their replacements
+        # These are applied in order, so more specific patterns should come first
+        replacements = [
+            # "in program X" → "with program path X"
+            (r"\b(in|from|on)\s+program\s+", r"with program path ", re.IGNORECASE),
+            # "at address X" → "with address X"
+            (r"\bat\s+address\s+", r"with address ", re.IGNORECASE),
+            # "to address X" → "with address X"
+            (r"\bto\s+address\s+", r"with address ", re.IGNORECASE),
+            # "for function X" → "with function X"
+            (r"\bfor\s+function\s+", r"with function ", re.IGNORECASE),
+            # "of function X" → "with function X"
+            (r"\bof\s+function\s+", r"with function ", re.IGNORECASE),
+            # "at offset X" → "with offset X"
+            (r"\bat\s+offset\s+", r"with offset ", re.IGNORECASE),
+            # "in binary X" → "with program path X"
+            (r"\b(in|from)\s+binary\s+", r"with program path ", re.IGNORECASE),
+            # "to project X" → "with project name X"
+            (r"\bto\s+project\s+", r"with project name ", re.IGNORECASE),
+            # "in project X" → "with project name X"
+            (r"\bin\s+project\s+", r"with project name ", re.IGNORECASE),
+            # "from X to Y" for import/export → keep the structure but add explicit markers
+            # (handled by existing patterns)
+        ]
+
+        processed_text = text
+        for pattern, replacement, flags in replacements:
+            processed_text = re.sub(pattern, replacement, processed_text, flags=flags)
+
+        return processed_text
 
     def execute_tool_cli(
         self,

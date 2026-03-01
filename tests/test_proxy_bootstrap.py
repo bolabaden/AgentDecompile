@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-
 from typing import Sequence
 
 import pytest
@@ -29,18 +28,37 @@ def _run(cmd: Sequence[str], env: dict[str, str]) -> tuple[bool, int, str, str]:
     return proc.returncode == 0, proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
+def _remote_backend_available(env: dict[str, str]) -> bool:
+    probe_cmd: list[str] = [
+        "uvx",
+        "--from",
+        ".",
+        "--with-editable",
+        ".",
+        "agentdecompile-cli",
+        "--server-url",
+        REMOTE_URL,
+        "list",
+        "project-files",
+    ]
+    ok, _, _, err = _run(probe_cmd, env)
+    if ok:
+        return True
+    return "Cannot connect to AgentDecompile server" not in err
+
+
 def _cmdline(cmd: Sequence[str]) -> str:
     return subprocess.list2cmdline(list(cmd))
 
 
 def _describe_cli_call(cmd: Sequence[str]) -> tuple[str, str]:
-    parts = list(cmd)
+    parts: list[str] = list(cmd)
     try:
         i = parts.index("agentdecompile-cli")
     except ValueError:
         return "unknown", "unable to locate agentdecompile-cli token"
 
-    args = parts[i + 1 :]
+    args: list[str] = parts[i + 1 :]
     if args[:2] == ["--server-url", REMOTE_URL] or args[:2] == ["--server-url", LOCAL_URL]:
         args = args[2:]
 
@@ -121,7 +139,11 @@ def _print_exact_output(stdout_text: str, stderr_text: str) -> None:
     print(stderr_text if stderr_text else "<empty>")
 
 
-def _run_phase(title: str, server_url: str, env: dict[str, str]) -> tuple[bool, list[str]]:
+def _run_phase(
+    title: str,
+    server_url: str,
+    env: dict[str, str],
+) -> tuple[bool, list[str]]:
     print("\n" + "=" * 78)
     print(title)
     print("=" * 78)
@@ -142,18 +164,18 @@ def _run_phase(title: str, server_url: str, env: dict[str, str]) -> tuple[bool, 
 
         if not ok:
             failures.append(
-                f"{label} failed (exit={return_code})\n"
-                f"command: {_cmdline(cmd)}\n"
-                f"stdout:\n{out or '<empty>'}\n"
-                f"stderr:\n{err or '<empty>'}\n",
+                f"{label} failed (exit={return_code})\ncommand: {_cmdline(cmd)}\nstdout:\n{out or '<empty>'}\nstderr:\n{err or '<empty>'}\n",
             )
 
     return len(failures) == 0, failures
 
 
-def _wait_proxy_ready(env: dict[str, str], timeout_sec: int = 30) -> bool:
+def _wait_proxy_ready(
+    env: dict[str, str],
+    timeout_sec: int = 30,
+) -> bool:
     deadline = time.time() + timeout_sec
-    health_cmd = [
+    health_cmd: list[str] = [
         "uvx",
         "--from",
         ".",
@@ -182,10 +204,13 @@ def _wait_proxy_ready(env: dict[str, str], timeout_sec: int = 30) -> bool:
 def test_proxy_bootstrap_exact_commands() -> None:
     env = _env()
 
+    if not _remote_backend_available(env):
+        pytest.skip(f"Remote AgentDecompile backend unavailable at {REMOTE_URL}")
+
     remote_ok, remote_failures = _run_phase("PHASE 1: DIRECT REMOTE COMMANDS", REMOTE_URL, env)
     assert remote_ok, "Remote phase failed:\n" + "\n".join(remote_failures)
 
-    proxy_cmd = [
+    proxy_cmd: list[str] = [
         "uvx",
         "--from",
         ".",

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import builtins
 import sys
+from typing import TYPE_CHECKING
 
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.executor import normalize_backend_url
 from tests.helpers import assert_bool_invariants, assert_string_invariants, assert_url_shape
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
 
 
 def test_normalize_backend_url_from_host_port():
@@ -60,7 +64,7 @@ def test_stdio_bridge_initialization_options_include_logging_capability():
     assert options.capabilities.logging is not None
 
 
-def test_connect_mode_main_does_not_import_pyghidra(monkeypatch):
+def test_connect_mode_main_does_not_import_pyghidra(monkeypatch: MonkeyPatch):
     # Import module lazily so monkeypatches apply to the module's main() call.
     import agentdecompile_cli.__main__ as cli_main
 
@@ -79,7 +83,7 @@ def test_connect_mode_main_does_not_import_pyghidra(monkeypatch):
 
     real_import = builtins.__import__
 
-    def guarded_import(name, *args, **kwargs):  # noqa: ANN001
+    def guarded_import(name: str, *args, **kwargs):  # noqa: ANN001
         if name == "pyghidra":
             raise AssertionError("pyghidra should not be imported in connect mode")
         return real_import(name, *args, **kwargs)
@@ -88,7 +92,7 @@ def test_connect_mode_main_does_not_import_pyghidra(monkeypatch):
     cli_main.main()
 
 
-def test_connect_mode_selected_from_env(monkeypatch):
+def test_connect_mode_selected_from_env(monkeypatch: MonkeyPatch):
     import agentdecompile_cli.__main__ as cli_main
 
     async def fake_run(self):  # noqa: ANN001

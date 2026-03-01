@@ -1,0 +1,30 @@
+
+================================================================================
+Step 1: Open program from shared server
+================================================================================
+Command: uv run agentdecompile-cli --server-url http://170.9.241.140:8080 open --server_host 170.9.241.140 --server_port 13100 --server_username OpenKotOR --server_password MuchaShakaPaka /K1/k1_win_gog_swkotor.exe
+Traceback (most recent call last):
+  File "c:\GitHub\agentdecompile\test_analysis.py", line 34, in run_cmd
+    print(f"\u2713 SUCCESS")
+    ~~~~~^^^^^^^^^^^^^^
+  File "C:\Program Files\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "c:\GitHub\agentdecompile\test_analysis.py", line 56, in <module>
+    success = run_cmd(
+        "Step 1: Open program from shared server",
+    ...<10 lines>...
+        timeout=60
+    )
+  File "c:\GitHub\agentdecompile\test_analysis.py", line 52, in run_cmd
+    print(f"\u2717 ERROR: {e}")
+    ~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2717' in position 0: character maps to <undefined>

@@ -625,6 +625,7 @@ class AgentDecompileStdioBridge:
         self.server: Server = Server("AgentDecompile")
         self._backend: RawMcpHttpBackend | None = None
         self._backend_lock = asyncio.Lock()
+        self._streamable_http_headers: dict[str, str] | None = None
 
         self._register_handlers()
 

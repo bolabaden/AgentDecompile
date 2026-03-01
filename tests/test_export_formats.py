@@ -94,7 +94,7 @@ def validate_sarif_output(output_path: str) -> dict:
     }
 
 
-def test_export_formats():
+def test_cli_export_formats():
     """Test various export formats."""
     print("=" * 70)
     print("TESTING EXPORT FORMATS")
