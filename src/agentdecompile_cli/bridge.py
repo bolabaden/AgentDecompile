@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import sys
 
 from collections import deque
@@ -681,7 +682,69 @@ class AgentDecompileStdioBridge:
             await backend.initialize()
             self._backends[sid] = backend
             sys.stderr.write(f"Backend session established to {self.url} (frontend session: {sid})\n")
+
+            # Auto-open shared server if CLI credentials are available.
+            await self._auto_open_shared_server(backend)
+
             return backend
+
+    async def _auto_open_shared_server(self, backend: RawMcpHttpBackend) -> None:
+        """Auto-open a shared Ghidra server connection if CLI credentials are in env vars.
+
+        When the bridge is started with ``--server-host``, ``--server-port``,
+        ``--server-username``, ``--server-password``, and optionally
+        ``--ghidra-server-repository``, these are stored as environment
+        variables.  This method reads them and calls ``open`` on the remote
+        backend so that tools like ``list-project-files`` work immediately
+        without requiring a manual ``open`` call.
+        """
+        server_host = os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        if not server_host:
+            return  # No shared server configured – nothing to auto-open.
+
+        server_port = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+        repository = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+
+        open_args: dict[str, Any] = {
+            "server_host": server_host,
+            "server_port": int(server_port) if server_port.isdigit() else 13100,
+        }
+        if server_username:
+            open_args["server_username"] = server_username
+        if server_password:
+            open_args["server_password"] = server_password
+        if repository:
+            open_args["path"] = repository
+
+        sys.stderr.write(
+            f"Auto-opening shared server {server_host}:{open_args['server_port']}"
+            f"{(' repo=' + repository) if repository else ''} ...\n"
+        )
+
+        try:
+            result = await backend.call_tool("open", open_args)
+            # Log a short summary of the result.
+            if isinstance(result, dict):
+                content = result.get("content", [])
+                is_error = result.get("isError", False)
+                if is_error:
+                    text_parts = [
+                        c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
+                    ]
+                    sys.stderr.write(f"Auto-open FAILED: {' '.join(text_parts)}\n")
+                else:
+                    # Extract program count from the JSON response embedded in content.
+                    text_parts = [
+                        c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
+                    ]
+                    sys.stderr.write(f"Auto-open OK: {' '.join(text_parts)[:200]}\n")
+            else:
+                sys.stderr.write(f"Auto-open returned: {str(result)[:200]}\n")
+        except Exception as exc:
+            # Non-fatal – tools still work, user can call open manually.
+            sys.stderr.write(f"Auto-open failed (non-fatal): {type(exc).__name__}: {exc}\n")
 
     async def _reset_backend_session(self, session_id: str | None = None) -> None:
         """Reset backend session(s).
