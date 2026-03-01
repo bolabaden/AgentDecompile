@@ -383,23 +383,14 @@ class ProjectToolProvider(ToolProvider):
 
             if not server_adapter.isConnected():
                 try:
+                    # Java connect() returns void (None via PyGhidra); check isConnected() after.
                     if server_username and server_password:
                         try:
-                            connected = bool(server_adapter.connect(server_username, server_password))
+                            server_adapter.connect(server_username, server_password)
                         except TypeError:
-                            connected = bool(server_adapter.connect())
+                            server_adapter.connect()
                     else:
-                        connected = bool(server_adapter.connect())
-                    if not connected:
-                        last_error = server_adapter.getLastConnectError()
-                        message = str(last_error) if last_error else "unknown authentication/connection failure"
-                        if auth_provided:
-                            raise PermissionError(
-                                f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
-                            )
-                        raise ValueError(
-                            f"Repository connection failed for {server_host}:{server_port}: {message}",
-                        )
+                        server_adapter.connect()
                 except Exception as exc:
                     exc_text = str(exc)
                     if auth_provided:
@@ -409,6 +400,17 @@ class ProjectToolProvider(ToolProvider):
                     raise ValueError(
                         f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
                     ) from exc
+
+                if not server_adapter.isConnected():
+                    last_error = getattr(server_adapter, "getLastConnectError", lambda: None)()
+                    message = str(last_error) if last_error else "unknown authentication/connection failure"
+                    if auth_provided:
+                        raise PermissionError(
+                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
+                        )
+                    raise ValueError(
+                        f"Repository connection failed for {server_host}:{server_port}: {message}",
+                    )
 
             try:
                 repository_names_raw = server_adapter.getRepositoryNames() or []
@@ -458,7 +460,8 @@ class ProjectToolProvider(ToolProvider):
 
             if not repository_adapter.isConnected():
                 try:
-                    connected_repo = bool(repository_adapter.connect())
+                    # Java connect() returns void (None via PyGhidra); check isConnected() after.
+                    repository_adapter.connect()
                 except Exception as exc:
                     exc_text = str(exc)
                     if auth_provided:
@@ -468,7 +471,8 @@ class ProjectToolProvider(ToolProvider):
                     raise ValueError(
                         f"Failed to connect repository '{repository_name}': {exc_text}",
                     ) from exc
-                if not connected_repo:
+
+                if not repository_adapter.isConnected():
                     if auth_provided:
                         raise PermissionError(
                             f"Authentication failed while opening repository '{repository_name}'",
@@ -1189,7 +1193,13 @@ class ProjectToolProvider(ToolProvider):
         repository_name = handle.get("repository_name") if handle else None
         return session_id, handle, repository_adapter, repository_name
 
-    def _pull_shared_repository_to_local(self, args: dict[str, Any], repository_adapter: Any, repository_name: str | None, project_data: Any) -> dict[str, Any]:
+    def _pull_shared_repository_to_local(
+        self,
+        args: dict[str, Any],
+        repository_adapter: Any,
+        repository_name: str | None,
+        project_data: Any,
+    ) -> dict[str, Any]:
         source_folder = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
