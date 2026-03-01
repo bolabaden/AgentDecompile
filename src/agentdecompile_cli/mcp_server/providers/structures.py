@@ -33,8 +33,9 @@ class StructureToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string"},
-                        "action": {
+                        "mode": {
                             "type": "string",
+                            "description": "Operation mode (aliases: action, operation)",
                             "enum": [
                                 "parse",
                                 "validate",
@@ -70,7 +71,7 @@ class StructureToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "mode", "action", default="list")
+        action = self._get_str(args, "mode", "action", "operation", default="list")
 
         dispatch = {
             "list": self._list,

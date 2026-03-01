@@ -119,8 +119,9 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "mode": {
+                        "syncDirection": {
                             "type": "string",
+                            "description": "Sync direction (pull, push, bidirectional)",
                             "enum": ["pull", "push", "bidirectional"],
                             "default": "pull",
                         },
@@ -143,33 +144,9 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {
+                        "mode": {
                             "type": "string",
-                            "enum": [
-                                "rename",
-                                "delete",
-                                "copy",
-                                "move",
-                                "info",
-                                "list",
-                                "mkdir",
-                                "touch",
-                                "read",
-                                "write",
-                                "append",
-                                "import",
-                                "export",
-                                "download-shared",
-                                "pull-shared",
-                                "push-shared",
-                                "sync-shared",
-                                "checkout",
-                                "uncheckout",
-                                "unhijack",
-                            ],
-                        },
-                        "operation": {
-                            "type": "string",
+                            "description": "Operation mode (aliases: action, operation)",
                             "enum": [
                                 "rename",
                                 "delete",
@@ -197,8 +174,9 @@ class ProjectToolProvider(ToolProvider):
                         "path": {"type": "string"},
                         "sourcePath": {"type": "string"},
                         "programPath": {"type": "string"},
-                        "mode": {
+                        "syncDirection": {
                             "type": "string",
+                            "description": "Direction for sync-shared mode",
                             "enum": ["pull", "push", "bidirectional"],
                         },
                         "newPath": {"type": "string"},
@@ -678,7 +656,7 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
-        operation: str = self._require_str(args, "operation", "action", "mode", name="operation")
+        operation: str = self._require_str(args, "mode", "action", "operation", name="mode")
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
         program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
         destination: str | None = self._get_str(args, "newpath", "destinationpath")
@@ -1165,7 +1143,7 @@ class ProjectToolProvider(ToolProvider):
         return current
 
     def _resolve_shared_sync_mode(self, args: dict[str, Any], default_mode: str = "pull") -> str:
-        requested = self._get_str(args, "mode", "direction", "syncmode", "operation", "action", default=default_mode)
+        requested = self._get_str(args, "syncdirection", "direction", "syncmode", default=default_mode)
         normalized = n(requested)
         if normalized in {"pull", "download", "downloadshared", "pullshared"}:
             return "pull"

@@ -53,11 +53,7 @@ class SymbolToolProvider(ToolProvider):
                         "demangle",
                     ],
                     "default": "symbols",
-                    "description": "Operation mode. Also accepts 'action' as an alias.",
-                },
-                "action": {
-                    "type": "string",
-                    "description": "Alias for 'mode'. Either 'mode' or 'action' may be used interchangeably.",
+                    "description": "Operation mode (aliases: action, operation)",
                 },
                 "query": {"type": "string", "description": "Search query / pattern"},
                 "addressOrSymbol": {"type": "string"},
@@ -146,7 +142,7 @@ class SymbolToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        mode = self._get_str(args, "mode", "action", default="symbols")
+        mode = self._get_str(args, "mode", "action", "operation", default="symbols")
 
         dispatch: dict[str, Callable[[dict[str, Any]], list[types.TextContent]]] = {
             "symbols": self._list_symbols,

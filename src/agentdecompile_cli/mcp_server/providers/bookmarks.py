@@ -35,7 +35,7 @@ class BookmarkToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Path to the program/binary file"},
-                        "action": {"type": "string", "description": "Action to perform", "enum": ["set", "get", "search", "remove", "remove_all", "categories"]},
+                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["set", "get", "search", "remove", "remove_all", "categories"]},
                         "addressOrSymbol": {"type": "string", "description": "Address or symbol for bookmark"},
                         "type": {"type": "string", "description": "Bookmark type", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
                         "category": {"type": "string", "description": "Bookmark category"},
@@ -53,7 +53,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = n(self._get_str(args, "mode", "action"))
+        action = n(self._get_str(args, "mode", "action", "operation"))
         if not action:
             raise ValueError("mode/action is required")
 
