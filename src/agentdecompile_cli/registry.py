@@ -569,7 +569,7 @@ def _build_advertised_tools() -> list[str]:
 
 ADVERTISED_TOOLS: list[str] = _build_advertised_tools()
 
-_ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ("action", "operation")
+_ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ()
 
 
 def _build_advertised_tool_params() -> dict[str, list[str]]:
@@ -579,13 +579,6 @@ def _build_advertised_tool_params() -> dict[str, list[str]]:
         if tool not in advertised_set:
             continue
         expanded: list[str] = list(params)
-        normalized_expanded = {normalize_identifier(param) for param in expanded}
-        if "mode" in normalized_expanded:
-            for alias in _ADVERTISED_SELECTOR_ALIASES:
-                alias_norm = normalize_identifier(alias)
-                if alias_norm not in normalized_expanded:
-                    expanded.append(alias)
-                    normalized_expanded.add(alias_norm)
         advertised[tool] = expanded
     return advertised
 
