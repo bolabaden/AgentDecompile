@@ -331,24 +331,12 @@ class ProjectToolProvider(ToolProvider):
                     },
                 )
 
-            if server_username and server_password:
-                ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
-                for setter_name in (
-                    "setUserName",
-                    "setUsername",
-                    "setUser",
-                    "setClientUserName",
-                    "setClientUsername",
-                    "setClientUser",
-                ):
-                    try:
-                        setter = getattr(ClientUtil, setter_name, None)
-                        if callable(setter):
-                            setter(server_username)
-                            break
-                    except Exception:
-                        continue
-
+            # Set Java system user.name AND the cached SystemUtilities.userName
+            # field BEFORE any Ghidra client calls so that ClientUtil.getUserName()
+            # and the JAAS Subject's GhidraPrincipal return the correct identity.
+            # SystemUtilities.getUserName() lazily caches System.getProperty("user.name")
+            # at first call and never re-reads the property, so we must also patch
+            # the private static 'userName' field via reflection.
             original_user_name: str | None = None
             if server_username:
                 try:
@@ -358,6 +346,23 @@ class ProjectToolProvider(ToolProvider):
                     JavaSystem.setProperty("user.name", server_username)
                 except Exception:
                     original_user_name = None
+
+                # Patch the cached field via Java reflection (critical for JAAS Subject).
+                try:
+                    from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                    field = SystemUtilities.class_.getDeclaredField("userName")
+                    field.setAccessible(True)
+                    field.set(None, server_username)
+                except Exception:
+                    pass  # best-effort; older builds may differ
+
+            if server_username and server_password:
+                # PasswordClientAuthenticator provides both username and password
+                # for the JAAS callback without prompting.
+                ClientUtil.setClientAuthenticator(
+                    PasswordClientAuthenticator(server_username, server_password),
+                )
 
             # Clear any cached (possibly stale/disconnected) adapter for this
             # host+port so that the next getRepositoryServer call creates a
@@ -416,6 +421,15 @@ class ProjectToolProvider(ToolProvider):
                         from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
 
                         JavaSystem.setProperty("user.name", original_user_name)
+                    except Exception:
+                        pass
+                    # Restore the cached SystemUtilities.userName field too.
+                    try:
+                        from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                        field = SystemUtilities.class_.getDeclaredField("userName")
+                        field.setAccessible(True)
+                        field.set(None, original_user_name)
                     except Exception:
                         pass
             repository_names: list[str] = [str(name) for name in repository_names_raw]
