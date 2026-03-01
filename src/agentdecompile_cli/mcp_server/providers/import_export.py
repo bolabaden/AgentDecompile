@@ -557,13 +557,18 @@ class ImportExportToolProvider(ToolProvider):
 
         program = self.program_info.program
         try:
-            from ghidra.app.cmd.program import SetLanguageCmd
             from ghidra.program.model.lang import CompilerSpecID, LanguageID
+            from ghidra.util.task import TaskMonitor
 
             tx = program.startTransaction("change-processor")
             try:
-                cmd = SetLanguageCmd(program, LanguageID(language), CompilerSpecID(compiler) if compiler else None, False, False, False)
-                ok = bool(cmd.applyTo(program))
+                # Try using setLanguage (alternative approach without SetLanguageCmd)
+                language_id = LanguageID(language)
+                compiler_spec_id = CompilerSpecID(compiler) if compiler else None
+                
+                # Use language service to set language directly
+                program.setLanguage(language_id, compiler_spec_id, True, TaskMonitor.DUMMY)
+                ok = True
                 program.endTransaction(tx, ok)
             except Exception:
                 program.endTransaction(tx, False)
@@ -592,10 +597,12 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
+            from ghidra.util.task import TaskMonitor
+            
             domain_file = program.getDomainFile()
             if domain_file is None:
                 raise RuntimeError("No domain file associated with active program")
-            domain_file.save()
+            domain_file.save(TaskMonitor.DUMMY)
             return create_success_response(
                 {
                     "action": "checkin",
@@ -613,6 +620,10 @@ class ImportExportToolProvider(ToolProvider):
                     "program": program.getName(),
                     "message": message,
                     "keepCheckedOut": keep_checked_out,
+                    "success": False,
+                    "error": str(exc),
+                },
+            )
                     "success": False,
                     "error": str(exc),
                 },
