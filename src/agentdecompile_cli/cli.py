@@ -1301,6 +1301,31 @@ def symbols_grp() -> None:
     pass
 
 
+@main.command("search-symbols-by-name", help="Search symbols by name (manage-symbols mode=symbols)")
+@click.option("--program_path", "program_path", required=True)
+@click.option("--query", "query", required=True)
+@click.option("--max_results", "max_results", type=int, default=50)
+@click.option("--offset", "offset", type=int, default=0)
+@click.pass_context
+def search_symbols_by_name_cmd(
+    ctx: click.Context,
+    program_path: str,
+    query: str,
+    max_results: int,
+    offset: int,
+) -> None:
+    _run_async(
+        _call(
+            ctx,
+            "search-symbols-by-name",
+            programPath=program_path,
+            query=query,
+            maxResults=max_results,
+            offset=offset,
+        ),
+    )
+
+
 @symbols_grp.command("run", help="Run manage-symbols with --mode and optional params")
 @click.option("-b", "--binary", "program_path")
 @click.option(

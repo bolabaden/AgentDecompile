@@ -73,13 +73,48 @@ async def main():
                 ["open", "--server_host", "170.9.241.140", "--server_port", "13100", "--server_username", "OpenKotOR", "--server_password", "MuchaShakaPaka", prog],
                 ["serverConnected"],
             ),
-            (2, "List", ["list", "project-files"], ["count"]),
-            (3, "Funcs", ["get-functions", "--program_path", prog, "--limit", "5"], ["functions"]),
-            (4, "Search", ["tool", "search-symbols-by-name", json.dumps({"programPath": prog, "query": "main", "maxResults": 5})], ["query"]),
-            (5, "Refs", ["tool", "get-references", json.dumps({"binary": prog, "target": "WinMain", "mode": "to", "limit": 5})], ["references"]),
-            (6, "Prog", ["tool", "get-current-program", json.dumps({"programPath": prog})], ["functionCount"]),
-            (7, "Imp", ["tool", "list-imports", json.dumps({"programPath": prog, "limit": 5})], ["mode"]),
-            (8, "Exp", ["tool", "list-exports", json.dumps({"programPath": prog, "limit": 5})], ["mode"]),
+            (
+                2,
+                "List",
+                ["list", "project-files"],
+                ["count"],
+            ),
+            (
+                3,
+                "Funcs",
+                ["get-functions", "--program_path", prog, "--limit", "5"],
+                ["functions"],
+            ),
+            (
+                4,
+                "Search",
+                ["tool", "search-symbols-by-name", json.dumps({"programPath": prog, "query": "main", "maxResults": 5})],
+                ["query"],
+            ),
+            (
+                5,
+                "Refs",
+                ["tool", "get-references", json.dumps({"binary": prog, "target": "WinMain", "mode": "to", "limit": 5})],
+                ["references"],
+            ),
+            (
+                6,
+                "Prog",
+                ["tool", "get-current-program", json.dumps({"programPath": prog})],
+                ["functionCount"],
+            ),
+            (
+                7,
+                "Imp",
+                ["tool", "list-imports", json.dumps({"programPath": prog, "limit": 5})],
+                ["mode"],
+            ),
+            (
+                8,
+                "Exp",
+                ["tool", "list-exports", json.dumps({"programPath": prog, "limit": 5})],
+                ["mode"],
+            ),
         ]
 
         print("\nRunning tests...")
