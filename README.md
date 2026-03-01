@@ -304,11 +304,11 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). | `agentdecompile-server --project-path` |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |
 | `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). | `agentdecompile-server --port` |
-| `AGENT_DECOMPILE_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-cli --ghidra-server-username`; `agentdecompile-proxy --server-username` |
-| `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-cli --ghidra-server-password`; `agentdecompile-proxy --server-password` |
-| `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-cli --ghidra-server-host`; `agentdecompile-proxy --server-host` |
-| `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-cli --ghidra-server-port`; `agentdecompile-proxy --server-port` |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-cli --ghidra-server-repository`; `agentdecompile-proxy --ghidra-server-repository` |
+| `AGENT_DECOMPILE_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-server --server-username`; `agentdecompile-cli --ghidra-server-username`; `agentdecompile-proxy --server-username` |
+| `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-server --server-password`; `agentdecompile-cli --ghidra-server-password`; `agentdecompile-proxy --server-password` |
+| `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --server-host`; `agentdecompile-cli --ghidra-server-host`; `agentdecompile-proxy --server-host` |
+| `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-server --server-port`; `agentdecompile-cli --ghidra-server-port`; `agentdecompile-proxy --server-port` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository`; `agentdecompile-proxy --ghidra-server-repository` |
 
 ### Shared project authentication
 

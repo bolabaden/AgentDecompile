@@ -238,6 +238,36 @@ def main() -> None:
         ),
     )
     g_server.add_argument(
+        "--server-host",
+        type=str,
+        default=None,
+        help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+    )
+    g_server.add_argument(
+        "--server-port",
+        type=int,
+        default=None,
+        help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+    )
+    g_server.add_argument(
+        "--server-username",
+        type=str,
+        default=None,
+        help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+    )
+    g_server.add_argument(
+        "--server-password",
+        type=str,
+        default=None,
+        help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+    )
+    g_server.add_argument(
+        "--ghidra-server-repository",
+        type=str,
+        default=None,
+        help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+    )
+    g_server.add_argument(
         "--project-path",
         type=Path,
         default=Path("agentdecompile_projects"),
@@ -285,6 +315,17 @@ def main() -> None:
     )
     parser.add_argument("--config", type=Path, default=None, help="AgentDecompile config file")
     args = parser.parse_args()
+
+    if args.server_host:
+        os.environ["AGENT_DECOMPILE_SERVER_HOST"] = str(args.server_host)
+    if args.server_port is not None:
+        os.environ["AGENT_DECOMPILE_SERVER_PORT"] = str(args.server_port)
+    if args.server_username:
+        os.environ["AGENT_DECOMPILE_SERVER_USERNAME"] = str(args.server_username)
+    if args.server_password:
+        os.environ["AGENT_DECOMPILE_SERVER_PASSWORD"] = str(args.server_password)
+    if args.ghidra_server_repository:
+        os.environ["AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY"] = str(args.ghidra_server_repository)
 
     # Apply env defaults for host/port (1:1 Java headless)
     port = args.port if args.port is not None else _env_port()
