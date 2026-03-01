@@ -41,7 +41,7 @@ class CommentToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string"},
-                        "action": {"type": "string", "enum": ["set", "get", "remove", "search", "search_decomp"]},
+                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["set", "get", "remove", "search", "search_decomp"]},
                         "addressOrSymbol": {"type": "string", "description": "Address or symbol for comment"},
                         "comment": {"type": "string", "description": "Comment text"},
                         "type": {"type": "string", "enum": ["eol", "pre", "post", "plate", "repeatable"], "default": "eol"},
@@ -60,7 +60,7 @@ class CommentToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "mode", "action", default="get")
+        action = self._get_str(args, "mode", "action", "operation", default="get")
 
         dispatch = {
             "set": self._set,

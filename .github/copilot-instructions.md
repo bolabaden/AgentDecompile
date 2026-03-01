@@ -95,6 +95,38 @@ This project intentionally accepts messy client input so humans and agents can u
 - Use argument helpers (`_get*`, `_require*`) and never manually parse key style variants.
 - If new synonyms are needed, add them to `TOOLS_LIST.md` and rely on generated alias maps.
 
+### Canonical Dispatch Parameter: `mode` (CRITICAL)
+
+**Absolute Rule: `mode` is THE canonical dispatch parameter name in all advertised tool schemas.**
+
+Many tools support multiple operations (e.g. `manage-symbols` supports `symbols`, `classes`, `imports`, etc.). The parameter that selects which operation to perform MUST be called `mode` in the advertised JSON schema.
+
+**Why this matters:**
+- MCP clients like VS Code validate parameters against the advertised JSON schema BEFORE sending to the server.
+- If the schema advertises `operation` but the user/agent sends `mode`, the client rejects it client-side — server-side normalization never fires.
+- Standardizing on `mode` everywhere eliminates this class of schema validation failures.
+
+**Schema Rules:**
+1. **Advertise `mode`**: The dispatch parameter in every tool's `inputSchema` MUST be named `"mode"`.
+2. **Description mentions aliases**: Use `"description": "Operation mode (aliases: action, operation)"`.
+3. **Never advertise `action` or `operation`** as separate schema properties for the dispatch parameter.
+4. **Handler lookups accept all three**: Every handler's `_get_str`/`_require_str` call for the dispatch must include `"mode"`, `"action"`, AND `"operation"` in the lookup chain: `self._get_str(args, "mode", "action", "operation", default="...")`.
+
+**Correctly implemented tools (examples):**
+- `manage-symbols`: `"mode": {"type": "string", "enum": ["symbols", "classes", ...], "default": "symbols"}`
+- `manage-comments`: `"mode": {"type": "string", "enum": ["set", "get", "remove", ...], "default": "get"}`
+- `manage-bookmarks`: `"mode": {"type": "string", "enum": ["set", "get", "search", ...]}`
+- `manage-structures`: `"mode": {"type": "string", "enum": ["parse", "create", "list", ...]}`
+- `manage-function`: `"mode": {"type": "string", "enum": ["rename", "set_prototype", ...]}`
+- `manage-files`: `"mode": {"type": "string", "enum": ["list", "import", "export", ...]}`
+- `inspect-memory`: `"mode": {"type": "string", "enum": ["blocks", "read", "data_at", ...]}`
+- `get-call-graph`: `"mode": {"type": "string", "enum": ["graph", "tree", "callers", ...]}`
+
+**Forbidden:**
+- Advertising `"action": {...}` or `"operation": {...}` as the dispatch parameter in any tool schema.
+- Having duplicate dispatch params (e.g. both `"mode"` and `"action"` in the same schema).
+- Using `mode` for non-dispatch purposes (e.g. sync direction) — use a descriptive name like `syncDirection` instead.
+
 **Change Checklist (must pass before merge):**
 - No provider contains custom tool/argument dispatch normalization.
 - No `from agentdecompile_cli.registry import normalize_identifier` inside `providers/*.py` methods.

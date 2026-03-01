@@ -125,11 +125,12 @@ class CallGraphToolProvider(ToolProvider):
 
         # Fallback: use Ghidra API directly
         try:
+            assert self.program_info is not None, "Program info is not available"
             program = self.program_info.program
             fm = program.getFunctionManager()
             listing = program.getListing()
 
-            target_func = None
+            target_func: Any = None
             # Try to find the function
             for f in fm.getFunctions(True):
                 if f.getName() == func or str(f.getEntryPoint()) == func:

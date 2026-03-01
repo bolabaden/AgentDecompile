@@ -38,7 +38,7 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "function": {"type": "string"},
                         "addressOrSymbol": {"type": "string"},
-                        "action": {"type": "string", "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"]},
+                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"]},
                         "newName": {"type": "string"},
                         "prototype": {"type": "string"},
                         "callingConvention": {"type": "string"},
@@ -57,7 +57,7 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "function": {"type": "string"},
                         "addressOrSymbol": {"type": "string"},
-                        "action": {"type": "string", "enum": ["list", "add", "remove", "search"]},
+                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["list", "add", "remove", "search"]},
                         "tag": {"type": "string"},
                         "tagName": {"type": "string"},
                     },
@@ -97,7 +97,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._require_str(args, "mode", "action", name="mode")
+        action = self._require_str(args, "mode", "action", "operation", name="mode")
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "name", "addr", "symbol")
         program = self.program_info.program
 
@@ -195,7 +195,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "mode", "action", default="list")
+        action = self._get_str(args, "mode", "action", "operation", default="list")
         func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier")
         tag_name = self._get_str(args, "tag", "tagname", "tags", "name")
         program = self.program_info.program

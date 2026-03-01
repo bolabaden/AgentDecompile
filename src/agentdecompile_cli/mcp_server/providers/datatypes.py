@@ -32,7 +32,7 @@ class DataTypeToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string"},
-                        "action": {"type": "string", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
+                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
                         "categoryPath": {"type": "string", "description": "Category path (e.g., /MyTypes)"},
                         "dataTypeString": {"type": "string", "description": "Data type as string (e.g., int, char*)"},
                         "addressOrSymbol": {"type": "string"},
@@ -46,7 +46,7 @@ class DataTypeToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "mode", "action", default="list")
+        action = self._get_str(args, "mode", "action", "operation", default="list")
 
         dispatch = {
             "archives": self._archives,
