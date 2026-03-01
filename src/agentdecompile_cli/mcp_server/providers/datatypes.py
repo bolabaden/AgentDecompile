@@ -32,7 +32,7 @@ class DataTypeToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string"},
-                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
+                        "mode": {"type": "string", "description": "Operation mode", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
                         "categoryPath": {"type": "string", "description": "Category path (e.g., /MyTypes)"},
                         "dataTypeString": {"type": "string", "description": "Data type as string (e.g., int, char*)"},
                         "addressOrSymbol": {"type": "string"},

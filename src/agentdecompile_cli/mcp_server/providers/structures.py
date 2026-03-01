@@ -35,7 +35,7 @@ class StructureToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "mode": {
                             "type": "string",
-                            "description": "Operation mode (aliases: action, operation)",
+                            "description": "Operation mode",
                             "enum": [
                                 "parse",
                                 "validate",

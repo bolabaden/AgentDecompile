@@ -35,7 +35,7 @@ class BookmarkToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Path to the program/binary file"},
-                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["set", "get", "search", "remove", "remove_all", "categories"]},
+                        "mode": {"type": "string", "description": "Operation mode", "enum": ["set", "get", "search", "remove", "remove_all", "categories"]},
                         "addressOrSymbol": {"type": "string", "description": "Address or symbol for bookmark"},
                         "type": {"type": "string", "description": "Bookmark type", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
                         "category": {"type": "string", "description": "Bookmark category"},
