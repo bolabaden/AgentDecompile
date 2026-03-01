@@ -11,17 +11,22 @@
 				".",
 				"agentdecompile-server",
 				"--transport",
-				"stdio"
-			],
-			"env": {
-				"AGENT_DECOMPILE_BACKEND_URL": "http://170.9.241.140:8080",
-				"AGENT_DECOMPILE_MCP_SERVER_URL": "http://127.0.0.1:8080",
-				"AGENT_DECOMPILE_SERVER_HOST": "170.9.241.140",
-				"AGENT_DECOMPILE_SERVER_PORT": "13100",
-				"AGENT_DECOMPILE_SERVER_USERNAME": "OpenKotOR",
-				"AGENT_DECOMPILE_SERVER_PASSWORD": "MuchaShakaPaka",
-				"AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": "Odyssey"
-			}
+				"stdio",
+				"--backend-url",
+				"http://170.9.241.140:8080",
+				"--mcp-server-url",
+				"http://127.0.0.1:8080",
+				"--server-host",
+				"170.9.241.140",
+				"--server-port",
+				"13100",
+				"--server-username",
+				"OpenKotOR",
+				"--server-password",
+				"MuchaShakaPaka",
+				"--ghidra-server-repository",
+				"Odyssey"
+			]
 		}
   },
   "inputs": [

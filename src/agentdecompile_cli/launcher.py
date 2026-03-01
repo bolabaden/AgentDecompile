@@ -1743,6 +1743,7 @@ def main() -> None:
     g_server.add_argument(
         "--backend-url",
         "--server-url",
+        "--mcp-server-url",
         dest="backend_url",
         type=str,
         default=None,
