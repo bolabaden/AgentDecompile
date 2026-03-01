@@ -32,6 +32,7 @@ from agentdecompile_cli.bridge import _apply_mcp_session_fix
 _apply_mcp_session_fix()
 
 from agentdecompile_cli.bridge import RawMcpHttpBackend
+from agentdecompile_cli.executor import normalize_backend_url
 
 
 async def run_http_server(backend_url: str, host: str, port: int) -> None:
@@ -42,7 +43,10 @@ async def run_http_server(backend_url: str, host: str, port: int) -> None:
     import uvicorn
     
     # Create backend connection
-    backend = RawMcpHttpBackend(backend_url)
+    backend = RawMcpHttpBackend(normalized_url)
+        # Normalize URL to include MCP endpoint
+        normalized_url = normalize_backend_url(backend_url)
+        backend = RawMcpHttpBackend(normalized_url)
     await backend.initialize()
     
     async def handle_request(request) -> JSONResponse:
