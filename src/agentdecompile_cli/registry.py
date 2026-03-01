@@ -887,6 +887,15 @@ class ToolRegistry:
                     if canonical_param is not None and parsed_args.get(canonical_param) is None:
                         parsed_args[canonical_param] = arg_val
 
+        # Pass through arguments not recognized by this tool's param set.
+        # Parameters are interchangeable between aliased/forwarded tools
+        # (e.g. search-symbols-by-name's "query" must survive resolution to
+        # manage-symbols).  The server-side normalization handles the rest.
+        parsed_norms: set[str] = {normalize_identifier(k) for k in parsed_args}
+        for key, value in arguments.items():
+            if normalize_identifier(key) not in parsed_norms:
+                parsed_args[key] = value
+
         return parsed_args
 
     def _extract_argument_value(
