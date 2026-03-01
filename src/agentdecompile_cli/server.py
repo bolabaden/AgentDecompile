@@ -173,9 +173,18 @@ def _env_host() -> str:
     return (os.environ.get("AGENT_DECOMPILE_HOST") or "").strip() or "127.0.0.1"
 
 
-def _resolve_proxy_backend_url(explicit_backend_url: str | None) -> str | None:
-    """Resolve proxy backend URL from CLI/env and normalize to /mcp/message."""
+def _resolve_proxy_backend_url(
+    explicit_backend_url: str | None,
+    explicit_mcp_server_url: str | None = None,
+) -> str | None:
+    """Resolve proxy backend URL from CLI/env and normalize to /mcp/message.
+
+    Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_BACKEND_URL env
+              > AGENT_DECOMPILE_MCP_SERVER_URL env > AGENT_DECOMPILE_SERVER_URL env.
+    """
     raw = explicit_backend_url
+    if not raw or not raw.strip():
+        raw = explicit_mcp_server_url
     if not raw or not raw.strip():
         raw = (
             os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
@@ -228,13 +237,22 @@ def main() -> None:
     g_server.add_argument(
         "--backend-url",
         "--server-url",
-        "--mcp-server-url",
         dest="backend_url",
         type=str,
         default=None,
         help=(
             "Run in proxy mode and forward all MCP requests to an existing MCP server "
             "(http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"
+        ),
+    )
+    g_server.add_argument(
+        "--mcp-server-url",
+        dest="mcp_server_url",
+        type=str,
+        default=None,
+        help=(
+            "Fallback backend URL if --backend-url is not provided "
+            "(equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"
         ),
     )
     g_server.add_argument(
@@ -330,7 +348,7 @@ def main() -> None:
     # Apply env defaults for host/port (1:1 Java headless)
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
-    backend_url = _resolve_proxy_backend_url(args.backend_url)
+    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
 
     if backend_url:
         from agentdecompile_cli.bridge import _apply_mcp_session_fix
