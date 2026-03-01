@@ -42,11 +42,10 @@ async def run_http_server(backend_url: str, host: str, port: int) -> None:
     from starlette.routing import Route
     import uvicorn
     
+    # Normalize URL to include MCP endpoint
+    normalized_url = normalize_backend_url(backend_url)
     # Create backend connection
     backend = RawMcpHttpBackend(normalized_url)
-        # Normalize URL to include MCP endpoint
-        normalized_url = normalize_backend_url(backend_url)
-        backend = RawMcpHttpBackend(normalized_url)
     await backend.initialize()
     
     async def handle_request(request) -> JSONResponse:
