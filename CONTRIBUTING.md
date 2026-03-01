@@ -90,6 +90,15 @@ flowchart TD
 
 ---
 
+## Primary vs Legacy tool names
+
+- The project maintains a curated default advertised tool-name set (what the server exposes by default and what `agentdecompile-cli tool --list-tools` returns).
+- The canonical tool list in `src/agentdecompile_cli/registry.py` documents all supported tool names; many additional names are legacy compatibility forwards and synonyms.
+- Policy: prefer adding or updating the default advertised tool name and its schema first, then document any legacy aliases as forwards in `TOOLS_LIST.md` when needed for compatibility.
+- Legacy names remain callable for backwards compatibility. To re-advertise the full legacy surface during testing or compatibility modes, set either `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` in your environment.
+- When submitting changes that add or remove tool names, update `TOOLS_LIST.md` and run `helper_scripts/generate_tools_list.py` and the tools-doc parity tests.
+
+
 ## Testing
 
 Run focused tests first, then broader suites.
