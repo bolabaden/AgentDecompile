@@ -118,9 +118,18 @@ RUN set -eux; \
 ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 RUN set -eux; \
+    INSTALL_SRC="/src/agentdecompile"; \
+    if [ ! -f "${INSTALL_SRC}/pyproject.toml" ]; then \
+    echo "WARNING: ${INSTALL_SRC}/pyproject.toml not found in build context; falling back to GitHub source"; \
+    ls -la "${INSTALL_SRC}" || true; \
+    FALLBACK_SRC="/tmp/agentdecompile-src"; \
+    rm -rf "${FALLBACK_SRC}"; \
+    git clone --depth 1 "https://github.com/bolabaden/agentdecompile.git" "${FALLBACK_SRC}"; \
+    INSTALL_SRC="${FALLBACK_SRC}"; \
+    fi; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
-    /src/agentdecompile
+    "${INSTALL_SRC}"
 
 FROM alpine:latest AS runtime
 
