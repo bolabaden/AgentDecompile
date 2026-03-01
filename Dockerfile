@@ -166,6 +166,7 @@ RUN \
     py3-packaging \
     openssl \
     libstdc++ \
+    qemu-x86_64 \
     musl-locales \
     musl-locales-lang \
     ; \
@@ -176,6 +177,22 @@ WORKDIR ${GHIDRA_HOME}
 COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
 RUN set -eux; \
     mkdir -p ${GHIDRA_HOME}/docker; \
+        for arch_dir in linux_aarch64 linux_arm_64 linux_arm64 linux_aarch_64; do \
+            mkdir -p ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}; \
+            printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'exec /usr/bin/qemu-x86_64 /ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/decompile "$@"' \
+            > ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/decompile; \
+            printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'exec /usr/bin/qemu-x86_64 /ghidra/Ghidra/Features/Decompiler/os/linux_x86_64/sleigh "$@"' \
+            > ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/sleigh; \
+            chmod +x \
+            ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/decompile \
+            ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/sleigh; \
+        done; \
     printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \

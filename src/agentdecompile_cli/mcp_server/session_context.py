@@ -22,6 +22,25 @@ CURRENT_MCP_SESSION_ID: ContextVar[str] = ContextVar("current_mcp_session_id", d
 
 def get_current_mcp_session_id() -> str:
     session_id = CURRENT_MCP_SESSION_ID.get()
+    if session_id and session_id != "default":
+        return session_id
+
+    # Fallback: derive from MCP SDK request context when transport wrappers do
+    # not propagate CURRENT_MCP_SESSION_ID.
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        ctx = request_ctx.get()
+        session = getattr(ctx, "session", None)
+        if session is not None:
+            for attr in ("session_id", "id", "_session_id", "client_id"):
+                value = getattr(session, attr, None)
+                if value:
+                    return str(value)
+            return f"sdk-session:{id(session)}"
+    except Exception:
+        pass
+
     return session_id or "default"
 
 
@@ -81,7 +100,9 @@ class SessionContextStore:
             if session.project_binaries:
                 return list(session.project_binaries)
 
-            if fallback_to_latest and self._last_session_with_binaries:
+            # Never leak binary catalogs across explicit MCP client sessions.
+            # Fallback is retained only for legacy/default session behavior.
+            if fallback_to_latest and session.session_id == "default" and self._last_session_with_binaries:
                 latest = self._sessions.get(self._last_session_with_binaries)
                 if latest and latest.project_binaries:
                     return list(latest.project_binaries)
