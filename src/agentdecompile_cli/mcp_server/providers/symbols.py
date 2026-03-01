@@ -53,7 +53,7 @@ class SymbolToolProvider(ToolProvider):
                         "demangle",
                     ],
                     "default": "symbols",
-                    "description": "Operation mode (aliases: action, operation)",
+                    "description": "Operation mode",
                 },
                 "query": {"type": "string", "description": "Search query / pattern"},
                 "addressOrSymbol": {"type": "string"},

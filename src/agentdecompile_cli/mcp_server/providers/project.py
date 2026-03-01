@@ -146,7 +146,7 @@ class ProjectToolProvider(ToolProvider):
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "description": "Operation mode (aliases: action, operation)",
+                            "description": "Operation mode",
                             "enum": [
                                 "rename",
                                 "delete",

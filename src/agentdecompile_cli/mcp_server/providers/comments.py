@@ -41,7 +41,7 @@ class CommentToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string"},
-                        "mode": {"type": "string", "description": "Operation mode (aliases: action, operation)", "enum": ["set", "get", "remove", "search", "search_decomp"]},
+                        "mode": {"type": "string", "description": "Operation mode", "enum": ["set", "get", "remove", "search", "search_decomp"]},
                         "addressOrSymbol": {"type": "string", "description": "Address or symbol for comment"},
                         "comment": {"type": "string", "description": "Comment text"},
                         "type": {"type": "string", "enum": ["eol", "pre", "post", "plate", "repeatable"], "default": "eol"},
