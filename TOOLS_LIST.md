@@ -1,6 +1,8 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 51 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all 52 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+
+**Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names, vendor forwards, and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
@@ -8,7 +10,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
   - [Table of Contents](#table-of-contents)
-  - [Canonical Tools (51)](#canonical-tools-51)
+  - [Canonical Tools (52)](#canonical-tools-52)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
@@ -39,6 +41,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
     - [`list-project-binaries`](#list-project-binaries)
     - [`list-project-binary-metadata`](#list-project-binary-metadata)
     - [`list-project-files`](#list-project-files)
+    - [`list-processors`](#list-processors)
     - [`list-strings`](#list-strings)
     - [`manage-bookmarks`](#manage-bookmarks)
     - [`manage-comments`](#manage-comments)
@@ -61,7 +64,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
     - [`search-symbols`](#search-symbols)
     - [`search-symbols-by-name`](#search-symbols-by-name)
     - [`suggest`](#suggest)
-  - [Vendor Alias Forwards](#vendor-alias-forwards)
+  - [Legacy Tool Name Forwards](#legacy-tool-name-forwards)
     - [`import-file` (forwards to `import-binary`)](#import-file-forwards-to-import-binary)
     - [`list-classes` (forwards to `manage-symbols`)](#list-classes-forwards-to-manage-symbols)
     - [`list-namespaces` (forwards to `manage-symbols`)](#list-namespaces-forwards-to-manage-symbols)
@@ -156,7 +159,7 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
 
-## Canonical Tools (51)
+## Canonical Tools (52)
 
 ### `analyze-data-flow`
 
@@ -1014,6 +1017,22 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 
 **Examples**:
 - List files: `list-project-files`.
+### `list-processors`
+
+**Description**: Lists available processor/language identifiers from Ghidra, optionally filtered by text. This tool helps select valid language/compiler targets before import or processor changes.
+
+**Parameters**:
+- `filter` (string, optional): Optional case-insensitive filter applied to language IDs and display names.
+  - Synonyms: `filter`, `query`, `search`.
+
+**Overloads**:
+- `list-processors(filter)` canonical signature.
+
+**Synonyms**: `list-processors`, `tool_list_processors`, `list_processors_tool`, `cmd_list_processors`, `run_list_processors`, `do_list_processors`, `api_list_processors`, `mcp_list_processors`, `ghidra_list_processors`, `agentdecompile_list_processors`, `list_processors_command`, `list_processors_action`, `list_processors_op`, `list_processors_task`, `execute_list_processors`
+
+**Examples**:
+- List all processors: `list-processors`.
+- Filter to x86 processors: `list-processors filter="x86"`.
 ### `list-strings`
 
 **Description**: Lists strings in the program, with filtering and limits. This tool extracts defined strings for quick review.
@@ -1698,7 +1717,9 @@ This document provides an exhaustive, consolidated reference for all 51 canonica
 
 **Examples**:
 - Suggest name: `suggest programPath="/bin.exe" suggestionType="name" address="0x401000"`.
-## Vendor Alias Forwards
+## Legacy Tool Name Forwards
+
+All names in this section are legacy compatibility forwards.
 
 ### `import-file` (forwards to `import-binary`)
 

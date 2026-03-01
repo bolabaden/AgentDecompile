@@ -1,6 +1,6 @@
-"""Data Tool Provider - get-data, apply-data-type, create-label.
+"""Data Tool Provider - get-data, apply-data-type.
 
-Handles raw data viewing, type application, and label creation at addresses.
+Handles raw data viewing and type application at addresses.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ class DataToolProvider(ToolProvider):
     HANDLERS = {
         "getdata": "_handle_get",
         "applydatatype": "_handle_apply",
-        "createlabel": "_handle_label",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -51,19 +50,6 @@ class DataToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "addressOrSymbol": {"type": "string"},
                         "dataType": {"type": "string", "description": "Data type name (e.g., int, char*, struct_name)"},
-                    },
-                    "required": [],
-                },
-            ),
-            types.Tool(
-                name="create-label",
-                description="Create a label at an address",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "labelName": {"type": "string"},
                     },
                     "required": [],
                 },
@@ -129,24 +115,3 @@ class DataToolProvider(ToolProvider):
             program.endTransaction(tx, False)
             raise
         return create_success_response({"address": str(addr), "dataType": dt_name, "success": True})
-
-    async def _handle_label(self, args: dict[str, Any]) -> list[types.TextContent]:
-        self._require_program()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
-        label = self._require_str(args, "labelname", "label", "name", name="labelName")
-
-        program = self.program_info.program
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-
-        from ghidra.program.model.symbol import SourceType
-
-        tx = program.startTransaction("create-label")
-        try:
-            program.getSymbolTable().createLabel(addr, label, SourceType.USER_DEFINED)
-            program.endTransaction(tx, True)
-        except Exception:
-            program.endTransaction(tx, False)
-            raise
-        return create_success_response({"address": str(addr), "label": label, "success": True})

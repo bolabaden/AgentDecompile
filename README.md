@@ -258,7 +258,11 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 49 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 52 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+
+- Default advertised tool names are the curated set returned by `agentdecompile-cli tool --list-tools`.
+- All other tool names (including non-default canonical names and alias/synonym names) are legacy compatibility names.
+- Legacy names remain accepted for compatibility; set `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` (or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`) to advertise the full legacy surface.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
 - Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-references`, `inspect-memory`, `manage-symbols`, `manage-comments`, `get-call-graph`
