@@ -19,6 +19,8 @@ ENV GHIDRA_REPO=${GHIDRA_REPO}
 ENV GHIDRA_GITHUB_API="https://api.github.com/repos/${GHIDRA_OWNER}/${GHIDRA_REPO}"
 ARG TARGETARCH
 ENV TARGETARCH=${TARGETARCH}
+ARG GHIDRA_REQUIRE_PG="true"
+ENV GHIDRA_REQUIRE_PG=${GHIDRA_REQUIRE_PG}
 
 ARG GHIDRA_USER="ghidra"
 ENV GHIDRA_USER=${GHIDRA_USER}
@@ -84,8 +86,13 @@ RUN set -eux; \
     EXPECTED_PG_BIN="${BSIM_OS_ROOT}/${EXPECTED_OSDIR}/postgresql/bin"; \
     FOUND_PG_BIN="$(find "${BSIM_OS_ROOT}" -maxdepth 4 -type f -name pg_ctl -path '*/postgresql/bin/pg_ctl' | head -n 1 || true)"; \
     if [ -z "${FOUND_PG_BIN}" ]; then \
-        echo "ERROR: make-postgres.sh did not produce PostgreSQL binaries under ${BSIM_OS_ROOT}"; \
-        exit 1; \
+        echo "WARNING: make-postgres.sh did not produce PostgreSQL binaries under ${BSIM_OS_ROOT}"; \
+        if [ "${GHIDRA_REQUIRE_PG}" = "true" ]; then \
+            echo "ERROR: PostgreSQL binaries are required for BSim but were not found."; \
+            exit 1; \
+        else \
+            echo "Continuing without PostgreSQL binaries (GHIDRA_REQUIRE_PG=false)."; \
+        fi; \
     fi; \
     FOUND_PG_DIR="$(dirname "${FOUND_PG_BIN}")"; \
     FOUND_OSDIR="$(basename "$(dirname "$(dirname "${FOUND_PG_DIR}")")")"; \
