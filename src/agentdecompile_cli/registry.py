@@ -123,6 +123,22 @@ MODE_PARAM_ALIASES: frozenset[str] = frozenset(
     },
 )
 
+NATURAL_LANGUAGE_INPUT_KEYS: frozenset[str] = frozenset(
+    {
+        "applescript",
+        "naturallanguage",
+        "instruction",
+        "instructions",
+        "commandtext",
+        "script",
+        "text",
+        "input",
+        "prompt",
+        "query",
+        "utterance",
+    },
+)
+
 
 def _canonical_param_name(param: str) -> str:
     if normalize_identifier(param) in MODE_PARAM_ALIASES:
@@ -1107,6 +1123,8 @@ class ToolRegistry:
 
         actual_tool_key: str = resolved_tool
 
+        augmented_arguments: dict[str, Any] = self._expand_natural_language_arguments(arguments, actual_tool_key)
+
         expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
         param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
 
@@ -1114,7 +1132,7 @@ class ToolRegistry:
 
         # For each expected parameter, try various naming variations
         for param in expected_params:
-            value = self._extract_argument_value(arguments, param)
+            value = self._extract_argument_value(augmented_arguments, param)
             if value is not None:
                 parsed_args[param] = value
 
@@ -1122,7 +1140,7 @@ class ToolRegistry:
         # to canonical parameter keys when not already set.
         if param_aliases:
             expected_by_norm = {normalize_identifier(param): param for param in expected_params}
-            for arg_key, arg_val in arguments.items():
+            for arg_key, arg_val in augmented_arguments.items():
                 alias_norm = normalize_identifier(arg_key)
                 target_norms = param_aliases.get(alias_norm)
                 if not target_norms:
@@ -1137,11 +1155,141 @@ class ToolRegistry:
         # (e.g. search-symbols-by-name's "query" must survive resolution to
         # manage-symbols).  The server-side normalization handles the rest.
         parsed_norms: set[str] = {normalize_identifier(k) for k in parsed_args}
-        for key, value in arguments.items():
+        for key, value in augmented_arguments.items():
             if normalize_identifier(key) not in parsed_norms:
                 parsed_args[key] = value
 
         return parsed_args
+
+    def _expand_natural_language_arguments(
+        self,
+        arguments: dict[str, Any],
+        tool_name: str,
+    ) -> dict[str, Any]:
+        """Expand AppleScript/natural-language payloads into structured arguments.
+
+        Accepts free-form content passed under keys like "appleScript",
+        "naturalLanguage", "instruction", etc. Explicit structured arguments
+        always win; extracted values only fill missing keys.
+        """
+        expanded: dict[str, Any] = dict(arguments)
+
+        expected_params = self.get_tool_params(tool_name)
+        if not expected_params:
+            return expanded
+
+        alias_map: dict[str, str] = self._build_natural_language_alias_map(tool_name, expected_params)
+
+        for key, value in arguments.items():
+            key_norm = normalize_identifier(key)
+            if key_norm not in NATURAL_LANGUAGE_INPUT_KEYS:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                continue
+
+            extracted = self._extract_natural_language_pairs(value, alias_map)
+            for canonical_param, parsed_value in extracted.items():
+                # Preserve explicit caller-provided arguments over inferred values.
+                if canonical_param not in expanded:
+                    expanded[canonical_param] = parsed_value
+
+        return expanded
+
+    def _build_natural_language_alias_map(
+        self,
+        tool_name: str,
+        expected_params: list[str],
+    ) -> dict[str, str]:
+        """Build normalized alias->canonical-param map for NL extraction."""
+        map_out: dict[str, str] = {}
+        tool_norm = normalize_identifier(tool_name)
+        tool_aliases = TOOL_PARAM_ALIASES.get(tool_norm, {})
+        expected_by_norm = {normalize_identifier(param): param for param in expected_params}
+
+        for canonical_param in expected_params:
+            canonical_norm = normalize_identifier(canonical_param)
+            map_out[canonical_norm] = canonical_param
+            for variation in self._generate_param_variations(canonical_param):
+                map_out[normalize_identifier(variation)] = canonical_param
+
+        for alias_norm, target_norms in tool_aliases.items():
+            for target_norm in target_norms:
+                canonical_param = expected_by_norm.get(target_norm)
+                if canonical_param is not None:
+                    map_out[alias_norm] = canonical_param
+
+        return map_out
+
+    def _extract_natural_language_pairs(
+        self,
+        text: str,
+        alias_map: dict[str, str],
+    ) -> dict[str, Any]:
+        """Extract key/value pairs from free-form AppleScript/NL text.
+
+        Supported forms include:
+        - "programPath=/tmp/a.bin"
+        - "program path: '/tmp/a.bin'"
+        - "target is main"
+        - "with include ref context true and max results 5"
+        """
+        extracted: dict[str, Any] = {}
+
+        kv_pattern = re.compile(
+            r"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{1,80}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>\"[^\"]*\"|'[^']*'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|[^,;\n]+?)(?=\s+\band\b\s+[A-Za-z]|[,;\n]|$)",
+            flags=re.IGNORECASE,
+        )
+        with_pattern = re.compile(
+            r"(?:\bwith\b|\band\b)\s+(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{1,80}?)\s+(?P<value>\"[^\"]*\"|'[^']*'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|[^,;\n]+?)(?=\s+\band\b\s+[A-Za-z]|[,;\n]|$)",
+            flags=re.IGNORECASE,
+        )
+
+        for pattern in (kv_pattern, with_pattern):
+            for match in pattern.finditer(text):
+                key_raw = match.group("key").strip()
+                value_raw = match.group("value").strip()
+                key_norm = normalize_identifier(key_raw)
+                canonical_param = alias_map.get(key_norm)
+                if canonical_param is None:
+                    continue
+                extracted[canonical_param] = self._coerce_natural_language_value(value_raw)
+
+        return extracted
+
+    def _coerce_natural_language_value(self, raw_value: str) -> Any:
+        """Coerce natural-language scalar text to bool/int/float/json/string."""
+        value = raw_value.strip()
+        if not value:
+            return value
+
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            return value[1:-1]
+
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+
+        if re.fullmatch(r"-?\d+", value):
+            try:
+                return int(value)
+            except Exception:
+                return value
+
+        if re.fullmatch(r"-?\d+\.\d+", value):
+            try:
+                return float(value)
+            except Exception:
+                return value
+
+        if (value.startswith("[") and value.endswith("]")) or (value.startswith("{") and value.endswith("}")):
+            try:
+                return _json.loads(value)
+            except Exception:
+                return value
+
+        return value
 
     def _extract_argument_value(
         self,
