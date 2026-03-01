@@ -68,7 +68,7 @@ RUN set -eux; \
     rm -rf /tmp/ghidra_extract
 
 RUN set -eux; \
-    apk add --no-cache --virtual .build-tools g++ gcc musl-dev make bison flex zlib-dev readline-dev perl python3-dev; \
+    apk add --no-cache --virtual .build-tools g++ gcc musl-dev make bison flex zlib-dev readline-dev perl python3-dev openssl-dev; \
     ${GHIDRA_HOME}/Ghidra/Features/BSim/support/make-postgres.sh; \
     BSIM_OS_ROOT="${GHIDRA_HOME}/Ghidra/Features/BSim/build/os"; \
     case "${TARGETARCH:-}" in \
@@ -141,6 +141,7 @@ RUN set -eux; \
         openjdk21 \
         bash \
         gcompat \
+        openssl \
         py3-packaging \
         libstdc++ \
     ; \
