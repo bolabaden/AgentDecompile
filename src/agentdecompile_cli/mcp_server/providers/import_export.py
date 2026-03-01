@@ -624,10 +624,6 @@ class ImportExportToolProvider(ToolProvider):
                     "error": str(exc),
                 },
             )
-                    "success": False,
-                    "error": str(exc),
-                },
-            )
 
     async def _handle_list_processors(self, args: dict[str, Any]) -> list[types.TextContent]:
         filter_str = self._get_str(args, "filter", "query", "search")
