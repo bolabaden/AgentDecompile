@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Bootstrap script for proxy MCP server integration testing.
 
-This script:
-1. Starts a local proxy MCP server (via uv) that forwards to remote backend
-2. Waits for the proxy to be ready
-3. Runs all 7 CLI test commands through the local proxy
-4. Captures and validates the output
-5. Cleans up resources
+This script demonstrates that a local proxy MCP server can successfully:
+1. Start and listen on stdio
+2. Forward tool calls to the remote MCP backend
+3. Return results correctly
+
+The test compares results from:
+- Direct CLI calls to the remote backend
+- MCP client calls through the local proxy
 
 Run this script from the project root directory.
 """
