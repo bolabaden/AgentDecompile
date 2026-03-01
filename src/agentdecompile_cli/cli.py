@@ -199,16 +199,17 @@ async def _recover_and_retry_with_program(
     if not requested_program:
         return result
 
-    shared_host = _backend_host_for_recovery(ctx)
-    shared_port_raw = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
+    opts = _get_opts(ctx)
+    shared_host = str(opts.get("ghidra_server_host") or "").strip() or _backend_host_for_recovery(ctx)
+    shared_port_raw = str(opts.get("ghidra_server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
         shared_port = 13100
 
-    shared_user = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    shared_pass = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-    shared_repo = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+    shared_user = str(opts.get("ghidra_server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+    shared_pass = str(opts.get("ghidra_server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+    shared_repo = str(opts.get("ghidra_server_repository") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
 
     open_attempts: list[dict[str, Any]] = [
         {"path": requested_program},
@@ -692,6 +693,13 @@ def _ensure_dynamic_commands_registered() -> None:
 @click.option("--host", default="127.0.0.1", help="Server host")
 @click.option("--port", type=int, default=8080, help="Server port")
 @click.option("--server-url", help="Full server URL (overrides --host/--port)")
+@click.option("--mcp-server-url", help="Alias of --server-url (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
+@click.option("--backend-url", help="Alias of --server-url for proxy/backend style configuration")
+@click.option("--ghidra-server-host", help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)")
+@click.option("--ghidra-server-port", type=int, help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)")
+@click.option("--ghidra-server-username", help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)")
+@click.option("--ghidra-server-password", help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)")
+@click.option("--ghidra-server-repository", help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)")
 @click.option(
     "-f",
     "--format",
@@ -706,14 +714,27 @@ def main(
     host: str,
     port: int,
     server_url: str | None,
+    mcp_server_url: str | None,
+    backend_url: str | None,
+    ghidra_server_host: str | None,
+    ghidra_server_port: int | None,
+    ghidra_server_username: str | None,
+    ghidra_server_password: str | None,
+    ghidra_server_repository: str | None,
     format: str,
 ) -> None:
     """AgentDecompile CLI – all tools from TOOLS_LIST.md (30+ tools)."""
     existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
+    effective_server_url = server_url or mcp_server_url or backend_url
     ctx.obj = {
         "host": host,
         "port": port,
-        "server_url": server_url,
+        "server_url": effective_server_url,
+        "ghidra_server_host": ghidra_server_host,
+        "ghidra_server_port": ghidra_server_port,
+        "ghidra_server_username": ghidra_server_username,
+        "ghidra_server_password": ghidra_server_password,
+        "ghidra_server_repository": ghidra_server_repository,
         "format": existing_obj.get("format", format),
     }
 

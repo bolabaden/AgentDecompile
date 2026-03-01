@@ -337,6 +337,8 @@ def main():
     )
     parser.add_argument(
         "--server-url",
+        "--mcp-server-url",
+        dest="server_url",
         type=str,
         help="Connect to an existing AgentDecompile MCP server (http(s)://host:port[/mcp/message])",
         required=False,
@@ -384,8 +386,8 @@ def main():
         args.server_url,
         args.host,
         args.port,
-        env_host_key="AGENT_DECOMPILE_MCP_SERVER_HOST",
-        env_port_key="AGENT_DECOMPILE_MCP_SERVER_PORT",
+        env_host_key="AGENT_DECOMPILE_SERVER_HOST",
+        env_port_key="AGENT_DECOMPILE_SERVER_PORT",
     )
 
     # Validate config file if provided

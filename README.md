@@ -296,19 +296,19 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 
 ### Environment variables
 
-| Variable | Purpose |
-|----------|---------|
-| `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for `agentdecompile-server` proxy mode (`--backend-url`). |
-| `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). |
-| `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. |
-| `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). |
-| `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). |
-| `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). |
-| `AGENT_DECOMPILE_SERVER_USERNAME` | Ghidra Server username (shared projects). |
-| `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). |
-| `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). |
-| `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. |
+| Variable | Purpose | CLI argument equivalent |
+|----------|---------|-------------------------|
+| `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for proxy mode. | `agentdecompile-server --backend-url` (aliases: `--server-url`, `--mcp-server-url`); `agentdecompile-proxy --backend-url` (alias: `--backend`) |
+| `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). | None (environment/config only) |
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. | `mcp-agentdecompile --mcp-server-url` (alias: `--server-url`); `agentdecompile-cli --mcp-server-url` (alias: `--server-url`); `agentdecompile-server --mcp-server-url` (aliases: `--server-url`, `--backend-url`); `agentdecompile-proxy --mcp-server-url` |
+| `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). | `agentdecompile-server --project-path` |
+| `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |
+| `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). | `agentdecompile-server --port` |
+| `AGENT_DECOMPILE_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-cli --ghidra-server-username`; `agentdecompile-proxy --server-username` |
+| `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-cli --ghidra-server-password`; `agentdecompile-proxy --server-password` |
+| `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-cli --ghidra-server-host`; `agentdecompile-proxy --server-host` |
+| `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-cli --ghidra-server-port`; `agentdecompile-proxy --server-port` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-cli --ghidra-server-repository`; `agentdecompile-proxy --ghidra-server-repository` |
 
 ### Shared project authentication
 
