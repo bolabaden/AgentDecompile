@@ -58,6 +58,7 @@ from mcp.types import (
 )
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
+from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 from agentdecompile_cli.registry import resolve_tool_name
 
 if TYPE_CHECKING:
@@ -623,42 +624,92 @@ class AgentDecompileStdioBridge:
             self.url = normalize_backend_url(backend)
 
         self.server: Server = Server("AgentDecompile")
-        self._backend: RawMcpHttpBackend | None = None
-        self._backend_lock = asyncio.Lock()
+        self._backends: dict[str, RawMcpHttpBackend] = {}
+        self._backend_locks: dict[str, asyncio.Lock] = {}
+        self._backend_map_lock = asyncio.Lock()
         self._streamable_http_headers: dict[str, str] | None = None
 
         self._register_handlers()
 
-    async def _ensure_backend(self) -> RawMcpHttpBackend:
-        """Return (or lazily create) the backend connection.
+    def _current_frontend_session_id(self) -> str:
+        sid = get_current_mcp_session_id()
+        if sid and sid != "default":
+            return sid
 
-        Uses an ``asyncio.Lock`` so only one handler initializes the backend.
-        Subsequent callers get the cached instance.
-        """
-        if self._backend is not None and self._backend._initialized:
-            return self._backend
+        # Fallback: derive from MCP SDK request context. Some transport paths
+        # may not propagate the custom contextvar but still carry a stable
+        # per-client session object in request_context.
+        try:
+            ctx = self.server.request_context
+            session = getattr(ctx, "session", None)
+            if session is not None:
+                for attr in ("session_id", "id", "_session_id", "client_id"):
+                    value = getattr(session, attr, None)
+                    if value:
+                        return str(value)
+                return f"sdk-session:{id(session)}"
+        except Exception:
+            pass
 
-        async with self._backend_lock:
-            # Double-check after acquiring lock.
-            if self._backend is not None and self._backend._initialized:
-                return self._backend
+        return sid or "default"
 
-            # Close stale client if any.
-            if self._backend is not None:
-                await self._backend.close()
+    async def _get_backend_lock(self, session_id: str) -> asyncio.Lock:
+        async with self._backend_map_lock:
+            lock = self._backend_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._backend_locks[session_id] = lock
+            return lock
+
+    async def _ensure_backend(self, session_id: str | None = None) -> RawMcpHttpBackend:
+        """Return (or lazily create) the backend connection for one frontend session."""
+        sid = session_id or self._current_frontend_session_id()
+        backend = self._backends.get(sid)
+        if backend is not None and backend._initialized:
+            return backend
+
+        lock = await self._get_backend_lock(sid)
+        async with lock:
+            backend = self._backends.get(sid)
+            if backend is not None and backend._initialized:
+                return backend
+
+            if backend is not None:
+                await backend.close()
 
             backend = RawMcpHttpBackend(self.url)
             await backend.initialize()
-            self._backend = backend
-            sys.stderr.write(f"Backend session established to {self.url}\n")
+            self._backends[sid] = backend
+            sys.stderr.write(f"Backend session established to {self.url} (frontend session: {sid})\n")
             return backend
+
+    async def _reset_backend_session(self, session_id: str | None = None) -> None:
+        """Reset backend session(s).
+
+        If ``session_id`` is provided, only that frontend-mapped backend session
+        is reset. Otherwise all backend sessions are reset.
+        """
+        if session_id:
+            sid = session_id or "default"
+            backend = self._backends.pop(sid, None)
+            self._backend_locks.pop(sid, None)
+            if backend is not None:
+                await backend.close()
+            return
+
+        backends = list(self._backends.values())
+        self._backends.clear()
+        self._backend_locks.clear()
+        for backend in backends:
+            await backend.close()
 
     async def _backend_request(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Convenience: ensure backend, call *method*, retry once on connection errors."""
         last_exc: Exception | None = None
+        session_id = self._current_frontend_session_id()
         for attempt in range(2):
             try:
-                backend = await self._ensure_backend()
+                backend = await self._ensure_backend(session_id)
                 func = getattr(backend, method)
                 return await func(*args, **kwargs)
             except Exception as exc:
@@ -666,12 +717,10 @@ class AgentDecompileStdioBridge:
                 if attempt == 0 and self._is_connection_error(exc):
                     sys.stderr.write(
                         f"Backend connection error on {method}, reconnecting... "
-                        f"({type(exc).__name__}: {exc})\n",
+                        f"({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
                     )
                     # Invalidate the session so _ensure_backend creates a fresh one.
-                    if self._backend is not None:
-                        await self._backend.close()
-                    self._backend = None
+                    await self._reset_backend_session(session_id)
                     continue
                 break
         raise last_exc  # type: ignore[misc]
@@ -835,8 +884,7 @@ class AgentDecompileStdioBridge:
         except Exception:
             raise
         finally:
-            if self._backend:
-                await self._backend.close()
+            await self._reset_backend_session()
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
@@ -844,5 +892,4 @@ class AgentDecompileStdioBridge:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        if self._backend:
-            loop.create_task(self._backend.close())
+        loop.create_task(self._reset_backend_session())

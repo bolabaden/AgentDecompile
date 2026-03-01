@@ -594,7 +594,7 @@ class PyGhidraContext:
 
         logger.info(f"Initializing Chroma code collection for {program_info.name}")
         try:
-            collection = self.chroma_client.get_collection(name=program_info.name)
+            collection: Any = self.chroma_client.get_collection(name=program_info.name)
             logger.info(f"Collection '{program_info.name}' exists; skipping code ingest.")
             program_info.code_collection = collection
         except Exception:

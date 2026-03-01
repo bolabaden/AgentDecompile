@@ -9,7 +9,6 @@ import logging
 import shutil
 import socket
 import time
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -280,12 +279,12 @@ class ProjectToolProvider(ToolProvider):
         ]
 
     async def _handle_open(self, args: dict[str, Any]) -> list[types.TextContent]:
-        session_id = get_current_mcp_session_id()
-        server_host = self._get_str(args, "serverhost", "host")
-        server_port = self._get_int(args, "serverport", "port", default=0)
-        server_username = self._get_str(args, "serverusername", "username")
-        server_password = self._get_str(args, "serverpassword", "password")
-        path = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
+        session_id: str = get_current_mcp_session_id()
+        server_host: str = self._get_str(args, "serverhost", "host")
+        server_port: int = self._get_int(args, "serverport", "port", default=0)
+        server_username: str = self._get_str(args, "serverusername", "username")
+        server_password: str = self._get_str(args, "serverpassword", "password")
+        path: str = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
 
         if server_host:
             if server_port <= 0:
@@ -360,9 +359,7 @@ class ProjectToolProvider(ToolProvider):
             if server_username and server_password:
                 # PasswordClientAuthenticator provides both username and password
                 # for the JAAS callback without prompting.
-                ClientUtil.setClientAuthenticator(
-                    PasswordClientAuthenticator(server_username, server_password),
-                )
+                ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
 
             # Clear any cached (possibly stale/disconnected) adapter for this
             # host+port so that the next getRepositoryServer call creates a
@@ -388,32 +385,22 @@ class ProjectToolProvider(ToolProvider):
                 except Exception as exc:
                     exc_text = str(exc)
                     if auth_provided:
-                        raise PermissionError(
-                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
-                        ) from exc
-                    raise ValueError(
-                        f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
-                    ) from exc
+                        raise PermissionError(f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}") from exc
+                    raise ValueError(f"Repository connection failed for {server_host}:{server_port}: {exc_text}") from exc
 
                 if not server_adapter.isConnected():
                     last_error = getattr(server_adapter, "getLastConnectError", lambda: None)()
                     message = str(last_error) if last_error else "unknown authentication/connection failure"
                     if auth_provided:
-                        raise PermissionError(
-                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
-                        )
-                    raise ValueError(
-                        f"Repository connection failed for {server_host}:{server_port}: {message}",
-                    )
+                        raise PermissionError(f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}")
+                    raise ValueError(f"Repository connection failed for {server_host}:{server_port}: {message}")
 
             try:
                 repository_names_raw = server_adapter.getRepositoryNames() or []
             except Exception as exc:
                 exc_text = str(exc)
                 if auth_provided:
-                    raise PermissionError(
-                        f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
-                    ) from exc
+                    raise PermissionError(f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}") from exc
                 raise ValueError(f"Repository server connection failed for {server_host}:{server_port}: {exc}") from exc
             finally:
                 if server_username and original_user_name is not None:
@@ -562,8 +549,8 @@ class ProjectToolProvider(ToolProvider):
 
         files_discovered: int = 0
         if resolved.is_dir():
-            extensions = self._get_list(args, "extensions")
-            patterns = [e.lower() for e in extensions] if extensions else []
+            extensions: list[str] = self._get_list(args, "extensions") or []
+            patterns: list[str] = [e.lower() for e in extensions] if extensions else []
             for file_path in resolved.rglob("*"):
                 if not file_path.is_file():
                     continue
@@ -616,11 +603,11 @@ class ProjectToolProvider(ToolProvider):
         return create_success_response(info)
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
-        folder: str  = self._get_str(args, "folder", "path", default="/")
+        folder: str = self._get_str(args, "folder", "path", default="/")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
         session_id: str = get_current_mcp_session_id()
 
-        fs_path = self._get_str(args, "path")
+        fs_path: str = self._get_str(args, "path")
         if fs_path:
             base: Path = Path(fs_path).expanduser().resolve()
             if not base.exists() or not base.is_dir():
@@ -712,26 +699,26 @@ class ProjectToolProvider(ToolProvider):
 
         pull_aliases = {
             "downloadshared",
-            "downloadsharedrepository",
             "downloadsharedproject",
+            "downloadsharedrepository",
             "pullshared",
-            "pullsharedrepository",
             "pullsharedproject",
+            "pullsharedrepository",
         }
         push_aliases = {
+            "importtoshared",
             "pushshared",
-            "pushsharedrepository",
             "pushsharedproject",
+            "pushsharedrepository",
             "uploadshared",
             "uploadsharedrepository",
-            "importtoshared",
         }
         sync_aliases = {
-            "syncshared",
-            "syncsharedrepository",
-            "syncsharedproject",
-            "syncwithshared",
             "mirrorshared",
+            "syncshared",
+            "syncsharedproject",
+            "syncsharedrepository",
+            "syncwithshared",
         }
         if op in pull_aliases:
             return await self._sync_shared_repository(args, default_mode="pull")
@@ -976,14 +963,14 @@ class ProjectToolProvider(ToolProvider):
             return None
 
     async def _import_file(self, file_path: str, args: dict[str, Any]) -> list[types.TextContent]:
-        session_id = get_current_mcp_session_id()
-        source = Path(file_path).expanduser().resolve()
+        session_id: str = get_current_mcp_session_id()
+        source: Path = Path(file_path).expanduser().resolve()
         if not source.exists():
             raise ValueError(f"Import path not found: {source}")
 
-        recursive = self._get_bool(args, "recursive", default=source.is_dir())
-        max_depth = self._get_int(args, "maxdepth", default=16)
-        analyze = self._get_bool(args, "analyzeafterimport", default=False)
+        recursive: bool = self._get_bool(args, "recursive", default=source.is_dir())
+        max_depth: int = self._get_int(args, "maxdepth", default=16)
+        analyze: bool = self._get_bool(args, "analyzeafterimport", default=False)
 
         discovered: list[Path] = []
         if source.is_file():
@@ -1000,11 +987,11 @@ class ProjectToolProvider(ToolProvider):
                 discovered.append(candidate)
 
         imported: list[dict[str, Any]] = []
-        imported_count = 0
+        imported_count: int = 0
         errors: list[dict[str, Any]] = []
 
-        project_handle = None
-        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        project_handle: Any = None
+        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             project_handle = ghidra_project
             try:
@@ -1020,21 +1007,21 @@ class ProjectToolProvider(ToolProvider):
                 if project_handle is None:
                     raise RuntimeError("No active Ghidra project context available for import")
 
-                program = project_handle.importProgram(File(str(entry)))
+                program: Any = project_handle.importProgram(File(str(entry)))
                 if program is None:
                     raise RuntimeError("import_binary returned None")
 
                 from agentdecompile_cli.launcher import ProgramInfo
 
-                decompiler = None
+                decompiler: Any = None
                 try:
-                    from agentdecompile_cli.decompiled_function_analyzer import DecompiledFunctionAnalyzer
+                    from agentdecompile_cli.decompiled_function_analyzer import DecompiledFunctionAnalyzer  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                     decompiler = DecompiledFunctionAnalyzer(program)
                 except Exception:
                     decompiler = None
 
-                program_path = str(program.getDomainFile().getPathname()) if program.getDomainFile() else str(entry)
+                program_path: str = str(program.getDomainFile().getPathname()) if program.getDomainFile() else str(entry)
                 program_info = ProgramInfo(
                     name=program.getName(),
                     program=program,
@@ -1042,7 +1029,7 @@ class ProjectToolProvider(ToolProvider):
                     decompiler=decompiler,
                     metadata={},
                     ghidra_analysis_complete=True,
-                    file_path=str(entry),
+                    file_path=Path(str(entry)),
                     load_time=time.time(),
                 )
                 SESSION_CONTEXTS.set_active_program_info(session_id, program_path, program_info)
@@ -1079,11 +1066,11 @@ class ProjectToolProvider(ToolProvider):
         if not out_path:
             raise ValueError("path/newPath is required for export")
 
-        output = Path(out_path).expanduser().resolve()
+        output: Path = Path(out_path).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        program = self.program_info.program
-        payload = {
+        program: Any = self.program_info.program
+        payload: dict[str, Any] = {
             "name": program.getName(),
             "path": str(program.getDomainFile().getPathname()) if program.getDomainFile() else None,
             "language": str(program.getLanguage().getLanguageID()),
@@ -1108,8 +1095,8 @@ class ProjectToolProvider(ToolProvider):
         return normalized
 
     def _path_in_scope(self, item_path: str, source_folder: str, recursive: bool) -> bool:
-        path = self._normalize_repo_path(item_path)
-        source = self._normalize_repo_path(source_folder)
+        path: str = self._normalize_repo_path(item_path)
+        source: str = self._normalize_repo_path(source_folder)
         if source == "/":
             if recursive:
                 return True
@@ -1123,11 +1110,11 @@ class ProjectToolProvider(ToolProvider):
         return parent == source
 
     def _map_repo_path_to_local(self, repo_path: str, source_folder: str, destination_folder: str) -> str:
-        source = self._normalize_repo_path(source_folder)
-        destination = self._normalize_repo_path(destination_folder)
-        path = self._normalize_repo_path(repo_path)
+        source: str = self._normalize_repo_path(source_folder)
+        destination: str = self._normalize_repo_path(destination_folder)
+        path: str = self._normalize_repo_path(repo_path)
 
-        relative = path.lstrip("/")
+        relative: str = path.lstrip("/")
         if source != "/":
             prefix = f"{source}/"
             if path.startswith(prefix):
@@ -1138,7 +1125,7 @@ class ProjectToolProvider(ToolProvider):
         return self._normalize_repo_path(f"{destination}/{relative}")
 
     def _get_active_project_data(self):
-        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             try:
                 return ghidra_project.getProject().getProjectData()
@@ -1159,19 +1146,19 @@ class ProjectToolProvider(ToolProvider):
         return None
 
     def _ensure_project_folder(self, project_data: ProjectData, folder_path: str):
-        normalized = self._normalize_repo_path(folder_path)
+        normalized: str = self._normalize_repo_path(folder_path)
         if normalized == "/":
             return project_data.getRootFolder()
 
-        folder = project_data.getFolder(normalized)
+        folder: Any = project_data.getFolder(normalized)
         if folder is not None:
             return folder
 
-        current = project_data.getRootFolder()
+        current: Any = project_data.getRootFolder()
         for component in normalized.strip("/").split("/"):
             if not component:
                 continue
-            child = current.getFolder(component)
+            child: Any = current.getFolder(component)
             if child is None:
                 child = current.createFolder(component)
             current = child
@@ -1189,11 +1176,11 @@ class ProjectToolProvider(ToolProvider):
         return default_mode
 
     def _get_shared_session_context(self) -> tuple[str, dict[str, Any] | None, Any, str | None]:
-        session_id = get_current_mcp_session_id()
-        session = SESSION_CONTEXTS.get_or_create(session_id)
+        session_id: str = get_current_mcp_session_id()
+        session: Any = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
-        repository_adapter = handle.get("repository_adapter") if handle else None
-        repository_name = handle.get("repository_name") if handle else None
+        repository_adapter: Any = handle.get("repository_adapter") if handle else None
+        repository_name: str | None = handle.get("repository_name") if handle else None
         return session_id, handle, repository_adapter, repository_name
 
     def _pull_shared_repository_to_local(
@@ -1209,15 +1196,15 @@ class ProjectToolProvider(ToolProvider):
         destination_folder = self._normalize_repo_path(
             self._get_str(args, "newpath", "destinationpath", "destinationfolder", default="/"),
         )
-        recursive = self._get_bool(args, "recursive", default=True)
-        max_results = self._get_int(args, "maxresults", "limit", default=100000)
-        force = self._get_bool(args, "force", default=False)
-        dry_run = self._get_bool(args, "dryrun", default=False)
+        recursive: bool = self._get_bool(args, "recursive", default=True)
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
+        force: bool = self._get_bool(args, "force", default=False)
+        dry_run: bool = self._get_bool(args, "dryrun", default=False)
 
         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-        session_id = get_current_mcp_session_id()
-        items = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        session_id: str = get_current_mcp_session_id()
+        items: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
         if not items:
             items = self._list_repository_items(repository_adapter)
 
@@ -1230,18 +1217,18 @@ class ProjectToolProvider(ToolProvider):
         if max_results > 0:
             candidates = candidates[:max_results]
 
-        monitor = TaskMonitor.DUMMY
+        monitor: Any = TaskMonitor.DUMMY
         transferred: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
 
         for item in candidates:
-            repo_path = self._normalize_repo_path(str(item.get("path") or ""))
+            repo_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if not repo_path or repo_path == "/":
                 continue
 
-            target_path = self._map_repo_path_to_local(repo_path, source_folder, destination_folder)
-            existing = project_data.getFile(target_path)
+            target_path: str = self._map_repo_path_to_local(repo_path, source_folder, destination_folder)
+            existing: Any = project_data.getFile(target_path)
             if existing is not None and not force:
                 skipped.append({"sourcePath": repo_path, "targetPath": target_path, "reason": "already-exists"})
                 continue
@@ -1263,8 +1250,8 @@ class ProjectToolProvider(ToolProvider):
                 if existing is not None and force and hasattr(existing, "delete"):
                     existing.delete()
 
-                parent_folder = self._ensure_project_folder(project_data, target_parent_path)
-                remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                parent_folder: Any = self._ensure_project_folder(project_data, target_parent_path)
+                remote_domain_obj: Any = repo_item.getDomainObject(self, True, False, monitor)
                 if remote_domain_obj is None:
                     raise ValueError(f"Unable to open shared item: {repo_path}")
 
@@ -1296,19 +1283,19 @@ class ProjectToolProvider(ToolProvider):
         }
 
     def _push_local_project_to_shared(self, args: dict[str, Any], repository_name: str | None, project_data: Any) -> dict[str, Any]:
-        source_folder = self._normalize_repo_path(
+        source_folder: str = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
-        recursive = self._get_bool(args, "recursive", default=True)
-        max_results = self._get_int(args, "maxresults", "limit", default=100000)
-        dry_run = self._get_bool(args, "dryrun", default=False)
+        recursive: bool = self._get_bool(args, "recursive", default=True)
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
+        dry_run: bool = self._get_bool(args, "dryrun", default=False)
 
-        root = project_data.getRootFolder()
-        local_items = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
+        root: Any = project_data.getRootFolder()
+        local_items: list[dict[str, Any]] = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
 
         candidates: list[dict[str, Any]] = []
         for item in local_items:
-            local_path = self._normalize_repo_path(str(item.get("path") or ""))
+            local_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if local_path and self._path_in_scope(local_path, source_folder, recursive):
                 candidates.append(item)
 
@@ -1320,7 +1307,7 @@ class ProjectToolProvider(ToolProvider):
         errors: list[dict[str, Any]] = []
 
         for item in candidates:
-            source_path = self._normalize_repo_path(str(item.get("path") or ""))
+            source_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if not source_path or source_path == "/":
                 continue
 
@@ -1329,7 +1316,7 @@ class ProjectToolProvider(ToolProvider):
                 continue
 
             try:
-                source_file = project_data.getFile(source_path)
+                source_file: Any = project_data.getFile(source_path)
                 if source_file is None:
                     raise ValueError(f"Local project item not found: {source_path}")
 
@@ -1382,7 +1369,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
-        project_data = self._get_active_project_data()
+        project_data: Any = self._get_active_project_data()
         if project_data is None:
             return create_success_response(
                 {
@@ -1407,7 +1394,7 @@ class ProjectToolProvider(ToolProvider):
             )
 
         if mode == "push":
-            push_result = self._push_local_project_to_shared(args, repository_name, project_data)
+            push_result: dict[str, Any] = self._push_local_project_to_shared(args, repository_name, project_data)
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1418,8 +1405,8 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
-        pull_result = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
-        push_result = self._push_local_project_to_shared(args, repository_name, project_data)
+        pull_result: dict[str, Any] = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
+        push_result: dict[str, Any] = self._push_local_project_to_shared(args, repository_name, project_data)
 
         return create_success_response(
             {
@@ -1445,8 +1432,8 @@ class ProjectToolProvider(ToolProvider):
         return await self._sync_shared_repository(args, default_mode="pull")
 
     async def _handle_list_project_binaries(self, args: dict[str, Any]) -> list[types.TextContent]:
-        session_id = get_current_mcp_session_id()
-        session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        session_id: str = get_current_mcp_session_id()
+        session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
         if session_binaries:
             return create_success_response({"binaries": session_binaries, "count": len(session_binaries)})
 
@@ -1488,36 +1475,24 @@ class ProjectToolProvider(ToolProvider):
         monitor = TaskMonitor.DUMMY
 
         # Split program_path into folder + name
-        parts = program_path.rsplit("/", 1)
+        parts: list[str] = program_path.rsplit("/", 1)
         if len(parts) == 2:
-            folder_path = parts[0] or "/"
-            item_name = parts[1]
+            folder_path: str = parts[0] or "/"
+            item_name: str = parts[1]
         else:
             folder_path = "/"
             item_name = parts[0]
 
         # Get the repository item
-        repo_item = repository_adapter.getItem(folder_path, item_name)
+        repo_item: Any = repository_adapter.getItem(folder_path, item_name)
         if repo_item is None:
             raise ValueError(f"Program '{program_path}' not found in repository folder '{folder_path}'")
 
-        # Preferred path for shared-server mode: open repository database directly
-        # in immutable mode and wrap it as ProgramDB. This avoids DomainFile
-        # assumptions that do not hold for remote RepositoryItem instances.
-        program = None
-        try:
-            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
-            managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0)
-            db_handle = DBHandle(managed_db)
-            program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
-        except Exception as exc:
-            logger.warning(
-                "Shared ProgramDB open failed for %s (repo item %s/%s): %s",
-                program_path,
-                folder_path,
-                item_name,
-                exc,
-            )
+        # Prefer opening via ProjectData/DomainFile so the resulting Program has
+        # standard project-backed behavior (including stable decompiler support).
+        # Keep a ProgramDB fallback for environments where DomainFile checkout is
+        # unavailable.
+        program: Any = None
 
         # Open / checkout the file via the project data
         # We need to use the project's DomainFile which can be retrieved
@@ -1525,7 +1500,7 @@ class ProjectToolProvider(ToolProvider):
 
         # Use the manager's GhidraProject (set from launcher) to get project data.
         project_data: ProjectData | None = None
-        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             try:
                 project_data = ghidra_project.getProject().getProjectData()
@@ -1542,20 +1517,7 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        if program is None and project_data is None:
-            # Fallback: open the item directly via low-level API
-            try:
-                domain_obj = repo_item.getDomainObject(self, True, False, monitor)
-            except Exception:
-                # Many versions of Ghidra don't support getDomainObject on RepositoryItem
-                raise ValueError(
-                    f"Cannot checkout '{program_path}': direct RepositoryItem.getDomainObject not supported. Import the binary locally first using 'import-binary'.",
-                )
-            if domain_obj is None:
-                raise ValueError(f"Failed to open '{program_path}' from repository")
-            program = domain_obj
-        elif program is None:
-            assert project_data is not None, "project_data should be available if program is None"
+        if project_data is not None:
             # Check if the file is already in the local project
             domain_file = project_data.getFile(program_path)
             if domain_file is None:
@@ -1574,7 +1536,7 @@ class ProjectToolProvider(ToolProvider):
                 if remote_domain_obj is None:
                     raise ValueError(f"Failed to fetch remote domain object for '{program_path}'")
                 try:
-                    domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor)
+                    domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor) # pyright: ignore[reportAttributeAccessIssue]
                 finally:
                     try:
                         remote_domain_obj.release(self)
@@ -1583,17 +1545,51 @@ class ProjectToolProvider(ToolProvider):
             if domain_file is None:
                 raise ValueError(f"Failed to checkout '{program_path}' into local project")
 
-            domain_obj = domain_file.getDomainObject(self, True, False, monitor)
+            domain_obj: Any = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
             if domain_obj is None:
                 raise ValueError(f"Failed to open '{program_path}'")
             program = domain_obj
 
+        if program is None and project_data is None:
+            # Fallback: open the item directly via low-level API
+            try:
+                domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+            except Exception:
+                # Many versions of Ghidra don't support getDomainObject on RepositoryItem
+                raise ValueError(
+                    f"Cannot checkout '{program_path}': direct RepositoryItem.getDomainObject not supported. Import the binary locally first using 'import-binary'.",
+                )
+            if domain_obj is None:
+                raise ValueError(f"Failed to open '{program_path}' from repository")
+            program = domain_obj
+        if program is None:
+            try:
+                version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+                managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0) # pyright: ignore[reportAttributeAccessIssue]
+                db_handle = DBHandle(managed_db)
+                program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+                logger.info("Opened shared program '%s' via ProgramDB fallback", program_path)
+            except Exception as exc:
+                logger.warning(
+                    "Shared ProgramDB open failed for %s (repo item %s/%s): %s",
+                    program_path,
+                    folder_path,
+                    item_name,
+                    exc,
+                )
+
+        if program is None:
+            raise ValueError(f"Failed to open '{program_path}' from repository")
+
         # Build ProgramInfo
-        from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 
         decompiler = DecompInterface()
+        decomp_options = DecompileOptions()
+        decomp_options.grabFromProgram(program)
+        decompiler.setOptions(decomp_options)
         decompiler.openProgram(program)
 
         program_info = ProgramInfo(
@@ -1621,13 +1617,13 @@ class ProjectToolProvider(ToolProvider):
         items: list[dict[str, Any]] = []
 
         def _walk(folder_path: str) -> None:
-            subfolders = repository_adapter.getSubfolderList(folder_path) or []
+            subfolders: list[Any] = repository_adapter.getSubfolderList(folder_path) or []
             for subfolder in subfolders:
                 subfolder_name = str(subfolder)
                 next_path = f"{folder_path.rstrip('/')}/{subfolder_name}" if folder_path != "/" else f"/{subfolder_name}"
                 _walk(next_path)
 
-            repo_items = repository_adapter.getItemList(folder_path) or []
+            repo_items: list[Any] = repository_adapter.getItemList(folder_path) or []
             for repo_item in repo_items:
                 name = str(repo_item.getName()) if hasattr(repo_item, "getName") else str(repo_item)
                 path = f"{folder_path.rstrip('/')}/{name}" if folder_path != "/" else f"/{name}"
@@ -1647,8 +1643,8 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
 
-        binary_name = self._get_str(args, "binaryname", "binaryname", "programpath", "binary")
-        program = self.program_info.program
+        binary_name: str = self._get_str(args, "binaryname", "binaryname", "programpath", "binary")
+        program: Any = self.program_info.program
 
         if binary_name and binary_name not in (program.getName(), str(program.getDomainFile().getPathname())):
             return create_success_response({"success": False, "error": f"Binary metadata currently available for active program only: {binary_name}"})
@@ -1672,7 +1668,7 @@ class ProjectToolProvider(ToolProvider):
 
         binary_name: str = self._require_str(args, "binaryname", "programpath", "binary", name="binaryName")
         program: Any = self.program_info.program
-        domain_file = program.getDomainFile()
+        domain_file: Any = program.getDomainFile()
         if domain_file is None:
             return create_success_response({"success": False, "error": "No domain file associated with current program"})
 
@@ -1694,7 +1690,7 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_list_open_programs(self, args: dict[str, Any]) -> list[types.TextContent]:
         if self.program_info is None:
             return create_success_response({"programs": [], "count": 0})
-        program = self.program_info.program
+        program: Any = self.program_info.program
         return create_success_response(
             {
                 "programs": [
@@ -1720,9 +1716,9 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
 
-        program = self.program_info.program
-        fm = program.getFunctionManager()
-        first = None
+        program: Any = self.program_info.program
+        fm: Any = program.getFunctionManager()
+        first: Any = None
         for func in fm.getFunctions(True):
             first = func
             break
