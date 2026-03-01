@@ -1519,49 +1519,52 @@ class ProjectToolProvider(ToolProvider):
 
         if project_data is not None:
             # Check if the file is already in the local project
-            domain_file = project_data.getFile(program_path)
-            if domain_file is None:
-                # Need to checkout the file from the server into the local project
-                parent_folder = project_data.getFolder(folder_path)
-                if parent_folder is None:
-                    parent_folder = project_data.getRootFolder()
-                    # Create intermediate folders
-                    for folder_component in folder_path.strip("/").split("/"):
-                        if folder_component:
-                            child = parent_folder.getFolder(folder_component)
-                            if child is None:
-                                child = parent_folder.createFolder(folder_component)
-                            parent_folder = child
-                remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
-                if remote_domain_obj is None:
-                    raise ValueError(f"Failed to fetch remote domain object for '{program_path}'")
-                try:
-                    domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor) # pyright: ignore[reportAttributeAccessIssue]
-                finally:
+            try:
+                domain_file = project_data.getFile(program_path)
+                if domain_file is None:
+                    # Need to checkout the file from the server into the local project
+                    parent_folder = project_data.getFolder(folder_path)
+                    if parent_folder is None:
+                        parent_folder = project_data.getRootFolder()
+                        # Create intermediate folders
+                        for folder_component in folder_path.strip("/").split("/"):
+                            if folder_component:
+                                child = parent_folder.getFolder(folder_component)
+                                if child is None:
+                                    child = parent_folder.createFolder(folder_component)
+                                parent_folder = child
+                    remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                    if remote_domain_obj is None:
+                        raise ValueError(f"Failed to fetch remote domain object for '{program_path}'")
                     try:
-                        remote_domain_obj.release(self)
-                    except Exception:
-                        pass
-            if domain_file is None:
-                raise ValueError(f"Failed to checkout '{program_path}' into local project")
+                        domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                    finally:
+                        try:
+                            remote_domain_obj.release(self)
+                        except Exception:
+                            pass
+                if domain_file is not None:
+                    domain_obj = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                    if domain_obj is not None:
+                        program = domain_obj
+            except Exception as exc:
+                logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
 
-            domain_obj: Any = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
-            if domain_obj is None:
-                raise ValueError(f"Failed to open '{program_path}'")
-            program = domain_obj
-
-        if program is None and project_data is None:
+        if program is None:
             # Fallback: open the item directly via low-level API
             try:
                 domain_obj = repo_item.getDomainObject(self, True, False, monitor)
-            except Exception:
+            except Exception as exc:
                 # Many versions of Ghidra don't support getDomainObject on RepositoryItem
-                raise ValueError(
-                    f"Cannot checkout '{program_path}': direct RepositoryItem.getDomainObject not supported. Import the binary locally first using 'import-binary'.",
+                # Fall through to ProgramDB fallback below.
+                logger.info(
+                    "RepositoryItem.getDomainObject not available for '%s': %s. Trying ProgramDB fallback.",
+                    program_path,
+                    exc,
                 )
-            if domain_obj is None:
-                raise ValueError(f"Failed to open '{program_path}' from repository")
-            program = domain_obj
+                domain_obj = None
+            if domain_obj is not None:
+                program = domain_obj
         if program is None:
             try:
                 version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
