@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import os
 import re
 
 from pathlib import Path
@@ -54,6 +55,7 @@ TOOLS = [
     "list-project-binaries",
     "list-project-binary-metadata",
     "list-project-files",
+    "list-processors",
     "list-strings",
     "manage-bookmarks",
     "manage-comments",
@@ -114,6 +116,10 @@ MODE_PARAM_ALIASES: frozenset[str] = frozenset(
         "actiontype",
         "method",
         "type",
+        "analysismode",
+        "behaviormode",
+        "kind",
+        "strategy",
     },
 )
 
@@ -126,13 +132,18 @@ def _canonical_param_name(param: str) -> str:
 
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
 TOOL_PARAMS: dict[str, list[str]] = {
-    "get-data": _params("programPath", "addressOrSymbol"),
+    "get-data": _params("programPath", "addressOrSymbol", "view"),
     "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
     "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
     "manage-strings": _params(
         "programPath",
         "mode",
+        "pattern",
+        "searchString",
+        "filter",
         "query",
+        "startIndex",
+        "maxCount",
         "offset",
         "limit",
         "includeReferencingFunctions",
@@ -145,8 +156,13 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "offset",
         "limit",
         "libraryName",
+        "startIndex",
+        "maxReferencers",
         "includeRefContext",
         "includeDataRefs",
+        "contextLines",
+        "importName",
+        "includeFlow",
     ),
     "get-functions": _params(
         "programPath",
@@ -159,6 +175,10 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "includeComments",
         "includeIncomingReferences",
         "includeReferenceContext",
+        "filterDefaultNames",
+        "filterByTag",
+        "untagged",
+        "verbose",
     ),
     "manage-symbols": _params(
         "programPath",
@@ -167,6 +187,8 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "labelName",
         "newName",
         "libraryFilter",
+        "startIndex",
+        "maxCount",
         "offset",
         "limit",
         "groupByLibrary",
@@ -180,6 +202,8 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "archiveName",
         "categoryPath",
         "includeSubcategories",
+        "startIndex",
+        "maxCount",
         "offset",
         "limit",
         "dataTypeString",
@@ -203,6 +227,15 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "force",
         "nameFilter",
         "includeBuiltIn",
+        "fieldName",
+        "dataType",
+        "offset",
+        "comment",
+        "bitfield",
+        "newDataType",
+        "newFieldName",
+        "newComment",
+        "newLength",
     ),
     "manage-comments": _params(
         "programPath",
@@ -216,32 +249,53 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "start",
         "end",
         "commentTypes",
-        "query",
+        "searchText",
+        "pattern",
         "caseSensitive",
-        "limit",
+        "maxResults",
         "overrideMaxFunctionsLimit",
+        "addressRange",
     ),
-    "manage-bookmarks": _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "query", "limit", "removeAll"),
+    "manage-bookmarks": _params(
+        "programPath",
+        "mode",
+        "addressOrSymbol",
+        "type",
+        "category",
+        "comment",
+        "bookmarks",
+        "searchText",
+        "maxResults",
+        "removeAll",
+        "addressRange",
+        "categories",
+        "types",
+    ),
     "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "get-call-graph": _params(
         "programPath",
         "functionIdentifier",
         "mode",
+        "depth",
         "maxDepth",
         "direction",
+        "startIndex",
         "maxCallers",
         "includeCallContext",
         "functionAddresses",
     ),
-    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "limit", "includeSmallValues", "topN"),
-    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "limit"),
+    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
+    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     "list-functions": _params(
         "programPath",
         "mode",
         "query",
+        "searchString",
         "minReferenceCount",
+        "startIndex",
+        "maxCount",
         "offset",
         "limit",
         "filterDefaultNames",
@@ -284,7 +338,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "propagateComments",
         "filterDefaultNames",
         "filterByTag",
-        "limit",
+        "maxFunctions",
         "batchSize",
     ),
     "get-current-program": _params("programPath"),
@@ -304,9 +358,19 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "force",
         "dryRun",
     ),
-    "checkin-program": _params("programPath", "message", "keepCheckedOut"),
-    "analyze-program": _params("programPath"),
-    "change-processor": _params("programPath", "languageId", "compilerSpecId"),
+    "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
+    "analyze-program": _params(
+        "programPath",
+        "forceAnalysis",
+        "verbose",
+        "noSymbols",
+        "gdts",
+        "programOptions",
+        "threaded",
+        "maxWorkers",
+        "waitForAnalysis",
+    ),
+    "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
     "manage-files": _params(
         "mode",
         "path",
@@ -353,12 +417,25 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "open-program-in-code-browser": _params("programPath"),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
     "capture-agentdecompile-debug-info": _params("message"),
-    "search-code": _params("binaryName", "query", "limit"),
-    "list-cross-references": _params("binaryName", "nameOrAddress"),
+    "search-code": _params(
+        "programPath",
+        "pattern",
+        "maxResults",
+        "offset",
+        "caseSensitive",
+        "searchMode",
+        "includeFullCode",
+        "previewLength",
+        "similarityThreshold",
+        "overrideMaxFunctionsLimit",
+    ),
+    "list-cross-references": _params("programPath", "address", "direction", "maxResults"),
     "gen-callgraph": _params(
-        "binaryName",
-        "functionNameOrAddress",
+        "programPath",
+        "functionIdentifier",
+        "depth",
         "direction",
+        "format",
         "displayType",
         "includeRefs",
         "maxDepth",
@@ -367,7 +444,20 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "topLayers",
         "bottomLayers",
     ),
-    "decompile-function": _params("binaryName", "name"),
+    "decompile-function": _params(
+        "programPath",
+        "functionIdentifier",
+        "offset",
+        "limit",
+        "includeComments",
+        "includeIncomingReferences",
+        "includeReferenceContext",
+        "includeDisassembly",
+        "includeCallers",
+        "includeCallees",
+        "signatureOnly",
+        "timeout",
+    ),
     "export": _params(
         "programPath",
         "outputPath",
@@ -378,17 +468,28 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "includeComments",
         "tags",
     ),
-    "import-binary": _params("binaryPath"),
-    "list-exports": _params("binaryName", "query", "offset", "limit"),
-    "list-imports": _params("binaryName", "query", "offset", "limit"),
+    "import-binary": _params(
+        "path",
+        "destinationFolder",
+        "recursive",
+        "maxDepth",
+        "analyzeAfterImport",
+        "stripLeadingPath",
+        "stripAllContainerPath",
+        "mirrorFs",
+        "enableVersionControl",
+    ),
+    "list-exports": _params("programPath", "filter", "maxResults", "offset", "startIndex"),
+    "list-imports": _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
     "list-project-binaries": [],
-    "list-project-binary-metadata": _params("binaryName"),
-    "delete-project-binary": _params("binaryName"),
-    "read-bytes": _params("binaryName", "address", "size"),
-    "search-strings": _params("binaryName", "query", "limit"),
-    "search-symbols-by-name": _params("binaryName", "query", "offset", "limit"),
-    "list-strings": _params("binaryName", "query", "limit"),
-    "search-symbols": _params("binaryName", "query", "offset", "limit"),
+    "list-project-binary-metadata": _params("programPath"),
+    "delete-project-binary": _params("programPath", "confirm"),
+    "list-processors": _params("filter"),
+    "read-bytes": _params("programPath", "address", "length"),
+    "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
+    "search-symbols-by-name": _params("programPath", "query", "maxResults", "offset"),
+    "list-strings": _params("programPath", "filter", "maxResults", "offset"),
+    "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
     "execute-script": _params("code", "programPath", "timeout"),
 }
 
@@ -403,6 +504,7 @@ TOOL_ALIASES: dict[str, str] = {}
 # Alias tools accepted for compatibility but intentionally not advertised.
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
+    # Canonical tools forwarded to parent tools
     "create-label": "manage-symbols",
     "download-shared-repository": "sync-shared-project",
     "sync-shared-repository": "sync-shared-project",
@@ -414,10 +516,102 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "list-exports": "manage-symbols",
     "list-imports": "manage-symbols",
     "list-strings": "manage-strings",
-    "read-bytes": "inspect-memory",
     "search-strings": "manage-strings",
     "search-symbols": "manage-symbols",
     "search-symbols-by-name": "manage-symbols",
+    # analyze-data-flow overloads
+    "find-variable-accesses": "analyze-data-flow",
+    "trace-data-flow-backward": "analyze-data-flow",
+    "trace-data-flow-forward": "analyze-data-flow",
+    # analyze-vtables overloads
+    "analyze-vtable": "analyze-vtables",
+    "find-vtable-callers": "analyze-vtables",
+    "find-vtables-containing-function": "analyze-vtables",
+    # capture-agentdecompile-debug-info overloads
+    "capture-reva-debug-info": "capture-agentdecompile-debug-info",
+    # decompile-function overloads/synonyms
+    "get-decompilation": "decompile-function",
+    # get-call-graph overloads
+    "find-common-callers": "get-call-graph",
+    "get-call-tree": "get-call-graph",
+    "get-callers-decompiled": "get-call-graph",
+    # get-functions overloads/synonyms
+    "get-function-by-address": "get-functions",
+    "find-function": "get-functions",
+    "get-all-functions": "list-functions",
+    # get-references overloads
+    "find-cross-references": "get-references",
+    "find-import-references": "get-references",
+    "get-referencers-decompiled": "get-references",
+    "resolve-thunk": "get-references",
+    # import-binary overloads/legacy
+    "import-file": "import-binary",
+    # inspect-memory overloads
+    "get-memory-blocks": "inspect-memory",
+    "read-memory": "inspect-memory",
+    # list-functions overloads
+    "get-function-count": "list-functions",
+    "get-functions-by-similarity": "list-functions",
+    "get-undefined-function-candidates": "list-functions",
+    "list-methods": "list-functions",
+    # manage-bookmarks overloads/legacy
+    "set-bookmark": "manage-bookmarks",
+    "get-bookmarks": "manage-bookmarks",
+    "remove-bookmark": "manage-bookmarks",
+    "search-bookmarks": "manage-bookmarks",
+    "list-bookmark-categories": "manage-bookmarks",
+    # manage-comments overloads/legacy
+    "set-comment": "manage-comments",
+    "get-comments": "manage-comments",
+    "remove-comment": "manage-comments",
+    "search-comments": "manage-comments",
+    "set-decompilation-comment": "manage-comments",
+    # manage-data-types overloads
+    "get-data-type-archives": "manage-data-types",
+    "get-data-type-by-string": "manage-data-types",
+    "get-data-types": "manage-data-types",
+    # manage-function overloads/legacy
+    "rename-function": "manage-function",
+    "rename-function-by-address": "manage-function",
+    "set-function-prototype": "manage-function",
+    "set-local-variable-type": "manage-function",
+    "rename-variable": "manage-function",
+    "change-variable-datatypes": "manage-function",
+    "create-function": "manage-function",
+    "rename-variables": "manage-function",
+    # manage-function-tags overloads
+    "function-tags": "manage-function-tags",
+    # manage-strings overloads
+    "get-strings": "manage-strings",
+    "get-strings-by-similarity": "manage-strings",
+    "get-strings-count": "manage-strings",
+    "search-strings-regex": "manage-strings",
+    # manage-structures overloads
+    "add-structure-field": "manage-structures",
+    "apply-structure": "manage-structures",
+    "create-structure": "manage-structures",
+    "delete-structure": "manage-structures",
+    "get-structure-info": "manage-structures",
+    "list-structures": "manage-structures",
+    "modify-structure-field": "manage-structures",
+    "modify-structure-from-c": "manage-structures",
+    "parse-c-header": "manage-structures",
+    "parse-c-structure": "manage-structures",
+    "validate-c-structure": "manage-structures",
+    # manage-symbols overloads/legacy
+    "list-classes": "manage-symbols",
+    "list-namespaces": "manage-symbols",
+    "rename-data": "manage-symbols",
+    "get-symbols": "manage-symbols",
+    "get-symbols-count": "manage-symbols",
+    # search-code overloads
+    "search-decompilation": "search-code",
+    # search-constants overloads
+    "find-constant-uses": "search-constants",
+    "find-constants-in-range": "search-constants",
+    "list-common-constants": "search-constants",
+    # search-symbols legacy
+    "search-functions-by-name": "search-symbols",
 }
 
 # TODO: GUI Only tools/commands
@@ -607,12 +801,63 @@ TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
 TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
 
-# Canonical advertised tools only (exclude aliases + disabled GUI-only entries).
-ADVERTISED_TOOLS: list[str] = [
-    tool
-    for tool in TOOLS
-    if tool not in DISABLED_GUI_ONLY_TOOLS and tool not in NON_ADVERTISED_TOOL_ALIASES
-]
+# Minimal advertised surface (MCP + CLI) by default.
+# All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
+DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
+    "analyze-data-flow",
+    "analyze-program",
+    "analyze-vtables",
+    "change-processor",
+    "checkin-program",
+    "execute-script",
+    "get-call-graph",
+    "get-functions",
+    "get-references",
+    "inspect-memory",
+    "list-functions",
+    "list-project-files",
+    "manage-bookmarks",
+    "manage-comments",
+    "manage-data-types",
+    "manage-files",
+    "manage-function-tags",
+    "manage-function",
+    "manage-strings",
+    "manage-structures",
+    "manage-symbols",
+    "match-function",
+    "open",
+    "read-bytes",
+    "search-constants",
+)
+
+_LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
+    "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
+    "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
+)
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _legacy_tools_advertised() -> bool:
+    return any(_is_truthy_env(os.getenv(var_name)) for var_name in _LEGACY_TOOLS_ENV_VARS)
+
+
+def _build_advertised_tools() -> list[str]:
+    canonical_visible = [tool for tool in TOOLS if tool not in DISABLED_GUI_ONLY_TOOLS]
+    default_set = {normalize_identifier(tool) for tool in DEFAULT_ADVERTISED_TOOLS}
+
+    if _legacy_tools_advertised():
+        return canonical_visible
+
+    return [tool for tool in canonical_visible if normalize_identifier(tool) in default_set]
+
+
+ADVERTISED_TOOLS: list[str] = _build_advertised_tools()
 
 _ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ("action", "operation")
 

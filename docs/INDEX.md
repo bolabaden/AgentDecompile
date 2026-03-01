@@ -34,6 +34,7 @@
    - Full `export` tool reference
    - Full `import-binary` tool reference
    - Parameter synonyms (for normalization)
+  - Non-default tool names documented as legacy compatibility names
    - API references to Ghidra documentation
 
 5. **[../MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md)** - MCP Protocol Guide

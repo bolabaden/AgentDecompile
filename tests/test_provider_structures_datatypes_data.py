@@ -3,7 +3,7 @@
 Covers:
 - manage-structures schema and action enum
 - manage-data-types schema and action enum
-- get-data, apply-data-type, create-label schemas
+- get-data and apply-data-type schemas
 - HANDLERS normalization
 - Error handling without program
 """
@@ -200,7 +200,6 @@ class TestDataProviderSchema:
         names = {t.name for t in p.list_tools()}
         assert "get-data" in names
         assert "apply-data-type" in names
-        assert "create-label" in names
 
     def test_get_data_format_enum(self):
         p = _make_data_provider()
@@ -216,14 +215,6 @@ class TestDataProviderSchema:
         assert "addressOrSymbol" in props
         assert "dataType" in props
 
-    def test_create_label_params(self):
-        p = _make_data_provider()
-        tool = next(t for t in p.list_tools() if t.name == "create-label")
-        props = tool.inputSchema["properties"]
-        assert "addressOrSymbol" in props
-        assert "labelName" in props
-
-
 class TestDataProviderHandlers:
     def test_handler_keys_normalized(self):
         for key in DataToolProvider.HANDLERS:
@@ -234,10 +225,6 @@ class TestDataProviderHandlers:
 
     def test_applydatatype_present(self):
         assert "applydatatype" in DataToolProvider.HANDLERS
-
-    def test_createlabel_present(self):
-        assert "createlabel" in DataToolProvider.HANDLERS
-
 
 class TestDataProviderValidation:
     @pytest.mark.asyncio

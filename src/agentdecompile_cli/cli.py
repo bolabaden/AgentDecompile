@@ -51,7 +51,9 @@ from agentdecompile_cli.executor import (
 )
 from agentdecompile_cli.ghidrecomp.decompile import decompile
 from agentdecompile_cli.registry import (
+    ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,
+    TOOLS,
     TOOL_PARAMS,
     RESOURCE_URI_DEBUG_INFO,
     RESOURCE_URI_PROGRAMS,
@@ -591,7 +593,8 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
 
 def _create_dynamic_commands(cli_group: click.Group) -> None:
     """Dynamically create CLI commands from the tool registry."""
-    for tool_name in tool_registry.get_tools():
+    advertised_set = set(ADVERTISED_TOOLS)
+    for tool_name in TOOLS:
         tool_params = tool_registry.get_tool_params(tool_name)
         snake_params = [to_snake_case(param) for param in tool_params]
         params_help = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
@@ -643,7 +646,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             )(tool_command)
 
         command_name = tool_name
-        hidden_from_help = tool_name in _TOOLS_WITH_CURATED_COMMANDS
+        hidden_from_help = tool_name in _TOOLS_WITH_CURATED_COMMANDS or tool_name not in advertised_set
 
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
