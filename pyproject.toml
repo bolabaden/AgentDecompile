@@ -73,6 +73,8 @@ mcp_agentdecompile    = "agentdecompile_cli.__main__:main"
 mcp-agentdecompile    = "agentdecompile_cli.__main__:main"
 # STDIO/Streamable-http/sse server entry point.
 agentdecompile-server = "agentdecompile_cli.server:main"
+# Proxy server entry point.
+agentdecompile-proxy  = "agentdecompile_cli.proxy_server:main"
 
 [project.optional-dependencies]
 semantic = [

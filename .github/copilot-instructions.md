@@ -102,6 +102,38 @@ This project intentionally accepts messy client input so humans and agents can u
 - `tests/test_normalization_combinatorial.py` passes.
 - Affected provider tests pass.
 
+### Parameter Overload / Mix-Match Rule (CRITICAL)
+
+**Absolute Rule: parameters are interchangeable across all tool names, including aliases.**
+
+Many tools share a common alias target (e.g. `search-symbols-by-name` → `manage-symbols`, `list-imports` → `manage-symbols`). When a tool name resolves to another via `NON_ADVERTISED_TOOL_ALIASES`, **all parameters supplied by the caller MUST be preserved**, even if they are not in the resolved tool's advertised param set. This is a universal pattern that is always in effect implicitly.
+
+**Why this matters:**
+- `search-symbols-by-name` defines a `query` parameter.
+- It resolves to `manage-symbols`, which does NOT advertise `query` in its own param set.
+- If `parse_arguments()` only keeps params matching the resolved tool's schema, `query` is silently dropped → wrong results.
+- The same applies to ANY parameter on ANY aliased/forwarded tool.
+
+**Implementation (in `registry.py` `parse_arguments()`):**
+After building `parsed_args` from the resolved tool's recognized params + aliases, passthrough ALL remaining caller-supplied argument keys whose normalized form is not already present:
+```python
+parsed_norms = {normalize_identifier(k) for k in parsed_args}
+for key, value in arguments.items():
+    if normalize_identifier(key) not in parsed_norms:
+        parsed_args[key] = value
+```
+
+**Rules:**
+1. `parse_arguments()` MUST passthrough unrecognized params — never silently drop them.
+2. Tool handlers read params via `_get*` / `_require*` helpers which normalize keys, so passthrough params are automatically accessible.
+3. This overload behavior does NOT affect how tools are advertised (schemas remain per-tool).
+4. When adding new aliased tools, you do NOT need to duplicate params into the target tool's schema — passthrough handles it.
+
+**Forbidden:**
+- Filtering/dropping unknown params in `parse_arguments()`.
+- Requiring every param to be declared in the resolved tool's param set.
+- Adding duplicate param definitions to target tools just to satisfy parsing.
+
 ## Vendor Source Integration
 
 Each tool merges compatible implementations from:

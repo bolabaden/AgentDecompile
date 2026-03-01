@@ -47,7 +47,7 @@ def test_stdio_bridge_accepts_url():
     assert bridge.port is None
     assert_url_shape(bridge.url, scheme="http", host="example.com:9000", path="/mcp/message")
     assert bridge.url == "http://example.com:9000/mcp/message"
-    assert bridge._streamable_http_headers is None
+    assert bridge._streamable_http_headers is None  # pyright: ignore[reportAttributeAccessIssue]  Only set for HTTP/1.1 with streaming support, not for HTTP/2 or non-streaming
     assert bridge.url.startswith("http://example.com")
     assert_bool_invariants(bridge.port is None)
 
