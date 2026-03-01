@@ -16,9 +16,8 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
-
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from mcp import types
 
@@ -26,7 +25,15 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
-from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOL_PARAM_ALIASES, normalize_identifier, resolve_tool_name, to_snake_case
+from agentdecompile_cli.registry import (
+    ADVERTISED_TOOL_PARAMS,
+    ADVERTISED_TOOLS,
+    DISABLED_GUI_ONLY_TOOLS,
+    TOOL_PARAM_ALIASES,
+    normalize_identifier,
+    resolve_tool_name,
+    to_snake_case,
+)
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import ProgramInfo
@@ -157,17 +164,17 @@ _ARRAY_PARAMS = frozenset(
 
 _SELECTOR_PARAM_ALIASES = frozenset(
     {
-        "mode",
         "action",
-        "operation",
-        "command",
-        "op",
-        "task",
-        "intent",
-        "verb",
         "actiontype",
+        "command",
+        "intent",
         "method",
+        "mode",
+        "op",
+        "operation",
+        "task",
         "type",
+        "verb",
     },
 )
 
@@ -189,7 +196,15 @@ def _infer_param_schema(param_name: str) -> dict[str, Any]:
     if norm in _BOOL_PREFIX_EXCEPTIONS:
         return {"type": "string"}
     # Check prefixes for booleans
-    for prefix in ("include", "filter", "enable", "propagate", "strip", "mirror", "override"):
+    for prefix in (
+        "enable",
+        "filter",
+        "include",
+        "mirror",
+        "override",
+        "propagate",
+        "strip",
+    ):
         if norm.startswith(prefix) and len(norm) > len(prefix) and norm not in _BOOL_PREFIX_EXCEPTIONS:
             return {"type": "boolean"}
     return {"type": "string"}
@@ -299,23 +314,25 @@ class ToolProvider:
         arguments: dict[str, Any],
     ) -> list[types.TextContent]:
         """Normalize name + args, dispatch to handler, catch errors."""
-        resolved_name = resolve_tool_name(name) or name
-        norm_name = n(resolved_name)
-
-        handler_method_name = self.HANDLERS.get(norm_name)
+        norm_name: str = n(name)
+        handler_method_name: str | None = self.HANDLERS.get(norm_name)
+        if handler_method_name is None:
+            resolved_name = resolve_tool_name(name) or name
+            norm_name = n(resolved_name)
+            handler_method_name = self.HANDLERS.get(norm_name)
         if handler_method_name is None:
             raise NotImplementedError(f"Unknown tool: {name}")
 
-        handler = getattr(self, handler_method_name)
+        handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] = getattr(self, handler_method_name)
 
         # Normalize ALL argument keys – the ONE place normalization happens.
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
 
         # Tool-specific parameter synonym bridging from TOOLS_LIST.md.
-        alias_map = TOOL_PARAM_ALIASES.get(norm_name, {})
+        alias_map: dict[str, list[str]] = TOOL_PARAM_ALIASES.get(norm_name, {})
         if alias_map:
             for key, value in list(norm_args.items()):
-                targets = alias_map.get(key)
+                targets: list[str] | None = alias_map.get(key)
                 if not targets:
                     continue
                 for target in targets:
@@ -341,7 +358,7 @@ class ToolProvider:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get(args: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    def _get(args: dict[str, Any], *keys: str, default: Any | None = None) -> Any:
         """First non-None value matching any *keys* (normalized before lookup)."""
         for k in keys:
             v = args.get(n(k))
@@ -714,7 +731,7 @@ class ToolProviderManager:
 
                 advertised_properties[snake_param] = provider_param_schema or _infer_param_schema(param)
 
-            required_norm = {n(str(item)) for item in required}
+            required_norm: set[str] = {n(str(item)) for item in required}
             advertised_required: list[str] = []
             for param in canonical_params:
                 normalized_param = n(param)
@@ -747,12 +764,12 @@ class ToolProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
-        resolved_name = resolve_tool_name(name) or name
+        resolved_name: str = resolve_tool_name(name) or name
         if resolved_name in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
                 f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",
             )
-        session_id = get_current_mcp_session_id()
+        session_id: str = get_current_mcp_session_id()
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
         norm_name = n(resolved_name)
@@ -791,7 +808,7 @@ class ToolProviderManager:
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
 
-        return await provider.call_tool(resolved_name, arguments)
+        return await provider.call_tool(name, arguments)
 
     def program_opened(self, program_info_or_path: ProgramInfo | os.PathLike | str) -> None:
         if isinstance(program_info_or_path, str):

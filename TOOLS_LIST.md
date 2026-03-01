@@ -1,6 +1,6 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 52 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all 42 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
 **Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names, vendor forwards, and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
@@ -66,6 +66,7 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
     - [`suggest`](#suggest)
   - [Legacy Tool Name Forwards](#legacy-tool-name-forwards)
     - [`import-file` (forwards to `import-binary`)](#import-file-forwards-to-import-binary)
+    - [`read-bytes` (forwards to `inspect-memory`)](#read-bytes-forwards-to-inspect-memory)
     - [`list-classes` (forwards to `manage-symbols`)](#list-classes-forwards-to-manage-symbols)
     - [`list-namespaces` (forwards to `manage-symbols`)](#list-namespaces-forwards-to-manage-symbols)
     - [`rename-data` (forwards to `manage-symbols`)](#rename-data-forwards-to-manage-symbols)
@@ -410,37 +411,15 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - **PyGhidra**: `with pyghidra.open_project(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 ### `create-label`
 
-**Description**: Creates or modifies a label (symbol) at a specific address or symbol location, allowing naming of code, data, or functions for improved readability. This tool supports setting primary labels and handles namespace conflicts. It is fundamental for manual annotation during analysis, enabling better decompilation and reference tracking. Transaction-safe, it integrates with symbol management for batch operations.
+**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="create_label"`.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `addressOrSymbol` (string, required): Address or existing symbol to label.
-  - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
-- `labelName` (string, required): New label name.
-  - Synonyms: `labelName`, `labeln`.
-- `setAsPrimary` (boolean, optional): Set as primary label (default: true).
-  - Synonyms: `address`, `symbol`, `name`, `primary`, `setAsPrimary`, `setap`.
+**Parameters**: Same as `manage-symbols`.
+  - Synonyms: All from `manage-symbols`.
+
 **Overloads**:
 - `create-label(programPath, addressOrSymbol, labelName, setAsPrimary)` from `vendor_reva` → forwards to `create-label`.
 
-**Synonyms**: `create-label`, `tool_create_label`, `create_label_tool`, `cmd_create_label`, `run_create_label`, `do_create_label`, `api_create_label`, `mcp_create_label`, `ghidra_create_label`, `agentdecompile_create_label`, `create_label_command`, `create_label_action`, `create_label_op`, `create_label_task`, `execute_create_label`
-
-**Examples**:
-- Create label: `create-label programPath="/bin.exe" addressOrSymbol="0x401000" labelName="main_entry"`.
-
-**API References**:
-- **`ghidra.program.model.symbol.SymbolTable`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SymbolTable.html) | [GitHub source (v12)](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Framework/SoftwareModeling/src/main/java/ghidra/program/model/symbol/SymbolTable.java)
-  - `createLabel(Address addr, String name, SourceType source)` → `Symbol`
-  - `createLabel(Address addr, String name, Namespace namespace, SourceType source)` → `Symbol`
-  - `getPrimarySymbol(Address addr)` → `Symbol`
-- **`ghidra.program.flatapi.FlatProgramAPI`** — [GitHub source (v12)](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/Base/src/main/java/ghidra/program/flatapi/FlatProgramAPI.java)
-  - `createLabel(Address addr, String name, boolean makePrimary, SourceType source)` → `Symbol`
-  - `removeSymbol(Address addr, String name)` → `boolean`
-- **`ghidra.program.model.symbol.SourceType`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/program/model/symbol/SourceType.html)
-  - Values: `DEFAULT`, `ANALYSIS`, `IMPORTED`, `USER_DEFINED`
-- **PyGhidra**: `sym = currentProgram.getSymbolTable().createLabel(toAddr('0x401000'), 'myLabel', SourceType.USER_DEFINED)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
-- **Community**: [RE.SE: "Ghidra Headless Analyzer - Create Functions"](https://reverseengineering.stackexchange.com/questions/22880/ghidra-headless-analyzer-create-functions)
+**Examples**: `create-label programPath="/bin.exe" addressOrSymbol="0x401000" labelName="main_entry"`.
 ### `decompile-function`
 
 **Description**: Decompiles a specific function to high-level C-like pseudocode, supporting line limits, offset starting, and inclusion of comments or references. This tool leverages Ghidra's decompiler for readable code views, aiding in understanding logic without assembly. It handles timeouts, simplification options, and batch decompilation for multiple functions. Essential for algorithm reverse engineering, with options to include caller/callee context for broader insight.
@@ -564,38 +543,15 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `gen-callgraph`
 
-**Description**: Generates a call graph for the program or specific functions, using Ghidra's graph services to build caller/callee relationships. This tool supports formats like JSON or DOT for visualization, with depth limits and direction options. It is key for understanding program structure, identifying key functions, and tracing execution paths. Integrates with ChromaDB for caching and querying large graphs.
+**Description**: Legacy compatibility forward for pyghidra naming.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `functionIdentifier` (string, optional): Function to center the graph on.
-  - Synonyms: `functionIdentifier`, `functioni`, `function`, `functionId`, `identifier`, `functionAddress`, `functionNameOrAddress`, `function_name`, `function_address`
-- `depth` (integer, optional): Graph depth (default: unlimited).
-  - Synonyms: `depth`
-- `direction` (string, optional): `callers`, `callees`, or `both` (default: both).
-  - Synonyms: `direction`, `dir`, `flow`, `traversalDirection`, `walkDirection`, `orientation`, `edgeDirection`, `pathDirection`, `scanDirection`, `cgDirection`.
-- `format` (string, optional): Output format (`json`, `dot`, default: json).
-  - Synonyms: `function`, `maxDepth`, `mode`, `outputFormat`, `format`
-- `displayType` (string, optional): Graph display type (e.g., tree, flat, graph).
-  - Synonyms: `displayType`, `cgDisplayType`, `display_type`.
-- `condenseThreshold` (integer, optional): Node count threshold for condensing (default: unlimited).
-  - Synonyms: `condenseThreshold`, `condense_threshold`.
-- `topLayers` (integer, optional): Number of top layers to show.
-  - Synonyms: `topLayers`, `top_layers`.
-- `bottomLayers` (integer, optional): Number of bottom layers to show.
-  - Synonyms: `bottomLayers`, `bottom_layers`.
-- `maxRunTime` (integer, optional): Maximum run time in seconds.
-  - Synonyms: `maxRunTime`, `max_run_time`.
-- `includeRefs` (boolean, optional): Include reference edges (default: true).
-  - Synonyms: `includeRefs`.
+**Parameters**: Same as `get-call-graph`.
+  - Synonyms: All from `get-call-graph`.
+
 **Overloads**:
 - `gen_callgraph(binary_name, function_name, direction, display_type, condense_threshold, top_layers, bottom_layers, max_run_time)` from `vendor_pyghidra` → forwards to `gen-callgraph`.
 
-**Synonyms**: `gen-callgraph`, `tool_gen_callgraph`, `gen_callgraph_tool`, `cmd_gen_callgraph`, `run_gen_callgraph`, `do_gen_callgraph`, `api_gen_callgraph`, `mcp_gen_callgraph`, `ghidra_gen_callgraph`, `agentdecompile_gen_callgraph`, `gen_callgraph_command`, `gen_callgraph_action`, `gen_callgraph_op`, `gen_callgraph_task`, `execute_gen_callgraph`, `gen_callgraph`
-
-**Examples**:
-- Generate full call graph: `gen-callgraph programPath="/bin.exe" format="dot"`.
+**Examples**: `gen-callgraph programPath="/bin.exe" mode="graph" functionIdentifier="main"`.
 ### `get-call-graph`
 
 **Description**: Retrieves caller/callee relationships as graphs, trees, sets, decompiled callers, or common callers for functions. Modes support visualization (graph/tree), listing (callers/callees), or advanced queries (common_callers). This tool is indispensable for navigation, dependency analysis, and bottleneck identification in call chains. Outputs JSON structures with addresses and optional decompilation context, with pagination for large results.
@@ -843,48 +799,28 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - Inspect bytes: `inspect-memory programPath="/bin.exe" mode="bytes" address="0x404000" length=128`.
 ### `list-cross-references`
 
-**Description**: Lists all cross-references to or from addresses, similar to `get-references` but focused on code xrefs with optional filtering. This tool aids in dependency mapping and usage analysis, outputting addresses and types.
+**Description**: Legacy compatibility forward.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `address` (string, required): Target address.
-  - Synonyms: `address`, `addr`, `startAddress`, `targetAddress`, `location`, `offsetAddress`, `addressValue`, `memAddress`, `va`, `nameOrAddress`, `name_or_address`.
-- `direction` (string, optional): `to` or `from` (default: to).
-  - Synonyms: `direction`, `dir`, `flow`, `traversalDirection`, `walkDirection`, `orientation`, `edgeDirection`, `pathDirection`, `scanDirection`.
-- `maxResults` (integer, optional): Max results (default: 100).
-  - Synonyms: `target`, `dir`, `limit`, `maxResults`, `maxr`.
+**Parameters**: Same as `get-references`.
+  - Synonyms: All from `get-references`.
+
 **Overloads**:
 - `list_cross_references(binary_name, name_or_address)` from `vendor_pyghidra` → forwards to `list-cross-references`.
 
-**Synonyms**: `list-cross-references`, `tool_list_cross_references`, `list_cross_references_tool`, `cmd_list_cross_references`, `run_list_cross_references`, `do_list_cross_references`, `api_list_cross_references`, `mcp_list_cross_references`, `ghidra_list_cross_references`, `agentdecompile_list_cross_references`, `list_cross_references_command`, `list_cross_references_action`, `list_cross_references_op`, `list_cross_references_task`, `execute_list_cross_references`, `list_cross_references`
-
-**Examples**:
-- List xrefs: `list-cross-references programPath="/bin.exe" address="0x401000" direction="to"`.
+**Examples**: `list-cross-references programPath="/bin.exe" target="0x401000"`.
 ### `list-exports`
 
-**Description**: Lists exported symbols from the program, including functions and data, with filtering and pagination. This tool is essential for analyzing shared libraries or DLLs, identifying public interfaces, and checking for dynamic linking.
+**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="exports"`.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `filter` (string, optional): Export name filter.
-  - Synonyms: `filter`, `query`
-- `maxResults` (integer, optional): Max results (default: 100).
-  - Synonyms: `pattern`, `limit`, `maxResults`, `maxr`.
-- `offset` (integer, optional): Result offset for pagination.
-  - Synonyms: `offset`, `skip`, `cursor`, `begin`, `position`.
-- `startIndex` (integer, optional): Alias for offset.
-  - Synonyms: `startIndex`, `starti`.
+**Parameters**: Same as `manage-symbols`.
+  - Synonyms: All from `manage-symbols`.
+
 **Overloads**:
 - `list_exports(offset, limit)` from `vendor_ghidramcp` → forwards to `list-exports`.
 - `list_exports(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `list-exports`.
 - `list-exports(programPath, maxResults, startIndex)` from `vendor_reva` → forwards to `list-exports`.
 
-**Synonyms**: `list-exports`, `tool_list_exports`, `list_exports_tool`, `cmd_list_exports`, `run_list_exports`, `do_list_exports`, `api_list_exports`, `mcp_list_exports`, `ghidra_list_exports`, `agentdecompile_list_exports`, `list_exports_command`, `list_exports_action`, `list_exports_op`, `list_exports_task`, `execute_list_exports`, `list_exports`
-
-**Examples**:
-- List exports: `list-exports programPath="/dll.exe" filter="api_*"`.
+**Examples**: `list-exports programPath="/dll.exe"`.
 ### `list-functions`
 
 **Description**: Lists all or filtered functions in the program, with options for tagging, reference counts, and verbose metadata. This tool supports querying by name, tag, or reference count, making it ideal for overviewing program structure or finding untagged functions for further analysis.
@@ -934,32 +870,17 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 
 ### `list-imports`
 
-**Description**: Lists imported symbols, libraries, and functions, with filtering for external references. This tool helps identify dependencies, potential vulnerabilities in libraries, and dynamic behaviors.
+**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="imports"`.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `libraryFilter` (string, optional): Library name filter.
-  - Synonyms: `libraryFilter`, `libraryf`.
-- `maxResults` (integer, optional): Max results (default: 100).
-  - Synonyms: `filter`, `limit`, `maxResults`, `maxr`.
-- `offset` (integer, optional): Result offset for pagination.
-  - Synonyms: `offset`, `skip`, `cursor`, `begin`, `position`.
-- `startIndex` (integer, optional): Alias for offset.
-  - Synonyms: `startIndex`, `starti`.
-- `query` (string, optional): General search query for filtering imports.
-  - Synonyms: `query`, `searchString`, `pattern`, `text`, `q`, `needle`.
-- `groupByLibrary` (boolean, optional): Group results by library (default: false).
-  - Synonyms: `groupByLibrary`, `groupbl`.
+**Parameters**: Same as `manage-symbols`.
+  - Synonyms: All from `manage-symbols`.
+
 **Overloads**:
 - `list_imports(offset, limit)` from `vendor_ghidramcp` → forwards to `list-imports`.
 - `list_imports(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `list-imports`.
 - `list-imports(programPath, libraryFilter, maxResults, startIndex, groupByLibrary)` from `vendor_reva` → forwards to `list-imports`.
 
-**Synonyms**: `list-imports`, `tool_list_imports`, `list_imports_tool`, `cmd_list_imports`, `run_list_imports`, `do_list_imports`, `api_list_imports`, `mcp_list_imports`, `ghidra_list_imports`, `agentdecompile_list_imports`, `list_imports_command`, `list_imports_action`, `list_imports_op`, `list_imports_task`, `execute_list_imports`, `list_imports`
-
-**Examples**:
-- List imports from kernel: `list-imports programPath="/bin.exe" libraryFilter="kernel32"`.
+**Examples**: `list-imports programPath="/bin.exe"`.
 ### `list-open-programs`
 
 **Description**: Lists all currently open programs in the Ghidra tool (GUI mode), including paths and status. This tool is useful for managing multiple open binaries during sessions.
@@ -1035,24 +956,15 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - Filter to x86 processors: `list-processors filter="x86"`.
 ### `list-strings`
 
-**Description**: Lists strings in the program, with filtering and limits. This tool extracts defined strings for quick review.
+**Description**: Legacy compatibility forward. Use `manage-strings` with `mode="list"`.
 
-**Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `filter` (string, optional): String filter.
-  - Synonyms: `filter`
-- `maxResults` (integer, optional): Max strings (default: 100).
-  - Synonyms: `pattern`, `limit`, `maxResults`, `maxr`.
-- `offset` (integer, optional): Result offset for pagination.
-  - Synonyms: `offset`, `skip`, `cursor`, `begin`, `position`, `startIndex`.
+**Parameters**: Same as `manage-strings`.
+  - Synonyms: All from `manage-strings`.
+
 **Overloads**:
 - `list_strings(offset, limit, filter)` from `vendor_ghidramcp` → forwards to `list-strings`.
 
-**Synonyms**: `list-strings`, `tool_list_strings`, `list_strings_tool`, `cmd_list_strings`, `run_list_strings`, `do_list_strings`, `api_list_strings`, `mcp_list_strings`, `ghidra_list_strings`, `agentdecompile_list_strings`, `list_strings_command`, `list_strings_action`, `list_strings_op`, `list_strings_task`, `execute_list_strings`, `list_strings`
-
-**Examples**:
-- List strings: `list-strings programPath="/bin.exe" filter="http"`.
+**Examples**: `list-strings programPath="/bin.exe"`.
 ### `manage-bookmarks`
 
 **Description**: Manages bookmarks for addresses or symbols, supporting creation, listing, removal, and searching by type, category, or text. This tool organizes findings with categories like "Note", "Warning", or "Analysis", enabling collaborative tagging and quick navigation. Batch operations allow multiple bookmarks in one call, with transaction safety for consistency.
@@ -1064,8 +976,6 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
   - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
 - `addressOrSymbol` (string, optional): Bookmark target.
   - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
-- `type` (string, optional): Type (`Note`, `Warning`, `TODO`, `Bug`, `Analysis`).
-  - Synonyms: `type`
 - `category` (string, optional): Category.
   - Synonyms: `category`
 - `comment` (string, optional): Bookmark text.
@@ -1188,11 +1098,7 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 **Description**: Manages project files, including import/export, local filesystem operations, project version-control helpers, and shared-repository transfer orchestration.
 
 **Parameters**:
-- `action` (string, required): File operation selector (`rename`, `delete`, `copy`, `move`, `info`, `list`, `mkdir`, `touch`, `read`, `write`, `append`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`).
-  - Synonyms: `action`, `operation`, `mode`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `operation` (string, optional): Compatibility alias for `action`.
-  - Synonyms: `operation`, `action`, `mode`.
-- `mode` (string, optional): Shared-sync direction when using shared actions (`pull`, `push`, `bidirectional`).
+- `mode` (string, optional): File operation selector and shared-sync direction (`rename`, `delete`, `copy`, `move`, `info`, `list`, `mkdir`, `touch`, `read`, `write`, `append`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, `pull`, `push`, `bidirectional`).
   - Synonyms: `mode`, `direction`, `syncMode`, `syncDirection`.
 - `filePath` (string, required for import/export): File path.
   - Synonyms: `filePath`, `filep`.
@@ -1205,7 +1111,7 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - `dryRun` (boolean, optional): Plan changes without mutating project/shared data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `manage-files(action, operation, mode, filePath, path, destination, recursive, dryRun)` canonical signature.
+- `manage-files(mode, filePath, path, destination, recursive, dryRun)` canonical signature.
 
 
 **Synonyms**: `manage-files`, `tool_manage_files`, `manage_files_tool`, `cmd_manage_files`, `run_manage_files`, `do_manage_files`, `api_manage_files`, `mcp_manage_files`, `ghidra_manage_files`, `agentdecompile_manage_files`, `manage_files_command`, `manage_files_action`, `manage_files_op`, `manage_files_task`, `execute_manage_files`
@@ -1348,8 +1254,6 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
   - Synonyms: `name`
 - `size` (integer, optional): Size.
   - Synonyms: `size`
-- `type` (string, optional): Type.
-  - Synonyms: `type`
 - `category` (string, optional): Category.
   - Synonyms: `category`
 - `packed` (boolean, optional): Packed (default: false).
@@ -1548,22 +1452,15 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - Open: `open programPath="/bin.exe"`.
 ### `read-bytes`
 
-**Description**: Reads raw bytes from memory, similar to inspect-memory but byte-focused.
+**Description**: Legacy compatibility forward for byte reads. Prefer `inspect-memory` with `mode="read"`.
 
-**Parameters**:
-- `programPath` (string, optional): Path.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `address` (string, required): Address.
-  - Synonyms: `address`, `addr`, `startAddress`, `targetAddress`, `location`, `offsetAddress`, `addressValue`, `memAddress`, `va`.
-- `length` (integer, required): Length.
-  - Synonyms: `start`, `size`, `length`
+**Parameters**: Same as `inspect-memory` read-mode semantics.
+  - Synonyms: Includes compatibility forms such as `binaryName` and `size`.
+
 **Overloads**:
 - `read_bytes(binary_name, address, size)` from `vendor_pyghidra` → forwards to `read-bytes`.
 
-**Synonyms**: `read-bytes`, `tool_read_bytes`, `read_bytes_tool`, `cmd_read_bytes`, `run_read_bytes`, `do_read_bytes`, `api_read_bytes`, `mcp_read_bytes`, `ghidra_read_bytes`, `agentdecompile_read_bytes`, `read_bytes_command`, `read_bytes_action`, `read_bytes_op`, `read_bytes_task`, `execute_read_bytes`, `read_bytes`
-
-**Examples**:
-- Read bytes: `read-bytes programPath="/bin.exe" address="0x404000" length=256`.
+**Examples**: `read-bytes programPath="/bin.exe" address="0x404000" length=256`.
 ### `search-code`
 
 **Description**: Searches code for patterns in disassembly or pcode.
@@ -1629,69 +1526,38 @@ This document provides an exhaustive, consolidated reference for all 52 canonica
 - Search constant: `search-constants programPath="/bin.exe" mode="specific" value="0xdeadbeef"`.
 ### `search-strings`
 
-**Description**: Searches strings with regex or similarity, similar to manage-strings search.
+**Description**: Legacy compatibility forward.
 
-**Parameters**:
-- `programPath` (string, optional): Path.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `pattern` (string, optional): Regex.
-  - Synonyms: `pattern`
-- `searchString` (string, optional): String.
-  - Synonyms: `searchString`, `searchs`.
-- `maxResults` (integer, optional): Max (default: 100).
-  - Synonyms: `regex`, `query`, `limit`, `maxResults`, `maxr`.
+**Parameters**: Same as `manage-strings`.
+  - Synonyms: All from `manage-strings`.
+
 **Overloads**:
 - `search_strings(binary_name, query, limit)` from `vendor_pyghidra` → forwards to `search-strings`.
 
-**Synonyms**: `search-strings`, `tool_search_strings`, `search_strings_tool`, `cmd_search_strings`, `run_search_strings`, `do_search_strings`, `api_search_strings`, `mcp_search_strings`, `ghidra_search_strings`, `agentdecompile_search_strings`, `search_strings_command`, `search_strings_action`, `search_strings_op`, `search_strings_task`, `execute_search_strings`, `search_strings`
-
-**Examples**:
-- Search strings: `search-strings programPath="/bin.exe" pattern="https?"`.
+**Examples**: `search-strings programPath="/bin.exe" query="https?"`.
 ### `search-symbols`
 
-**Description**: Searches symbols by name or pattern, including externals.
+**Description**: Legacy compatibility forward.
 
-**Parameters**:
-- `programPath` (string, optional): Path.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `query` (string, required): Search query.
-  - Synonyms: `query`, `searchString`, `pattern`, `filter`, `text`, `q`, `needle`, `searchQuery`, `match`.
-- `offset` (integer, optional): Offset.
-  - Synonyms: `offset`, `startIndex`, `start`, `index`, `from`, `skip`, `cursor`, `begin`, `position`.
-- `limit` (integer, optional): Limit.
-  - Synonyms: `limit`, `maxResults`, `maxCount`, `count`, `size`, `max`, `take`, `cap`, `pageSize`.
-- `includeExternal` (boolean, optional): Include externals (default: false).
-  - Synonyms: `includeExternal`, `includee`.
-- `filterDefaultNames` (boolean, optional): Filter defaults (default: false).
-  - Synonyms: `q`, `start`, `max`, `extern`, `defaults`, `filterDefaultNames`, `filterdn`.
+**Parameters**: Same as `manage-symbols`.
+  - Synonyms: All from `manage-symbols`.
+
 **Overloads**:
 - `search_functions_by_name(query, offset, limit)` from `vendor_ghidramcp` → forwards to `search-symbols`.
 
-**Synonyms**: `search-functions-by-name`, `search-symbols`, `tool_search_symbols`, `search_symbols_tool`, `cmd_search_symbols`, `run_search_symbols`, `do_search_symbols`, `api_search_symbols`, `mcp_search_symbols`, `ghidra_search_symbols`, `agentdecompile_search_symbols`, `search_symbols_command`, `search_symbols_action`, `search_symbols_op`, `search_symbols_task`, `search_functions_by_name`
-
-**Examples**:
-- Search symbols: `search-symbols programPath="/bin.exe" query="main"`.
+**Examples**: `search-symbols programPath="/bin.exe" query="main"`.
 
 ### `search-symbols-by-name`
 
-**Description**: Searches symbols by exact name, subset of search-symbols.
+**Description**: Legacy compatibility forward for name-focused symbol search.
 
-**Parameters**:
-- `programPath` (string, optional): Path.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `query` (string, required): Name.
-  - Synonyms: `query`, `searchString`, `pattern`, `filter`, `text`, `q`, `needle`, `searchQuery`, `match`.
-- `maxResults` (integer, optional): Max (default: 100).
-  - Synonyms: `name`, `limit`, `maxResults`, `maxr`.
-- `offset` (integer, optional): Result offset for pagination.
-  - Synonyms: `offset`, `skip`, `cursor`, `begin`, `position`, `startIndex`.
+**Parameters**: Same as `manage-symbols`.
+  - Synonyms: All from `manage-symbols`.
+
 **Overloads**:
 - `search_symbols_by_name(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `search-symbols-by-name`.
 
-**Synonyms**: `search-symbols-by-name`, `tool_search_symbols_by_name`, `search_symbols_by_name_tool`, `cmd_search_symbols_by_name`, `run_search_symbols_by_name`, `do_search_symbols_by_name`, `api_search_symbols_by_name`, `mcp_search_symbols_by_name`, `ghidra_search_symbols_by_name`, `agentdecompile_search_symbols_by_name`, `search_symbols_by_name_command`, `search_symbols_by_name_action`, `search_symbols_by_name_op`, `search_symbols_by_name_task`, `execute_search_symbols_by_name`, `search_symbols_by_name`
-
-**Examples**:
-- Search by name: `search-symbols-by-name programPath="/bin.exe" query="entry"`.
+**Examples**: `search-symbols-by-name programPath="/bin.exe" query="entry"`.
 ### `suggest`
 
 **Description**: Suggests improvements like names, types, or comments based on context.
@@ -1731,8 +1597,20 @@ All names in this section are legacy compatibility forwards.
 **Overloads**:
 - `import-file(...)` vendor/alias entry → forwards to `import-binary` with the same supported parameters.
 
-
 **Examples**: Same as `import-binary`.
+
+### `read-bytes` (forwards to `inspect-memory`)
+
+**Description**: Forwards to `inspect-memory` for raw byte reading (`mode="read"`).
+
+**Parameters**: Same as `inspect-memory` read-mode semantics.
+  - Synonyms: All compatible forms from `read-bytes` and `inspect-memory`.
+
+**Overloads**:
+- `read-bytes(...)` vendor/alias entry → forwards to `inspect-memory` with the same supported parameters.
+
+
+**Examples**: Same as `inspect-memory` read mode.
 
 ### `list-classes` (forwards to `manage-symbols`)
 
