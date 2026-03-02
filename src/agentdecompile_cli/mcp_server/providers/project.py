@@ -1681,10 +1681,24 @@ class ProjectToolProvider(ToolProvider):
                             pass
 
                 if domain_file is not None:
-                    domain_obj = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
-                    if domain_obj is not None:
-                        program = domain_obj
-                        logger.info("Opened '%s' via project DomainFile (path=%s)", program_path, domain_file.getPathname())
+                    # Prefer GhidraProject.openProgram() which gives writable access
+                    # on local project files, over getDomainObject() which may
+                    # open read-only.
+                    opened = False
+                    if ghidra_project is not None:
+                        try:
+                            domain_obj = ghidra_project.openProgram(domain_file)
+                            if domain_obj is not None:
+                                program = domain_obj
+                                opened = True
+                                logger.info("Opened '%s' via GhidraProject.openProgram (writable)", program_path)
+                        except Exception:
+                            pass
+                    if not opened:
+                        domain_obj = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                        if domain_obj is not None:
+                            program = domain_obj
+                            logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
             except Exception as exc:
                 logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
 
