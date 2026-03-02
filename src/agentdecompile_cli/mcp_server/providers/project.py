@@ -781,7 +781,8 @@ class ProjectToolProvider(ToolProvider):
                 if op == "checkout":
                     exclusive = self._get_bool(args, "exclusive", default=False)
                     if hasattr(domain_file, "checkout"):
-                        domain_file.checkout(exclusive, False, None)
+                        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        domain_file.checkout(exclusive, TaskMonitor.DUMMY)
                     return create_success_response(
                         {
                             "operation": "checkout",
@@ -1636,7 +1637,7 @@ class ProjectToolProvider(ToolProvider):
             try:
                 domain_file = project_data.getFile(program_path)
                 if domain_file is None:
-                    # Need to checkout the file from the server into the local project
+                    # Need to create the file in the local project from the shared repo.
                     parent_folder = project_data.getFolder(folder_path)
                     if parent_folder is None:
                         parent_folder = project_data.getRootFolder()
@@ -1647,20 +1648,43 @@ class ProjectToolProvider(ToolProvider):
                                 if child is None:
                                     child = parent_folder.createFolder(folder_component)
                                 parent_folder = child
-                    remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+
+                    # Multi-strategy to get a domain object from the repo item:
+                    remote_domain_obj: Any = None
+                    consumer = JavaObject()
+
+                    # Strategy 1: RepositoryItem.getDomainObject (some Ghidra versions)
+                    if hasattr(repo_item, "getDomainObject"):
+                        try:
+                            remote_domain_obj = repo_item.getDomainObject(consumer, True, False, monitor)
+                        except Exception:
+                            pass
+
+                    # Strategy 2: Open via ProgramDB from repository database
+                    if remote_domain_obj is None and hasattr(repository_adapter, "openDatabase"):
+                        try:
+                            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+                            managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0)
+                            db_handle = DBHandle(managed_db)
+                            remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, consumer)
+                        except Exception as e2:
+                            logger.debug("ProgramDB strategy for createFile failed: %s", e2)
+
                     if remote_domain_obj is None:
                         raise ValueError(f"Failed to fetch remote domain object for '{program_path}'")
                     try:
                         domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor) # pyright: ignore[reportAttributeAccessIssue]
                     finally:
                         try:
-                            remote_domain_obj.release(self)
+                            remote_domain_obj.release(consumer)
                         except Exception:
                             pass
+
                 if domain_file is not None:
                     domain_obj = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
                     if domain_obj is not None:
                         program = domain_obj
+                        logger.info("Opened '%s' via project DomainFile (path=%s)", program_path, domain_file.getPathname())
             except Exception as exc:
                 logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
 
