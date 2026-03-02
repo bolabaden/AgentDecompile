@@ -60,11 +60,12 @@ RUN set -eux; \
     DOWNLOAD_URL="$(echo "${BODY}" | jq -r '.assets[] | select(.name | test("\\.zip$")) | select(.name | test("PUBLIC")) | .browser_download_url' | head -n 1)"; \
     if [ -z "${DOWNLOAD_URL}" ] || [ "${DOWNLOAD_URL}" = "null" ]; then \
         if [ -n "${GHIDRA_VERSION}" ]; then \
-            RELEASE_PAGE="https://github.com/${GHIDRA_OWNER}/${GHIDRA_REPO}/releases/tag/Ghidra_${GHIDRA_VERSION}_build"; \
+            GHIDRA_TAG="Ghidra_${GHIDRA_VERSION}_build"; \
         else \
-            RELEASE_PAGE="https://github.com/${GHIDRA_OWNER}/${GHIDRA_REPO}/releases/latest"; \
+            GHIDRA_TAG="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GHIDRA_OWNER}/${GHIDRA_REPO}/releases/latest" | sed 's#.*/##')"; \
         fi; \
-        echo "GitHub API lookup failed, falling back to release page scrape: ${RELEASE_PAGE}"; \
+        RELEASE_PAGE="https://github.com/${GHIDRA_OWNER}/${GHIDRA_REPO}/releases/expanded_assets/${GHIDRA_TAG}"; \
+        echo "GitHub API lookup failed, falling back to expanded assets scrape: ${RELEASE_PAGE}"; \
         DOWNLOAD_URL="$(curl -fsSL "${RELEASE_PAGE}" | sed -n 's/.*href="\([^"]*\/releases\/download\/[^"]*ghidra_[^"]*PUBLIC[^"]*\.zip\)".*/\1/p' | head -n 1)"; \
         case "${DOWNLOAD_URL}" in \
             http://*|https://*) ;; \
