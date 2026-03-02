@@ -1363,7 +1363,10 @@ class ProjectToolProvider(ToolProvider):
                             version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
                             managed_db = repository_adapter.openDatabase(repo_folder, item_name, version, 0)
                             db_handle = DBHandle(managed_db)
-                            remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+                            try:
+                                remote_domain_obj = ProgramDB(db_handle, OpenMode.UPDATE, monitor, JavaObject())
+                            except Exception:
+                                remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
                     except Exception:
                         pass
 
@@ -1666,7 +1669,10 @@ class ProjectToolProvider(ToolProvider):
                             version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
                             managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0)
                             db_handle = DBHandle(managed_db)
-                            remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, consumer)
+                            try:
+                                remote_domain_obj = ProgramDB(db_handle, OpenMode.UPDATE, monitor, consumer)
+                            except Exception:
+                                remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, consumer)
                         except Exception as e2:
                             logger.debug("ProgramDB strategy for createFile failed: %s", e2)
 
@@ -1722,7 +1728,10 @@ class ProjectToolProvider(ToolProvider):
                 version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
                 managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0) # pyright: ignore[reportAttributeAccessIssue]
                 db_handle = DBHandle(managed_db)
-                program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+                try:
+                    program = ProgramDB(db_handle, OpenMode.UPDATE, monitor, JavaObject())
+                except Exception:
+                    program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
                 logger.info("Opened shared program '%s' via ProgramDB fallback", program_path)
             except Exception as exc:
                 logger.warning(
