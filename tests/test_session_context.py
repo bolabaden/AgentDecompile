@@ -17,10 +17,12 @@ def test_get_project_binaries_returns_session_specific_first() -> None:
 
 
 def test_get_project_binaries_falls_back_to_latest_when_enabled() -> None:
+    # Fallback is restricted to the "default" session only (see session_context.py comment:
+    # "Never leak binary catalogs across explicit MCP client sessions").
     store = SessionContextStore()
     store.set_project_binaries("session-open", [{"name": "prog", "path": "/prog"}])
 
-    binaries = store.get_project_binaries("session-list", fallback_to_latest=True)
+    binaries = store.get_project_binaries("default", fallback_to_latest=True)
 
     assert binaries == [{"name": "prog", "path": "/prog"}]
 

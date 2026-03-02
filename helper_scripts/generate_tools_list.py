@@ -128,6 +128,13 @@ def build_overload_block(
             lines.append(f"- `{signature}` → forwards to `{tool_name}`.")
         return "\n".join(lines) + "\n\n"
 
+    # No vendor data available. Preserve the existing overload block from the source document
+    # rather than overwriting it with a generated "canonical signature" placeholder.
+    existing = re.search(r"\*\*Overloads\*\*:\n(?:- [^\n]*\n)+\n", section_body, flags=re.M)
+    if existing:
+        return existing.group(0)
+
+    # No existing block; generate a canonical signature as a fallback.
     params = canonical_params.get(tool_name)
     if params is None:
         params = re.findall(r"^- `([^`]+)` \([^\n]+\):", section_body, flags=re.M)
