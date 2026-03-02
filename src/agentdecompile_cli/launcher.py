@@ -220,7 +220,7 @@ class PyGhidraContext:
         # if locator.getMarkerFile().exists() and locator.getProjectDir().exists():
         if locator.exists():
             logger.info(f"Opening existing project: {self.project_name}")
-            return GhidraProject.openProject(project_dir_str, self.project_name, True)
+            return GhidraProject.openProject(project_dir_str, self.project_name, False)
         logger.info(f"Creating new project: {self.project_name}")
         return GhidraProject.createProject(
             project_dir_str,
