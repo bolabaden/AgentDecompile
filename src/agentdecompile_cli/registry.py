@@ -177,7 +177,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "list-processors": _params("filter"),
     "list-project-binaries": [],
     "list-project-binary-metadata": _params("programPath"),
-    "list-project-files": _params("programPath", "binary", "folder", "path", "maxResults"),
+    "list-project-files": [],
     "list-strings": _params("programPath", "filter", "maxResults", "offset"),
     "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
     "manage-comments": _params( "programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange" ),
