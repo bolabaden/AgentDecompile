@@ -257,12 +257,20 @@ class TestCliProgramFallback:
 
 
 class TestCliToolSequence:
-    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
-    def test_tool_seq_runs_multiple_steps(self, mocked_call_raw):
-        mocked_call_raw.side_effect = [
+    @patch("agentdecompile_cli.cli._client")
+    def test_tool_seq_runs_multiple_steps(self, mocked_client_factory):
+        from unittest.mock import MagicMock
+        
+        # Create a mock client
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock()
+        mock_client.call_tool.side_effect = [
             {"success": True, "repository": "Odyssey"},
             {"success": True, "count": 12345},
         ]
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mocked_client_factory.return_value = mock_client
 
         steps = (
             '[{"name":"open","arguments":{"path":"Odyssey"}},'
@@ -275,12 +283,20 @@ class TestCliToolSequence:
         assert '"name": "open"' in result.output
         assert '"name": "list-functions"' in result.output
 
-    @patch("agentdecompile_cli.cli._call_raw", new_callable=AsyncMock)
-    def test_tool_seq_stops_on_error_by_default(self, mocked_call_raw):
-        mocked_call_raw.side_effect = [
+    @patch("agentdecompile_cli.cli._client")
+    def test_tool_seq_stops_on_error_by_default(self, mocked_client_factory):
+        from unittest.mock import MagicMock
+        
+        # Create a mock client
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock()
+        mock_client.call_tool.side_effect = [
             {"success": False, "error": "checkout failed"},
             {"success": True, "count": 12345},
         ]
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mocked_client_factory.return_value = mock_client
 
         steps = (
             '[{"name":"manage-files","arguments":{"operation":"checkout","path":"/K1/k1_win_gog_swkotor.exe"}},'
@@ -289,8 +305,60 @@ class TestCliToolSequence:
         result = _runner().invoke(main, ["-f", "json", "tool-seq", steps])
 
         assert result.exit_code != 0
-        assert mocked_call_raw.await_count == 1
+        assert mock_client.call_tool.await_count == 1
 
+
+    @patch("agentdecompile_cli.cli._client")
+    def test_tool_seq_reuses_single_session_across_steps(self, mocked_client_factory):
+        """Integration test: verify tool-seq creates one client and reuses it for all steps.
+        
+        This is critical for shared-server workflows where session continuity is required.
+        The fix in commit a21d160 ensures tool-seq creates one client and passes it via
+        client_override to all _call_raw invocations within the same 'async with client:' block.
+        """
+        from unittest.mock import MagicMock
+        
+        # Create a mock client that tracks call_tool invocations
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock()
+        mock_client.call_tool.side_effect = [
+            {"success": True, "repository": "Odyssey"},
+            {"success": True, "transferred": 1, "errors": []},
+            {"success": True, "transferred": 1, "errors": []},
+        ]
+        
+        # Configure context manager to reuse the same mock client instance
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        
+        # Factory returns the same client instance each time
+        mocked_client_factory.return_value = mock_client
+        
+        steps = (
+            '[{"name":"open","arguments":{"server_host":"170.9.241.140","server_port":13100,'
+            '"server_username":"OpenKotOR","server_password":"MuchaShakaPaka",'
+            '"repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}},'
+            '{"name":"sync-shared-project","arguments":{"mode":"pull","path":"/K1","new_path":"/K1_sync","dry_run":true}},'
+            '{"name":"sync-shared-project","arguments":{"mode":"push","path":"/K1_sync","dry_run":true}}]'
+        )
+        
+        result = _runner().invoke(main, ["-f", "json", "tool-seq", steps])
+        
+        assert result.exit_code == 0, result.output
+        
+        # Verify the client factory was called only once (session reuse)
+        assert mocked_client_factory.call_count == 1, "Expected _client to be called once for the entire sequence"
+        
+        # Verify __aenter__ was called once (one context manager entry)
+        assert mock_client.__aenter__.await_count == 1, "Expected client context entered once"
+        
+        # Verify call_tool was invoked 3 times on the SAME client instance
+        assert mock_client.call_tool.await_count == 3, f"Expected 3 tool calls, got {mock_client.call_tool.await_count}"
+        
+        # Verify all 3 steps appeared in output
+        assert '"name": "open"' in result.output
+        assert '"name": "sync-shared-project"' in result.output
+        assert result.output.count('"name": "sync-shared-project"') == 2
 
 class TestCliToolListIntegration:
     """Test the tool list functionality."""
