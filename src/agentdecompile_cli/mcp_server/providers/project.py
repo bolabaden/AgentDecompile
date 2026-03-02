@@ -1439,7 +1439,12 @@ class ProjectToolProvider(ToolProvider):
                     raise ValueError(f"Local project item not found: {source_path}")
 
                 if hasattr(source_file, "save"):
-                    source_file.save()
+                    try:
+                        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                        source_file.save(TaskMonitor.DUMMY)
+                    except Exception:
+                        source_file.save()
                 else:
                     skipped.append({"sourcePath": source_path, "reason": "save-not-supported"})
                     continue
