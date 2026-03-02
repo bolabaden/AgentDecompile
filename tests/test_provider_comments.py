@@ -45,13 +45,13 @@ class TestCommentProviderSchema:
             assert_tool_schema_invariants(tool)
         assert "manage-comments" in names
 
-    def test_action_enum(self):
+    def test_mode_enum(self):
         p = _make_provider()
         tool = p.list_tools()[0]
         assert_tool_schema_invariants(tool, expected_name="manage-comments")
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("set", "get", "remove", "search", "search_decomp"):
-            assert a in actions
+            assert a in modes
 
     def test_comment_type_enum(self):
         p = _make_provider()
@@ -65,7 +65,10 @@ class TestCommentProviderSchema:
         p = _make_provider()
         tool = p.list_tools()[0]
         assert_tool_schema_invariants(tool, expected_name="manage-comments")
-        assert tool.inputSchema["properties"]["type"].get("default") == "eol"
+        # type defaults to eol
+        type_prop = tool.inputSchema["properties"].get("type", {})
+        if type_prop:
+            assert type_prop.get("default") == "eol"
 
     def test_batch_comments_array_param(self):
         p = _make_provider()

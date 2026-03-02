@@ -46,21 +46,21 @@ class TestGetFunctionProviderSchema:
         assert "manage-function-tags" in names
         assert "match-function" in names
 
-    def test_manage_function_action_enum(self):
+    def test_manage_function_mode_enum(self):
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "manage-function")
         assert_tool_schema_invariants(tool, expected_name="manage-function")
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"):
-            assert a in actions
+            assert a in modes
 
-    def test_manage_function_tags_action_enum(self):
+    def test_manage_function_tags_mode_enum(self):
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "manage-function-tags")
         assert_tool_schema_invariants(tool, expected_name="manage-function-tags")
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("list", "add", "remove", "search"):
-            assert a in actions
+            assert a in modes
 
     def test_match_function_mode_enum(self):
         p = _make_provider()
