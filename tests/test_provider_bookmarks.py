@@ -46,13 +46,13 @@ class TestBookmarkProviderSchema:
             assert_tool_schema_invariants(tool)
         assert "manage-bookmarks" in names
 
-    def test_action_enum(self):
+    def test_mode_enum(self):
         p = _make_provider()
         tool = p.list_tools()[0]
         assert_tool_schema_invariants(tool, expected_name="manage-bookmarks")
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("set", "get", "search", "remove", "remove_all", "categories"):
-            assert a in actions
+            assert a in modes
 
     def test_type_enum(self):
         p = _make_provider()

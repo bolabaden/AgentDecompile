@@ -70,12 +70,12 @@ class TestStructureProviderSchema:
         names = {t.name for t in p.list_tools()}
         assert "manage-structures" in names
 
-    def test_action_enum(self):
+    def test_mode_enum(self):
         p = _make_structure_provider()
         tool = p.list_tools()[0]
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("parse", "validate", "create", "list", "apply", "delete"):
-            assert a in actions
+            assert a in modes
 
     def test_c_definition_param(self):
         p = _make_structure_provider()
@@ -137,17 +137,17 @@ class TestDataTypeProviderSchema:
         names = {t.name for t in p.list_tools()}
         assert "manage-data-types" in names
 
-    def test_action_enum(self):
+    def test_mode_enum(self):
         p = _make_datatype_provider()
         tool = p.list_tools()[0]
-        actions = tool.inputSchema["properties"]["action"]["enum"]
+        modes = tool.inputSchema["properties"]["mode"]["enum"]
         for a in ("archives", "list", "by_string", "apply"):
-            assert a in actions
+            assert a in modes
 
-    def test_action_default_list(self):
+    def test_mode_default_list(self):
         p = _make_datatype_provider()
         tool = p.list_tools()[0]
-        assert tool.inputSchema["properties"]["action"].get("default") == "list"
+        assert tool.inputSchema["properties"]["mode"].get("default") == "list"
 
     def test_data_type_string_param(self):
         p = _make_datatype_provider()

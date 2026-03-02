@@ -73,21 +73,18 @@ class TestProjectProviderSchema:
         expected = set(TOOL_PARAMS["open"])
         assert expected.issubset(set(props.keys()))
 
-    def test_manage_files_action_enum(self):
+    def test_manage_files_mode_enum(self):
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "manage-files")
-        # Action or operation should be present
         props = tool.inputSchema["properties"]
-        enum_key = "action" if "action" in props else "operation"
-        assert enum_key in props
-        enum_vals = props[enum_key]["enum"]
+        assert "mode" in props
+        enum_vals = props["mode"]["enum"]
         for action in ("rename", "delete", "copy", "move"):
             assert action in enum_vals
         assert "download-shared" in enum_vals
         assert "pull-shared" in enum_vals
         assert "push-shared" in enum_vals
         assert "sync-shared" in enum_vals
-        assert "mode" in props
         assert "dryRun" in props
 
     def test_list_project_files_pagination(self):
@@ -290,23 +287,6 @@ class TestProjectProviderValidation:
         assert result.get("mode") == "bidirectional"
         assert result.get("success") is False
         assert "shared-server" in str(result.get("error", ""))
-
-    @pytest.mark.asyncio
-    async def test_manage_files_mode_override_is_respected(self):
-        p = _make_provider(with_program=False)
-        resp = await p.call_tool(
-            "manage-files",
-            {
-                "operation": "push-shared",
-                "mode": "pull",
-                "path": "/K1",
-                "recursive": True,
-            },
-        )
-        result = _parse(resp)
-        assert result.get("operation") == "sync-shared"
-        assert result.get("mode") == "pull"
-        assert result.get("success") is False
 
 
 class TestProjectProviderArgNormalization:
