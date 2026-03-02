@@ -403,7 +403,12 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     click.echo(format_output(data, _fmt(ctx)))
 
 
-async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> Any:
+async def _call_raw(
+    ctx: click.Context,
+    tool: str,
+    payload: dict[str, Any],
+    client_override: Any | None = None,
+) -> Any:
     """Call tool and return raw result for programmatic CLI workflows."""
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
@@ -419,6 +424,10 @@ async def _call_raw(ctx: click.Context, tool: str, payload: dict[str, Any]) -> A
 
     call_tool_name = to_snake_case(call_tool_name)
     try:
+        if client_override is not None:
+            first = await client_override.call_tool(call_tool_name, safe_payload)
+            return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, safe_payload, first)
+
         client = _client(ctx)
         async with client:
             first = await client.call_tool(call_tool_name, safe_payload)
@@ -3842,33 +3851,35 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
 
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
-        for index, step in enumerate(parsed_steps, start=1):
-            name = step.get("name")
-            arguments = step.get("arguments", {})
+        client = _client(ctx)
+        async with client:
+            for index, step in enumerate(parsed_steps, start=1):
+                name = step.get("name")
+                arguments = step.get("arguments", {})
 
-            if not isinstance(name, str) or not name.strip():
-                click.echo(f"Step {index}: missing or invalid 'name'", err=True)
-                sys.exit(1)
-            if not isinstance(arguments, dict):
-                click.echo(f"Step {index}: 'arguments' must be a JSON object", err=True)
-                sys.exit(1)
+                if not isinstance(name, str) or not name.strip():
+                    click.echo(f"Step {index}: missing or invalid 'name'", err=True)
+                    sys.exit(1)
+                if not isinstance(arguments, dict):
+                    click.echo(f"Step {index}: 'arguments' must be a JSON object", err=True)
+                    sys.exit(1)
 
-            _validate_known_tool(name)
-            prepared_arguments, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, arguments)
-            data = await _call_raw(ctx, name, prepared_arguments)
-            if inferred_program is not None:
-                data = _inject_inferred_program(data, inferred_program)
-            step_result = {
-                "index": index,
-                "name": name,
-                "success": not (isinstance(data, dict) and data.get("success") is False and "error" in data),
-                "result": data,
-            }
-            results.append(step_result)
+                _validate_known_tool(name)
+                prepared_arguments, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, arguments)
+                data = await _call_raw(ctx, name, prepared_arguments, client_override=client)
+                if inferred_program is not None:
+                    data = _inject_inferred_program(data, inferred_program)
+                step_result = {
+                    "index": index,
+                    "name": name,
+                    "success": not (isinstance(data, dict) and data.get("success") is False and "error" in data),
+                    "result": data,
+                }
+                results.append(step_result)
 
-            if not step_result["success"] and not continue_on_error:
-                click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
-                sys.exit(1)
+                if not step_result["success"] and not continue_on_error:
+                    click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
+                    sys.exit(1)
 
         click.echo(format_output({"success": True, "steps": results}, _fmt(ctx)))
 
