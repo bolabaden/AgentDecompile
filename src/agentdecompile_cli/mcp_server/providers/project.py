@@ -129,9 +129,9 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "syncDirection": {
+                        "mode": {
                             "type": "string",
-                            "description": "Sync direction (pull, push, bidirectional)",
+                            "description": "Sync direction (aliases: syncDirection, direction, action, operation)",
                             "enum": ["pull", "push", "bidirectional"],
                             "default": "pull",
                         },
@@ -969,16 +969,27 @@ class ProjectToolProvider(ToolProvider):
 
         try:
             normalized = str(program_path).strip()
+            # Check active program's domain file first
             if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
                 current_df = self.program_info.program.getDomainFile()
-                if current_df is not None and str(current_df.getPathname()) == normalized:
-                    return current_df
+                if current_df is not None:
+                    current_path = str(current_df.getPathname())
+                    if current_path == normalized or current_path.lstrip("/") == normalized.lstrip("/"):
+                        return current_df
 
-            if self.program_info is None or getattr(self.program_info, "program", None) is None:
-                return None
+            # Try project_data.getFile() from active program
+            project_data = self._get_active_project_data()
+            if project_data is not None:
+                df = project_data.getFile(normalized)
+                if df is not None:
+                    return df
+                # Try with leading slash normalized
+                if not normalized.startswith("/"):
+                    df = project_data.getFile(f"/{normalized}")
+                    if df is not None:
+                        return df
 
-            project_data = self.program_info.program.getDomainFile().getProjectData()
-            return project_data.getFile(normalized)
+            return None
         except Exception:
             return None
 
@@ -1185,7 +1196,12 @@ class ProjectToolProvider(ToolProvider):
         return current
 
     def _resolve_shared_sync_mode(self, args: dict[str, Any], default_mode: str = "pull") -> str:
-        requested = self._get_str(args, "syncdirection", "direction", "syncmode", default=default_mode)
+        # Check direction-specific keys first, then fall back to generic 'mode'.
+        # When routed through manage-files, 'mode' contains the operation alias
+        # (e.g. 'pull-shared') which also resolves correctly.
+        requested = self._get_str(args, "syncdirection", "direction", "syncmode", default="")
+        if not requested:
+            requested = self._get_str(args, "mode", default=default_mode)
         normalized = n(requested)
         if normalized in {"pull", "download", "downloadshared", "pullshared"}:
             return "pull"
@@ -1263,15 +1279,49 @@ class ProjectToolProvider(ToolProvider):
             target_parent_path = target_path.rsplit("/", 1)[0] or "/"
 
             try:
-                repo_item = repository_adapter.getItem(repo_folder, item_name)
-                if repo_item is None:
-                    raise ValueError(f"Repository item not found: {repo_path}")
-
                 if existing is not None and force and hasattr(existing, "delete"):
                     existing.delete()
 
                 parent_folder: Any = self._ensure_project_folder(project_data, target_parent_path)
-                remote_domain_obj: Any = repo_item.getDomainObject(self, True, False, monitor)
+                remote_domain_obj: Any = None
+
+                # Strategy 1: Open via project_data DomainFile (works when files are
+                # already visible through the shared-server project connection).
+                try:
+                    source_df = project_data.getFile(repo_path)
+                    if source_df is not None:
+                        remote_domain_obj = source_df.getDomainObject(self, True, False, monitor)
+                except Exception:
+                    pass
+
+                # Strategy 2: Use RepositoryItem if we have a working adapter.
+                if remote_domain_obj is None:
+                    repo_item = repository_adapter.getItem(repo_folder, item_name)
+                    if repo_item is None:
+                        raise ValueError(f"Repository item not found: {repo_path}")
+                    # Try DomainFile-style open on the repo item (some Ghidra versions).
+                    if hasattr(repo_item, "getDomainObject"):
+                        remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                    elif hasattr(repo_item, "open"):
+                        remote_domain_obj = repo_item.open(monitor)
+
+                # Strategy 3: ProgramDB fallback via adapter's openDatabase.
+                if remote_domain_obj is None and hasattr(repository_adapter, "openDatabase"):
+                    try:
+                        from db import DBHandle  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        from ghidra.framework.data import OpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        from ghidra.program.database import ProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        from java.lang import Object as JavaObject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                        repo_item = repository_adapter.getItem(repo_folder, item_name) if repo_item is None else repo_item
+                        if repo_item is not None:
+                            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+                            managed_db = repository_adapter.openDatabase(repo_folder, item_name, version, 0)
+                            db_handle = DBHandle(managed_db)
+                            remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+                    except Exception:
+                        pass
+
                 if remote_domain_obj is None:
                     raise ValueError(f"Unable to open shared item: {repo_path}")
 
