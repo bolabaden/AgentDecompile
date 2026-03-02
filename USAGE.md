@@ -100,6 +100,7 @@ $InitResp = Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Header
 } -Body $InitBody
 
 $SID = $InitResp.Headers["mcp-session-id"]
+if ($SID -is [array]) { $SID = $SID[0] }  # PowerShell 7 returns String[]
 
 $NotifBody = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Headers @{
@@ -315,14 +316,14 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 Tool payload (`name=get_references`):
 
 ```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"SaveGame","limit":25}
+{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}
 ```
 
 <details>
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 106 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"SaveGame","limit":25}'
+call_tool 106 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
 ```
 
 </details>
@@ -330,7 +331,7 @@ call_tool 106 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 106 -Name "get_references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"SaveGame","limit":25}'
+Invoke-McpTool -Id 106 -Name "get_references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
 ```
 
 </details>
@@ -338,7 +339,7 @@ Invoke-McpTool -Id 106 -Name "get_references" -ArgumentsJson '{"program_path":"/
 <summary><b>uvx</b></summary>
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target SaveGame --limit 25
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
 ```
 
 </details>

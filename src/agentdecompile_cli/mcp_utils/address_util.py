@@ -110,6 +110,14 @@ class AddressUtil:
         if symbols and len(symbols) > 0:
             return symbols[0].getAddress()
 
+        # Broaden search: symbol may live in a non-global namespace
+        try:
+            all_symbols = list(symbol_table.getSymbols(input_str))
+            if all_symbols:
+                return all_symbols[0].getAddress()
+        except Exception:
+            pass
+
         # If not found as a symbol, try to parse as an address
         return AddressUtil.parse_address(program, input_str)
 
