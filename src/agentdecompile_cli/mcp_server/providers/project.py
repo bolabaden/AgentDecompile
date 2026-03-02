@@ -750,12 +750,30 @@ class ProjectToolProvider(ToolProvider):
         if op in {"checkout", "uncheckout", "unhijack"}:
             domain_file = self._resolve_domain_file(program_path)
             if domain_file is None:
+                # Provide diagnostic info
+                has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
+                has_df = False
+                df_path = None
+                if has_program:
+                    try:
+                        df = self.program_info.program.getDomainFile()
+                        has_df = df is not None
+                        df_path = str(df.getPathname()) if df else None
+                    except Exception:
+                        pass
+                pd = self._get_active_project_data()
                 return create_success_response(
                     {
                         "operation": op,
                         "programPath": program_path,
                         "success": False,
                         "error": "No project-backed domain file found for the requested programPath",
+                        "diagnostics": {
+                            "hasActiveProgram": has_program,
+                            "activeDomainFile": has_df,
+                            "activeDomainFilePath": df_path,
+                            "hasProjectData": pd is not None,
+                        },
                     },
                 )
 
@@ -971,14 +989,19 @@ class ProjectToolProvider(ToolProvider):
             normalized = str(program_path).strip()
             # Check active program's domain file first
             if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
-                current_df = self.program_info.program.getDomainFile()
+                try:
+                    current_df = self.program_info.program.getDomainFile()
+                except Exception:
+                    current_df = None
                 if current_df is not None:
                     current_path = str(current_df.getPathname())
                     if current_path == normalized or current_path.lstrip("/") == normalized.lstrip("/"):
                         return current_df
+                    logger.debug("_resolve_domain_file: active DF path='%s' != requested='%s'", current_path, normalized)
 
             # Try project_data.getFile() from active program
             project_data = self._get_active_project_data()
+            logger.debug("_resolve_domain_file: project_data=%s", type(project_data).__name__ if project_data else None)
             if project_data is not None:
                 df = project_data.getFile(normalized)
                 if df is not None:
@@ -989,8 +1012,29 @@ class ProjectToolProvider(ToolProvider):
                     if df is not None:
                         return df
 
+            # Fallback: try from session context project handle (shared-server mode)
+            session_id = get_current_mcp_session_id()
+            session = SESSION_CONTEXTS.get_or_create(session_id)
+            handle = session.project_handle if isinstance(session.project_handle, dict) else None
+            if handle and project_data is None:
+                # No project data found through normal paths; try to get it from
+                # the active program's domain file or root project
+                logger.debug("_resolve_domain_file: trying session-context fallback for '%s'", normalized)
+                if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+                    try:
+                        df_check = self.program_info.program.getDomainFile()
+                        if df_check is not None:
+                            pd = df_check.getProjectData()
+                            if pd is not None:
+                                result = pd.getFile(normalized)
+                                if result is not None:
+                                    return result
+                    except Exception as exc:
+                        logger.debug("session-context fallback failed: %s", exc)
+
             return None
-        except Exception:
+        except Exception as exc:
+            logger.debug("_resolve_domain_file exception: %s", exc)
             return None
 
     async def _import_file(self, file_path: str, args: dict[str, Any]) -> list[types.TextContent]:
