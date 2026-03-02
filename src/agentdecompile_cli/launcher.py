@@ -1198,7 +1198,7 @@ class ProjectManager:
             self.project = GhidraProject.openProject(
                 str(project_path),
                 project_name,
-                True,
+                False,  # readOnly=False: allow write operations (rename, comment, checkin, etc.)
             )
         else:
             sys.stderr.write(f"Creating new project: {project_name} at {project_path}\n")
