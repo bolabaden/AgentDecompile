@@ -272,7 +272,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "get-current-program": _params("programPath"),
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
-    "list-project-files": [],
+    "list-project-files": _params("programPath", "binary", "folder", "path", "maxResults"),
     "list-open-programs": [],
     "sync-shared-project": _params(
         "mode",

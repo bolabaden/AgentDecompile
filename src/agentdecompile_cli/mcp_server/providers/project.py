@@ -6,6 +6,7 @@ Handles project and program management operations.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import socket
 import time
@@ -98,7 +99,14 @@ class ProjectToolProvider(ToolProvider):
             types.Tool(
                 name="get-current-program",
                 description="Get info about the currently loaded program",
-                inputSchema={"type": "object", "properties": {}, "required": []},
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string"},
+                        "binary": {"type": "string"},
+                    },
+                    "required": [],
+                },
             ),
             types.Tool(
                 name="list-project-files",
@@ -106,6 +114,8 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "programPath": {"type": "string"},
+                        "binary": {"type": "string"},
                         "folder": {"type": "string", "default": "/"},
                         "path": {"type": "string"},
                         "maxResults": {"type": "integer", "default": 100},
@@ -549,6 +559,8 @@ class ProjectToolProvider(ToolProvider):
         )
 
     async def _handle_current(self, args: dict[str, Any]) -> list[types.TextContent]:
+        await self._ensure_program_loaded_for_stateless_request(args)
+
         if self.program_info is None:
             return create_success_response({"loaded": False, "note": "No program currently loaded"})
 
@@ -581,6 +593,8 @@ class ProjectToolProvider(ToolProvider):
         return create_success_response(info)
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        await self._ensure_program_loaded_for_stateless_request(args)
+
         folder: str = self._get_str(args, "folder", "path", default="/")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
         session_id: str = get_current_mcp_session_id()
@@ -654,6 +668,34 @@ class ProjectToolProvider(ToolProvider):
                     },
                 )
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
+
+    async def _ensure_program_loaded_for_stateless_request(self, args: dict[str, Any]) -> None:
+        program = getattr(self.program_info, "program", None) if self.program_info is not None else None
+        if program is not None:
+            return
+
+        requested_program = self._get_str(args, "programpath", "binary", "binaryname")
+        if not requested_program:
+            return
+
+        open_args: dict[str, Any] = {
+            "path": requested_program,
+        }
+
+        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        if server_host:
+            open_args["serverhost"] = server_host
+            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_SERVER_PORT", "13100") or "13100"))
+            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            repository_name = self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            if repository_name:
+                open_args["repositoryname"] = repository_name
+
+        try:
+            await self._handle_open(open_args)
+        except Exception as e:
+            logger.debug(f"Auto-open failed for stateless request ({requested_program}): {e}")
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation: str = self._require_str(args, "mode", "action", "operation", name="mode")
