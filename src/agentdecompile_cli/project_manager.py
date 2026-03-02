@@ -117,7 +117,7 @@ class ProjectManager:
             self.project = GhidraProject.openProject(
                 str(project_path),
                 project_name,
-                True,
+                False,
             )
         else:
             sys.stderr.write(f"Creating new project: {project_name} at {project_path}\n")
