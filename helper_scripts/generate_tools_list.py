@@ -13,14 +13,6 @@ TOOLS_LIST_GENERATED = ROOT / "TOOLS_LIST_GENERATED.md"
 DIFF_OUT = ROOT / "tmp" / "TOOLS_LIST_GENERATED.diff"
 
 REGISTRY_PATH = ROOT / "src/agentdecompile_cli/registry.py"
-VERIFY_MATRIX_PATH = ROOT / "tmp/_verify_explicit_vendor_matrix.py"
-
-PYGHIDRA_SERVER = ROOT / "vendor/pyghidra-mcp/src/pyghidra_mcp/server.py"
-PYGHIDRA_MCP_TOOLS = ROOT / "vendor/pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py"
-PYGHIDRA_TOOLS = ROOT / "vendor/pyghidra-mcp/src/pyghidra_mcp/tools.py"
-
-GHIDRAMCP_BRIDGE = ROOT / "vendor/GhidraMCP/bridge_mcp_ghidra.py"
-REVA_TOOLS_BASE = ROOT / "vendor/reverse-engineering-assistant/src/main/java/reva/tools"
 
 
 def parse_registry_tools_and_params() -> tuple[list[str], dict[str, list[str]]]:
@@ -61,177 +53,13 @@ def parse_registry_tools_and_params() -> tuple[list[str], dict[str, list[str]]]:
 
 
 def parse_map() -> dict[str, str]:
-    src = VERIFY_MATRIX_PATH.read_text(encoding="utf-8", errors="ignore")
-    module = ast.parse(src)
-    for node in module.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "MAP":
-                    return ast.literal_eval(node.value)
-    raise RuntimeError("MAP was not found in _verify_explicit_vendor_matrix.py")
-
-
-def extract_vendor_pyghidra() -> list[dict[str, Any]]:
-    server_text = PYGHIDRA_SERVER.read_text(encoding="utf-8", errors="ignore")
-    registered = re.findall(r"mcp\.tool\(\)\(mcp_tools\.(\w+)\)", server_text)
-
-    mcp_tools_src: str = PYGHIDRA_MCP_TOOLS.read_text(encoding="utf-8", errors="ignore")
-    mcp_tree = ast.parse(mcp_tools_src)
-
-    sigs: dict[str, list[str]] = {}
-    backing: dict[str, list[str]] = {}
-
-    for node in mcp_tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name not in registered:
-            continue
-
-        params: list[str] = []
-        for arg in node.args.args:
-            if arg.arg not in {"ctx", "context"}:
-                params.append(arg.arg)
-        for arg in node.args.kwonlyargs:
-            if arg.arg not in {"ctx", "context"}:
-                params.append(arg.arg)
-        sigs[node.name] = params
-
-        node_src = ast.get_source_segment(mcp_tools_src, node) or ""
-        calls = sorted(set(re.findall(r"\btools\.(\w+)\(", node_src)))
-        if calls:
-            backing[node.name] = calls
-
-    tools_tree: ast.Module = ast.parse(PYGHIDRA_TOOLS.read_text(encoding="utf-8", errors="ignore"))
-    tool_methods: dict[str, list[str]] = {}
-    for node in tools_tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "GhidraTools":
-            for fn in node.body:
-                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    params = [a.arg for a in fn.args.args if a.arg != "self"]
-                    params.extend([a.arg for a in fn.args.kwonlyargs])
-                    tool_methods[fn.name] = params
-
-    rows: list[dict[str, Any]] = []
-    for tool in registered:
-        methods = backing.get(tool, [])
-        rows.append(
-            {
-                "tool_name": tool,
-                "mcp_params": sigs.get(tool, []),
-                "logic_paths": [
-                    "vendor/pyghidra-mcp/src/pyghidra_mcp/server.py",
-                    "vendor/pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py",
-                    "vendor/pyghidra-mcp/src/pyghidra_mcp/tools.py",
-                ],
-                "backing_methods": [{m: tool_methods.get(m, [])} for m in methods],
-            }
-        )
-
-    return rows
-
-
-def extract_vendor_ghidramcp() -> list[dict[str, Any]]:
-    text = GHIDRAMCP_BRIDGE.read_text(encoding="utf-8", errors="ignore")
-    tree = ast.parse(text)
-    rows: list[dict[str, Any]] = []
-
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-
-        decorated: bool = False
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "tool":
-                decorated = True
-                break
-        if not decorated:
-            continue
-
-        params: list[str] = [a.arg for a in node.args.args]
-        rows.append(
-            {
-                "tool_name": node.name,
-                "params": params,
-                "logic_path": "vendor/GhidraMCP/bridge_mcp_ghidra.py",
-            }
-        )
-
-    return rows
-
-
-def extract_vendor_reva() -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-
-    def dedup(seq: list[str]) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for x in seq:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
-
-    for p in REVA_TOOLS_BASE.rglob("*.java"):
-        rel: str = p.relative_to(ROOT).as_posix()
-        lines: list[str] = p.read_text(encoding="utf-8", errors="ignore").splitlines()
-        name_idxs: list[int] = [i for i, line in enumerate(lines) if re.search(r'\.name\("([^"]+)"\)', line)]
-
-        for idx_pos, i in enumerate(name_idxs):
-            m = re.search(r'\.name\("([^"]+)"\)', lines[i])
-            if not m:
-                continue
-            tool: str = m.group(1)
-            prev_name: int = name_idxs[idx_pos - 1] if idx_pos > 0 else -1
-            search_start: int = prev_name + 1
-
-            prop_decl: int = -1
-            for j in range(i, search_start - 1, -1):
-                if "Map<String, Object> properties" in lines[j]:
-                    prop_decl = j
-                    break
-
-            start: int = prop_decl if prop_decl != -1 else search_start
-            end: int = i
-            for j in range(i, len(lines)):
-                if ".build()" in lines[j]:
-                    end = j
-                    break
-
-            chunk = lines[start : end + 1]
-            chunk_text = "\n".join(chunk)
-
-            props: list[str] = []
-            req: list[str] = []
-
-            for cl in chunk:
-                props.extend(re.findall(r'properties\.put\("([^"]+)"', cl))
-                req.extend(re.findall(r'required\.add\("([^"]+)"\)', cl))
-
-            for lm in re.finditer(r"required\s*=\s*List\.of\((.*?)\)", chunk_text, re.S):
-                req.extend(re.findall(r'"([^"]+)"', lm.group(1)))
-
-            for lm in re.finditer(r"createSchema\(\s*properties\s*,\s*List\.of\((.*?)\)\s*\)", chunk_text, re.S):
-                req.extend(re.findall(r'"([^"]+)"', lm.group(1)))
-
-            rows.append(
-                {
-                    "tool_name": tool,
-                    "logic_path": rel,
-                    "required": dedup(req),
-                    "properties": dedup(props),
-                }
-            )
-
-    rows.sort(key=lambda r: (str(r.get("tool_name", "")), str(r.get("logic_path", ""))))
-    return rows
+    """Returns an empty mapping; vendor matrix no longer in use."""
+    return {}
 
 
 def collect_vendor_rows() -> dict[str, list[dict[str, Any]]]:
-    return {
-        "vendor_pyghidra": extract_vendor_pyghidra(),
-        "vendor_reva": extract_vendor_reva(),
-        "vendor_ghidramcp": extract_vendor_ghidramcp(),
-    }
+    """Returns empty; vendor source directories have been removed."""
+    return {}
 
 
 def collect_overloads(vendors: dict[str, list[dict[str, Any]]], mapping: dict[str, str]) -> dict[str, list[tuple[str, tuple[str, ...], str]]]:
@@ -291,13 +119,13 @@ def build_overload_block(
     lines = ["**Overloads**:"]
 
     if forward_target:
-        lines.append(f"- `{tool_name}(...)` vendor/alias entry → forwards to `{forward_target}` with the same supported parameters.")
+        lines.append(f"- `{tool_name}(...)` alias entry → forwards to `{forward_target}` with the same supported parameters.")
         return "\n".join(lines) + "\n\n"
 
     if tool_name in overloads:
         for vendor_tool, params, source in overloads[tool_name]:
             signature: str = f"{vendor_tool}({', '.join(params)})" if params else f"{vendor_tool}()"
-            lines.append(f"- `{signature}` from `{source}` → forwards to `{tool_name}`.")
+            lines.append(f"- `{signature}` → forwards to `{tool_name}`.")
         return "\n".join(lines) + "\n\n"
 
     params = canonical_params.get(tool_name)

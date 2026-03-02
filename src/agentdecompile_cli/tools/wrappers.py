@@ -1,4 +1,4 @@
-"""Comprehensive tool implementations for pyghidra-mcp."""
+"""Comprehensive tool implementations for AgentDecompile."""
 
 from __future__ import annotations
 

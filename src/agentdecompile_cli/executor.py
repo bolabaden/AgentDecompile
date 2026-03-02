@@ -62,7 +62,7 @@ def get_server_start_message() -> str:
         "  mcp-agentdecompile --server-url http://host:port\n"
         "  mcp-agentdecompile --host 127.0.0.1 --port 8080\n"
         "  AGENT_DECOMPILE_MCP_SERVER_URL=http://host:port mcp-agentdecompile\n"
-        "  AGENT_DECOMPILE_SERVER_HOST=host AGENT_DECOMPILE_SERVER_PORT=8080 mcp-agentdecompile\n\n"
+        "  AGENT_DECOMPILE_MCP_SERVER_HOST=host AGENT_DECOMPILE_MCP_SERVER_PORT=8080 mcp-agentdecompile\n\n"
         "Or run Ghidra with AgentDecompile enabled and use the URL from File > Edit Tool Options > AgentDecompile."
     )
 
@@ -103,8 +103,8 @@ def resolve_backend_url(
         "AGENT_DECOMPILE_MCP_SERVER_URL",
         "AGENT_DECOMPILE_SERVER_URL",
     ),
-    env_host_key: str = "AGENT_DECOMPILE_SERVER_HOST",
-    env_port_key: str = "AGENT_DECOMPILE_SERVER_PORT",
+    env_host_key: str = "AGENT_DECOMPILE_MCP_SERVER_HOST",
+    env_port_key: str = "AGENT_DECOMPILE_MCP_SERVER_PORT",
     default_host: str = "127.0.0.1",
     default_port: int = 8080,
 ) -> str | None:
@@ -119,11 +119,11 @@ def resolve_backend_url(
         val = os.getenv(key)
         if val and val.strip():
             return val.strip()
-    h = host or os.getenv(env_host_key)
+    h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST")
     p = port
     if p is None:
         try:
-            p = int(os.getenv(env_port_key, "") or default_port)
+            p = int(os.getenv(env_port_key, "") or os.getenv("AGENT_DECOMPILE_SERVER_PORT", "") or default_port)
         except ValueError:
             p = default_port
     if h is not None and h.strip():
@@ -869,7 +869,7 @@ class DynamicToolExecutor:
             "managecomments": ["programpath", "action"],
             "managestructures": ["programpath", "action"],
             "searchconstants": ["programpath", "mode"],
-            # pyghidra-mcp tools
+            # alias tools
             "decompilefunction": ["binaryname", "name"],
             "deleteprojectbinary": ["binaryname"],
             "gencallgraph": ["binaryname", "functionnameoraddress"],
@@ -977,8 +977,8 @@ class DynamicToolExecutor:
                         "mermaidUrl": result.mermaid_url,
                     },
                 )
-            # pyghidra-mcp tools (alpha-only internal names)
-            _PYGHIDRA_MCP_TOOLS: frozenset[str] = frozenset(
+            # legacy alias tools (alpha-only internal names)
+            _LEGACY_ALIAS_TOOLS: frozenset[str] = frozenset(
                 {
                     "decompilefunction",
                     "deleteprojectbinary",
@@ -995,14 +995,14 @@ class DynamicToolExecutor:
                     "searchsymbolsbyname",
                 },
             )
-            if normalized_tool_name in _PYGHIDRA_MCP_TOOLS:
-                # Tools from pyghidra-mcp - placeholder implementations
+            if normalized_tool_name in _LEGACY_ALIAS_TOOLS:
+                # Legacy alias tools - placeholder implementations
                 return self._create_success_response(
                     {
                         "tool": tool_name,
-                        "status": "pyghidra_mcp_tool_placeholder",
+                        "status": "legacy_tool_placeholder",
                         "args": args,
-                        "message": f"Tool '{tool_name}' from pyghidra-mcp needs integration",
+                        "message": f"Tool '{tool_name}' is a legacy alias and needs integration",
                     },
                 )
             # Generic tool execution for tools not yet fully implemented

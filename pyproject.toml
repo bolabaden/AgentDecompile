@@ -64,7 +64,6 @@ Issues = "https://github.com/bolabaden/AgentDecompile/issues"
 Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 
 [project.scripts]
-# CLI inspired by pyghidra-mcp project.
 agentdecompile        = "agentdecompile_cli.cli:main"
 agentdecompile-cli    = "agentdecompile_cli.cli:main"
 # MCP stdio entrypoint.

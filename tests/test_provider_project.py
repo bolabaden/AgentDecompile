@@ -127,7 +127,7 @@ class TestProjectProviderHandlers:
         assert "deleteprojectbinary" in ProjectToolProvider.HANDLERS
 
     def test_importfile_alias_present(self):
-        """importfile alias is used by pyghidra-mcp clients."""
+        """importfile alias must be routed to the project provider."""
         assert "importfile" in ProjectToolProvider.HANDLERS
 
     def test_getcurrentaddress_handler_present(self):

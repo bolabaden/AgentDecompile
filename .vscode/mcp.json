@@ -16,7 +16,7 @@
 				"http://170.9.241.140:8080",
 				"--mcp-server-url",
 				"http://127.0.0.1:8080",
-				"--server-host",
+				"--ghidra-server-host",
 				"170.9.241.140",
 				"--server-port",
 				"13100",

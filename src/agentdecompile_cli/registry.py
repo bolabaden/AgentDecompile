@@ -236,8 +236,7 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "analyze-vtable": "analyze-vtables",
     "find-vtable-callers": "analyze-vtables",
     "find-vtables-containing-function": "analyze-vtables",
-    # capture-agentdecompile-debug-info overloads
-    "capture-reva-debug-info": "capture-agentdecompile-debug-info",
+    # capture-agentdecompile-debug-info overloads: none
     # decompile-function overloads/synonyms
     "get-decompilation": "decompile-function",
     # get-call-graph overloads
@@ -510,6 +509,37 @@ TOOL_PARAMS = _merge_tools_list_params(TOOL_PARAMS, _tools_list_params)
 TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
 TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
+
+
+def _add_builtin_param_aliases() -> None:
+    def _add(tool: str, alias: str, canonical_param: str) -> None:
+        tool_norm = normalize_identifier(tool)
+        alias_norm = normalize_identifier(alias)
+        canonical_norm = normalize_identifier(canonical_param)
+        if not tool_norm or not alias_norm or not canonical_norm:
+            return
+        per_tool = TOOL_PARAM_ALIASES.setdefault(tool_norm, {})
+        per_tool.setdefault(alias_norm, set()).add(canonical_norm)
+
+    # Open/shared-server argument harmonization.
+    for tool_name in ("open",):
+        _add(tool_name, "ghidraServerHost", "serverHost")
+        _add(tool_name, "ghidra_server_host", "serverHost")
+        _add(tool_name, "ghidraServerPort", "serverPort")
+        _add(tool_name, "ghidra_server_port", "serverPort")
+        _add(tool_name, "ghidraServerUsername", "serverUsername")
+        _add(tool_name, "ghidra_server_username", "serverUsername")
+        _add(tool_name, "ghidraServerPassword", "serverPassword")
+        _add(tool_name, "ghidra_server_password", "serverPassword")
+        _add(tool_name, "ghidraServerRepository", "path")
+        _add(tool_name, "ghidra_server_repository", "path")
+        _add(tool_name, "serverRepository", "path")
+        _add(tool_name, "server_repository", "path")
+        _add(tool_name, "repositoryName", "path")
+        _add(tool_name, "repository_name", "path")
+
+
+_add_builtin_param_aliases()
 
 # Minimal advertised surface (MCP + CLI) by default.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.

@@ -1,7 +1,6 @@
 """Interactive CLI client for AgentDecompile MCP server.
 
-Matches TOOLS_LIST.md and vendor pyghidra-mcp README functionality. Supports both
-existing AgentDecompile tool names/parameters and the operations described there.
+Matches TOOLS_LIST.md tool specifications. Supports all AgentDecompile tool names/parameters.
 
 Usage:
   # Start server (in another terminal)
@@ -70,6 +69,25 @@ _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
 _DEFAULT_OUTPUT_FORMAT = "shell"
+
+
+def _configure_runtime_logging(verbose: bool) -> None:
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.DEBUG if verbose else logging.WARNING,
+            stream=sys.stderr,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+        )
+    else:
+        root_logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+    if verbose:
+        logging.getLogger("httpx").setLevel(logging.INFO)
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+    else:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 # Canonical tools that already have curated command wrappers.
@@ -159,9 +177,25 @@ def _get_error_result_message(data: Any) -> str | None:
     """If data is a tool error result (success: false, error present), return the error message; else None."""
     if not isinstance(data, dict):
         return None
-    if data.get("success") is not False or "error" not in data:
+    if data.get("success") is False and "error" in data:
+        return str(data.get("error", "Tool returned an error"))
+
+    content = data.get("content")
+    if not isinstance(content, list):
         return None
-    return str(data.get("error", "Tool returned an error"))
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        try:
+            nested = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(nested, dict) and nested.get("success") is False and "error" in nested:
+            return str(nested.get("error", "Tool returned an error"))
+    return None
 
 
 def _is_no_program_loaded_error(data: Any) -> bool:
@@ -200,27 +234,45 @@ async def _recover_and_retry_with_program(
         return result
 
     opts = _get_opts(ctx)
-    shared_host = str(opts.get("ghidra_server_host") or "").strip() or _backend_host_for_recovery(ctx)
-    shared_port_raw = str(opts.get("ghidra_server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
+    shared_host = (
+        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        or _backend_host_for_recovery(ctx)
+    )
+    shared_port_raw = (
+        str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+        or "13100"
+    )
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
         shared_port = 13100
 
-    shared_user = str(opts.get("ghidra_server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    shared_pass = str(opts.get("ghidra_server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-    shared_repo = str(opts.get("ghidra_server_repository") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+    shared_user = (
+        str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+    )
+    shared_pass = (
+        str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+    )
+    shared_repo = (
+        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+    )
 
-    open_attempts: list[dict[str, Any]] = [
-        {"path": requested_program},
-        {
-            "serverHost": shared_host,
-            "serverPort": shared_port,
-            "serverUsername": shared_user or None,
-            "serverPassword": shared_pass or None,
-            "path": requested_program,
-        },
-    ]
+    open_attempts: list[dict[str, Any]] = []
+    if shared_host:
+        open_attempts.append(
+            {
+                "serverHost": shared_host,
+                "serverPort": shared_port,
+                "serverUsername": shared_user or None,
+                "serverPassword": shared_pass or None,
+                "path": requested_program,
+            },
+        )
     if shared_repo:
         open_attempts.append(
             {
@@ -231,17 +283,20 @@ async def _recover_and_retry_with_program(
                 "path": shared_repo,
             },
         )
+    open_attempts.append({"path": requested_program})
 
     for open_payload in open_attempts:
         clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
         try:
-            await client.call_tool("open", clean_open_payload)
+            open_result = await client.call_tool("open", clean_open_payload)
+            if _get_error_result_message(open_result):
+                continue
         except Exception:
             continue
 
         # Best-effort explicit checkout when shared open connected at repo scope.
         try:
-            await client.call_tool("manage_files", {"operation": "checkout", "programPath": requested_program})
+            await client.call_tool("manage_files", {"mode": "checkout", "programPath": requested_program})
         except Exception:
             pass
 
@@ -695,11 +750,38 @@ def _ensure_dynamic_commands_registered() -> None:
 @click.option("--server-url", help="Full server URL (overrides --host/--port)")
 @click.option("--mcp-server-url", help="Alias of --server-url (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
 @click.option("--backend-url", help="Alias of --server-url for proxy/backend style configuration")
-@click.option("--ghidra-server-host", help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)")
-@click.option("--ghidra-server-port", type=int, help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)")
-@click.option("--ghidra-server-username", help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)")
-@click.option("--ghidra-server-password", help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)")
-@click.option("--ghidra-server-repository", help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)")
+@click.option(
+    "--ghidra-server-host",
+    "--server-host",
+    "ghidra_server_host",
+    help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+)
+@click.option(
+    "--ghidra-server-port",
+    "--server-port",
+    "ghidra_server_port",
+    type=int,
+    help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+)
+@click.option(
+    "--ghidra-server-username",
+    "--server-username",
+    "ghidra_server_username",
+    help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+)
+@click.option(
+    "--ghidra-server-password",
+    "--server-password",
+    "ghidra_server_password",
+    help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+)
+@click.option(
+    "--ghidra-server-repository",
+    "--server-repository",
+    "ghidra_server_repository",
+    help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logs (including HTTP request diagnostics)")
 @click.option(
     "-f",
     "--format",
@@ -721,9 +803,12 @@ def main(
     ghidra_server_username: str | None,
     ghidra_server_password: str | None,
     ghidra_server_repository: str | None,
+    verbose: bool,
     format: str,
 ) -> None:
     """AgentDecompile CLI – all tools from TOOLS_LIST.md (30+ tools)."""
+    _configure_runtime_logging(verbose)
+
     existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
     effective_server_url = server_url or mcp_server_url or backend_url
     ctx.obj = {
@@ -735,6 +820,7 @@ def main(
         "ghidra_server_username": ghidra_server_username,
         "ghidra_server_password": ghidra_server_password,
         "ghidra_server_repository": ghidra_server_repository,
+        "verbose": verbose,
         "format": existing_obj.get("format", format),
     }
 
@@ -2007,10 +2093,10 @@ def memory_run(
     "enable_version_control",
     default=True,
 )
-@click.option("--server_username", "--server-username", "server_username")
-@click.option("--server_password", "--server-password", "server_password")
-@click.option("--server_host", "--server-host", "server_host")
-@click.option("--server_port", "--server-port", "server_port", type=int)
+@click.option("--server_username", "--server-username", "--ghidra_server_username", "--ghidra-server-username", "server_username")
+@click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
+@click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
+@click.option("--server_port", "--server-port", "--ghidra_server_port", "--ghidra-server-port", "server_port", type=int)
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
@@ -3507,7 +3593,7 @@ def delete_cmd(program_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Convenience aliases (match previous CLI / pyghidra-mcp style)
+# Convenience aliases
 # ---------------------------------------------------------------------------
 
 
@@ -3532,7 +3618,7 @@ def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
     )
 
 
-# Alias for pyghidra-mcp compatibility (Click's command() treats second positional as cls)
+# Alias for import-binary compatibility (Click's command() treats second positional as cls)
 main.add_command(main.commands["import"], "import-binary")
 
 

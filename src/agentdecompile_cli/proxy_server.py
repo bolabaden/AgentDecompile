@@ -9,6 +9,7 @@ Supports:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -16,6 +17,25 @@ import time
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.mcp_server.proxy_server import AgentDecompileMcpProxyServer, ProxyServerConfig
+
+
+def _configure_runtime_logging(verbose: bool) -> None:
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.DEBUG if verbose else logging.WARNING,
+            stream=sys.stderr,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+        )
+    else:
+        root_logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
+
+    if verbose:
+        logging.getLogger("httpx").setLevel(logging.INFO)
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+    else:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -31,11 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backend", default=None, help="Remote MCP backend base URL")
     parser.add_argument("--backend-url", default=None, help="Alias of --backend (equivalent to AGENT_DECOMPILE_BACKEND_URL)")
     parser.add_argument("--mcp-server-url", default=None, help="Fallback backend URL (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
-    parser.add_argument("--server-host", default=None, help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)")
-    parser.add_argument("--server-port", type=int, default=None, help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)")
-    parser.add_argument("--server-username", default=None, help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)")
-    parser.add_argument("--server-password", default=None, help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)")
-    parser.add_argument("--ghidra-server-repository", default=None, help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)")
+    parser.add_argument("--server-host", "--ghidra-server-host", default=None, help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)")
+    parser.add_argument("--server-port", "--ghidra-server-port", type=int, default=None, help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)")
+    parser.add_argument("--server-username", "--ghidra-server-username", default=None, help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)")
+    parser.add_argument("--server-password", "--ghidra-server-password", default=None, help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)")
+    parser.add_argument("--ghidra-server-repository", "--server-repository", default=None, help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)")
     parser.add_argument("--http", action="store_true", help="Run streamable-http proxy mode")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host for HTTP mode")
     parser.add_argument("--port", type=int, default=8081, help="Bind port for HTTP mode")
@@ -45,6 +65,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args: argparse.Namespace = _build_parser().parse_args()
+    _configure_runtime_logging(args.verbose)
     backend_raw: str = (
         args.backend
         or args.backend_url

@@ -5,7 +5,7 @@ Provides stdio MCP transport for AgentDecompile, enabling integration with Claud
 Usage: claude mcp add AgentDecompile -- mcp-agentdecompile [--config PATH] [--verbose]
 
 Connect mode (1:1 with Python MCP server): --server-url or --host/--port.
-Defaults for host/port come from AGENT_DECOMPILE_SERVER_HOST and AGENT_DECOMPILE_SERVER_PORT.
+Defaults for host/port come from AGENT_DECOMPILE_MCP_SERVER_HOST and AGENT_DECOMPILE_MCP_SERVER_PORT.
 Project path (when spawning local server): AGENT_DECOMPILE_PROJECT_PATH.
 """
 
@@ -348,14 +348,14 @@ def main():
         type=str,
         default=None,
         metavar="HOST",
-        help="Server host for connect mode (default: 127.0.0.1 or AGENT_DECOMPILE_SERVER_HOST)",
+        help="Server host for connect mode (default: 127.0.0.1 or AGENT_DECOMPILE_MCP_SERVER_HOST)",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=None,
         metavar="PORT",
-        help="Server port for connect mode (default: 8080 or AGENT_DECOMPILE_SERVER_PORT)",
+        help="Server port for connect mode (default: 8080 or AGENT_DECOMPILE_MCP_SERVER_PORT)",
     )
     parser.add_argument(
         "-f",
@@ -386,8 +386,8 @@ def main():
         args.server_url,
         args.host,
         args.port,
-        env_host_key="AGENT_DECOMPILE_SERVER_HOST",
-        env_port_key="AGENT_DECOMPILE_SERVER_PORT",
+        env_host_key="AGENT_DECOMPILE_MCP_SERVER_HOST",
+        env_port_key="AGENT_DECOMPILE_MCP_SERVER_PORT",
     )
 
     # Validate config file if provided

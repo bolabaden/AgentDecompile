@@ -71,7 +71,7 @@ class CallGraphToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="gen-callgraph",
-                description="Generate a call graph (pyghidra-mcp compatible alias)",
+                description="Generate a call graph (alias for get-call-graph)",
                 inputSchema=schema,
             ),
         ]

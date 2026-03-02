@@ -1,277 +1,229 @@
 #!/usr/bin/env python3
-"""
-Performance Benchmark Script for AgentDecompile Python MCP Server
+"""Local performance benchmark helper for AgentDecompile internals.
 
-This script measures the performance of the Python MCP server implementation
-compared to the original Java version (where applicable).
+Benchmarks local Python operations (no remote backend):
+- component startup
+- tool listing throughput
+- normalization throughput
+- provider/module import overhead
 
-Usage:
-    python scripts/performance_benchmark.py
+Examples:
+  python helper_scripts/performance_benchmark.py
+  python helper_scripts/performance_benchmark.py --iterations 50 --json
+  python helper_scripts/performance_benchmark.py --output tmp/benchmark.json
 """
 
 from __future__ import annotations
 
-import asyncio
+import argparse
+import json
 import sys
 import time
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable
+from statistics import mean
+from typing import Any, Callable
 
-import psutil  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
+try:
+    import psutil  # pyright: ignore[reportMissingImports, reportMissingTypeStubs]
+except Exception:
+    psutil = None  # type: ignore[assignment]
 
-if TYPE_CHECKING:
-    from mcp import Tool
 
-# Add src to path for imports
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 
 @dataclass
 class BenchmarkResult:
-    """Result of a benchmark test."""
-
     name: str
     duration_ms: float
     memory_mb: float
     success: bool
     error: str = ""
+    iterations: int = 1
 
 
-class PerformanceBenchmark:
-    """Performance benchmark suite for AgentDecompile."""
+class BenchmarkRunner:
+    def __init__(self) -> None:
+        self._process = psutil.Process() if psutil else None
 
-    def __init__(self):
-        self.results: list[BenchmarkResult] = []
-        self.process: psutil.Process = psutil.Process()
+    def memory_mb(self) -> float:
+        if self._process is None:
+            return 0.0
+        return self._process.memory_info().rss / (1024 * 1024)
 
-    def get_memory_usage(self) -> float:
-        """Get current memory usage in MB."""
-        return self.process.memory_info().rss / 1024 / 1024
-
-    async def benchmark_server_startup(self) -> BenchmarkResult:
-        """Benchmark MCP server startup time."""
-        start_time: float = time.time()
-        start_memory: float = self.get_memory_usage()
-
+    def _measure(self, name: str, fn: Callable[[], None], *, iterations: int = 1) -> BenchmarkResult:
+        start_mem = self.memory_mb()
+        start = time.perf_counter()
         try:
-            # Import and initialize server components
+            for _ in range(iterations):
+                fn()
+            duration = (time.perf_counter() - start) * 1000.0
+            delta_mem = self.memory_mb() - start_mem
+            return BenchmarkResult(
+                name=name,
+                duration_ms=duration,
+                memory_mb=delta_mem,
+                success=True,
+                iterations=iterations,
+            )
+        except Exception as exc:
+            return BenchmarkResult(
+                name=name,
+                duration_ms=0.0,
+                memory_mb=0.0,
+                success=False,
+                error=f"{exc.__class__.__name__}: {exc}",
+                iterations=iterations,
+            )
+
+    def bench_server_startup(self) -> BenchmarkResult:
+        def _run() -> None:
+            from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
             from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
-            # Initialize tool provider manager
-            tool_manager = ToolProviderManager()
+            tm = ToolProviderManager()
+            rm = ResourceProviderManager()
+            tools = tm.list_tools()
+            resources = rm.list_resources()
+            if not tools or not isinstance(tools, list):
+                raise ValueError("tool manager did not return non-empty tool list")
+            if not isinstance(resources, list):
+                raise ValueError("resource manager did not return list")
 
-            # Measure time and memory
-            end_time: float = time.time()
-            end_memory: float = self.get_memory_usage()
+        return self._measure("server_startup", _run)
 
-            duration_ms: float = (end_time - start_time) * 1000
-            memory_mb: float = end_memory - start_memory
-
-            return BenchmarkResult(name="Server Startup", duration_ms=duration_ms, memory_mb=memory_mb, success=True)
-
-        except Exception as e:
-            return BenchmarkResult(name="Server Startup", duration_ms=0, memory_mb=0, success=False, error=str(e))
-
-    async def benchmark_tool_listing(self) -> BenchmarkResult:
-        """Benchmark tool listing performance."""
-        start_time: float = time.time()
-        start_memory: float = self.get_memory_usage()
-
-        try:
+    def bench_tool_listing(self, *, iterations: int) -> BenchmarkResult:
+        def _run() -> None:
             from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
-            tool_manager = ToolProviderManager()
-            tools: list[Tool] = tool_manager.list_tools()
+            tools = ToolProviderManager().list_tools()
+            if not isinstance(tools, list):
+                raise ValueError("list_tools() must return list")
 
-            # Run multiple times for more accurate measurement
-            for _ in range(10):
-                tools = tool_manager.list_tools()
+        return self._measure("tool_listing", _run, iterations=iterations)
 
-            end_time: float = time.time()
-            end_memory: float = self.get_memory_usage()
+    def bench_normalization(self, *, iterations: int) -> BenchmarkResult:
+        def _run() -> None:
+            from agentdecompile_cli.registry import normalize_identifier
 
-            duration_ms: float = (end_time - start_time) * 1000
-            memory_mb: float = end_memory - start_memory
-
-            return BenchmarkResult(name="Tool Listing (10 iterations)", duration_ms=duration_ms, memory_mb=memory_mb, success=True)
-
-        except Exception as e:
-            return BenchmarkResult(name="Tool Listing", duration_ms=0, memory_mb=0, success=False, error=f"{e.__class__.__name__}: {e}")
-
-    async def benchmark_flexible_parsing(self) -> BenchmarkResult:
-        """Benchmark flexible tool name and parameter parsing."""
-        start_time: float = time.time()
-        start_memory: float = self.get_memory_usage()
-
-        try:
-            from agentdecompile_cli.mcp_server.providers.functions import FunctionToolProvider
-
-            provider = FunctionToolProvider()  # noqa: F841
-
-            # Test various tool name variations
-            test_cases: list[tuple[str, dict[str, str]]] = [
-                ("get-functions", {}),
-                ("get_functions", {}),
-                ("getfunctions", {}),
-                ("list-functions", {}),
-                ("list_functions", {}),
-                ("listfunctions", {}),
-                ("manage-function", {"action": "rename", "address": "0x1000", "name": "test"}),
-                ("manage_function", {"action": "rename", "address": "0x1000", "name": "test"}),
-                ("managefunction", {"action": "rename", "address": "0x1000", "name": "test"}),
+            samples = [
+                "manage-symbols",
+                "Manage_Symbols",
+                "@@manage symbols@@",
+                "programPath",
+                "program_path",
+                "PROGRAM PATH",
+                "get-functions",
+                "getFunctions",
+                "GET_FUNCTIONS",
             ]
+            for token in samples:
+                normalize_identifier(token)
 
-            for tool_name, args in test_cases:
-                # Just test the tool name matching (don't actually execute)
-                tool_name_lower = tool_name.lower().strip()
-                if tool_name_lower in ("get-functions", "get_functions", "getfunctions", "list-functions", "list_functions", "listfunctions"):
-                    pass  # Valid
-                elif tool_name_lower in ("manage-function", "manage_function", "managefunction", "manage-functions", "manage_functions", "managefunctions"):
-                    pass  # Valid
+        return self._measure("normalization", _run, iterations=iterations)
 
-            end_time: float = time.time()
-            end_memory: float = self.get_memory_usage()
-
-            duration_ms: float = (end_time - start_time) * 1000
-            memory_mb: float = end_memory - start_memory
-
-            return BenchmarkResult(name="Flexible Parsing", duration_ms=duration_ms, memory_mb=memory_mb, success=True)
-
-        except Exception as e:
-            return BenchmarkResult(name="Flexible Parsing", duration_ms=0, memory_mb=0, success=False, error=f"{e.__class__.__name__}: {e}")
-
-    async def benchmark_import_overhead(self) -> BenchmarkResult:
-        """Benchmark module import overhead."""
-        start_time = time.time()
-        start_memory = self.get_memory_usage()
-
-        try:
-            # Import all provider modules
+    def bench_import_overhead(self) -> BenchmarkResult:
+        def _run() -> None:
             from agentdecompile_cli.config import config_manager  # noqa: F401
-            from agentdecompile_cli.mcp_server.providers import (
-                BookmarkToolProvider,  # noqa: F401
-                CallGraphToolProvider,  # noqa: F401
-                CommentToolProvider,  # noqa: F401
-                ConstantSearchToolProvider,  # noqa: F401
-                CrossReferencesToolProvider,  # noqa: F401
-                DataFlowToolProvider,  # noqa: F401
-                DataToolProvider,  # noqa: F401
-                DecompilerToolProvider,  # noqa: F401
-                FunctionToolProvider,  # noqa: F401
-                GetFunctionToolProvider,  # noqa: F401
-                ImportExportToolProvider,  # noqa: F401
-                MemoryToolProvider,  # noqa: F401
-                ProjectToolProvider,  # noqa: F401
-                StringToolProvider,  # noqa: F401
-                StructureToolProvider,  # noqa: F401
-                SymbolToolProvider,  # noqa: F401
-                VtableToolProvider,  # noqa: F401
+            from agentdecompile_cli.mcp_server.providers import (  # noqa: F401
+                BookmarkToolProvider,
+                CallGraphToolProvider,
+                CommentToolProvider,
+                ConstantSearchToolProvider,
+                CrossReferencesToolProvider,
+                DataFlowToolProvider,
+                DataToolProvider,
+                DecompilerToolProvider,
+                FunctionToolProvider,
+                GetFunctionToolProvider,
+                ImportExportToolProvider,
+                MemoryToolProvider,
+                ProjectToolProvider,
+                ScriptToolProvider,
+                StringToolProvider,
+                StructureToolProvider,
+                SymbolToolProvider,
+                VtableToolProvider,
             )
 
-            # Import utility modules
-            from agentdecompile_cli.mcp_utils import (
-                address_util,  # noqa: F401
-                debug_logger,  # noqa: F401
-                memory_util,  # noqa: F401
-                program_lookup_util,  # noqa: F401
-                schema_util,  # noqa: F401
-                service_registry,  # noqa: F401
-                symbol_util,  # noqa: F401
+        return self._measure("module_imports", _run)
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run local performance benchmarks for AgentDecompile")
+    parser.add_argument("--iterations", type=int, default=20, help="Iterations for throughput-oriented benchmarks")
+    parser.add_argument("--json", action="store_true", help="Print JSON output instead of human-readable table")
+    parser.add_argument("--output", type=str, default="", help="Optional file path for JSON output")
+    return parser.parse_args(argv)
+
+
+def summarize(results: list[BenchmarkResult]) -> dict[str, Any]:
+    succeeded = [r for r in results if r.success]
+    failed = [r for r in results if not r.success]
+    average_duration = mean([r.duration_ms for r in succeeded]) if succeeded else 0.0
+    return {
+        "total": len(results),
+        "passed": len(succeeded),
+        "failed": len(failed),
+        "avg_duration_ms": average_duration,
+        "results": [asdict(r) for r in results],
+    }
+
+
+def print_human(results: list[BenchmarkResult]) -> None:
+    print("=" * 78)
+    print("AgentDecompile performance benchmarks")
+    print("=" * 78)
+    for r in results:
+        status = "PASS" if r.success else "FAIL"
+        if r.success:
+            print(
+                f"[{status}] {r.name:18} duration={r.duration_ms:9.2f} ms  "
+                f"memory_delta={r.memory_mb:7.2f} MB  iterations={r.iterations}"
             )
-
-            end_time: float = time.time()
-            end_memory: float = self.get_memory_usage()
-
-            duration_ms: float = (end_time - start_time) * 1000
-            memory_mb: float = end_memory - start_memory
-
-            return BenchmarkResult(name="Module Imports", duration_ms=duration_ms, memory_mb=memory_mb, success=True)
-
-        except Exception as e:
-            return BenchmarkResult(name="Module Imports", duration_ms=0, memory_mb=0, success=False, error=str(e))
-
-    async def run_benchmarks(self) -> list[BenchmarkResult]:
-        """Run all benchmarks."""
-        print("Starting AgentDecompile Performance Benchmarks")
-        print("=" * 60)
-
-        benchmarks: list[tuple[str, Callable[[], Awaitable[BenchmarkResult]]]] = [
-            ("Server Startup", self.benchmark_server_startup),
-            ("Tool Listing", self.benchmark_tool_listing),
-            ("Flexible Parsing", self.benchmark_flexible_parsing),
-            ("Module Imports", self.benchmark_import_overhead),
-        ]
-
-        results: list[BenchmarkResult] = []
-        for name, benchmark_func in benchmarks:
-            print(f"Running {name}...")
-            try:
-                result = await benchmark_func()
-                results.append(result)
-
-                if result.success:
-                    print(f"{result.duration_ms:.2f} ms, {result.memory_mb:.2f} MB")
-                else:
-                    print(f"FAILED {name}: {result.error}")
-            except Exception as e:
-                error_result = BenchmarkResult(name=name, duration_ms=0, memory_mb=0, success=False, error=str(e))
-                results.append(error_result)
-                print(f"ERROR {name}: {e.__class__.__name__}: {e}")
-
-        return results
-
-    def print_summary(self, results: list[BenchmarkResult]):
-        """Print benchmark summary."""
-        print("\n" + "=" * 60)
-        print("PERFORMANCE BENCHMARK SUMMARY")
-        print("=" * 60)
-
-        successful: list[BenchmarkResult] = [r for r in results if r.success]
-        failed: list[BenchmarkResult] = [r for r in results if not r.success]
-
-        print(f"Successful: {len(successful)}/{len(results)}")
-        if failed:
-            print(f"Failed: {len(failed)}")
-            for failure in failed:
-                print(f"   - {failure.name}: {failure.error}")
-
-        print("\nPerformance Metrics:")
-        print("<25")
-        print("-" * 50)
-
-        for result in successful:
-            print("<25")
-
-        print("\nKey Performance Insights:")
-        print("• Python startup is significantly faster than Java JVM")
-        print("• Tool listing is highly efficient (< 1ms)")
-        print("• Flexible parsing adds minimal overhead")
-        print("• Memory usage is reasonable for a Python application")
-        print("• All operations complete in well under 100ms")
-
-        # Performance targets check
-        all_fast: bool = all(r.duration_ms < 100 for r in successful)
-        memory_efficient: bool = all(r.memory_mb < 50 for r in successful)
-
-        print("\nPerformance Targets:")
-        print(f"- Sub-100ms operations: {'PASS' if all_fast else 'FAIL'}")
-        print(f"- Sub-50MB memory usage: {'PASS' if memory_efficient else 'FAIL'}")
-        print(f"- Zero failures: {'PASS' if not failed else 'FAIL'}")
+        else:
+            print(f"[{status}] {r.name:18} error={r.error}")
+    payload = summarize(results)
+    print("-" * 78)
+    print(
+        f"Summary: {payload['passed']}/{payload['total']} passed, "
+        f"avg_duration={payload['avg_duration_ms']:.2f} ms"
+    )
 
 
-async def main():
-    """Main benchmark entry point."""
-    benchmark = PerformanceBenchmark()
-    results: list[BenchmarkResult] = await benchmark.run_benchmarks()
-    benchmark.print_summary(results)
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    if args.iterations <= 0:
+        print("--iterations must be > 0", file=sys.stderr)
+        return 2
 
-    # Exit with appropriate code
-    failed_count: int = len([r for r in results if not r.success])
-    sys.exit(0 if failed_count == 0 else 1)
+    runner = BenchmarkRunner()
+    results: list[BenchmarkResult] = [
+        runner.bench_server_startup(),
+        runner.bench_tool_listing(iterations=args.iterations),
+        runner.bench_normalization(iterations=args.iterations * 25),
+        runner.bench_import_overhead(),
+    ]
+
+    payload = summarize(results)
+    if args.json:
+        rendered = json.dumps(payload, indent=2)
+        print(rendered)
+    else:
+        print_human(results)
+
+    if args.output:
+        out = Path(args.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    return 0 if payload["failed"] == 0 else 1
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())
