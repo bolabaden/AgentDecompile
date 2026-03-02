@@ -578,6 +578,59 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 ```
 
 </details>
+### 2.12 Shared sync workflow (validated)
+
+Verified against `http://170.9.241.140:8080/mcp/message/` with repository `Odyssey` on 2026-03-02.
+
+<details>
+<summary><b>Linux (bash/zsh)</b></summary>
+
+```bash
+# 1) Open shared repository session
+call_tool 201 open '{"server_host":"170.9.241.140","server_port":13100,"server_username":"OpenKotOR","server_password":"MuchaShakaPaka","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}'
+
+# 2) Pull plan
+call_tool 202 sync-shared-project '{"mode":"pull","path":"/K1","newPath":"/K1_sync_test","recursive":true,"maxResults":1,"dryRun":true}'
+
+# 3) Push plan
+call_tool 203 sync-shared-project '{"mode":"push","path":"/K1_sync_test","recursive":true,"maxResults":1,"dryRun":true}'
+```
+
+</details>
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+$url = "http://170.9.241.140:8080/mcp/message/"
+$hdr = @{ "Content-Type"="application/json"; "Accept"="application/json, text/event-stream" }
+
+$init = @{ jsonrpc="2.0"; id=1; method="initialize"; params=@{ protocolVersion="2025-03-26"; capabilities=@{}; clientInfo=@{ name="ps-sync"; version="0.1" } } } | ConvertTo-Json -Depth 8
+$r = Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $init -UseBasicParsing
+$sid = ($r.Headers.GetEnumerator() | Where-Object { $_.Key -ieq "mcp-session-id" } | Select-Object -First 1 -ExpandProperty Value)
+$hdr["mcp-session-id"] = $sid
+Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json -Depth 5) -UseBasicParsing | Out-Null
+
+$open = @{ jsonrpc="2.0"; id=2; method="tools/call"; params=@{ name="open"; arguments=@{ server_host="170.9.241.140"; server_port=13100; server_username="OpenKotOR"; server_password="MuchaShakaPaka"; repository_name="Odyssey"; program_path="/K1/k1_win_gog_swkotor.exe" } } } | ConvertTo-Json -Depth 10
+Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $open -UseBasicParsing
+
+$pull = @{ jsonrpc="2.0"; id=3; method="tools/call"; params=@{ name="sync-shared-project"; arguments=@{ mode="pull"; path="/K1"; newPath="/K1_ps_sync"; recursive=$true; maxResults=1; dryRun=$true } } } | ConvertTo-Json -Depth 10
+Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $pull -UseBasicParsing
+
+$push = @{ jsonrpc="2.0"; id=4; method="tools/call"; params=@{ name="sync-shared-project"; arguments=@{ mode="push"; path="/K1_ps_sync"; recursive=$true; maxResults=1; dryRun=$true } } } | ConvertTo-Json -Depth 10
+Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $push -UseBasicParsing
+```
+
+</details>
+<details>
+<summary><b>uvx</b></summary>
+
+```powershell
+$steps = '[{"name":"open","arguments":{"server_host":"170.9.241.140","server_port":13100,"server_username":"OpenKotOR","server_password":"MuchaShakaPaka","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"sync-shared-project","arguments":{"mode":"pull","path":"/K1","newPath":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}},{"name":"sync-shared-project","arguments":{"mode":"push","path":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}}]'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ tool-seq $steps
+```
+
+</details>
+
 ---
 
 ## 3) Notes
@@ -585,4 +638,6 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 - This file is intentionally organized in three tabs for each workflow: Linux, Windows, and `uvx`.
 - For strict output comparability, run all HTTP calls in one session and run `open` first.
 - In PowerShell `uvx ... tool <name> <json>`, pass JSON via a variable like `$a`.
-- In shared-server mode, rename/comment/tag writes can return read-only transaction errors unless the backend checkout is writable.
+- Verified behavior (2026-03-02): shared pull and push dry-runs succeed in both PowerShell and `uvx` when `open` and `sync-shared-project` run in the same MCP session.
+- Verified behavior (2026-03-02): shared push actual succeeds after pull (`mode="push"`, non-dry-run).
+- `checkin-program` can still fail when the active program is non-project-backed (`path` like `/Untitled`); use sync pull/push flow for shared updates.
