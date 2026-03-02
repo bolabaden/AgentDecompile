@@ -1,0 +1,110 @@
+{
+  "operation": "list",
+  "path": "/ghidra",
+  "entries": [
+    {
+      "name": "agentdecompile_projects",
+      "path": "/ghidra/agentdecompile_projects",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "docker",
+      "path": "/ghidra/docker",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "docs",
+      "path": "/ghidra/docs",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "Extensions",
+      "path": "/ghidra/Extensions",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "Ghidra",
+      "path": "/ghidra/Ghidra",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "GPL",
+      "path": "/ghidra/GPL",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "licenses",
+      "path": "/ghidra/licenses",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "repositories",
+      "path": "/ghidra/repositories",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "server",
+      "path": "/ghidra/server",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "support",
+      "path": "/ghidra/support",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "venv",
+      "path": "/ghidra/venv",
+      "isDirectory": true,
+      "size": null
+    },
+    {
+      "name": "bom.json",
+      "path": "/ghidra/bom.json",
+      "isDirectory": false,
+      "size": 156576
+    },
+    {
+      "name": "GettingStarted.html",
+      "path": "/ghidra/GettingStarted.html",
+      "isDirectory": false,
+      "size": 38459
+    },
+    {
+      "name": "GettingStarted.md",
+      "path": "/ghidra/GettingStarted.md",
+      "isDirectory": false,
+      "size": 26170
+    },
+    {
+      "name": "ghidraRun",
+      "path": "/ghidra/ghidraRun",
+      "isDirectory": false,
+      "size": 887
+    },
+    {
+      "name": "ghidraRun.bat",
+      "path": "/ghidra/ghidraRun.bat",
+      "isDirectory": false,
+      "size": 923
+    },
+    {
+      "name": "LICENSE",
+      "path": "/ghidra/LICENSE",
+      "isDirectory": false,
+      "size": 11357
+    }
+  ],
+  "count": 17,
+  "maxResults": 200
+}

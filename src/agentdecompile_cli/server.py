@@ -35,7 +35,7 @@ from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.utils import get_client, run_async
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     stream=sys.stderr,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
@@ -256,31 +256,43 @@ def main() -> None:
         ),
     )
     g_server.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Enable verbose logs (including HTTP request diagnostics)",
+    )
+    g_server.add_argument(
         "--server-host",
+        "--ghidra-server-host",
         type=str,
         default=None,
         help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
     )
     g_server.add_argument(
         "--server-port",
+        "--ghidra-server-port",
         type=int,
         default=None,
         help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
     )
     g_server.add_argument(
         "--server-username",
+        "--ghidra-server-username",
         type=str,
         default=None,
         help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
     )
     g_server.add_argument(
         "--server-password",
+        "--ghidra-server-password",
         type=str,
         default=None,
         help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
     )
     g_server.add_argument(
         "--ghidra-server-repository",
+        "--server-repository",
         type=str,
         default=None,
         help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
@@ -333,6 +345,14 @@ def main() -> None:
     )
     parser.add_argument("--config", type=Path, default=None, help="AgentDecompile config file")
     args = parser.parse_args()
+
+    logging.getLogger().setLevel(logging.DEBUG if args.verbose else logging.WARNING)
+    if args.verbose:
+        logging.getLogger("httpx").setLevel(logging.INFO)
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+    else:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     if args.server_host:
         os.environ["AGENT_DECOMPILE_SERVER_HOST"] = str(args.server_host)

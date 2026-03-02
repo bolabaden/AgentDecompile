@@ -1,0 +1,162 @@
+[
+  {
+    "index": 1,
+    "name": "open",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 2,
+    "name": "list project-files",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 3,
+    "name": "get-current-program",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 4,
+    "name": "get-functions limit",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 5,
+    "name": "search-symbols-by-name",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 6,
+    "name": "references to",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 7,
+    "name": "get-functions info",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 8,
+    "name": "get-functions decompile",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 9,
+    "name": "get-functions disassemble",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 10,
+    "name": "get-call-graph",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 11,
+    "name": "references from",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 12,
+    "name": "manage-strings",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 13,
+    "name": "search-constants",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 14,
+    "name": "analyze-data-flow",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 15,
+    "name": "manage-function rename",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 16,
+    "name": "manage-comments set",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 17,
+    "name": "manage-function-tags add",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 18,
+    "name": "manage-bookmarks set",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 19,
+    "name": "tool list-imports",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  },
+  {
+    "index": 20,
+    "name": "tool list-exports",
+    "uvx_rc": 0,
+    "curl_rc": 0,
+    "curl_json_ok": true,
+    "curl_error": null
+  }
+]

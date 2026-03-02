@@ -1,247 +1,220 @@
 #!/usr/bin/env python3
+"""Integration smoke checks for AgentDecompile Python components.
+
+This helper stays local-only (no remote backend required) and focuses on:
+- import surface validity
+- provider manager initialization and tool/resource advertisement shape
+- normalization behavior for flexible tool/argument names
+
+Examples:
+  python helper_scripts/integration_test.py
+  python helper_scripts/integration_test.py --checks imports,normalization --json
+  python helper_scripts/integration_test.py --strict
 """
-Integration Test Script for AgentDecompile MCP Server
 
-This script tests the basic functionality and imports of the Python MCP server
-to ensure it can be used by external MCP clients.
+from __future__ import annotations
 
-Usage:
-    python scripts/integration_test.py
-"""
-
+import argparse
+import json
 import sys
 import time
+
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Callable
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-def test_imports():
-    """Test that all MCP server components can be imported."""
-    print("Testing MCP server imports...")
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
+
+@dataclass
+class CheckResult:
+    name: str
+    passed: bool
+    duration_ms: float
+    detail: str
+
+
+def _ok(name: str, started: float, detail: str) -> CheckResult:
+    return CheckResult(name=name, passed=True, duration_ms=(time.perf_counter() - started) * 1000.0, detail=detail)
+
+
+def _fail(name: str, started: float, exc: Exception) -> CheckResult:
+    return CheckResult(
+        name=name,
+        passed=False,
+        duration_ms=(time.perf_counter() - started) * 1000.0,
+        detail=f"{exc.__class__.__name__}: {exc}",
+    )
+
+
+def check_imports() -> CheckResult:
+    started = time.perf_counter()
+    name = "imports"
     try:
-        # Test main server components
-        from agentdecompile_cli.mcp_server.server import PythonMcpServer
-        from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
-        from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
-
-        # Test all tool providers
-        from agentdecompile_cli.mcp_server.providers import (
+        from agentdecompile_cli.mcp_server.server import PythonMcpServer  # noqa: F401
+        from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager  # noqa: F401
+        from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager  # noqa: F401
+        from agentdecompile_cli.mcp_server.providers import (  # noqa: F401
+            BookmarkToolProvider,
+            CallGraphToolProvider,
+            CommentToolProvider,
+            ConstantSearchToolProvider,
+            CrossReferencesToolProvider,
+            DataFlowToolProvider,
+            DataToolProvider,
             DecompilerToolProvider,
             FunctionToolProvider,
-            SymbolToolProvider,
-            MemoryToolProvider,
-            DataToolProvider,
-            StringToolProvider,
-            StructureToolProvider,
-            CrossReferencesToolProvider,
-            CommentToolProvider,
-            BookmarkToolProvider,
-            ProjectToolProvider,
-            CallGraphToolProvider,
             GetFunctionToolProvider,
             ImportExportToolProvider,
-            DataFlowToolProvider,
-            ConstantSearchToolProvider,
+            MemoryToolProvider,
+            ProjectToolProvider,
+            StringToolProvider,
+            StructureToolProvider,
+            SymbolToolProvider,
             VtableToolProvider,
         )
+        return _ok(name, started, "All target modules imported successfully")
+    except Exception as exc:
+        return _fail(name, started, exc)
 
-        # Test utility modules
-        from agentdecompile_cli.mcp_utils import (
-            address_util,
-            debug_logger,
-            memory_util,
-            program_lookup_util,
-            symbol_util,
-            schema_util,
-            service_registry,
-        )
-        from agentdecompile_cli.config import config_manager
 
-        print("PASS All MCP server components imported successfully")
-        return True
-
-    except Exception as e:
-        print(f"FAIL Import test failed: {e}")
-        return False
-
-def test_server_initialization():
-    """Test that the MCP server can be initialized."""
-    print("Testing MCP server initialization...")
-
+def check_server_components() -> CheckResult:
+    started = time.perf_counter()
+    name = "server-components"
     try:
-        from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
         from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
-        from agentdecompile_cli.mcp_server.server import PythonMcpServer
+        from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
-        # Initialize components
-        tool_manager = ToolProviderManager()
-        resource_manager = ResourceProviderManager()
+        tools = ToolProviderManager().list_tools()
+        resources = ResourceProviderManager().list_resources()
+        if not isinstance(tools, list) or len(tools) == 0:
+            raise ValueError("ToolProviderManager.list_tools() must return a non-empty list")
+        if not isinstance(resources, list):
+            raise ValueError("ResourceProviderManager.list_resources() must return a list")
+        return _ok(name, started, f"tools={len(tools)} resources={len(resources)}")
+    except Exception as exc:
+        return _fail(name, started, exc)
 
-        # Test tool listing
-        tools = tool_manager.list_tools()
-        assert isinstance(tools, list), "Tools should be a list"
-        assert len(tools) > 0, "Should have at least one tool"
 
-        # Test resource listing
-        resources = resource_manager.list_resources()
-        assert isinstance(resources, list), "Resources should be a list"
-
-        print(f"PASS Server initialization successful - {len(tools)} tools, {len(resources)} resources")
-        return True
-
-    except Exception as e:
-        print(f"FAIL Server initialization failed: {e}")
-        return False
-
-def test_flexible_tool_matching():
-    """Test flexible tool name matching."""
-    print("Testing flexible tool name matching...")
-
-    try:
-        from agentdecompile_cli.mcp_server.providers.functions import FunctionToolProvider
-
-        provider = FunctionToolProvider()
-
-        # Test various tool name patterns that should work
-        test_names = [
-            "get-functions",
-            "get_functions",
-            "getfunctions",
-            "list-functions",
-            "list_functions",
-            "listfunctions",
-            "manage-function",
-            "manage_function",
-            "managefunction",
-        ]
-
-        success_count = 0
-        for name in test_names:
-            # We can't actually call the tools without a program loaded,
-            # but we can verify the provider accepts the patterns
-            name_lower = name.lower().strip()
-            if (name_lower in ("get-functions", "get_functions", "getfunctions", "list-functions", "list_functions", "listfunctions") or
-                name_lower in ("manage-function", "manage_function", "managefunction", "manage-functions", "manage_functions", "managefunctions")):
-                success_count += 1
-
-        print(f"PASS Flexible tool matching works for {success_count}/{len(test_names)} patterns")
-        return success_count == len(test_names)
-
-    except Exception as e:
-        print(f"FAIL Flexible tool matching failed: {e}")
-        return False
-
-def test_mcp_protocol_compatibility():
-    """Test basic MCP protocol compatibility."""
-    print("Testing MCP protocol compatibility...")
-
+def check_protocol_shape() -> CheckResult:
+    started = time.perf_counter()
+    name = "protocol-shape"
     try:
         from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
-        tool_manager = ToolProviderManager()
-        tools = tool_manager.list_tools()
-
-        # Verify MCP tool schema
+        tools = ToolProviderManager().list_tools()
+        bad: list[str] = []
         for tool in tools:
-            assert "name" in tool, "Tool should have name"
-            assert "description" in tool, "Tool should have description"
-            assert "inputSchema" in tool, "Tool should have inputSchema"
-            assert isinstance(tool["inputSchema"], dict), "inputSchema should be dict"
+            tname = getattr(tool, "name", "")
+            tdesc = getattr(tool, "description", "")
+            tschema = getattr(tool, "inputSchema", None)
+            if not isinstance(tname, str) or not tname.strip():
+                bad.append(f"name:{tool}")
+            if not isinstance(tdesc, str):
+                bad.append(f"description:{tname or '?'}")
+            if not isinstance(tschema, dict):
+                bad.append(f"inputSchema:{tname or '?'}")
+        if bad:
+            raise ValueError(f"Invalid tool schema entries: {bad[:10]}")
+        return _ok(name, started, f"validated={len(tools)}")
+    except Exception as exc:
+        return _fail(name, started, exc)
 
-        print(f"PASS MCP protocol compatibility verified for {len(tools)} tools")
-        return True
 
-    except Exception as e:
-        print(f"FAIL MCP protocol compatibility failed: {e}")
-        return False
-
-def test_error_handling():
-    """Test error handling capabilities."""
-    print("Testing error handling...")
-
+def check_normalization() -> CheckResult:
+    started = time.perf_counter()
+    name = "normalization"
     try:
-        from agentdecompile_cli.mcp_server.providers.functions import FunctionToolProvider
+        from agentdecompile_cli.registry import normalize_identifier
 
-        provider = FunctionToolProvider()
+        pairs: list[tuple[str, str]] = [
+            ("manage-symbols", "managesymbols"),
+            ("Manage_Symbols", "managesymbols"),
+            ("@@manage symbols@@", "managesymbols"),
+            ("programPath", "programpath"),
+            ("program_path", "programpath"),
+        ]
+        for raw, expected in pairs:
+            got = normalize_identifier(raw)
+            if got != expected:
+                raise ValueError(f"normalize_identifier({raw!r}) => {got!r}, expected {expected!r}")
+        return _ok(name, started, f"validated={len(pairs)}")
+    except Exception as exc:
+        return _fail(name, started, exc)
 
-        # Test calling a tool with invalid arguments (should not crash)
-        import asyncio
 
-        async def test_call():
-            try:
-                result = await provider.call_tool("get-functions", {})
-                # Should return error gracefully
-                return result
-            except Exception as e:
-                return str(e)
+def run_selected_checks(checks: list[str]) -> list[CheckResult]:
+    registry: dict[str, Callable[[], CheckResult]] = {
+        "imports": check_imports,
+        "server-components": check_server_components,
+        "protocol-shape": check_protocol_shape,
+        "normalization": check_normalization,
+    }
+    results: list[CheckResult] = []
+    for check in checks:
+        results.append(registry[check]())
+    return results
 
-        # Run the async test
-        result = asyncio.run(test_call())
 
-        # Should handle the error gracefully
-        if isinstance(result, list) and len(result) > 0:
-            content = result[0]
-            if hasattr(content, 'text'):
-                text = content.text
-                if '"success": false' in text or 'error' in text.lower():
-                    print("PASS Error handling works correctly")
-                    return True
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run local integration smoke checks for AgentDecompile")
+    parser.add_argument(
+        "--checks",
+        default="imports,server-components,protocol-shape,normalization",
+        help="Comma-separated checks to run. Allowed: imports,server-components,protocol-shape,normalization",
+    )
+    parser.add_argument("--json", action="store_true", help="Emit JSON summary")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Use non-zero exit if any check fails (default behavior). Reserved for explicit CI usage.",
+    )
+    return parser.parse_args(argv)
 
-        print("PASS Error handling appears to work")
-        return True
 
-    except Exception as e:
-        print(f"FAIL Error handling failed: {e}")
-        return False
+def _print_human(results: list[CheckResult]) -> None:
+    print("=" * 72)
+    print("AgentDecompile integration smoke checks")
+    print("=" * 72)
+    for item in results:
+        status = "PASS" if item.passed else "FAIL"
+        print(f"[{status}] {item.name:18} {item.duration_ms:8.2f} ms  {item.detail}")
+    print("-" * 72)
+    passed = sum(1 for item in results if item.passed)
+    print(f"Summary: {passed}/{len(results)} passed")
 
-def main():
-    """Main entry point."""
-    print("=" * 60)
-    print("AgentDecompile MCP Integration Tests")
-    print("=" * 60)
 
-    tests = [
-        ("Import Test", test_imports),
-        ("Server Initialization", test_server_initialization),
-        ("Flexible Tool Matching", test_flexible_tool_matching),
-        ("MCP Protocol Compatibility", test_mcp_protocol_compatibility),
-        ("Error Handling", test_error_handling),
-    ]
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    requested = [token.strip() for token in args.checks.split(",") if token.strip()]
+    allowed = {"imports", "server-components", "protocol-shape", "normalization"}
+    unknown = [item for item in requested if item not in allowed]
+    if unknown:
+        print(f"Unknown checks: {', '.join(unknown)}", file=sys.stderr)
+        return 2
 
-    passed = 0
-    total = len(tests)
+    results = run_selected_checks(requested)
+    failed = [item for item in results if not item.passed]
 
-    for name, test_func in tests:
-        start_time = time.time()
-        try:
-            if test_func():
-                passed += 1
-                duration = time.time() - start_time
-                print(".2f")
-            else:
-                print(f"FAIL {name}")
-        except Exception as e:
-            print(f"ERROR {name}: {e}")
-
-    print("\n" + "=" * 60)
-    print("INTEGRATION TEST SUMMARY")
-    print("=" * 60)
-    print(f"Tests Passed: {passed}/{total}")
-
-    if passed == total:
-        print("\nIntegration Status:")
-        print("  PASS ALL INTEGRATION TESTS PASSED")
-        print("  PASS MCP server components work correctly")
-        print("  PASS Protocol compatibility maintained")
-        print("  PASS Error handling works properly")
-        print("  PASS Flexible tool matching functional")
-        return 0
+    if args.json:
+        payload: dict[str, Any] = {
+            "requested": requested,
+            "passed": len(results) - len(failed),
+            "failed": len(failed),
+            "results": [asdict(item) for item in results],
+        }
+        print(json.dumps(payload, indent=2))
     else:
-        print(f"\nIntegration Status:")
-        print(f"  FAIL {total - passed} integration tests failed")
+        _print_human(results)
+
+    if failed:
         return 1
+    return 0
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

@@ -1,5 +1,11 @@
 # AgentDecompile – Copilot/Claude Instructions
 
+## Writing and Tone Policy (Anti-Fluff)
+- **No Preambles or Postambles**: Never start with "Here is...", "Certainly!", or "Sure, I can help...". Do not end with summaries like "In conclusion..." or "Let me know if you need anything else."
+- **No Sycophantic Echoing**: Do not repeat or embed the user's prompt back to them in your response. 
+- **No AI Filler Words**: Avoid words like *delve, tapestry, crucial, testament, robust, flawlessly, seamless, embark*.
+- **Direct & Clinical**: Adopt a strictly technical, objective, and factual tone. Just output the code, docs, or direct answer.
+
 ## Planning and Documentation Diagram Policy
 
 - Every new or updated planning/design document must include at least one Mermaid diagram.
@@ -166,28 +172,12 @@ for key, value in arguments.items():
 - Requiring every param to be declared in the resolved tool's param set.
 - Adding duplicate param definitions to target tools just to satisfy parsing.
 
-## Vendor Source Integration
-
-Each tool merges compatible implementations from:
-1. `vendor/pyghidra-mcp/` – Base tool implementations
-2. `vendor/GhidraMCP/` – Additional symbols/xrefs API
-3. `vendor/reverse-engineering-assistant/` – Project management patterns
-4. `TOOLS_LIST.md` – Canonical specifications
-
-Example: `manage-symbols` consolidates:
-- pyghidra-mcp: `search_symbols_by_name()` → `mode='symbols'`
-- GhidraMCP: `list_methods()`, `list_classes()` → `mode='classes'`, `mode='namespaces'`
-- TOOLS_LIST: `demangle`, `imports`, `exports`, `rename_data`, `count`, `create_label`
-
-All modes, all argument names, all response formats in one unified tool.
-
 ## How to Work on This
 
 1. **Start with TOOLS_LIST.md** – Extract tool specification (modes, parameters, response shape)
-2. **Review vendor sources** – Check pyghidra-mcp, GhidraMCP, etc. for working implementations
-3. **Implement in Python** – `src/agentdecompile_cli/mcp_server/providers/DOMAIN_NAME.py`
-4. **Extend `ToolProvider`** – Define `HANDLERS` dict, use `self._get()` helpers for normalized arg access
-5. **Test** – Verify all modes, argument forms, error cases
+2. **Implement in Python** – `src/agentdecompile_cli/mcp_server/providers/DOMAIN_NAME.py`
+3. **Extend `ToolProvider`** – Define `HANDLERS` dict, use `self._get()` helpers for normalized arg access
+4. **Test** – Verify all modes, argument forms, error cases
 
 For detailed architectural notes, see [src/CLAUDE.md](../src/CLAUDE.md).
 

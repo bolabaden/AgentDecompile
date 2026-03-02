@@ -131,6 +131,10 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
+HTTP request diagnostics are disabled by default in CLI/server/proxy output. Use `--verbose` (or `-v`) to enable transport-level request logs during troubleshooting.
+
+Shared Ghidra connection flags are accepted with or without the `ghidra-` prefix in CLI/server/proxy entrypoints. For example, `--server-host` and `--ghidra-server-host` are equivalent (same for `port`, `username`, `password`, and `repository`).
+
 #### Shared server quick usage (concise)
 
 The examples below use the published Git source install form and redact sensitive values.

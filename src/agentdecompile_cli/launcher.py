@@ -109,7 +109,7 @@ class PyGhidraContext:
         self,
         project_name: str,
         project_path: str | Path,
-        pyghidra_mcp_dir: Path | None = None,
+        agentdecompile_dir: Path | None = None,
         force_analysis: bool = False,
         verbose_analysis: bool = False,
         no_symbols: bool = False,
@@ -146,13 +146,13 @@ class PyGhidraContext:
         self.programs: dict[str, ProgramInfo] = {}
         self._init_project_programs()
 
-        self.pyghidra_mcp_dir = (
-            self.project_path / "pyghidra-mcp" if pyghidra_mcp_dir is None else Path(pyghidra_mcp_dir)  # Use provided pyghidra-mcp directory or create default
+        self.agentdecompile_dir = (
+            self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
         )
 
         self.chroma_client: Any | None = None
         if chromadb is not None and Settings is not None:
-            chromadb_path: Path = self.pyghidra_mcp_dir / "chromadb"
+            chromadb_path: Path = self.agentdecompile_dir / "chromadb"
             chromadb_path.mkdir(parents=True, exist_ok=True)
             self.chroma_client = chromadb.PersistentClient(
                 path=str(chromadb_path),
@@ -168,10 +168,10 @@ class PyGhidraContext:
         self.gdts: list[str] = [] if gdts is None else gdts
 
         # Symbol configuration
-        self.symbols_path: Path = Path(symbols_path) if symbols_path else self.pyghidra_mcp_dir / "symbols"
+        self.symbols_path: Path = Path(symbols_path) if symbols_path else self.agentdecompile_dir / "symbols"
         self.sym_file_path: Path | None = None if sym_file_path is None else Path(sym_file_path)
         self.program_options: dict[str, Any] = {} if program_options is None else program_options
-        self.gzfs_path: Path = self.pyghidra_mcp_dir / "gzfs" if gzfs_path is None else Path(gzfs_path)
+        self.gzfs_path: Path = self.agentdecompile_dir / "gzfs" if gzfs_path is None else Path(gzfs_path)
         self.gzfs_path.mkdir(exist_ok=True, parents=True)
 
         self.threaded: bool = bool(threaded)

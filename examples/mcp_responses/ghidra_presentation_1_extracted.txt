@@ -1,0 +1,239 @@
+Some Ghidra Things
+To help folk understand wtf I’m talkin about a bit more with Reverse engineering things
+
+Ghidra Repos
+● A Ghidra Project is made up of 
+repos.
+● Each repo represents an 
+executable binary
+● When double clicking on one of 
+these you will be brought to the 
+CodeBrowser
+● On the server we try to 
+label/organize these by version and 
+platform
+
+
+The Code Browser
+
+Symbol Tree
+● Allows for searching all symbols
+● Symbols include:
+○ Classes
+○ Namespaces
+○ Functions
+○ Labels
+○ Imports (DLLs)
+○ Exports (entry function)
+● This should be your starting point when 
+you’re looking for things in the exe
+● Classes have drop downs containing all 
+symbols defined within that class
+
+
+Data Type Manager
+● Shows all defined or included data types
+● Data Types include:
+○ Structures (usually associated with a class)
+○ Unions (used rarely)
+○ Enums
+○ TypeDefs
+○ Function Types
+○ Pointers (usually hidden as they just 
+reference an existing type)
+● This is where to search if you want to 
+understand how something is structured in 
+Memory, and what fields/offsets it has.
+
+
+Listing
+● This is where the program assembly will 
+appear, it should be your primary interface 
+with the CodeBrowser
+● The Listing is our Ground-Truth for what 
+the program is actually doing, and should 
+always be trusted above the decompile 
+view
+● It also has some useful features:
+○ Quick Navigation
+○ Address labelling
+○ XREFs
+○ DataTyping
+
+
+Decompile
+● The decompile view shows Ghidra’s best 
+attempt at decompiling the last selected 
+function
+● This is used for getting an intuition of what 
+the program is doing, however it should 
+not be 100% trusted.
+● The Ghidra analysis pipeline is a Heuristic, 
+not an algorithm, accuracy can vary.
+● Some features include:
+○ Quick labeling
+○ Quick Navigation
+○ Function Modification
+
+
+Other Code Browser Things
+● CodeBrowser has numerous different 
+plugins that are good to be familiar with:
+○ Function Call Trees
+○ Memory Map
+○ Bookmarks
+○ Symbol Table
+○ Functions
+○ Jython (PyGhidra)
+○ Script Manager
+○ Console
+○ And more...
+
+
+Ghidra Concepts
+
+Functions
+● A function is defined at some address.
+● They have a Name, Calling Convention, 
+Return Type, and 0 or more Params
+● Functions also can be a part of a 
+class/namespace (this can only be set 
+through the ‘Rename Function’ view)
+● Functions can also have various other 
+properties such as:
+○ Varargs
+○ Inlining
+○ Custom Storage Objects
+○ Call Fixups
+○ Thunks
+
+
+Functions - Calling Conventions
+ ● The calling convention determines how a 
+function gets called, where parameters 
+come from, and what sort of stack 
+behavior is expected.
+● The 4 main conventions we’ll discuss are:
+○ __cdecl | (used for C functions, caller 
+responsible for clean-up)
+○ __fastcall | (rarely used in kotor, register 
+based parameterization)
+○ __stdcall | (Standard for Win32 API, and 
+many C++ functions, callee cleans up)
+○ __thiscall | (Most common in kotor, allows 
+for bringing it a this pointer for the 
+function, clean up depends on param 
+count)
+
+
+Functions - Custom Storage
+● There are times when a function violates 
+standard calling conventions (usually due 
+to compiler optimization or non-standard 
+patterns)
+● For these cases we have to override the 
+function storage to reflect the correct 
+behavior
+● Most common reason for this is FPU 
+functions
+● This was also used to get the __ftol2 
+library function to behave
+
+
+Structures
+● Structures represent the way that data is 
+organized in memory
+● They have a Name, Size, Description, and 
+a number of fields
+● Each fields has a Name, Type (which 
+could be another structure), Length, and 
+offset into the structure it occurs
+● If fields are labeled they will appear in the 
+decompile view when referenced, 
+otherwise they’ll have a name like 
+field<id>_<hex_offset>
+
+
+Structures - vtables
+● A vtable (or vftable) is an array of addresses 
+to non-static functions that a class can call 
+upon
+● This is specially allows for functions to be 
+invoked as a member of an object instance 
+such as this->getValue(var)
+● Ghidra’s support for robust vtable labeling is 
+limited unfortunately, so we have to rely on 
+some structure tricks and Function typing to 
+get useful decompiles from these
+● Vtable structures get shared through 
+inheritance, causing some types to have 
+unimplemented virtual functions (usually 
+shows up as return_zero or 
+void_return, depending on default 
+behavior. They will also sometimes have 
+parent class functions
+
+
+Structures - Template Classes
+● Template classes are yet another thing 
+that Ghidra is bad at supporting
+● As a result, for every T variant applied to 
+ClassName<T> will result in a separate 
+structure in Ghidra
+● The main templated types in KotOR are:
+○ CExoArrayList<T>
+○ CExoLinkedList<T>
+○ CResHelp<T,N>
+○ funcholder<T>
+○ SafePointer<T>
+
+
+Common Decompile Issues
+
+extraout variables
+● Local variables prefixed with extraout, 
+indicates that some function being called 
+bear that variable has an issue with it’s 
+return type that’s resulting unexpected 
+data being pulled into the logic flow
+● Sometimes this is as simple as a function 
+missing a return (extraout_EAX or 
+extraout_ST0) or with a wrong return 
+type
+● Other times it can be much more 
+complicated, such as the release compiler 
+identifying a register as non-volatile within 
+a function, and skipping the recovery steps
+
+
+Stack Param Violations
+● A stack param violation occurs when the 
+compiler decides to write local variables 
+into parameter stack space
+● This happens because the optimizer 
+detects that the parameter is either no 
+longer used or relocated, so it is safe to 
+reclaim this stack space
+● However, this is a violation of stack based 
+call conventions, which causes Ghidra to 
+struggle to identify these are net-new 
+variables
+● These are particularly annoying, and 
+Ghidra does not have a supported means 
+of resolving these
+
+
+unaff Register Variables
+● These appear whenever a register or 
+stack variable gets pulled into the logic 
+flow without evidence of it being written or 
+cleaned up
+● These are often caused by functions with 
+an incorrect or non-standard calling 
+convention
+● Particularly, this can happen with an 
+untyped vtable call, which would 
+necessary have an unknown calling 
+convention
+● This makes these very difficult (and at 
+times unreasonable) to fix

@@ -63,7 +63,7 @@ class TestDecompilerProviderHandlers:
         assert "decompile" in DecompilerToolProvider.HANDLERS
 
     def test_decompilefunction_handler_present(self):
-        """decompilefunction is a GhidraMCP/pyghidra-mcp alias."""
+        """decompilefunction is an alias for decompile."""
         assert "decompilefunction" in DecompilerToolProvider.HANDLERS
 
     def test_both_aliases_route_to_same_method(self):

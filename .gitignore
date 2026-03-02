@@ -291,7 +291,6 @@ uv.lock
 .vscode/extensions.json
 .vscode/settings.json
 config/agentdecompile-headless-example.properties
-config/reva-headless-example.properties
 docs/JAVA_TO_PYTHON_MIGRATION.md
 docs/MCP_AGENTDECOMPILE_USAGE.md
 docs/USAGE.md
@@ -304,3 +303,4 @@ __init__.pyi
 tmp/
 docs/from_video/
 TOOLS_LIST_GENERATED.md
+kotor_save_load/

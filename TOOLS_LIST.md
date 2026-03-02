@@ -1,8 +1,8 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 42 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), merged with vendor aliases and synonyms from sources including GhidraMCP, pyghidra-mcp, and reverse-engineering-assistant. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool as vendor signature forwards. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified in sources. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all 42 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
-**Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names, vendor forwards, and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
+**Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
@@ -178,9 +178,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `direction` (string, required): Direction of analysis (`backward`, `forward`, or `variable_accesses`).
   - Synonyms: `mode`, `analysisMode`, `traceDirection`, `direction`, `dir`, `flow`, `traversalDirection`, `walkDirection`, `orientation`, `edgeDirection`, `pathDirection`.
 **Overloads**:
-- `find-variable-accesses(programPath, functionAddress, variableName)` from `vendor_reva` → forwards to `analyze-data-flow`.
-- `trace-data-flow-backward(programPath, address)` from `vendor_reva` → forwards to `analyze-data-flow`.
-- `trace-data-flow-forward(programPath, address)` from `vendor_reva` → forwards to `analyze-data-flow`.
+- `find-variable-accesses(programPath, functionAddress, variableName)` → forwards to `analyze-data-flow`.
+- `trace-data-flow-backward(programPath, address)` → forwards to `analyze-data-flow`.
+- `trace-data-flow-forward(programPath, address)` → forwards to `analyze-data-flow`.
 
 **Synonyms**: `analyze-data-flow`, `tool_analyze_data_flow`, `analyze_data_flow_tool`, `cmd_analyze_data_flow`, `run_analyze_data_flow`, `do_analyze_data_flow`, `api_analyze_data_flow`, `mcp_analyze_data_flow`, `ghidra_analyze_data_flow`, `agentdecompile_analyze_data_flow`, `analyze_data_flow_command`, `analyze_data_flow_action`, `analyze_data_flow_op`, `analyze_data_flow_task`, `execute_analyze_data_flow`, `find-variable-accesses`, `trace-data-flow-backward`, `trace-data-flow-forward`
 
@@ -223,7 +223,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `waitForAnalysis` (boolean, optional): Block until analysis completes (default: false).
   - Synonyms: `binaryPath`, `program`, `force`, `verboseAnalysis`, `no_symbols`, `gdtFiles`, `options`, `useThreading`, `workers`, `wait`, `waitForAnalysis`
 **Overloads**:
-- `analyze-program(programPath)` from `vendor_reva` → forwards to `analyze-program`.
+- `analyze-program(programPath)` → forwards to `analyze-program`.
 
 **Synonyms**: `analyze-program`, `tool_analyze_program`, `analyze_program_tool`, `cmd_analyze_program`, `run_analyze_program`, `do_analyze_program`, `api_analyze_program`, `mcp_analyze_program`, `ghidra_analyze_program`, `agentdecompile_analyze_program`, `analyze_program_command`, `analyze_program_action`, `analyze_program_op`, `analyze_program_task`, `execute_analyze_program`
 
@@ -261,9 +261,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `maxResults` (integer, optional): Maximum results for `callers` or `containing` (default: 100).
   - Synonyms: `analysisMode`, `vtable`, `function`, `max_entries`, `max_results`, `maxr`.
 **Overloads**:
-- `analyze-vtable(programPath, vtableAddress, maxEntries)` from `vendor_reva` → forwards to `analyze-vtables`.
-- `find-vtable-callers(programPath, functionAddress, vtableAddress, maxResults)` from `vendor_reva` → forwards to `analyze-vtables`.
-- `find-vtables-containing-function(programPath, functionAddress)` from `vendor_reva` → forwards to `analyze-vtables`.
+- `analyze-vtable(programPath, vtableAddress, maxEntries)` → forwards to `analyze-vtables`.
+- `find-vtable-callers(programPath, functionAddress, vtableAddress, maxResults)` → forwards to `analyze-vtables`.
+- `find-vtables-containing-function(programPath, functionAddress)` → forwards to `analyze-vtables`.
 
 **Synonyms**: `analyze-vtables`, `tool_analyze_vtables`, `analyze_vtables_tool`, `cmd_analyze_vtables`, `run_analyze_vtables`, `do_analyze_vtables`, `api_analyze_vtables`, `mcp_analyze_vtables`, `ghidra_analyze_vtables`, `agentdecompile_analyze_vtables`, `analyze_vtables_command`, `analyze_vtables_action`, `analyze_vtables_op`, `analyze_vtables_task`, `execute_analyze_vtables`, `analyze-vtable`, `find-vtable-callers`, `find-vtables-containing-function`
 
@@ -298,7 +298,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `archiveName` (string, optional): Name of the data type archive to use.
   - Synonyms: `address`, `symbol`, `dataType`, `type`, `archive`, `archiveName`, `archiven`.
 **Overloads**:
-- `apply-data-type(programPath, addressOrSymbol, dataTypeString, archiveName)` from `vendor_reva` → forwards to `apply-data-type`.
+- `apply-data-type(programPath, addressOrSymbol, dataTypeString, archiveName)` → forwards to `apply-data-type`.
 
 **Synonyms**: `apply-data-type`, `tool_apply_data_type`, `apply_data_type_tool`, `cmd_apply_data_type`, `run_apply_data_type`, `do_apply_data_type`, `api_apply_data_type`, `mcp_apply_data_type`, `ghidra_apply_data_type`, `agentdecompile_apply_data_type`, `apply_data_type_command`, `apply_data_type_action`, `apply_data_type_op`, `apply_data_type_task`, `execute_apply_data_type`
 
@@ -324,10 +324,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Parameters**:
 - `message` (string, optional): Optional summary of the issue being debugged.
   - Synonyms: `description`, `issueSummary`, `message`
-**Overloads**:
-- `capture-reva-debug-info(message)` from `vendor_reva` → forwards to `capture-agentdecompile-debug-info`.
+**Overloads**: None.
 
-**Synonyms**: `capture-agentdecompile-debug-info`, `tool_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_tool`, `cmd_capture_agentdecompile_debug_info`, `run_capture_agentdecompile_debug_info`, `do_capture_agentdecompile_debug_info`, `api_capture_agentdecompile_debug_info`, `mcp_capture_agentdecompile_debug_info`, `ghidra_capture_agentdecompile_debug_info`, `agentdecompile_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_command`, `capture_agentdecompile_debug_info_action`, `capture_agentdecompile_debug_info_op`, `capture_agentdecompile_debug_info_task`, `execute_capture_agentdecompile_debug_info`, `capture-reva-debug-info`
+**Synonyms**: `capture-agentdecompile-debug-info`, `tool_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_tool`, `cmd_capture_agentdecompile_debug_info`, `run_capture_agentdecompile_debug_info`, `do_capture_agentdecompile_debug_info`, `api_capture_agentdecompile_debug_info`, `mcp_capture_agentdecompile_debug_info`, `ghidra_capture_agentdecompile_debug_info`, `agentdecompile_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_command`, `capture_agentdecompile_debug_info_action`, `capture_agentdecompile_debug_info_op`, `capture_agentdecompile_debug_info_task`, `execute_capture_agentdecompile_debug_info`
 
 **Examples**:
 - Capture debug info: `capture-agentdecompile-debug-info message="Decompiler crash on function 0x401000"`.
@@ -361,7 +360,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `endian` (string, optional): Endianness (`little` or `big`).
   - Synonyms: `arch`, `language`, `compiler`, `byteOrder`, `endian`
 **Overloads**:
-- `change-processor(programPath, languageId, compilerSpecId)` from `vendor_reva` → forwards to `change-processor`.
+- `change-processor(programPath, languageId, compilerSpecId)` → forwards to `change-processor`.
 
 **Synonyms**: `change-processor`, `tool_change_processor`, `change_processor_tool`, `cmd_change_processor`, `run_change_processor`, `do_change_processor`, `api_change_processor`, `mcp_change_processor`, `ghidra_change_processor`, `agentdecompile_change_processor`, `change_processor_command`, `change_processor_action`, `change_processor_op`, `change_processor_task`, `execute_change_processor`
 
@@ -391,7 +390,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `keepCheckedOut` (boolean, optional): Keep the program checked out after commit (default: false).
   - Synonyms: `path`, `message`, `keepOpen`, `keepCheckedOut`, `keepco`.
 **Overloads**:
-- `checkin-program(programPath, message, keepCheckedOut)` from `vendor_reva` → forwards to `checkin-program`.
+- `checkin-program(programPath, message, keepCheckedOut)` → forwards to `checkin-program`.
 
 **Synonyms**: `checkin-program`, `tool_checkin_program`, `checkin_program_tool`, `cmd_checkin_program`, `run_checkin_program`, `do_checkin_program`, `api_checkin_program`, `mcp_checkin_program`, `ghidra_checkin_program`, `agentdecompile_checkin_program`, `checkin_program_command`, `checkin_program_action`, `checkin_program_op`, `checkin_program_task`, `execute_checkin_program`
 
@@ -417,7 +416,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-symbols`.
 
 **Overloads**:
-- `create-label(programPath, addressOrSymbol, labelName, setAsPrimary)` from `vendor_reva` → forwards to `create-label`.
+- `create-label(programPath, addressOrSymbol, labelName, setAsPrimary)` → forwards to `create-label`.
 
 **Examples**: `create-label programPath="/bin.exe" addressOrSymbol="0x401000" labelName="main_entry"`.
 ### `decompile-function`
@@ -450,10 +449,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `timeout` (integer, optional): Decompiler timeout in seconds (default: 60).
   - Synonyms: `timeout`, `decompileTimeout`, `timeoutSecs`.
 **Overloads**:
-- `decompile_function(name)` from `vendor_ghidramcp` → forwards to `decompile-function`.
-- `decompile_function_by_address(address)` from `vendor_ghidramcp` → forwards to `decompile-function`.
-- `decompile_function(binary_name, name_or_address)` from `vendor_pyghidra` → forwards to `decompile-function`.
-- `get-decompilation(programPath, functionNameOrAddress, offset, limit, includeDisassembly, includeComments, includeIncomingReferences, includeReferenceContext, includeCallers, includeCallees, signatureOnly)` from `vendor_reva` → forwards to `decompile-function`.
+- `decompile_function(name)` → forwards to `decompile-function`.
+- `decompile_function_by_address(address)` → forwards to `decompile-function`.
+- `decompile_function(binary_name, name_or_address)` → forwards to `decompile-function`.
+- `get-decompilation(programPath, functionNameOrAddress, offset, limit, includeDisassembly, includeComments, includeIncomingReferences, includeReferenceContext, includeCallers, includeCallees, signatureOnly)` → forwards to `decompile-function`.
 
 **Synonyms**: `get-decompilation`, `decompile-function`, `tool_decompile_function`, `decompile_function_tool`, `cmd_decompile_function`, `run_decompile_function`, `do_decompile_function`, `api_decompile_function`, `mcp_decompile_function`, `ghidra_decompile_function`, `agentdecompile_decompile_function`, `decompile_function_command`, `decompile_function_action`, `decompile_function_op`, `decompile_function_task`, `decompile_function_by_address`, `decompile_function`
 
@@ -535,7 +534,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `confirm` (boolean, optional): Confirm deletion (default: false).
   - Synonyms: `binaryPath`, `force`, `confirm`
 **Overloads**:
-- `delete_project_binary(binary_name)` from `vendor_pyghidra` → forwards to `delete-project-binary`.
+- `delete_project_binary(binary_name)` → forwards to `delete-project-binary`.
 
 **Synonyms**: `delete-project-binary`, `tool_delete_project_binary`, `delete_project_binary_tool`, `cmd_delete_project_binary`, `run_delete_project_binary`, `do_delete_project_binary`, `api_delete_project_binary`, `mcp_delete_project_binary`, `ghidra_delete_project_binary`, `agentdecompile_delete_project_binary`, `delete_project_binary_command`, `delete_project_binary_action`, `delete_project_binary_op`, `delete_project_binary_task`, `execute_delete_project_binary`, `delete_project_binary`
 
@@ -543,13 +542,13 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `gen-callgraph`
 
-**Description**: Legacy compatibility forward for pyghidra naming.
+**Description**: Legacy compatibility alias.
 
 **Parameters**: Same as `get-call-graph`.
   - Synonyms: All from `get-call-graph`.
 
 **Overloads**:
-- `gen_callgraph(binary_name, function_name, direction, display_type, condense_threshold, top_layers, bottom_layers, max_run_time)` from `vendor_pyghidra` → forwards to `gen-callgraph`.
+- `gen_callgraph(binary_name, function_name, direction, display_type, condense_threshold, top_layers, bottom_layers, max_run_time)` → forwards to `gen-callgraph`.
 
 **Examples**: `gen-callgraph programPath="/bin.exe" mode="graph" functionIdentifier="main"`.
 ### `get-call-graph`
@@ -578,10 +577,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `functionAddresses` (string, optional): Comma-separated addresses for `common_callers`.
   - Synonyms: `function`, `analysisMode`, `level`, `dir`, `max_depth`, `offset`, `limit`, `context`, `functions`, `functionAddresses`
 **Overloads**:
-- `find-common-callers(programPath, functionAddresses)` from `vendor_reva` → forwards to `get-call-graph`.
-- `get-call-graph(programPath, functionAddress, depth)` from `vendor_reva` → forwards to `get-call-graph`.
-- `get-call-tree(programPath, functionAddress, direction, maxDepth)` from `vendor_reva` → forwards to `get-call-graph`.
-- `get-callers-decompiled(programPath, functionNameOrAddress, maxCallers, startIndex, includeCallContext)` from `vendor_reva` → forwards to `get-call-graph`.
+- `find-common-callers(programPath, functionAddresses)` → forwards to `get-call-graph`.
+- `get-call-graph(programPath, functionAddress, depth)` → forwards to `get-call-graph`.
+- `get-call-tree(programPath, functionAddress, direction, maxDepth)` → forwards to `get-call-graph`.
+- `get-callers-decompiled(programPath, functionNameOrAddress, maxCallers, startIndex, includeCallContext)` → forwards to `get-call-graph`.
 
 **Synonyms**: `get-call-tree`, `find-common-callers`, `get-call-graph`, `tool_get_call_graph`, `get_call_graph_tool`, `cmd_get_call_graph`, `run_get_call_graph`, `do_get_call_graph`, `api_get_call_graph`, `mcp_get_call_graph`, `ghidra_get_call_graph`, `agentdecompile_get_call_graph`, `get_call_graph_command`, `get_call_graph_action`, `get_call_graph_op`, `get-callers-decompiled`
 
@@ -596,7 +595,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `programPath` (string, optional): Path to the program (uses current if omitted).
   - Synonyms: `program`, `programPath`, `programp`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 **Overloads**:
-- `get_current_address()` from `vendor_ghidramcp` → forwards to `get-current-address`.
+- `get_current_address()` → forwards to `get-current-address`.
 
 **Synonyms**: `get-current-address`, `tool_get_current_address`, `get_current_address_tool`, `cmd_get_current_address`, `run_get_current_address`, `do_get_current_address`, `api_get_current_address`, `mcp_get_current_address`, `ghidra_get_current_address`, `agentdecompile_get_current_address`, `get_current_address_command`, `get_current_address_action`, `get_current_address_op`, `get_current_address_task`, `execute_get_current_address`, `get_current_address`
 
@@ -610,7 +609,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `programPath` (string, optional): Path to the program (uses current if omitted).
   - Synonyms: `program`, `programPath`, `programp`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 **Overloads**:
-- `get_current_function()` from `vendor_ghidramcp` → forwards to `get-current-function`.
+- `get_current_function()` → forwards to `get-current-function`.
 
 **Synonyms**: `get-current-function`, `tool_get_current_function`, `get_current_function_tool`, `cmd_get_current_function`, `run_get_current_function`, `do_get_current_function`, `api_get_current_function`, `mcp_get_current_function`, `ghidra_get_current_function`, `agentdecompile_get_current_function`, `get_current_function_command`, `get_current_function_action`, `get_current_function_op`, `get_current_function_task`, `execute_get_current_function`, `get_current_function`
 
@@ -624,7 +623,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `programPath` (string, optional): Path to verify (uses current if omitted).
   - Synonyms: `program`, `programPath`, `programp`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 **Overloads**:
-- `get-current-program()` from `vendor_reva` → forwards to `get-current-program`.
+- `get-current-program()` → forwards to `get-current-program`.
 
 **Synonyms**: `get-current-program`, `tool_get_current_program`, `get_current_program_tool`, `cmd_get_current_program`, `run_get_current_program`, `do_get_current_program`, `api_get_current_program`, `mcp_get_current_program`, `ghidra_get_current_program`, `agentdecompile_get_current_program`, `get_current_program_command`, `get_current_program_action`, `get_current_program_op`, `get_current_program_task`, `execute_get_current_program`
 
@@ -642,7 +641,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `view` (string, optional): Data view (`hex`, `ascii`, `structured`, default: hex).
   - Synonyms: `address`, `symbol`, `format`, `view`
 **Overloads**:
-- `get-data(programPath, addressOrSymbol)` from `vendor_reva` → forwards to `get-data`.
+- `get-data(programPath, addressOrSymbol)` → forwards to `get-data`.
 
 **Synonyms**: `get-data`, `tool_get_data`, `get_data_tool`, `cmd_get_data`, `run_get_data`, `do_get_data`, `api_get_data`, `mcp_get_data`, `ghidra_get_data`, `agentdecompile_get_data`, `get_data_command`, `get_data_action`, `get_data_op`, `get_data_task`, `execute_get_data`
 
@@ -682,9 +681,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `verbose` (boolean, optional): Include detailed metadata (default: false).
   - Synonyms: `verbose`.
 **Overloads**:
-- `disassemble_function(address)` from `vendor_ghidramcp` → forwards to `get-functions`.
-- `get_function_by_address(address)` from `vendor_ghidramcp` → forwards to `get-functions`.
-- `get-functions(programPath, filterDefaultNames, filterByTag, untagged, verbose, startIndex, maxCount)` from `vendor_reva` → forwards to `get-functions`.
+- `disassemble_function(address)` → forwards to `get-functions`.
+- `get_function_by_address(address)` → forwards to `get-functions`.
+- `get-functions(programPath, filterDefaultNames, filterByTag, untagged, verbose, startIndex, maxCount)` → forwards to `get-functions`.
 
 **Synonyms**: `get-function-by-address`, `find-function`, `get-functions`, `tool_get_functions`, `get_functions_tool`, `cmd_get_functions`, `run_get_functions`, `do_get_functions`, `api_get_functions`, `mcp_get_functions`, `ghidra_get_functions`, `agentdecompile_get_functions`, `get_functions_command`, `get_functions_action`, `get_functions_op`, `disassemble_function`, `get_function_by_address`
 
@@ -725,13 +724,13 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `includeFlow` (boolean, optional): Include flow references (default: true).
   - Synonyms: `includeFlow`.
 **Overloads**:
-- `get_function_xrefs(name, offset, limit)` from `vendor_ghidramcp` → forwards to `get-references`.
-- `get_xrefs_from(address, offset, limit)` from `vendor_ghidramcp` → forwards to `get-references`.
-- `get_xrefs_to(address, offset, limit)` from `vendor_ghidramcp` → forwards to `get-references`.
-- `find-cross-references(programPath, location, direction, includeFlow, includeData, includeContext, contextLines, offset, limit)` from `vendor_reva` → forwards to `get-references`.
-- `find-import-references(programPath, importName, libraryName, maxResults)` from `vendor_reva` → forwards to `get-references`.
-- `get-referencers-decompiled(programPath, addressOrSymbol, maxReferencers, startIndex, includeDataRefs, includeRefContext)` from `vendor_reva` → forwards to `get-references`.
-- `resolve-thunk(programPath, address)` from `vendor_reva` → forwards to `get-references`.
+- `get_function_xrefs(name, offset, limit)` → forwards to `get-references`.
+- `get_xrefs_from(address, offset, limit)` → forwards to `get-references`.
+- `get_xrefs_to(address, offset, limit)` → forwards to `get-references`.
+- `find-cross-references(programPath, location, direction, includeFlow, includeData, includeContext, contextLines, offset, limit)` → forwards to `get-references`.
+- `find-import-references(programPath, importName, libraryName, maxResults)` → forwards to `get-references`.
+- `get-referencers-decompiled(programPath, addressOrSymbol, maxReferencers, startIndex, includeDataRefs, includeRefContext)` → forwards to `get-references`.
+- `resolve-thunk(programPath, address)` → forwards to `get-references`.
 
 **Synonyms**: `get-references`, `tool_get_references`, `get_references_tool`, `cmd_get_references`, `run_get_references`, `do_get_references`, `api_get_references`, `mcp_get_references`, `ghidra_get_references`, `agentdecompile_get_references`, `get_references_command`, `get_references_action`, `get_references_op`, `get_references_task`, `execute_get_references`, `get_xrefs_to`, `get_xrefs_from`, `get_function_xrefs`, `find-cross-references`, `find-import-references`, `get-referencers-decompiled`, `resolve-thunk`
 
@@ -761,8 +760,8 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `enableVersionControl` (boolean, optional): Enable versioning (default: false).
   - Synonyms: `filePath`, `destFolder`, `recurse`, `depth`, `autoAnalyze`, `stripPath`, `stripContainer`, `mirror`, `versioning`, `enableVersionControl`
 **Overloads**:
-- `import_binary(binary_path)` from `vendor_pyghidra` → forwards to `import-binary`.
-- `import-file(path, destinationFolder, recursive, maxDepth, analyzeAfterImport, stripLeadingPath, stripAllContainerPath, mirrorFs, enableVersionControl)` from `vendor_reva` → forwards to `import-binary`.
+- `import_binary(binary_path)` → forwards to `import-binary`.
+- `import-file(path, destinationFolder, recursive, maxDepth, analyzeAfterImport, stripLeadingPath, stripAllContainerPath, mirrorFs, enableVersionControl)` → forwards to `import-binary`.
 
 **Synonyms**: `import-file`, `import-binary`, `tool_import_binary`, `import_binary_tool`, `cmd_import_binary`, `run_import_binary`, `do_import_binary`, `api_import_binary`, `mcp_import_binary`, `ghidra_import_binary`, `agentdecompile_import_binary`, `import_binary_command`, `import_binary_action`, `import_binary_op`, `import_binary_task`, `import_binary`
 
@@ -788,10 +787,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `limit` (integer, optional): Max results.
   - Synonyms: `view`, `start`, `size`, `startIndex`, `max`, `limit`, `maxResults`, `maxCount`, `count`, `take`, `cap`.
 **Overloads**:
-- `list_data_items(offset, limit)` from `vendor_ghidramcp` → forwards to `inspect-memory`.
-- `list_segments(offset, limit)` from `vendor_ghidramcp` → forwards to `inspect-memory`.
-- `get-memory-blocks(programPath)` from `vendor_reva` → forwards to `inspect-memory`.
-- `read-memory(programPath, addressOrSymbol, length, format)` from `vendor_reva` → forwards to `inspect-memory`.
+- `list_data_items(offset, limit)` → forwards to `inspect-memory`.
+- `list_segments(offset, limit)` → forwards to `inspect-memory`.
+- `get-memory-blocks(programPath)` → forwards to `inspect-memory`.
+- `read-memory(programPath, addressOrSymbol, length, format)` → forwards to `inspect-memory`.
 
 **Synonyms**: `inspect-memory`, `tool_inspect_memory`, `inspect_memory_tool`, `cmd_inspect_memory`, `run_inspect_memory`, `do_inspect_memory`, `api_inspect_memory`, `mcp_inspect_memory`, `ghidra_inspect_memory`, `agentdecompile_inspect_memory`, `inspect_memory_command`, `inspect_memory_action`, `inspect_memory_op`, `inspect_memory_task`, `execute_inspect_memory`, `list_segments`, `list_data_items`, `get-memory-blocks`, `read-memory`
 
@@ -805,7 +804,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `get-references`.
 
 **Overloads**:
-- `list_cross_references(binary_name, name_or_address)` from `vendor_pyghidra` → forwards to `list-cross-references`.
+- `list_cross_references(binary_name, name_or_address)` → forwards to `list-cross-references`.
 
 **Examples**: `list-cross-references programPath="/bin.exe" target="0x401000"`.
 ### `list-exports`
@@ -816,9 +815,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-symbols`.
 
 **Overloads**:
-- `list_exports(offset, limit)` from `vendor_ghidramcp` → forwards to `list-exports`.
-- `list_exports(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `list-exports`.
-- `list-exports(programPath, maxResults, startIndex)` from `vendor_reva` → forwards to `list-exports`.
+- `list_exports(offset, limit)` → forwards to `list-exports`.
+- `list_exports(binary_name, query, offset, limit)` → forwards to `list-exports`.
+- `list-exports(programPath, maxResults, startIndex)` → forwards to `list-exports`.
 
 **Examples**: `list-exports programPath="/dll.exe"`.
 ### `list-functions`
@@ -857,11 +856,11 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `identifiers` (array, optional): Specific IDs.
   - Synonyms: `filter`, `pattern`, `minRefs`, `index`, `max`, `start`, `count`, `defaults`, `tag`, `noTags`, `tagged`, `details`.
 **Overloads**:
-- `list_functions()` from `vendor_ghidramcp` → forwards to `list-functions`.
-- `list_methods(offset, limit)` from `vendor_ghidramcp` → forwards to `list-functions`.
-- `get-function-count(programPath, filterDefaultNames)` from `vendor_reva` → forwards to `list-functions`.
-- `get-functions-by-similarity(programPath, searchString, filterDefaultNames, startIndex, maxCount, verbose)` from `vendor_reva` → forwards to `list-functions`.
-- `get-undefined-function-candidates(programPath, maxCandidates, startIndex, minReferenceCount)` from `vendor_reva` → forwards to `list-functions`.
+- `list_functions()` → forwards to `list-functions`.
+- `list_methods(offset, limit)` → forwards to `list-functions`.
+- `get-function-count(programPath, filterDefaultNames)` → forwards to `list-functions`.
+- `get-functions-by-similarity(programPath, searchString, filterDefaultNames, startIndex, maxCount, verbose)` → forwards to `list-functions`.
+- `get-undefined-function-candidates(programPath, maxCandidates, startIndex, minReferenceCount)` → forwards to `list-functions`.
 
 **Synonyms**: `list-methods`, `get-all-functions`, `list-functions`, `tool_list_functions`, `list_functions_tool`, `cmd_list_functions`, `run_list_functions`, `do_list_functions`, `api_list_functions`, `mcp_list_functions`, `ghidra_list_functions`, `agentdecompile_list_functions`, `list_functions_command`, `list_functions_action`, `list_functions_op`, `get-function-count`, `get-functions-by-similarity`, `get-undefined-function-candidates`, `list_functions`, `list_methods`
 
@@ -876,9 +875,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-symbols`.
 
 **Overloads**:
-- `list_imports(offset, limit)` from `vendor_ghidramcp` → forwards to `list-imports`.
-- `list_imports(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `list-imports`.
-- `list-imports(programPath, libraryFilter, maxResults, startIndex, groupByLibrary)` from `vendor_reva` → forwards to `list-imports`.
+- `list_imports(offset, limit)` → forwards to `list-imports`.
+- `list_imports(binary_name, query, offset, limit)` → forwards to `list-imports`.
+- `list-imports(programPath, libraryFilter, maxResults, startIndex, groupByLibrary)` → forwards to `list-imports`.
 
 **Examples**: `list-imports programPath="/bin.exe"`.
 ### `list-open-programs`
@@ -890,7 +889,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: N/A.
 
 **Overloads**:
-- `list-open-programs()` from `vendor_reva` → forwards to `list-open-programs`.
+- `list-open-programs()` → forwards to `list-open-programs`.
 
 **Synonyms**: `list-open-programs`, `tool_list_open_programs`, `list_open_programs_tool`, `cmd_list_open_programs`, `run_list_open_programs`, `do_list_open_programs`, `api_list_open_programs`, `mcp_list_open_programs`, `ghidra_list_open_programs`, `agentdecompile_list_open_programs`, `list_open_programs_command`, `list_open_programs_action`, `list_open_programs_op`, `list_open_programs_task`, `execute_list_open_programs`
 
@@ -905,7 +904,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: N/A.
 
 **Overloads**:
-- `list_project_binaries()` from `vendor_pyghidra` → forwards to `list-project-binaries`.
+- `list_project_binaries()` → forwards to `list-project-binaries`.
 
 **Synonyms**: `list-project-binaries`, `tool_list_project_binaries`, `list_project_binaries_tool`, `cmd_list_project_binaries`, `run_list_project_binaries`, `do_list_project_binaries`, `api_list_project_binaries`, `mcp_list_project_binaries`, `ghidra_list_project_binaries`, `agentdecompile_list_project_binaries`, `list_project_binaries_command`, `list_project_binaries_action`, `list_project_binaries_op`, `list_project_binaries_task`, `execute_list_project_binaries`, `list_project_binaries`
 
@@ -919,7 +918,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `programPath` (string, required): Binary path.
   - Synonyms: `path`, `programPath`, `programp`, `program`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
 **Overloads**:
-- `list_project_binary_metadata(binary_name)` from `vendor_pyghidra` → forwards to `list-project-binary-metadata`.
+- `list_project_binary_metadata(binary_name)` → forwards to `list-project-binary-metadata`.
 
 **Synonyms**: `list-project-binary-metadata`, `tool_list_project_binary_metadata`, `list_project_binary_metadata_tool`, `cmd_list_project_binary_metadata`, `run_list_project_binary_metadata`, `do_list_project_binary_metadata`, `api_list_project_binary_metadata`, `mcp_list_project_binary_metadata`, `ghidra_list_project_binary_metadata`, `agentdecompile_list_project_binary_metadata`, `list_project_binary_metadata_command`, `list_project_binary_metadata_action`, `list_project_binary_metadata_op`, `list_project_binary_metadata_task`, `execute_list_project_binary_metadata`, `list_project_binary_metadata`
 
@@ -932,7 +931,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Parameters**:
 - None.
 **Overloads**:
-- `list-project-files(folderPath, recursive)` from `vendor_reva` → forwards to `list-project-files`.
+- `list-project-files(folderPath, recursive)` → forwards to `list-project-files`.
 
 **Synonyms**: `list-project-files`, `tool_list_project_files`, `list_project_files_tool`, `cmd_list_project_files`, `run_list_project_files`, `do_list_project_files`, `api_list_project_files`, `mcp_list_project_files`, `ghidra_list_project_files`, `agentdecompile_list_project_files`, `list_project_files_command`, `list_project_files_action`, `list_project_files_op`, `list_project_files_task`, `execute_list_project_files`
 
@@ -962,7 +961,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-strings`.
 
 **Overloads**:
-- `list_strings(offset, limit, filter)` from `vendor_ghidramcp` → forwards to `list-strings`.
+- `list_strings(offset, limit, filter)` → forwards to `list-strings`.
 
 **Examples**: `list-strings programPath="/bin.exe"`.
 ### `manage-bookmarks`
@@ -995,11 +994,11 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `types` (array, optional): Array of bookmark types to filter by.
   - Synonyms: `types`, `bookmarkTypes`.
 **Overloads**:
-- `get-bookmarks(programPath, addressOrSymbol, addressRange, type, category)` from `vendor_reva` → forwards to `manage-bookmarks`.
-- `list-bookmark-categories(programPath, type)` from `vendor_reva` → forwards to `manage-bookmarks`.
-- `remove-bookmark(programPath, addressOrSymbol, type, category)` from `vendor_reva` → forwards to `manage-bookmarks`.
-- `search-bookmarks(programPath, searchText, types, categories, addressRange, maxResults)` from `vendor_reva` → forwards to `manage-bookmarks`.
-- `set-bookmark(programPath, addressOrSymbol, type, category, comment)` from `vendor_reva` → forwards to `manage-bookmarks`.
+- `get-bookmarks(programPath, addressOrSymbol, addressRange, type, category)` → forwards to `manage-bookmarks`.
+- `list-bookmark-categories(programPath, type)` → forwards to `manage-bookmarks`.
+- `remove-bookmark(programPath, addressOrSymbol, type, category)` → forwards to `manage-bookmarks`.
+- `search-bookmarks(programPath, searchText, types, categories, addressRange, maxResults)` → forwards to `manage-bookmarks`.
+- `set-bookmark(programPath, addressOrSymbol, type, category, comment)` → forwards to `manage-bookmarks`.
 
 **Synonyms**: `set-bookmark`, `get-bookmarks`, `remove-bookmark`, `search-bookmarks`, `list-bookmark-categories`, `manage-bookmarks`, `tool_manage_bookmarks`, `manage_bookmarks_tool`, `cmd_manage_bookmarks`, `run_manage_bookmarks`, `do_manage_bookmarks`, `api_manage_bookmarks`, `mcp_manage_bookmarks`, `ghidra_manage_bookmarks`, `agentdecompile_manage_bookmarks`
 
@@ -1047,13 +1046,13 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `addressRange` (string, optional): Address range filter (e.g., "0x400000-0x401000").
   - Synonyms: `addressRange`, `range`, `addrRange`.
 **Overloads**:
-- `set_decompiler_comment(address, comment)` from `vendor_ghidramcp` → forwards to `manage-comments`.
-- `set_disassembly_comment(address, comment)` from `vendor_ghidramcp` → forwards to `manage-comments`.
-- `get-comments(programPath, addressOrSymbol, addressRange, commentTypes)` from `vendor_reva` → forwards to `manage-comments`.
-- `remove-comment(programPath, addressOrSymbol, commentType)` from `vendor_reva` → forwards to `manage-comments`.
-- `search-comments(programPath, searchText, caseSensitive, commentTypes, maxResults)` from `vendor_reva` → forwards to `manage-comments`.
-- `set-comment(programPath, addressOrSymbol, commentType, comment)` from `vendor_reva` → forwards to `manage-comments`.
-- `set-decompilation-comment(programPath, functionNameOrAddress, lineNumber, commentType, comment)` from `vendor_reva` → forwards to `manage-comments`.
+- `set_decompiler_comment(address, comment)` → forwards to `manage-comments`.
+- `set_disassembly_comment(address, comment)` → forwards to `manage-comments`.
+- `get-comments(programPath, addressOrSymbol, addressRange, commentTypes)` → forwards to `manage-comments`.
+- `remove-comment(programPath, addressOrSymbol, commentType)` → forwards to `manage-comments`.
+- `search-comments(programPath, searchText, caseSensitive, commentTypes, maxResults)` → forwards to `manage-comments`.
+- `set-comment(programPath, addressOrSymbol, commentType, comment)` → forwards to `manage-comments`.
+- `set-decompilation-comment(programPath, functionNameOrAddress, lineNumber, commentType, comment)` → forwards to `manage-comments`.
 
 **Synonyms**: `set-comment`, `get-comments`, `search-comments`, `manage-comments`, `tool_manage_comments`, `manage_comments_tool`, `cmd_manage_comments`, `run_manage_comments`, `do_manage_comments`, `api_manage_comments`, `mcp_manage_comments`, `ghidra_manage_comments`, `agentdecompile_manage_comments`, `manage_comments_command`, `manage_comments_action`, `set_decompiler_comment`, `set_disassembly_comment`, `remove-comment`, `set-decompilation-comment`
 
@@ -1085,9 +1084,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `addressOrSymbol` (string, optional): Apply location.
   - Synonyms: `mode`, `archive`, `category`, `subs`, `offset`, `limit`, `type`, `address`, `addressOrSymbol`
 **Overloads**:
-- `get-data-type-archives(programPath)` from `vendor_reva` → forwards to `manage-data-types`.
-- `get-data-type-by-string(programPath, dataTypeString, archiveName)` from `vendor_reva` → forwards to `manage-data-types`.
-- `get-data-types(programPath, archiveName, categoryPath, includeSubcategories, startIndex, maxCount)` from `vendor_reva` → forwards to `manage-data-types`.
+- `get-data-type-archives(programPath)` → forwards to `manage-data-types`.
+- `get-data-type-by-string(programPath, dataTypeString, archiveName)` → forwards to `manage-data-types`.
+- `get-data-types(programPath, archiveName, categoryPath, includeSubcategories, startIndex, maxCount)` → forwards to `manage-data-types`.
 
 **Synonyms**: `manage-data-types`, `tool_manage_data_types`, `manage_data_types_tool`, `cmd_manage_data_types`, `run_manage_data_types`, `do_manage_data_types`, `api_manage_data_types`, `mcp_manage_data_types`, `ghidra_manage_data_types`, `agentdecompile_manage_data_types`, `manage_data_types_command`, `manage_data_types_action`, `manage_data_types_op`, `manage_data_types_task`, `execute_manage_data_types`, `get-data-type-archives`, `get-data-type-by-string`, `get-data-types`
 
@@ -1135,7 +1134,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `tags` (array or string, optional): Tags to manage.
   - Synonyms: `identifier`, `action`, `labels`, `tags`
 **Overloads**:
-- `function-tags(programPath, function, mode, tags)` from `vendor_reva` → forwards to `manage-function-tags`.
+- `function-tags(programPath, function, mode, tags)` → forwards to `manage-function-tags`.
 
 **Synonyms**: `manage-function-tags`, `tool_manage_function_tags`, `manage_function_tags_tool`, `cmd_manage_function_tags`, `run_manage_function_tags`, `do_manage_function_tags`, `api_manage_function_tags`, `mcp_manage_function_tags`, `ghidra_manage_function_tags`, `agentdecompile_manage_function_tags`, `manage_function_tags_command`, `manage_function_tags_action`, `manage_function_tags_op`, `manage_function_tags_task`, `execute_manage_function_tags`, `function-tags`
 
@@ -1185,15 +1184,15 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `propagateMaxInstructions` (integer, optional): Max instructions.
   - Synonyms: `mode`, `funcAddr`, `identifier`, `new_name`, `batch`, `old_name`, `vars`, `signature`, `varName`, `type`, `types`, `archive`.
 **Overloads**:
-- `rename_function(old_name, new_name)` from `vendor_ghidramcp` → forwards to `manage-function`.
-- `rename_function_by_address(function_address, new_name)` from `vendor_ghidramcp` → forwards to `manage-function`.
-- `rename_variable(function_name, old_name, new_name)` from `vendor_ghidramcp` → forwards to `manage-function`.
-- `set_function_prototype(function_address, prototype)` from `vendor_ghidramcp` → forwards to `manage-function`.
-- `set_local_variable_type(function_address, variable_name, new_type)` from `vendor_ghidramcp` → forwards to `manage-function`.
-- `change-variable-datatypes(programPath, functionNameOrAddress, datatypeMappings, archiveName)` from `vendor_reva` → forwards to `manage-function`.
-- `create-function(programPath, address, name)` from `vendor_reva` → forwards to `manage-function`.
-- `rename-variables(programPath, functionNameOrAddress, variableMappings)` from `vendor_reva` → forwards to `manage-function`.
-- `set-function-prototype(programPath, location, signature, createIfNotExists)` from `vendor_reva` → forwards to `manage-function`.
+- `rename_function(old_name, new_name)` → forwards to `manage-function`.
+- `rename_function_by_address(function_address, new_name)` → forwards to `manage-function`.
+- `rename_variable(function_name, old_name, new_name)` → forwards to `manage-function`.
+- `set_function_prototype(function_address, prototype)` → forwards to `manage-function`.
+- `set_local_variable_type(function_address, variable_name, new_type)` → forwards to `manage-function`.
+- `change-variable-datatypes(programPath, functionNameOrAddress, datatypeMappings, archiveName)` → forwards to `manage-function`.
+- `create-function(programPath, address, name)` → forwards to `manage-function`.
+- `rename-variables(programPath, functionNameOrAddress, variableMappings)` → forwards to `manage-function`.
+- `set-function-prototype(programPath, location, signature, createIfNotExists)` → forwards to `manage-function`.
 
 **Synonyms**: `rename-function`, `rename-function-by-address`, `set-function-prototype`, `set-local-variable-type`, `rename-variable`, `manage-function`, `tool_manage_function`, `manage_function_tool`, `cmd_manage_function`, `run_manage_function`, `do_manage_function`, `api_manage_function`, `mcp_manage_function`, `ghidra_manage_function`, `agentdecompile_manage_function`, `change-variable-datatypes`, `create-function`, `rename-variables`, `rename_function`, `rename_function_by_address`, `set_function_prototype`, `set_local_variable_type`, `rename_variable`
 
@@ -1226,10 +1225,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `includeReferencingFunctions` (boolean, optional): Include refs (default: false).
   - Synonyms: `action`, `query`, `str`, `pat`, `index`, `count`, `start`, `max`, `refs`, `includeReferencingFunctions`
 **Overloads**:
-- `get-strings(programPath, startIndex, maxCount, includeReferencingFunctions)` from `vendor_reva` → forwards to `manage-strings`.
-- `get-strings-by-similarity(programPath, searchString, startIndex, maxCount, includeReferencingFunctions)` from `vendor_reva` → forwards to `manage-strings`.
-- `get-strings-count(programPath)` from `vendor_reva` → forwards to `manage-strings`.
-- `search-strings-regex(programPath, regexPattern, startIndex, maxCount, includeReferencingFunctions)` from `vendor_reva` → forwards to `manage-strings`.
+- `get-strings(programPath, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
+- `get-strings-by-similarity(programPath, searchString, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
+- `get-strings-count(programPath)` → forwards to `manage-strings`.
+- `search-strings-regex(programPath, regexPattern, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
 
 **Synonyms**: `manage-strings`, `tool_manage_strings`, `manage_strings_tool`, `cmd_manage_strings`, `run_manage_strings`, `do_manage_strings`, `api_manage_strings`, `mcp_manage_strings`, `ghidra_manage_strings`, `agentdecompile_manage_strings`, `manage_strings_command`, `manage_strings_action`, `manage_strings_op`, `manage_strings_task`, `execute_manage_strings`, `get-strings`, `get-strings-by-similarity`, `get-strings-count`, `search-strings-regex`
 
@@ -1291,17 +1290,17 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `newLength` (integer, optional): New length for modify-field.
   - Synonyms: `newLength`, `newSize`.
 **Overloads**:
-- `add-structure-field(programPath, structureName, fieldName, dataType, offset, comment, bitfield)` from `vendor_reva` → forwards to `manage-structures`.
-- `apply-structure(programPath, structureName, addressOrSymbol, clearExisting)` from `vendor_reva` → forwards to `manage-structures`.
-- `create-structure(programPath, name, size, type, category, packed, description)` from `vendor_reva` → forwards to `manage-structures`.
-- `delete-structure(programPath, structureName, force)` from `vendor_reva` → forwards to `manage-structures`.
-- `get-structure-info(programPath, structureName)` from `vendor_reva` → forwards to `manage-structures`.
-- `list-structures(programPath, category, nameFilter, includeBuiltIn)` from `vendor_reva` → forwards to `manage-structures`.
-- `modify-structure-field(programPath, structureName, fieldName, offset, newDataType, newFieldName, newComment, newLength)` from `vendor_reva` → forwards to `manage-structures`.
-- `modify-structure-from-c(programPath, cDefinition)` from `vendor_reva` → forwards to `manage-structures`.
-- `parse-c-header(programPath, headerContent, category)` from `vendor_reva` → forwards to `manage-structures`.
-- `parse-c-structure(programPath, cDefinition, category)` from `vendor_reva` → forwards to `manage-structures`.
-- `validate-c-structure(cDefinition)` from `vendor_reva` → forwards to `manage-structures`.
+- `add-structure-field(programPath, structureName, fieldName, dataType, offset, comment, bitfield)` → forwards to `manage-structures`.
+- `apply-structure(programPath, structureName, addressOrSymbol, clearExisting)` → forwards to `manage-structures`.
+- `create-structure(programPath, name, size, type, category, packed, description)` → forwards to `manage-structures`.
+- `delete-structure(programPath, structureName, force)` → forwards to `manage-structures`.
+- `get-structure-info(programPath, structureName)` → forwards to `manage-structures`.
+- `list-structures(programPath, category, nameFilter, includeBuiltIn)` → forwards to `manage-structures`.
+- `modify-structure-field(programPath, structureName, fieldName, offset, newDataType, newFieldName, newComment, newLength)` → forwards to `manage-structures`.
+- `modify-structure-from-c(programPath, cDefinition)` → forwards to `manage-structures`.
+- `parse-c-header(programPath, headerContent, category)` → forwards to `manage-structures`.
+- `parse-c-structure(programPath, cDefinition, category)` → forwards to `manage-structures`.
+- `validate-c-structure(cDefinition)` → forwards to `manage-structures`.
 
 **Synonyms**: `manage-structures`, `tool_manage_structures`, `manage_structures_tool`, `cmd_manage_structures`, `run_manage_structures`, `do_manage_structures`, `api_manage_structures`, `mcp_manage_structures`, `ghidra_manage_structures`, `agentdecompile_manage_structures`, `manage_structures_command`, `manage_structures_action`, `manage_structures_op`, `manage_structures_task`, `execute_manage_structures`, `add-structure-field`, `apply-structure`, `create-structure`, `delete-structure`, `get-structure-info`, `list-structures`, `modify-structure-field`, `modify-structure-from-c`, `parse-c-header`, `parse-c-structure`, `validate-c-structure`
 
@@ -1341,11 +1340,11 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `demangleAll` (boolean, optional): Demangle all (default: false).
   - Synonyms: `action`, `addr`, `name`, `renameTo`, `library`, `max`, `index`, `start`, `count`, `group`, `extern`, `defaults`.
 **Overloads**:
-- `list_classes(offset, limit)` from `vendor_ghidramcp` → forwards to `manage-symbols`.
-- `list_namespaces(offset, limit)` from `vendor_ghidramcp` → forwards to `manage-symbols`.
-- `rename_data(address, new_name)` from `vendor_ghidramcp` → forwards to `manage-symbols`.
-- `get-symbols(programPath, includeExternal, startIndex, maxCount, filterDefaultNames)` from `vendor_reva` → forwards to `manage-symbols`.
-- `get-symbols-count(programPath, includeExternal, filterDefaultNames)` from `vendor_reva` → forwards to `manage-symbols`.
+- `list_classes(offset, limit)` → forwards to `manage-symbols`.
+- `list_namespaces(offset, limit)` → forwards to `manage-symbols`.
+- `rename_data(address, new_name)` → forwards to `manage-symbols`.
+- `get-symbols(programPath, includeExternal, startIndex, maxCount, filterDefaultNames)` → forwards to `manage-symbols`.
+- `get-symbols-count(programPath, includeExternal, filterDefaultNames)` → forwards to `manage-symbols`.
 
 **Synonyms**: `list-classes`, `list-namespaces`, `rename-data`, `manage-symbols`, `tool_manage_symbols`, `manage_symbols_tool`, `cmd_manage_symbols`, `run_manage_symbols`, `do_manage_symbols`, `api_manage_symbols`, `mcp_manage_symbols`, `ghidra_manage_symbols`, `agentdecompile_manage_symbols`, `manage_symbols_command`, `manage_symbols_action`, `get-symbols`, `get-symbols-count`, `list_classes`, `list_namespaces`, `rename_data`
 
@@ -1458,7 +1457,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: Includes compatibility forms such as `binaryName` and `size`.
 
 **Overloads**:
-- `read_bytes(binary_name, address, size)` from `vendor_pyghidra` → forwards to `read-bytes`.
+- `read_bytes(binary_name, address, size)` → forwards to `read-bytes`.
 
 **Examples**: `read-bytes programPath="/bin.exe" address="0x404000" length=256`.
 ### `search-code`
@@ -1487,8 +1486,8 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `overrideMaxFunctionsLimit` (boolean, optional): Override the maximum functions search limit (default: false).
   - Synonyms: `overrideMaxFunctionsLimit`, `noLimit`.
 **Overloads**:
-- `search_code(binary_name, query, limit, offset, search_mode, include_full_code, preview_length, similarity_threshold)` from `vendor_pyghidra` → forwards to `search-code`.
-- `search-decompilation(programPath, pattern, maxResults, caseSensitive, overrideMaxFunctionsLimit)` from `vendor_reva` → forwards to `search-code`.
+- `search_code(binary_name, query, limit, offset, search_mode, include_full_code, preview_length, similarity_threshold)` → forwards to `search-code`.
+- `search-decompilation(programPath, pattern, maxResults, caseSensitive, overrideMaxFunctionsLimit)` → forwards to `search-code`.
 
 **Synonyms**: `search-code`, `tool_search_code`, `search_code_tool`, `cmd_search_code`, `run_search_code`, `do_search_code`, `api_search_code`, `mcp_search_code`, `ghidra_search_code`, `agentdecompile_search_code`, `search_code_command`, `search_code_action`, `search_code_op`, `search_code_task`, `execute_search_code`, `search_code`, `search-decompilation`
 
@@ -1516,9 +1515,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `topN` (integer, optional): Top N in common (default: 50).
   - Synonyms: `action`, `val`, `min`, `max`, `limit`, `smallVals`, `top`, `topN`
 **Overloads**:
-- `find-constant-uses(programPath, value, maxResults)` from `vendor_reva` → forwards to `search-constants`.
-- `find-constants-in-range(programPath, minValue, maxValue, maxResults)` from `vendor_reva` → forwards to `search-constants`.
-- `list-common-constants(programPath, topN, minValue, includeSmallValues)` from `vendor_reva` → forwards to `search-constants`.
+- `find-constant-uses(programPath, value, maxResults)` → forwards to `search-constants`.
+- `find-constants-in-range(programPath, minValue, maxValue, maxResults)` → forwards to `search-constants`.
+- `list-common-constants(programPath, topN, minValue, includeSmallValues)` → forwards to `search-constants`.
 
 **Synonyms**: `search-constants`, `tool_search_constants`, `search_constants_tool`, `cmd_search_constants`, `run_search_constants`, `do_search_constants`, `api_search_constants`, `mcp_search_constants`, `ghidra_search_constants`, `agentdecompile_search_constants`, `search_constants_command`, `search_constants_action`, `search_constants_op`, `search_constants_task`, `execute_search_constants`, `find-constant-uses`, `find-constants-in-range`, `list-common-constants`
 
@@ -1532,7 +1531,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-strings`.
 
 **Overloads**:
-- `search_strings(binary_name, query, limit)` from `vendor_pyghidra` → forwards to `search-strings`.
+- `search_strings(binary_name, query, limit)` → forwards to `search-strings`.
 
 **Examples**: `search-strings programPath="/bin.exe" query="https?"`.
 ### `search-symbols`
@@ -1543,7 +1542,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-symbols`.
 
 **Overloads**:
-- `search_functions_by_name(query, offset, limit)` from `vendor_ghidramcp` → forwards to `search-symbols`.
+- `search_functions_by_name(query, offset, limit)` → forwards to `search-symbols`.
 
 **Examples**: `search-symbols programPath="/bin.exe" query="main"`.
 
@@ -1555,7 +1554,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: All from `manage-symbols`.
 
 **Overloads**:
-- `search_symbols_by_name(binary_name, query, offset, limit)` from `vendor_pyghidra` → forwards to `search-symbols-by-name`.
+- `search_symbols_by_name(binary_name, query, offset, limit)` → forwards to `search-symbols-by-name`.
 
 **Examples**: `search-symbols-by-name programPath="/bin.exe" query="entry"`.
 ### `suggest`

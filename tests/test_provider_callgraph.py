@@ -1,7 +1,7 @@
 """Unit tests for CallGraphToolProvider.
 
 Covers:
-- get-call-graph and gen-callgraph (pyghidra-mcp alias) schema
+- get-call-graph and gen-callgraph (alias) schema
 - HANDLERS normalization
 - Mode enum: graph, tree, callers, callees, callers_decomp, common_callers
 - Direction enum: calling, called
@@ -58,14 +58,14 @@ class TestCallGraphProviderSchema:
         assert "calling" in props["direction"]["enum"]
         assert "called" in props["direction"]["enum"]
 
-    def test_pyghidra_mcp_params_present(self):
-        """pyghidra-mcp-specific params should be present in schema."""
+    def test_callgraph_params_present(self):
+        """Callgraph-specific params should be present in schema."""
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "gen-callgraph")
         assert_tool_schema_invariants(tool, expected_name="gen-callgraph")
         props = tool.inputSchema["properties"]
         for param in ("condenseThreshold", "topLayers", "bottomLayers", "maxRunTime"):
-            assert param in props, f"Missing pyghidra-mcp param '{param}'"
+            assert param in props, f"Missing param '{param}'"
 
     def test_second_function_param(self):
         """common_callers mode needs a secondFunction parameter."""
@@ -92,7 +92,7 @@ class TestCallGraphProviderHandlers:
         assert "getcallgraph" in CallGraphToolProvider.HANDLERS
 
     def test_gencallgraph_alias_present(self):
-        """gen-callgraph is the pyghidra-mcp alias and must be routed."""
+        """gen-callgraph is an alias and must be routed."""
         assert "gencallgraph" in CallGraphToolProvider.HANDLERS
 
     def test_both_aliases_route_to_same_method(self):
