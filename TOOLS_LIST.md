@@ -1594,7 +1594,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `import-binary`.
 
 **Overloads**:
-- `import-file(...)` vendor/alias entry → forwards to `import-binary` with the same supported parameters.
+- `import-file(...)` alias entry → forwards to `import-binary` with the same supported parameters.
 
 **Examples**: Same as `import-binary`.
 
@@ -1606,7 +1606,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All compatible forms from `read-bytes` and `inspect-memory`.
 
 **Overloads**:
-- `read-bytes(...)` vendor/alias entry → forwards to `inspect-memory` with the same supported parameters.
+- `read-bytes(...)` alias entry → forwards to `inspect-memory` with the same supported parameters.
 
 
 **Examples**: Same as `inspect-memory` read mode.
@@ -1619,7 +1619,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-symbols`, plus `classes` for mode.
 
 **Overloads**:
-- `list-classes(...)` vendor/alias entry → forwards to `manage-symbols` with the same supported parameters.
+- `list-classes(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
 
 
 **Examples**: `list-classes programPath="/bin.exe" maxResults=50`.
@@ -1632,7 +1632,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-symbols`, plus `namespaces` for mode.
 
 **Overloads**:
-- `list-namespaces(...)` vendor/alias entry → forwards to `manage-symbols` with the same supported parameters.
+- `list-namespaces(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
 
 
 **Examples**: `list-namespaces programPath="/bin.exe"`.
@@ -1645,7 +1645,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-symbols`, plus `rename_data` for mode.
 
 **Overloads**:
-- `rename-data(...)` vendor/alias entry → forwards to `manage-symbols` with the same supported parameters.
+- `rename-data(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
 
 
 **Examples**: `rename-data programPath="/bin.exe" address="0x404000" newName="sbox"`.
@@ -1658,7 +1658,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `search-symbols`.
 
 **Overloads**:
-- `search-functions-by-name(...)` vendor/alias entry → forwards to `search-symbols` with the same supported parameters.
+- `search-functions-by-name(...)` alias entry → forwards to `search-symbols` with the same supported parameters.
 
 
 **Examples**: Same as `search-symbols`.
@@ -1671,7 +1671,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `get-functions`.
 
 **Overloads**:
-- `get-function-by-address(...)` vendor/alias entry → forwards to `get-functions` with the same supported parameters.
+- `get-function-by-address(...)` alias entry → forwards to `get-functions` with the same supported parameters.
 
 
 **Examples**: Same as `get-functions`.
@@ -1684,7 +1684,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `get-functions`.
 
 **Overloads**:
-- `find-function(...)` vendor/alias entry → forwards to `get-functions` with the same supported parameters.
+- `find-function(...)` alias entry → forwards to `get-functions` with the same supported parameters.
 
 
 **Examples**: Same as `get-functions`.
@@ -1697,7 +1697,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-function`.
 
 **Overloads**:
-- `rename-function(...)` vendor/alias entry → forwards to `manage-function` with the same supported parameters.
+- `rename-function(...)` alias entry → forwards to `manage-function` with the same supported parameters.
 
 
 **Examples**: Same as `manage-function`.
@@ -1710,7 +1710,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-function`.
 
 **Overloads**:
-- `rename-function-by-address(...)` vendor/alias entry → forwards to `manage-function` with the same supported parameters.
+- `rename-function-by-address(...)` alias entry → forwards to `manage-function` with the same supported parameters.
 
 
 **Examples**: Same as `manage-function`.
@@ -1723,7 +1723,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-function`.
 
 **Overloads**:
-- `set-function-prototype(...)` vendor/alias entry → forwards to `manage-function` with the same supported parameters.
+- `set-function-prototype(...)` alias entry → forwards to `manage-function` with the same supported parameters.
 
 
 **Examples**: Same as `manage-function`.
@@ -1736,7 +1736,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-function`.
 
 **Overloads**:
-- `set-local-variable-type(...)` vendor/alias entry → forwards to `manage-function` with the same supported parameters.
+- `set-local-variable-type(...)` alias entry → forwards to `manage-function` with the same supported parameters.
 
 
 **Examples**: Same as `manage-function`.
@@ -1749,7 +1749,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-function`.
 
 **Overloads**:
-- `rename-variable(...)` vendor/alias entry → forwards to `manage-function` with the same supported parameters.
+- `rename-variable(...)` alias entry → forwards to `manage-function` with the same supported parameters.
 
 
 **Examples**: Same as `manage-function`.
@@ -1762,7 +1762,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `list-functions`.
 
 **Overloads**:
-- `list-methods(...)` vendor/alias entry → forwards to `list-functions` with the same supported parameters.
+- `list-methods(...)` alias entry → forwards to `list-functions` with the same supported parameters.
 
 
 **Examples**: Same as `list-functions`.
@@ -1775,7 +1775,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `list-functions`.
 
 **Overloads**:
-- `get-all-functions(...)` vendor/alias entry → forwards to `list-functions` with the same supported parameters.
+- `get-all-functions(...)` alias entry → forwards to `list-functions` with the same supported parameters.
 
 
 **Examples**: Same as `list-functions`.
@@ -1788,7 +1788,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `decompile-function`.
 
 **Overloads**:
-- `get-decompilation(...)` vendor/alias entry → forwards to `decompile-function` with the same supported parameters.
+- `get-decompilation(...)` alias entry → forwards to `decompile-function` with the same supported parameters.
 
 
 **Examples**: Same as `decompile-function`.
@@ -1801,7 +1801,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-comments`.
 
 **Overloads**:
-- `set-comment(...)` vendor/alias entry → forwards to `manage-comments` with the same supported parameters.
+- `set-comment(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
 
 
 **Examples**: Same as `manage-comments`.
@@ -1814,7 +1814,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-comments`.
 
 **Overloads**:
-- `get-comments(...)` vendor/alias entry → forwards to `manage-comments` with the same supported parameters.
+- `get-comments(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
 
 
 **Examples**: Same as `manage-comments`.
@@ -1827,7 +1827,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-comments`.
 
 **Overloads**:
-- `search-comments(...)` vendor/alias entry → forwards to `manage-comments` with the same supported parameters.
+- `search-comments(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
 
 
 **Examples**: Same as `manage-comments`.
@@ -1840,7 +1840,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `get-call-graph`.
 
 **Overloads**:
-- `get-call-tree(...)` vendor/alias entry → forwards to `get-call-graph` with the same supported parameters.
+- `get-call-tree(...)` alias entry → forwards to `get-call-graph` with the same supported parameters.
 
 
 **Examples**: Same as `get-call-graph`.
@@ -1853,7 +1853,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `get-call-graph`.
 
 **Overloads**:
-- `find-common-callers(...)` vendor/alias entry → forwards to `get-call-graph` with the same supported parameters.
+- `find-common-callers(...)` alias entry → forwards to `get-call-graph` with the same supported parameters.
 
 
 **Examples**: Same as `get-call-graph`.
@@ -1866,7 +1866,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-bookmarks`.
 
 **Overloads**:
-- `set-bookmark(...)` vendor/alias entry → forwards to `manage-bookmarks` with the same supported parameters.
+- `set-bookmark(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
 
 
 **Examples**: Same as `manage-bookmarks`.
@@ -1879,7 +1879,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-bookmarks`.
 
 **Overloads**:
-- `get-bookmarks(...)` vendor/alias entry → forwards to `manage-bookmarks` with the same supported parameters.
+- `get-bookmarks(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
 
 
 **Examples**: Same as `manage-bookmarks`.
@@ -1892,7 +1892,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-bookmarks`.
 
 **Overloads**:
-- `remove-bookmark(...)` vendor/alias entry → forwards to `manage-bookmarks` with the same supported parameters.
+- `remove-bookmark(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
 
 
 **Examples**: Same as `manage-bookmarks`.
@@ -1905,7 +1905,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-bookmarks`.
 
 **Overloads**:
-- `search-bookmarks(...)` vendor/alias entry → forwards to `manage-bookmarks` with the same supported parameters.
+- `search-bookmarks(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
 
 
 **Examples**: Same as `manage-bookmarks`.
@@ -1918,7 +1918,7 @@ All names in this section are legacy compatibility forwards.
   - Synonyms: All from `manage-bookmarks`.
 
 **Overloads**:
-- `list-bookmark-categories(...)` vendor/alias entry → forwards to `manage-bookmarks` with the same supported parameters.
+- `list-bookmark-categories(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
 
 
 **Examples**: `list-bookmark-categories programPath="/bin.exe" type="Analysis"`.

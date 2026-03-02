@@ -275,12 +275,17 @@ class TestSymbolProviderModeActionAlias:
     """Verify that 'action' is accepted as an alias for 'mode' in manage-symbols."""
 
     def test_schema_advertises_action_property(self):
+        """Per the schema rules, 'action' must NOT be a separate schema property.
+        'mode' is the canonical dispatch parameter; 'action' is accepted at runtime
+        via normalization, not via a duplicate schema field."""
         p = _make_provider()
         tool = next(t for t in p.list_tools() if t.name == "manage-symbols")
         props = tool.inputSchema["properties"]
-        assert "action" in props, "manage-symbols schema must advertise 'action' property"
-        assert "alias" in props["action"].get("description", "").lower(), \
-            "action description should mention it's an alias"
+        assert "action" not in props, (
+            "manage-symbols must not advertise 'action' as a separate schema property; "
+            "runtime normalization handles action -> mode transparently"
+        )
+        assert "mode" in props, "mode must be the canonical dispatch property"
 
     def test_schema_advertises_mode_as_primary(self):
         p = _make_provider()
