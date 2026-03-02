@@ -200,10 +200,38 @@ def _get_error_result_message(data: Any) -> str | None:
 
 def _is_no_program_loaded_error(data: Any) -> bool:
     err = _get_error_result_message(data)
-    if not err:
-        return False
-    err_l = err.strip().lower()
-    return "no program loaded" in err_l or "no active program" in err_l
+    if err:
+        err_l = err.strip().lower()
+        if "no program loaded" in err_l or "no active program" in err_l:
+            return True
+
+    if isinstance(data, dict):
+        note = str(data.get("note", "")).strip().lower()
+        if note in {"no program currently loaded", "no project loaded"}:
+            return True
+        if data.get("loaded") is False and "no program" in note:
+            return True
+
+        content = data.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                try:
+                    nested = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(nested, dict):
+                    nested_note = str(nested.get("note", "")).strip().lower()
+                    if nested_note in {"no program currently loaded", "no project loaded"}:
+                        return True
+                    if nested.get("loaded") is False and "no program" in nested_note:
+                        return True
+
+    return False
 
 
 def _backend_host_for_recovery(ctx: click.Context) -> str:
