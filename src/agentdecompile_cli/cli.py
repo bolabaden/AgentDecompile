@@ -1112,9 +1112,13 @@ def list_exports(
     "project-files",
     help="List project file/folder hierarchy (list-project-files)",
 )
+@click.option("-b", "--binary", "program_path")
 @click.pass_context
-def list_project_files(ctx: click.Context) -> None:
-    _run_async(_call(ctx, "list-project-files"))
+def list_project_files(ctx: click.Context, program_path: str | None) -> None:
+    payload: dict[str, Any] = {}
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
+    _run_async(_call(ctx, "list-project-files", **payload))
 
 
 @list_grp.command("open-programs", help="List open programs (list-open-programs, GUI)")

@@ -44,6 +44,11 @@ $ProgramPath = "/K1/k1_win_gog_swkotor.exe"
 ```bash
 UVX_PREFIX='uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/'
 PROGRAM_PATH='/K1/k1_win_gog_swkotor.exe'
+export AGENT_DECOMPILE_SERVER_HOST='170.9.241.140'
+export AGENT_DECOMPILE_SERVER_PORT='13100'
+export AGENT_DECOMPILE_SERVER_USERNAME='OpenKotOR'
+export AGENT_DECOMPILE_SERVER_PASSWORD='MuchaShakaPaka'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='Odyssey'
 ```
 
 </details>
@@ -143,7 +148,13 @@ function Invoke-McpTool {
 # No manual initialize/session handling required in uvx mode.
 # The CLI handles transport/session lifecycle per command.
 
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ list project-files
+$env:AGENT_DECOMPILE_SERVER_HOST = "170.9.241.140"
+$env:AGENT_DECOMPILE_SERVER_PORT = "13100"
+$env:AGENT_DECOMPILE_SERVER_USERNAME = "OpenKotOR"
+$env:AGENT_DECOMPILE_SERVER_PASSWORD = "MuchaShakaPaka"
+$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "Odyssey"
+
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ list project-files --binary /K1/k1_win_gog_swkotor.exe
 ```
 
 </details>
@@ -188,14 +199,14 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 Tool payload (`name=list_project_files`):
 
 ```json
-{}
+{"program_path":"/K1/k1_win_gog_swkotor.exe"}
 ```
 
 <details>
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 102 list_project_files '{}'
+call_tool 102 list_project_files '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -203,7 +214,7 @@ call_tool 102 list_project_files '{}'
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 102 -Name "list_project_files" -ArgumentsJson '{}'
+Invoke-McpTool -Id 102 -Name "list_project_files" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -211,7 +222,7 @@ Invoke-McpTool -Id 102 -Name "list_project_files" -ArgumentsJson '{}'
 <summary><b>uvx</b></summary>
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ list project-files
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/ list project-files --binary /K1/k1_win_gog_swkotor.exe
 ```
 
 </details>
@@ -574,3 +585,4 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 - This file is intentionally organized in three tabs for each workflow: Linux, Windows, and `uvx`.
 - For strict output comparability, run all HTTP calls in one session and run `open` first.
 - In PowerShell `uvx ... tool <name> <json>`, pass JSON via a variable like `$a`.
+- In shared-server mode, rename/comment/tag writes can return read-only transaction errors unless the backend checkout is writable.
