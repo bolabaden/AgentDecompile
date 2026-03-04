@@ -10,6 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import MagicMock
 
 import pytest
@@ -184,3 +186,116 @@ class TestImportExportArgNormalization:
         p._handle_analyze = capture
         await p.call_tool("analyze-program", {"programPath": "/test", "analyzers": ["AutoAnalysis"]})
         assert "analyzers" in received
+
+
+class TestImportExportAnalyzeExecution:
+    @pytest.mark.asyncio
+    async def test_analyze_uses_non_null_monitor(self, monkeypatch):
+        p = _make_provider(with_program=True)
+        p._require_program = MagicMock()
+        program = p.program_info.program
+        program.getName.return_value = "k1_win_gog_swkotor.exe"
+        program.startTransaction.return_value = 1
+
+        observed = {"reanalyze": None, "start": None}
+
+        class _Mgr:
+            def reAnalyzeAll(self, monitor):
+                observed["reanalyze"] = monitor
+
+            def startAnalysis(self, monitor):
+                observed["start"] = monitor
+
+        class _AutoAnalysisManager:
+            @staticmethod
+            def getAnalysisManager(_program):
+                return _Mgr()
+
+        class _TaskMonitor:
+            DUMMY = object()
+
+        monkeypatch.setitem(sys.modules, "ghidra", types.ModuleType("ghidra"))
+        monkeypatch.setitem(sys.modules, "ghidra.app", types.ModuleType("ghidra.app"))
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin", types.ModuleType("ghidra.app.plugin"))
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin.core", types.ModuleType("ghidra.app.plugin.core"))
+        analysis_mod = types.ModuleType("ghidra.app.plugin.core.analysis")
+        analysis_mod.AutoAnalysisManager = _AutoAnalysisManager
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin.core.analysis", analysis_mod)
+        monkeypatch.setitem(sys.modules, "ghidra.util", types.ModuleType("ghidra.util"))
+        task_mod = types.ModuleType("ghidra.util.task")
+        task_mod.TaskMonitor = _TaskMonitor
+        monkeypatch.setitem(sys.modules, "ghidra.util.task", task_mod)
+
+        resp = await p._handle_analyze({"analyzers": ["all"]})
+        result = _parse(resp)
+
+        assert result["success"] is True
+        assert observed["reanalyze"] is _TaskMonitor.DUMMY
+        assert observed["start"] is _TaskMonitor.DUMMY
+        program.endTransaction.assert_called_with(1, True)
+
+
+class TestImportExportChangeProcessorExecution:
+    @pytest.mark.asyncio
+    async def test_change_processor_uses_language_object(self, monkeypatch):
+        p = _make_provider(with_program=True)
+        p._require_program = MagicMock()
+        program = p.program_info.program
+        program.startTransaction.return_value = 7
+
+        class _LanguageID:
+            def __init__(self, value):
+                self.value = value
+
+        class _CompilerSpecID:
+            def __init__(self, value):
+                self.value = value
+
+        class _DefaultCompilerSpec:
+            def getCompilerSpecID(self):
+                return _CompilerSpecID("windows")
+
+        class _Language:
+            def getDefaultCompilerSpec(self):
+                return _DefaultCompilerSpec()
+
+        class _LanguageService:
+            def getLanguage(self, language_id):
+                if getattr(language_id, "value", "") == "x86:LE:32:default":
+                    return _Language()
+                return None
+
+        class _DefaultLanguageService:
+            @staticmethod
+            def getLanguageService():
+                return _LanguageService()
+
+        class _TaskMonitor:
+            DUMMY = object()
+
+        monkeypatch.setitem(sys.modules, "ghidra", types.ModuleType("ghidra"))
+        monkeypatch.setitem(sys.modules, "ghidra.program", types.ModuleType("ghidra.program"))
+        monkeypatch.setitem(sys.modules, "ghidra.program.model", types.ModuleType("ghidra.program.model"))
+        lang_mod = types.ModuleType("ghidra.program.model.lang")
+        lang_mod.LanguageID = _LanguageID
+        lang_mod.CompilerSpecID = _CompilerSpecID
+        monkeypatch.setitem(sys.modules, "ghidra.program.model.lang", lang_mod)
+        util_mod = types.ModuleType("ghidra.program.util")
+        util_mod.DefaultLanguageService = _DefaultLanguageService
+        monkeypatch.setitem(sys.modules, "ghidra.program.util", util_mod)
+        monkeypatch.setitem(sys.modules, "ghidra.util", types.ModuleType("ghidra.util"))
+        task_mod = types.ModuleType("ghidra.util.task")
+        task_mod.TaskMonitor = _TaskMonitor
+        monkeypatch.setitem(sys.modules, "ghidra.util.task", task_mod)
+
+        resp = await p._handle_change_processor({"language": "x86:LE:32:default", "compiler": "windows"})
+        result = _parse(resp)
+
+        assert result["success"] is True
+        program.setLanguage.assert_called_once()
+        language_arg, compiler_arg, force_arg, monitor_arg = program.setLanguage.call_args[0]
+        assert language_arg.__class__.__name__ == "_Language"
+        assert getattr(compiler_arg, "value", None) == "windows"
+        assert force_arg is True
+        assert monitor_arg is _TaskMonitor.DUMMY
+        program.endTransaction.assert_called_with(7, True)

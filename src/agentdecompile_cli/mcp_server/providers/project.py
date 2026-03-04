@@ -1450,7 +1450,7 @@ class ProjectToolProvider(ToolProvider):
 
         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-        return domain_file.getDomainObject(self, True, False, TaskMonitor.DUMMY)
+        return domain_file.getDomainObject(None, True, False, TaskMonitor.DUMMY)
 
     def _set_active_program_info(self, program: Any, program_path: str) -> None:
         from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
@@ -1596,7 +1596,7 @@ class ProjectToolProvider(ToolProvider):
                 try:
                     source_df = project_data.getFile(repo_path)
                     if source_df is not None:
-                        remote_domain_obj = source_df.getDomainObject(self, True, False, monitor)
+                        remote_domain_obj = source_df.getDomainObject(None, True, False, monitor)
                 except Exception:
                     pass
 
@@ -1607,7 +1607,7 @@ class ProjectToolProvider(ToolProvider):
                         raise ValueError(f"Repository item not found: {repo_path}")
                     # Try DomainFile-style open on the repo item (some Ghidra versions).
                     if hasattr(repo_item, "getDomainObject"):
-                        remote_domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                        remote_domain_obj = repo_item.getDomainObject(None, True, False, monitor)
                     elif hasattr(repo_item, "open"):
                         remote_domain_obj = repo_item.open(monitor)
 
@@ -1988,7 +1988,7 @@ class ProjectToolProvider(ToolProvider):
                         except Exception:
                             pass
                     if not opened:
-                        domain_obj = domain_file.getDomainObject(self, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                        domain_obj = domain_file.getDomainObject(None, True, False, monitor) # pyright: ignore[reportAttributeAccessIssue]
                         if domain_obj is not None:
                             program = domain_obj
                             logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
@@ -1998,7 +1998,7 @@ class ProjectToolProvider(ToolProvider):
         if program is None:
             # Fallback: open the item directly via low-level API
             try:
-                domain_obj = repo_item.getDomainObject(self, True, False, monitor)
+                domain_obj = repo_item.getDomainObject(None, True, False, monitor)
             except Exception as exc:
                 # Many versions of Ghidra don't support getDomainObject on RepositoryItem
                 # Fall through to ProgramDB fallback below.

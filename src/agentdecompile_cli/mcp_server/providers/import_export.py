@@ -520,12 +520,14 @@ class ImportExportToolProvider(ToolProvider):
 
         try:
             from ghidra.app.plugin.core.analysis import AutoAnalysisManager
+            from ghidra.util.task import TaskMonitor
 
             mgr = AutoAnalysisManager.getAnalysisManager(program)
             tx = program.startTransaction("auto-analysis")
             try:
-                mgr.reAnalyzeAll(None)
-                mgr.startAnalysis(None)
+                monitor = TaskMonitor.DUMMY
+                mgr.reAnalyzeAll(monitor)
+                mgr.startAnalysis(monitor)
                 program.endTransaction(tx, True)
             except Exception:
                 program.endTransaction(tx, False)
@@ -558,16 +560,20 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
         try:
             from ghidra.program.model.lang import CompilerSpecID, LanguageID
+            from ghidra.program.util import DefaultLanguageService
             from ghidra.util.task import TaskMonitor
 
             tx = program.startTransaction("change-processor")
             try:
-                # Try using setLanguage (alternative approach without SetLanguageCmd)
                 language_id = LanguageID(language)
-                compiler_spec_id = CompilerSpecID(compiler) if compiler else None
-                
-                # Use language service to set language directly
-                program.setLanguage(language_id, compiler_spec_id, True, TaskMonitor.DUMMY)
+                language_service = DefaultLanguageService.getLanguageService()
+                language_obj = language_service.getLanguage(language_id)
+                if language_obj is None:
+                    raise RuntimeError(f"Unable to resolve language: {language}")
+
+                compiler_spec_id = CompilerSpecID(compiler) if compiler else language_obj.getDefaultCompilerSpec().getCompilerSpecID()
+
+                program.setLanguage(language_obj, compiler_spec_id, True, TaskMonitor.DUMMY)
                 ok = True
                 program.endTransaction(tx, ok)
             except Exception:
