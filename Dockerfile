@@ -6,7 +6,8 @@
 #
 # MCP-only image: one container runs only AgentDecompile MCP (8080).
 # For the all-in-one (Ghidra server + BSim + MCP) image, use Dockerfile.aio.
-FROM alpine:latest AS build
+ARG ALPINE_BASE_IMAGE="public.ecr.aws/docker/library/alpine:latest"
+FROM ${ALPINE_BASE_IMAGE} AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
 ARG GHIDRA_HOME="/ghidra"
@@ -113,11 +114,28 @@ RUN set -eux; \
     apk del .pyghidra-build || true; \
     mkdir ${GHIDRA_HOME}/repositories
 
-# --- Layer 4: source (invalidates from here when you change code) ---
+# --- Layer 4: Python dependencies from metadata (cached unless pyproject changes) ---
+COPY pyproject.toml /tmp/agentdecompile-meta/pyproject.toml
+RUN set -eux; \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --upgrade pip setuptools wheel; \
+    ${GHIDRA_HOME}/venv/bin/python3 - <<'PY'
+import pathlib
+import subprocess
+import sys
+import tomllib
+
+pyproject_path = pathlib.Path('/tmp/agentdecompile-meta/pyproject.toml')
+project = tomllib.loads(pyproject_path.read_text(encoding='utf-8')).get('project', {})
+dependencies = project.get('dependencies', [])
+if dependencies:
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', *dependencies])
+PY
+
+# --- Layer 5: source (invalidates from here when you change code) ---
 COPY . /src/agentdecompile
 WORKDIR /src/agentdecompile
 
-# --- Layer 4b: build/install AgentDecompile Ghidra extension ---
+# --- Layer 5b: build/install AgentDecompile Ghidra extension ---
 RUN set -eux; \
     if [ -f ./build.gradle ] || [ -f ./build.gradle.kts ] || [ -f ./settings.gradle ] || [ -f ./settings.gradle.kts ]; then \
     gradle clean buildExtension; \
@@ -129,7 +147,7 @@ RUN set -eux; \
     echo "No Gradle build files found; skipping extension build"; \
     fi
 
-# --- Layer 5: install AgentDecompile Python package into venv ---
+# --- Layer 6: install AgentDecompile Python package into venv ---
 ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 RUN set -eux; \
@@ -142,11 +160,10 @@ RUN set -eux; \
     git clone --depth 1 "https://github.com/bolabaden/agentdecompile.git" "${FALLBACK_SRC}"; \
     INSTALL_SRC="${FALLBACK_SRC}"; \
     fi; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir \
+    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-deps \
     "${INSTALL_SRC}"
 
-FROM alpine:latest AS runtime
+FROM ${ALPINE_BASE_IMAGE} AS runtime
 
 # --- Runtime env/args ---
 ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
@@ -198,7 +215,7 @@ RUN \
     run adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
 WORKDIR ${GHIDRA_HOME}
-COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
+COPY --from=build --chown=${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} ${GHIDRA_HOME}
 RUN set -eux; \
     mkdir -p ${GHIDRA_HOME}/docker; \
         for arch_dir in linux_aarch64 linux_arm_64 linux_arm64 linux_aarch_64; do \
@@ -240,7 +257,7 @@ RUN set -eux; \
     sed -i 's/\r$//' ${GHIDRA_HOME}/docker/start-mcp.sh; \
     chmod +x ${GHIDRA_HOME}/docker/start-mcp.sh; \
     mkdir -p /work /projects; \
-    chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
+    chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} /work /projects
 
 USER ${GHIDRA_USER}
 
