@@ -526,7 +526,27 @@ class ImportExportToolProvider(ToolProvider):
             tx = program.startTransaction("auto-analysis")
             try:
                 monitor = TaskMonitor.DUMMY
-                mgr.reAnalyzeAll(monitor)
+                reanalyze_done = False
+                try:
+                    from ghidra.program.model.address import AddressSet
+
+                    addr_set = None
+                    if hasattr(program, "getMemory"):
+                        memory = program.getMemory()
+                        if memory is not None:
+                            if hasattr(memory, "getLoadedAndInitializedAddressSet"):
+                                addr_set = memory.getLoadedAndInitializedAddressSet()
+                            elif hasattr(memory, "getAllInitializedAddressSet"):
+                                addr_set = memory.getAllInitializedAddressSet()
+                    if addr_set is None:
+                        addr_set = AddressSet()
+                    mgr.reAnalyzeAll(addr_set)
+                    reanalyze_done = True
+                except Exception:
+                    pass
+
+                if not reanalyze_done:
+                    mgr.reAnalyzeAll(monitor)
                 mgr.startAnalysis(monitor)
                 program.endTransaction(tx, True)
             except Exception:
