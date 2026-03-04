@@ -16,6 +16,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -220,10 +221,164 @@ def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=_json.dumps(data))]
 
 
-def create_error_response(error: str | Exception) -> list[types.TextContent]:
-    """Create a standardized MCP error response."""
-    msg = str(error) if isinstance(error, Exception) else error
-    return [types.TextContent(type="text", text=_json.dumps({"success": False, "error": msg}))]
+class ActionableError(Exception):
+    """Structured error that carries state context and explicit next calls."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        next_steps: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.context = context or {}
+        self.next_steps = next_steps or []
+
+
+def _merge_context(
+    base: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    if isinstance(base, dict):
+        merged.update(base)
+    if isinstance(extra, dict):
+        merged.update(extra)
+    return merged or None
+
+
+def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] | None:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for step in (base or []):
+        normalized = str(step).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+    for step in (extra or []):
+        normalized = str(step).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(normalized)
+    return merged or None
+
+
+def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] | None]:
+    lowered = msg.lower()
+
+    if "unknown tool" in lowered:
+        return (
+            {"state": "unknown-tool"},
+            [
+                "Call `list_tools` to discover the canonical tool name.",
+                "Retry with the canonical tool name in snake_case.",
+            ],
+        )
+
+    if "required parameter missing" in lowered:
+        match = re.search(r"required parameter missing(?: or empty)?:\s*(.+)$", msg, flags=re.IGNORECASE)
+        param_name = match.group(1).strip() if match else None
+        context: dict[str, Any] = {"state": "missing-required-parameter"}
+        if param_name:
+            context["missingParameter"] = param_name
+        return (
+            context,
+            [
+                "Read the tool input schema and include all required parameters.",
+                "Retry with the missing value populated.",
+            ],
+        )
+
+    if "no program loaded" in lowered or "ghidra tools unavailable" in lowered:
+        return (
+            {"state": "no-active-program"},
+            [
+                "Call `open` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
+                "Then call `get-current-program` to verify an active program is loaded.",
+            ],
+        )
+
+    if "authentication failed" in lowered:
+        return (
+            {"state": "authentication-failed"},
+            [
+                "Verify `serverUsername`/`serverPassword` and retry `open`.",
+                "If credentials are correct, verify the Ghidra server is running and reachable on `serverHost:serverPort`.",
+            ],
+        )
+
+    if "not connected to repository server" in lowered or "shared-server" in lowered:
+        return (
+            {"state": "shared-session-unavailable"},
+            [
+                "Call `open` first with shared-server parameters to establish a repository session.",
+                "Then call `list-project-files` or `manage-files` `mode=list` to verify repository visibility.",
+            ],
+        )
+
+    if "path does not exist" in lowered or "path not found" in lowered or "invalid folder path" in lowered:
+        return (
+            {"state": "path-not-found"},
+            [
+                "Call `manage-files` with `mode=list` on the parent folder to discover the correct path.",
+                "Retry with an absolute path visible to the backend runtime.",
+            ],
+        )
+
+    if "not a readable file" in lowered or "is not a directory" in lowered:
+        return (
+            {"state": "path-type-mismatch"},
+            [
+                "Call `manage-files` `mode=info` on the same path to verify file vs directory.",
+                "Use `mode=read` for files and `mode=list` for directories.",
+            ],
+        )
+
+    if "provided but could not be resolved/opened" in lowered:
+        return (
+            {"state": "program-resolution-failed"},
+            [
+                "Call `list-project-files` to locate the exact program path in the active project/session.",
+                "Call `open` with that exact path (or with shared server args and repository) before retrying analysis tools.",
+            ],
+        )
+
+    return None, None
+
+
+def create_error_response(
+    error: str | Exception,
+    *,
+    context: dict[str, Any] | None = None,
+    next_steps: list[str] | None = None,
+) -> list[types.TextContent]:
+    """Create a standardized MCP error response with optional actionable metadata."""
+    if isinstance(error, ActionableError):
+        msg = error.message
+        context = _merge_context(error.context, context)
+        next_steps = _merge_steps(error.next_steps, next_steps)
+    else:
+        msg = str(error) if isinstance(error, Exception) else str(error)
+
+    inferred_context, inferred_steps = _default_error_guidance(msg)
+    context = _merge_context(inferred_context, context)
+    next_steps = _merge_steps(inferred_steps, next_steps)
+
+    payload: dict[str, Any] = {"success": False, "error": msg}
+    if context:
+        payload["context"] = context
+        for key, value in context.items():
+            if key in payload:
+                continue
+            if isinstance(value, (str, int, float, bool, type(None))):
+                payload[key] = value
+    if next_steps:
+        payload["nextSteps"] = next_steps
+    return [types.TextContent(type="text", text=_json.dumps(payload))]
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +506,13 @@ class ToolProvider:
             return await handler(norm_args)
         except Exception as e:
             logger.error(f"Tool {name} error: {e.__class__.__name__}: {e}")
-            return create_error_response(e)
+            return create_error_response(
+                e,
+                context={
+                    "tool": to_snake_case(resolve_tool_name(name) or name),
+                    "provider": self.__class__.__name__,
+                },
+            )
 
     # ------------------------------------------------------------------
     # Argument extraction helpers (on already-normalized dicts)
@@ -423,11 +584,25 @@ class ToolProvider:
 
     def _require_program(self) -> None:
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
-            raise ValueError("No program loaded")
+            raise ActionableError(
+                "No program loaded",
+                context={"state": "no-active-program"},
+                next_steps=[
+                    "Call `open` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `get-current-program` to confirm `loaded=true`.",
+                ],
+            )
 
     def _require_ghidra(self) -> None:
         if self.ghidra_tools is None:
-            raise ValueError("No program loaded (Ghidra tools unavailable)")
+            raise ActionableError(
+                "No program loaded (Ghidra tools unavailable)",
+                context={"state": "no-active-program"},
+                next_steps=[
+                    "Call `open` with `path` (local binary/.gpr) or shared server args.",
+                    "Then retry the current analysis tool.",
+                ],
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle hooks
@@ -767,7 +942,14 @@ class ToolProviderManager:
         resolved_name: str = resolve_tool_name(name) or name
         if resolved_name in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
-                f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",
+                ActionableError(
+                    f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",
+                    context={"tool": to_snake_case(resolved_name), "state": "gui-only-disabled"},
+                    next_steps=[
+                        "Run this tool in GUI mode (Code Browser) instead of headless mode.",
+                        "Use a headless-compatible alternative tool for automation workflows.",
+                    ],
+                ),
             )
         session_id: str = get_current_mcp_session_id()
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
@@ -775,7 +957,16 @@ class ToolProviderManager:
         norm_name = n(resolved_name)
         provider = self._tool_map.get(norm_name)
         if provider is None:
-            return create_error_response(f"Unknown tool: {name}")
+            return create_error_response(
+                ActionableError(
+                    f"Unknown tool: {name}",
+                    context={"tool": str(name), "state": "unknown-tool"},
+                    next_steps=[
+                        "Call `list_tools` to discover canonical tool names.",
+                        "Retry with the canonical snake_case tool name.",
+                    ],
+                ),
+            )
 
         norm_args = {n(k): v for k, v in (arguments or {}).items()}
 
@@ -799,7 +990,17 @@ class ToolProviderManager:
 
         if requested_program_key and effective_program_info is None:
             return create_error_response(
-                f"Program path '{requested_program_key}' was provided but could not be resolved/opened from the current project or shared repository session.",
+                ActionableError(
+                    f"Program path '{requested_program_key}' was provided but could not be resolved/opened from the current project or shared repository session.",
+                    context={
+                        "state": "program-resolution-failed",
+                        "requestedProgramPath": requested_program_key,
+                    },
+                    next_steps=[
+                        "Call `list-project-files` to discover the exact program path available in this session.",
+                        "Call `open` with that program path (or with shared-server credentials and repository) before retrying this tool.",
+                    ],
+                ),
             )
 
         if effective_program_info is not None and provider.program_info is not effective_program_info:

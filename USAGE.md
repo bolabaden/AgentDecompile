@@ -20,6 +20,27 @@ Diagnostics note: HTTP request logs are hidden by default. Add `--verbose` (or `
 
 Parameter alias note: shared-server connection options are interchangeable with/without the `ghidra-` prefix (for example `--server-host` == `--ghidra-server-host`, same for port/username/password/repository).
 
+Error response contract: tool failures now return actionable payloads with explicit state and next calls. Expect:
+
+```json
+{
+  "success": false,
+  "error": "Authentication failed for user@host:13100: ...",
+  "context": {
+    "state": "authentication-failed",
+    "tool": "open",
+    "serverHost": "170.9.241.140",
+    "serverPort": 13100
+  },
+  "nextSteps": [
+    "Verify serverUsername/serverPassword and retry open.",
+    "If credentials are correct, verify server reachability and repository access."
+  ]
+}
+```
+
+Automation guidance: when `nextSteps` is present, execute those calls before falling back to broad discovery commands.
+
 <details>
 <summary><b>Linux (bash/zsh)</b></summary>
 
