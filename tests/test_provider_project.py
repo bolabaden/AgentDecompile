@@ -288,6 +288,48 @@ class TestProjectProviderValidation:
         assert result.get("success") is False
         assert "shared-server" in str(result.get("error", ""))
 
+    @pytest.mark.asyncio
+    async def test_open_project_domain_path_when_filesystem_path_missing(self):
+        p = _make_provider(with_program=True)
+
+        project_data = MagicMock()
+        domain_file = MagicMock()
+        project_data.getFile.return_value = domain_file
+
+        program = MagicMock()
+        program.getName.return_value = "k1_win_gog_swkotor.exe"
+
+        p._get_active_project_data = MagicMock(return_value=project_data)
+        p._open_program_from_domain_file = MagicMock(return_value=program)
+        p._set_active_program_info = MagicMock()
+
+        resp = await p.call_tool("open", {"path": "/K1_local_pull_test/k1_win_gog_swkotor.exe"})
+        result = _parse(resp)
+
+        assert result.get("mode") == "project-domain"
+        assert result.get("path") == "/K1_local_pull_test/k1_win_gog_swkotor.exe"
+        p._open_program_from_domain_file.assert_called_once_with(domain_file)
+        p._set_active_program_info.assert_called_once_with(program, "/K1_local_pull_test/k1_win_gog_swkotor.exe")
+
+    @pytest.mark.asyncio
+    async def test_list_project_files_uses_active_project_data(self):
+        p = _make_provider(with_program=True)
+        p.program_info.program.getDomainFile.return_value.getProjectData.side_effect = AttributeError("DomainFileProxy has no getProjectData")
+
+        project_data = MagicMock()
+        root_folder = MagicMock()
+        project_data.getRootFolder.return_value = root_folder
+
+        p._get_active_project_data = MagicMock(return_value=project_data)
+        p._list_domain_files = MagicMock(return_value=[{"name": "k1_win_gog_swkotor.exe", "path": "/K1_local_pull_test/k1_win_gog_swkotor.exe", "type": "Program"}])
+
+        resp = await p.call_tool("list-project-files", {"folder": "/", "maxResults": 10})
+        result = _parse(resp)
+
+        assert result.get("count") == 1
+        assert result.get("files", [])[0].get("path") == "/K1_local_pull_test/k1_win_gog_swkotor.exe"
+        p._list_domain_files.assert_called_once_with(root_folder, 10)
+
 
 class TestProjectProviderArgNormalization:
     @pytest.mark.asyncio

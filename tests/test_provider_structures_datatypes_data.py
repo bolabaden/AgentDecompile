@@ -93,6 +93,14 @@ class TestStructureProviderSchema:
         props = tool.inputSchema["properties"]
         assert "isUnion" in props
 
+    def test_list_filter_params_present(self):
+        p = _make_structure_provider()
+        tool = p.list_tools()[0]
+        props = tool.inputSchema["properties"]
+        assert "nameFilter" in props
+        assert "query" in props
+        assert "filter" in props
+
 
 class TestStructureProviderHandlers:
     def test_handler_keys_normalized(self):
@@ -120,10 +128,33 @@ class TestStructureProviderValidation:
             getDataTypes=MagicMock(return_value=[]),
             getCategories=MagicMock(return_value=[]),
         ))
+        dtm_mock.getAllStructures = MagicMock(return_value=[])
         p.program_info.program.getDataTypeManager = MagicMock(return_value=dtm_mock)
         resp = await p.call_tool("manage-structures", {"action": "list"})
         result = _parse(resp)
         assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_list_action_name_filter(self):
+        p = _make_structure_provider(with_program=True)
+
+        def _dt(name: str):
+            item = MagicMock()
+            item.getName = MagicMock(return_value=name)
+            item.getCategoryPath = MagicMock(return_value="/")
+            item.getLength = MagicMock(return_value=16)
+            item.getNumComponents = MagicMock(return_value=2)
+            item.isUnion = MagicMock(return_value=False)
+            return item
+
+        dtm_mock = MagicMock()
+        dtm_mock.getAllStructures = MagicMock(return_value=[_dt("SaveHeader"), _dt("LoadInfo"), _dt("Vector3")])
+        p.program_info.program.getDataTypeManager = MagicMock(return_value=dtm_mock)
+
+        resp = await p.call_tool("manage-structures", {"action": "list", "query": "save"})
+        result = _parse(resp)
+        names = [entry.get("name") for entry in result.get("structures", [])]
+        assert names == ["SaveHeader"]
 
 
 # ---------------------------------------------------------------------------
