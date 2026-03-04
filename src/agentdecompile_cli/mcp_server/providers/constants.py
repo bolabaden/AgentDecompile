@@ -7,18 +7,16 @@ Scans instructions for scalar operands matching search criteria.
 from __future__ import annotations
 
 import logging
-
-from typing import Any
+from typing import Any, Callable
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_constants
 from agentdecompile_cli.mcp_server.tool_providers import (
-    ToolProvider,
-    create_success_response,
-    n,
     DEFAULT_LARGE_PAGE_LIMIT,
     DEFAULT_MAX_INSTRUCTIONS,
     DEFAULT_SAMPLES_PER_CONSTANT,
+    ToolProvider,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,19 +29,32 @@ class ConstantSearchToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="search-constants",
-                description="Search for constant values used in instructions",
+                description="Scan the assembly instructions of the program to find a specific hardcoded number, a range of numbers, or a list of commonly used magic numbers (like crypto signatures or checksums). Use this to locate where a known algorithm or specific value is configured in code.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["specific", "range", "common"], "default": "common"},
-                        "value": {"type": "integer", "description": "Specific value to search (specific mode)"},
-                        "minValue": {"type": "integer", "description": "Min value (range mode)"},
-                        "maxValue": {"type": "integer", "description": "Max value (range mode)"},
-                        "limit": {"type": "integer", "default": 1000},
-                        "offset": {"type": "integer", "default": 0},
-                        "maxInstructions": {"type": "integer", "default": 2000000},
-                        "samplesPerConstant": {"type": "integer", "default": 5},
+                        "programPath": {"type": "string", "description": "The path to the binary program in Ghidra."},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["specific", "range", "common"],
+                            "default": "common",
+                            "description": "Type of search: 'specific' (exact match), 'range' (between min and max), or 'common' (find well-known crypto/magic values).",
+                        },
+                        "value": {"type": "integer", "description": "The exact numeric value to search for when mode is 'specific'."},
+                        "minValue": {"type": "integer", "description": "The lowest numeric value to match when mode is 'range'."},
+                        "maxValue": {"type": "integer", "description": "The highest numeric value to match when mode is 'range'."},
+                        "limit": {"type": "integer", "default": 1000, "description": "Maximum number of constants to list in the results."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination text offset."},
+                        "maxInstructions": {
+                            "type": "integer",
+                            "default": 2000000,
+                            "description": "Maximum number of assembly instructions to scan before timing out, preventing massive slowdowns on huge binaries.",
+                        },
+                        "samplesPerConstant": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": "For each constant found, how many examples of the code that uses it to include in the output.",
+                        },
                     },
                     "required": [],
                 },
@@ -66,10 +77,10 @@ class ConstantSearchToolProvider(ToolProvider):
 
     def _collect_constants(self, args: dict[str, Any], value_filter: Callable[[int], bool]) -> tuple[list[dict], int]:
         """Collect constants from instructions using the provided filter.
-        
+
         Scans program instructions to find scalar values that pass the filter.
         Returns formatted results sorted by occurrence frequency, and instruction count.
-        
+
         Performance: O(max_instructions) scan with O(samples_per_constant * unique_values) storage.
         Uses heapq.nlargest implicitly via sorting for top-K by frequency.
         """
@@ -77,55 +88,15 @@ class ConstantSearchToolProvider(ToolProvider):
         max_instr = self._get_int(args, "maxinstructions", default=DEFAULT_MAX_INSTRUCTIONS)
         samples_per = self._get_int(args, "samplesperconstant", default=DEFAULT_SAMPLES_PER_CONSTANT)
 
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
-        listing = self._get_listing(program)
 
-        # Gather constants from instructions
-        constants: dict[int, list[dict]] = {}
-        instr_count = 0
-
-        try:
-            instr_iter = listing.getInstructions(True)
-            while instr_iter.hasNext() and instr_count < max_instr:
-                instr = instr_iter.next()
-                instr_count += 1
-                num_ops = instr.getNumOperands()
-                for i in range(num_ops):
-                    for obj in instr.getOpObjects(i):
-                        try:
-                            scalar_val = obj.getValue() if hasattr(obj, "getValue") else None
-                            if scalar_val is None:
-                                continue
-                            val = int(scalar_val)
-                            if val == 0 or not value_filter(val):
-                                continue
-
-                            if val not in constants:
-                                constants[val] = []
-                            if len(constants[val]) < samples_per:
-                                constants[val].append(
-                                    {
-                                        "address": str(instr.getAddress()),
-                                        "instruction": str(instr),
-                                    },
-                                )
-                        except Exception:
-                            continue
-        except Exception as e:
-            logger.warning(f"Instruction scan error: {e}")
-
-        # Format results
-        sorted_vals = sorted(constants.keys(), key=lambda v: len(constants[v]), reverse=True)
-        all_results = []
-        for val in sorted_vals:
-            all_results.append(
-                {
-                    "value": val,
-                    "hex": hex(val),
-                    "occurrences": len(constants[val]),
-                    "samples": constants[val],
-                },
-            )
+        all_results, instr_count = collect_constants(
+            program,
+            value_filter=value_filter,
+            max_instructions=max_instr,
+            samples_per_constant=samples_per,
+        )
 
         return all_results, instr_count
 

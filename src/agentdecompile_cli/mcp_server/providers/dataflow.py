@@ -51,17 +51,43 @@ class DataFlowToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="analyze-data-flow",
-                description="Analyze data flow at an address (backward slice, forward slice, variable accesses)",
+                description="Track the flow of data through registers and memory starting from a specific address. Use 'backward' to see where a value came from (e.g. tracking user input to a vulnerability), 'forward' to see where a value goes, or 'variable_accesses' to find reads/writes to a variable.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "functionIdentifier": {"type": "string"},
-                        "direction": {"type": "string", "enum": ["backward", "forward", "variable_accesses"], "default": "backward"},
-                        "maxOps": {"type": "integer", "default": 500},
-                        "maxDepth": {"type": "integer", "default": 10},
-                        "timeout": {"type": "integer", "default": 30},
+                        "programPath": {
+                            "type": "string",
+                            "description": "Path to the program in the Ghidra project."
+                        },
+                        "addressOrSymbol": {
+                            "type": "string",
+                            "description": "The target address or symbol name to start tracking data flow from."
+                        },
+                        "functionIdentifier": {
+                            "type": "string",
+                            "description": "Name or address of the function containing the data to track."
+                        },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["backward", "forward", "variable_accesses"],
+                            "default": "backward",
+                            "description": "Whether to track where the data came from (backward), where it goes (forward), or how a variable is accessed."
+                        },
+                        "maxOps": {
+                            "type": "integer",
+                            "default": 500,
+                            "description": "Maximum number of operations (P-code ops) to analyze. Prevents infinite loops."
+                        },
+                        "maxDepth": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Maximum path depth when tracing through data flow graphs."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "default": 30,
+                            "description": "Maximum time in seconds to allow the analysis to run."
+                        },
                     },
                     "required": [],
                 },

@@ -46,7 +46,7 @@ class TestStringProviderSchema:
         tool = next(t for t in p.list_tools() if t.name == "manage-strings")
         assert_tool_schema_invariants(tool, expected_name="manage-strings")
         modes = tool.inputSchema["properties"]["mode"]["enum"]
-        for m in ("list", "regex", "count", "similarity"):
+        for m in ("list", "search", "count"):
             assert m in modes
 
     def test_manage_strings_mode_default_list(self):
@@ -74,6 +74,9 @@ class TestStringProviderSchema:
         assert_tool_schema_invariants(tool, expected_name="search-strings")
         props = tool.inputSchema["properties"]
         assert "mode" in props
+        modes = props["mode"]["enum"]
+        for m in ("list", "search"):
+            assert m in modes
 
     def test_include_referencing_functions_param(self):
         p = _make_provider()

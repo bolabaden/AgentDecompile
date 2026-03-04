@@ -16,6 +16,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
 
 logger = logging.getLogger(__name__)
 
@@ -30,33 +31,33 @@ class FunctionToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="list-functions",
-                description="List all functions in the program",
+                description="Retrieve a giant list of every function defined inside the program. This is useful for getting an overview of what subroutines exist, verifying if a known library function was statically linked, or mapping out everything prior to iterating over them.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "namePattern": {"type": "string", "description": "Regex filter on function name"},
-                        "includeExternals": {"type": "boolean", "default": True},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The path to the program containing the functions."},
+                        "namePattern": {"type": "string", "description": "Optional regular expression used to filter down the function names (e.g., '^sub_' to find all default-named subs)."},
+                        "includeExternals": {"type": "boolean", "default": True, "description": "Whether to include functions that are dynamically linked to external libraries (like kernel32.dll or libc)."},
+                        "limit": {"type": "integer", "default": 100, "description": "Maximum number of functions returned. Keep this manageable."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="get-functions",
-                description="Get detailed function info (decompile, disassemble, info, calls)",
+                description="Get detailed analysis regarding a specific function, such as decompiling it to C code, disassembling it to assembly language, reading its signature, or viewing who it calls and who calls it.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "function": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "functionIdentifier": {"type": "string"},
-                        "view": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "default": "info"},
-                        "timeout": {"type": "integer", "default": 60},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The path to the program containing the function."},
+                        "function": {"type": "string", "description": "The name or address of the function to analyze."},
+                        "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the target function's address."},
+                        "functionIdentifier": {"type": "string", "description": "Another alternative to identify the target function."},
+                        "view": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "default": "info", "description": "What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships."},
+                        "timeout": {"type": "integer", "default": 60, "description": "Maximum seconds to wait on the decompiler if view='decompile'."},
+                        "limit": {"type": "integer", "default": 100, "description": "Used only if dropping down to a list view."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],
                 },
@@ -98,29 +99,23 @@ class FunctionToolProvider(ToolProvider):
         program = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
-        fm = self._get_function_manager(program)
 
         # Compile regex once; None if no pattern.
         pat = re.compile(pattern, re.IGNORECASE) if pattern else None
 
-        # Collect all matching functions first to get accurate total
-        all_matching: list[dict[str, Any]] = []
-        for func in fm.getFunctions(True):
-            # Apply filters.
-            if not include_ext and func.isExternal():
-                continue
-            if pat and not pat.search(func.getName()):
-                continue
-            all_matching.append(
-                {
-                    "name": func.getName(),
-                    "address": str(func.getEntryPoint()),
-                    "size": func.getBody().getNumAddresses() if func.getBody() else 0,
-                    "isExternal": func.isExternal(),
-                    "isThunk": func.isThunk(),
-                    "parameterCount": func.getParameterCount(),
-                },
-            )
+        all_functions = collect_functions(program)
+        all_matching = [
+            {
+                "name": row["name"],
+                "address": row["address"],
+                "size": row["size"],
+                "isExternal": row["isExternal"],
+                "isThunk": row["isThunk"],
+                "parameterCount": row["parameterCount"],
+            }
+            for row in all_functions
+            if (include_ext or not row.get("isExternal")) and (not pat or pat.search(str(row.get("name", ""))))
+        ]
 
         paginated, has_more = self._paginate_results(all_matching, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_matching), mode="list")

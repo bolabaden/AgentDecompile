@@ -314,6 +314,21 @@ async def _recover_and_retry_with_program(
     if not requested_program:
         return result
 
+    open_attempts = _build_open_attempts(ctx, requested_program)
+
+    for open_payload in open_attempts:
+        clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
+        if await _try_open_program(ctx, client, clean_open_payload):
+            retried = await _try_retry_tool_call(client, tool_name, payload)
+            if retried and not _is_no_program_loaded_error(retried):
+                return retried
+            result = retried or result
+
+    return result
+
+
+def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dict[str, Any]]:
+    """Build a list of open attempts for the requested program."""
     opts = _get_opts(ctx)
     shared_host = (
         str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
@@ -321,6 +336,7 @@ async def _recover_and_retry_with_program(
         or _backend_host_for_recovery(ctx)
     )
     shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
+    
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
@@ -354,31 +370,34 @@ async def _recover_and_retry_with_program(
             },
         )
     open_attempts.append({"path": requested_program})
+    
+    return open_attempts
 
-    for open_payload in open_attempts:
-        clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
-        try:
-            open_result = await client.call_tool("open", clean_open_payload)
-            if _get_error_result_message(open_result):
-                continue
-        except Exception:
-            continue
 
-        # Best-effort explicit checkout when shared open connected at repo scope.
-        try:
-            await client.call_tool("manage_files", {"mode": "checkout", "programPath": requested_program})
-        except Exception:
-            pass
+async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> bool:
+    """Try to open a program with the given payload."""
+    try:
+        open_result = await client.call_tool("open", open_payload)
+        if _get_error_result_message(open_result):
+            return False
+    except Exception:
+        return False
 
-        try:
-            retried = await client.call_tool(tool_name, payload)
-            if not _is_no_program_loaded_error(retried):
-                return retried
-            result = retried
-        except Exception:
-            continue
+    # Best-effort explicit checkout when shared open connected at repo scope.
+    try:
+        await client.call_tool("manage_files", {"mode": "checkout", "programPath": open_payload.get("path")})
+    except Exception:
+        pass
 
-    return result
+    return True
+
+
+async def _try_retry_tool_call(client: Any, tool_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Try to retry the tool call after opening the program."""
+    try:
+        return await client.call_tool(tool_name, payload)
+    except Exception:
+        return None
 
 
 def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -441,40 +460,18 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
-    # Canonicalize tool + args through the shared registry path when known.
-    call_tool_name, payload = _resolve_tool_call_target(tool, payload)
-    if tool_registry.is_valid_tool(call_tool_name):
-        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
-        payload = tool_registry.parse_arguments(payload, call_tool_name)
-
-    explicit_program = _extract_program_argument(payload)
-    if explicit_program is not None:
-        _set_cached_program(ctx, explicit_program)
-
-    call_tool_name = to_snake_case(call_tool_name)
-
-    try:
-        client = _client(ctx)
-        async with client:
-            data = await client.call_tool(call_tool_name, payload)
-            data = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, data)
-    except ServerNotRunningError as exc:
-        click.echo(str(exc), err=True)
-        sys.exit(1)
-    except Exception as exc:
-        click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
-        sys.exit(1)
-
+    result = await _call_raw(ctx, tool, payload)
+    
     # data is already a dict from AgentDecompileMcpClient._extract_result()
-    err_msg = _get_error_result_message(data)
+    err_msg = _get_error_result_message(result)
     if err_msg is not None:
         click.echo(err_msg, err=True)
         sys.exit(1)
 
-    if call_tool_name == "list_project_files":
-        data = _ensure_count_in_project_file_results(data)
+    if tool == "list_project_files":
+        result = _ensure_count_in_project_file_results(result)
 
-    click.echo(format_output(data, _fmt(ctx)))
+    click.echo(format_output(result, _fmt(ctx)))
 
 
 async def _call_raw(
@@ -500,8 +497,8 @@ async def _call_raw(
     """
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
-    safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
-    call_tool_name, safe_payload = _resolve_tool_call_target(tool, safe_payload)
+    # Canonicalize tool + args through the shared registry path when known.
+    call_tool_name, safe_payload = _resolve_tool_call_target(tool, payload)
     if tool_registry.is_valid_tool(call_tool_name):
         call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
         safe_payload = tool_registry.parse_arguments(safe_payload, call_tool_name)
@@ -511,15 +508,28 @@ async def _call_raw(
         _set_cached_program(ctx, explicit_program)
 
     call_tool_name = to_snake_case(call_tool_name)
+
+    return await _execute_tool_call(ctx, call_tool_name, safe_payload, client_override)
+
+
+async def _execute_tool_call(
+    ctx: click.Context,
+    call_tool_name: str,
+    payload: dict[str, Any],
+    client_override: Any | None = None,
+) -> Any:
+    """Execute the actual tool call with error handling and recovery."""
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
     try:
         if client_override is not None:
-            first = await client_override.call_tool(call_tool_name, safe_payload)
-            return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, safe_payload, first)
+            first = await client_override.call_tool(call_tool_name, payload)
+            return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
 
         client = _client(ctx)
         async with client:
-            first = await client.call_tool(call_tool_name, safe_payload)
-            return await _recover_and_retry_with_program(ctx, client, call_tool_name, safe_payload, first)
+            first = await client.call_tool(call_tool_name, payload)
+            return await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)

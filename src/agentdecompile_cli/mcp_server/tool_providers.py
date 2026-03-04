@@ -25,7 +25,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar
 
 from mcp import types
 
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------  
+# ---------------------------------------------------------------------------
 # Default limits and constants
 # ---------------------------------------------------------------------------
 
@@ -250,18 +250,18 @@ def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
 
 class ActionableError(Exception):
     """Structured error that carries state context and explicit next steps for resolution.
-    
+
     Use this instead of generic exceptions when you want to help users fix the problem.
     The MCP response layer automatically includes context and next_steps in the error
     response, along with auto-inferred guidance from error message patterns.
-    
+
     **When to use ActionableError:**
     - No program loaded (user needs to call `open` first)
     - Authentication failed (user should verify credentials)
     - Invalid path (user should check if file exists)
     - Required parameter missing (user should include the param)
     - Ghidra operation timeout (user might retry with longer timeout)
-    
+
     **Example:**
         ```python
         if not program:
@@ -274,7 +274,7 @@ class ActionableError(Exception):
                 ],
             )
         ```
-    
+
     **Response Format:**
     When caught by the MCP dispatcher, becomes:
         ```json
@@ -286,7 +286,7 @@ class ActionableError(Exception):
             "state": "no-active-program"  (context keys flattened into response)
         }
         ```
-    
+
     Args:
         message: Error message shown to user
         context: Optional dict of state/contextinfo (e.g., {"state": "no-program"})
@@ -321,13 +321,13 @@ def _merge_context(
 def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] | None:
     seen: set[str] = set()
     merged: list[str] = []
-    for step in (base or []):
+    for step in base or []:
         normalized = str(step).strip()
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
         merged.append(normalized)
-    for step in (extra or []):
+    for step in extra or []:
         normalized = str(step).strip()
         if not normalized or normalized in seen:
             continue
@@ -533,7 +533,7 @@ class ToolProvider:
     See ``dispatch_tool()`` and ``call_tool()`` for implementation details.
     """
 
-    HANDLERS: dict[str, str] = {}
+    HANDLERS: ClassVar[dict[str, str]] = {}
     """Mapping from normalized tool name (a-z only) to handler method name.
     
     Example: {'mytool': '_handle', 'anothertool': '_handle'} means
@@ -587,6 +587,7 @@ class ToolProvider:
 
         # Normalize ALL argument keys – the ONE place normalization happens.
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
+        auto_prereq_invocation: bool = self._get_bool(norm_args, "autoprereqinvocation", default=False)
 
         # Tool-specific parameter synonym bridging from TOOLS_LIST.md.
         # Note: alias_map returns dict[str, set[str]] from TOOL_PARAM_ALIASES
@@ -612,13 +613,162 @@ class ToolProvider:
             return await handler(norm_args)
         except Exception as e:
             logger.error(f"Tool {name} error: {e.__class__.__name__}: {e}")
+            extra_context: dict[str, Any] | None = None
+            if isinstance(e, ActionableError) and not auto_prereq_invocation:
+                try:
+                    extra_context = await self._build_prerequisite_call_context(e, norm_args)
+                except Exception as prereq_exc:
+                    logger.debug("Failed to build prerequisite call context for %s: %s", name, prereq_exc)
             return create_error_response(
                 e,
-                context={
+                context=_merge_context(
+                    {
                     "tool": to_snake_case(resolve_tool_name(name) or name),
                     "provider": self.__class__.__name__,
-                },
+                    },
+                    extra_context,
+                ),
             )
+
+    @staticmethod
+    def _extract_path_hint_from_context(context: dict[str, Any] | None, args: dict[str, Any] | None) -> str | None:
+        context_path = ""
+        if isinstance(context, dict):
+            value = context.get("path")
+            if value is not None:
+                context_path = str(value).strip()
+
+        if not context_path and isinstance(args, dict):
+            value = args.get("path")
+            if value is not None:
+                context_path = str(value).strip()
+
+        if not context_path:
+            return None
+
+        try:
+            candidate = Path(context_path)
+            parent = candidate.parent
+            if str(parent).strip() and str(parent) != ".":
+                return str(parent)
+        except Exception:
+            pass
+
+        return None
+
+    def _build_prerequisite_call_plan(
+        self,
+        next_steps: list[str] | None,
+        context: dict[str, Any] | None,
+        args: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        plan: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        path_hint = self._extract_path_hint_from_context(context, args)
+
+        for step in next_steps or []:
+            normalized_step = str(step).strip()
+            if not normalized_step:
+                continue
+
+            lowered = normalized_step.lower()
+            entries: list[tuple[str, dict[str, Any]]] = []
+
+            if "call `list-project-files`" in lowered:
+                entries.append(("list-project-files", {}))
+
+            if "call `get-current-program`" in lowered:
+                entries.append(("get-current-program", {}))
+
+            if "call `manage-files`" in lowered and "mode=list" in lowered:
+                manage_args: dict[str, Any] = {"mode": "list"}
+                if path_hint:
+                    manage_args["path"] = path_hint
+                entries.append(("manage-files", manage_args))
+
+            if "call `list_tools`" in lowered or "call `list-tools`" in lowered:
+                entries.append(("list_tools", {}))
+
+            for tool_name, tool_args in entries:
+                dedupe_key = (tool_name, _json.dumps(tool_args, sort_keys=True))
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                plan.append(
+                    {
+                        "tool": tool_name,
+                        "arguments": tool_args,
+                        "trigger": normalized_step,
+                    }
+                )
+
+        return plan
+
+    async def _run_prerequisite_call(self, tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
+        if tool_name == "list_tools":
+            tools = self._manager.list_tools() if self._manager is not None else []
+            return {
+                "tool": "list_tools",
+                "arguments": {},
+                "success": True,
+                "output": {"count": len(tools), "tools": [t.name for t in tools]},
+            }
+
+        if self._manager is None:
+            return {
+                "tool": tool_name,
+                "arguments": tool_args,
+                "success": False,
+                "output": {"error": "Tool provider manager unavailable"},
+            }
+
+        invocation_args = dict(tool_args)
+        invocation_args["__auto_prereq_invocation"] = True
+        response = await self._manager.call_tool(tool_name, invocation_args, program_info=self.program_info)
+
+        output: Any
+        success: bool
+        if response and isinstance(response[0], types.TextContent):
+            raw_text = str(response[0].text)
+            try:
+                parsed = _json.loads(raw_text)
+            except Exception:
+                parsed = {"raw": raw_text}
+            output = parsed
+            success = not (isinstance(parsed, dict) and parsed.get("success") is False)
+        else:
+            output = {"raw": str(response)}
+            success = True
+
+        return {
+            "tool": tool_name,
+            "arguments": tool_args,
+            "success": success,
+            "output": output,
+        }
+
+    async def _build_prerequisite_call_context(self, error: ActionableError, args: dict[str, Any]) -> dict[str, Any] | None:
+        inferred_context, inferred_steps = _default_error_guidance(error.message)
+        combined_steps = _merge_steps(error.next_steps, inferred_steps)
+        combined_context = _merge_context(error.context, inferred_context)
+
+        plan = self._build_prerequisite_call_plan(combined_steps, combined_context, args)
+        if not plan:
+            return None
+
+        results: list[dict[str, Any]] = []
+        for entry in plan:
+            tool_name = str(entry.get("tool", "")).strip()
+            tool_args = entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {}
+            trigger = str(entry.get("trigger", "")).strip()
+            result = await self._run_prerequisite_call(tool_name, tool_args)
+            result["trigger"] = trigger
+            results.append(result)
+
+        if not results:
+            return None
+
+        return {"prerequisiteCalls": results}
 
     # ------------------------------------------------------------------
     # Argument extraction helpers (on already-normalized dicts)
@@ -686,31 +836,31 @@ class ToolProvider:
 
     def _get_address_or_symbol(self, args: dict[str, Any], default: str = "") -> str:
         """Get address or symbol parameter with common aliases consolidated.
-        
+
         **Consolidates 8-10 parameter aliases into a single lookup**, eliminating
         24 instances of verbose parameter extraction across 10+ providers.
-        
+
         This method replaces the repeated pattern found in dataflow, vtable, bookmarks,
         callgraph, getfunction, decompiler, and others:
-            addr = self._get_str(args, "addressorsymbol", "address", "addr", 
+            addr = self._get_str(args, "addressorsymbol", "address", "addr",
                                   "symbol", "functionidentifier", "functionaddress", ...)
-        
+
         **Consolidation Impact:**
         - Reduced code volume: ~4-6 lines per call site
         - Improved readability: single method call instead of 6+ aliases
         - Centralized alias management: changes propagate everywhere automatically
         - Applied to: dataflow, vtable, bookmarks, callgraph, getfunction, functions, decompiler, suggestions
         - Total elimination: 24+ instances of parameter enumeration
-        
+
         Args:
         ----
             args: Normalized arguments dict
             default: Value to return if no address found
-            
+
         Returns:
         -------
             The address string, symbol name, or function identifier
-            
+
         Example:
         -------
             >>> addr = self._get_address_or_symbol(args)
@@ -737,23 +887,23 @@ class ToolProvider:
 
     def _get_pagination_params(self, args: dict[str, Any], default_limit: int = DEFAULT_PAGE_LIMIT) -> tuple[int, int]:
         """Extract pagination parameters (offset, limit) from args.
-        
+
         Consolidates two repeated extraction calls:
             offset = self._get_int(args, "offset", "startindex", default=0)
             limit = self._get_int(args, "limit", "maxresults", "maxcount", default=...)
-        
+
         This single method eliminates 2+ lines per pagination method across
         15+ providers that perform result slicing/pagination.
-        
+
         Args:
         ----
             args: Normalized arguments dict
             default_limit: Default value for limit parameter
-            
+
         Returns:
         -------
             Tuple of (offset, limit)
-            
+
         Example:
         -------
             >>> offset, limit = self._get_pagination_params(args, default_limit=50)
@@ -763,28 +913,24 @@ class ToolProvider:
         limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=default_limit)
         return offset, limit
 
-    def _dispatch_handler(
-        self,
-        *args,
-        **kwargs
-    ) -> Any:
+    def _dispatch_handler(self, *args, **kwargs) -> Any:
         """Unified handler dispatch with error handling.
-        
+
         Supports two calling patterns:
         1. _dispatch_handler(dispatch_dict, key, param_name) -> callable
         2. _dispatch_handler(args, mode, dispatch_dict, **extra_kwargs) -> awaitable result
-        
+
         **Pattern 1 (legacy):** Returns handler function for manual calling
         **Pattern 2 (new):** Calls handler directly and returns result
-        
+
         Args:
             For pattern 1: dispatch, key, param_name
             For pattern 2: args_dict, mode_key, dispatch_dict, **handler_kwargs
-            
+
         Returns:
             For pattern 1: handler function
             For pattern 2: result of await handler(args, **kwargs)
-            
+
         Raises:
             ActionableError: If mode/key not found in dispatch
         """
@@ -896,10 +1042,10 @@ class ToolProvider:
 
     def _get_function_manager(self, program: Any | None = None) -> Any:
         """Get function manager from program, with safe access and caching.
-        
+
         Consolidates 20+ repeated patterns of:
             fm = program.getFunctionManager()
-        
+
         Eliminates boilerplate and ensures consistent error handling.
         """
         target_program = program or getattr(self.program_info, "program", None)
@@ -909,7 +1055,7 @@ class ToolProvider:
 
     def _get_listing(self, program: Any | None = None) -> Any:
         """Get program listing (instructions/data units) with safe access.
-        
+
         Consolidates 15+ repeated patterns of:
             listing = program.getListing()
         """
@@ -920,7 +1066,7 @@ class ToolProvider:
 
     def _get_memory(self, program: Any | None = None) -> Any:
         """Get program memory interface with safe access.
-        
+
         Consolidates repeated memory access patterns:
             memory = program.getMemory()
         """
@@ -931,7 +1077,7 @@ class ToolProvider:
 
     def _get_symbol_table(self, program: Any | None = None) -> Any:
         """Get symbol table from program with safe access.
-        
+
         Consolidates patterns like:
             st = program.getSymbolTable()
         """
@@ -995,24 +1141,24 @@ class ToolProvider:
         limit: int,
     ) -> tuple[list[Any], bool]:
         """Slice results for pagination and compute hasMore flag.
-        
+
         Consolidates the repeated pattern across multiple providers:
             paginated = results[offset : offset + limit]
             hasMore = offset + len(paginated) < len(results)
-        
+
         This single helper eliminates ~6 lines of duplication per method that
         performs slicing + pagination response creation.
-        
+
         Args:
         ----
             all_results: Complete list of results before pagination
             offset: Number of results to skip (0-based)
             limit: Maximum number of results to include
-            
+
         Returns:
         -------
             (paginated_list, has_more_flag) tuple
-            
+
         Example:
         -------
             >>> results, has_more = self._paginate_results(all_users, offset=10, limit=20)
@@ -1030,7 +1176,7 @@ class ToolProvider:
         **extra_response_fields: Any,
     ) -> list[types.TextContent]:
         """Handle a paginated search operation with common boilerplate.
-        
+
         Consolidates the repeated pattern of:
             self._require_program()
             query = self._get_str(args, "query", ...)
@@ -1038,17 +1184,17 @@ class ToolProvider:
             results = await search_func(args)
             paginated, has_more = self._paginate_results(results, offset, limit)
             return self._create_paginated_response(paginated, offset, limit, mode=mode, **extra)
-        
+
         This helper eliminates 8-12 lines of duplication per search method
         across providers like symbols, strings, bookmarks, etc.
-        
+
         Args:
         ----
             args: Normalized arguments dict
             search_func: Async function that takes args and returns list of results
             mode: Response mode string
             extra_response_fields: Additional fields for response
-            
+
         Returns:
         -------
             Paginated MCP response
@@ -1057,9 +1203,7 @@ class ToolProvider:
         offset, limit = self._get_pagination_params(args)
         results = await search_func(args)
         paginated, _ = self._paginate_results(results, offset, limit)
-        return self._create_paginated_response(
-            paginated, offset, limit, total=len(results), mode=mode, **extra_response_fields
-        )
+        return self._create_paginated_response(paginated, offset, limit, total=len(results), mode=mode, **extra_response_fields)
 
     def _create_paginated_response(
         self,
@@ -1071,7 +1215,7 @@ class ToolProvider:
         **extra_fields: Any,
     ) -> list[types.TextContent]:
         """Create a standardized paginated response with count, total, hasMore.
-        
+
         Consolidates the repeated pattern across multiple providers:
             return create_success_response({
                 "mode": mode,
@@ -1083,11 +1227,11 @@ class ToolProvider:
                 "limit": limit,
                 **extra_fields
             })
-        
+
         This helper eliminates ~6-8 lines of response construction per method
         that returns paginated results. Used in symbols, bookmarks, strings,
         and other providers.
-        
+
         Args:
         ----
             results: The paginated results list
@@ -1096,11 +1240,11 @@ class ToolProvider:
             total: Total number of items (if known), or None to calculate from results
             mode: Optional mode string for response
             extra_fields: Additional fields to include in response
-            
+
         Returns:
         -------
             MCP TextContent list with standardized paginated response
-            
+
         Example:
         -------
             >>> results, has_more = self._paginate_results(all_items, offset, limit)
@@ -1177,6 +1321,7 @@ class ToolProviderManager:
             MemoryToolProvider,
             ProjectToolProvider,
             ScriptToolProvider,
+            SearchEverythingToolProvider,
             StringToolProvider,
             StructureToolProvider,
             SuggestionToolProvider,
@@ -1200,6 +1345,7 @@ class ToolProviderManager:
             MemoryToolProvider,
             ProjectToolProvider,
             ScriptToolProvider,
+            SearchEverythingToolProvider,
             StringToolProvider,
             StructureToolProvider,
             SuggestionToolProvider,
@@ -1483,10 +1629,23 @@ class ToolProviderManager:
         norm_name = n(resolved_name)
         provider = self._tool_map.get(norm_name)
         if provider is None:
+            tools = self.list_tools()
             return create_error_response(
                 ActionableError(
                     f"Unknown tool: {name}",
-                    context={"tool": str(name), "state": "unknown-tool"},
+                    context={
+                        "tool": str(name),
+                        "state": "unknown-tool",
+                        "prerequisiteCalls": [
+                            {
+                                "tool": "list_tools",
+                                "arguments": {},
+                                "success": True,
+                                "output": {"count": len(tools), "tools": [t.name for t in tools]},
+                                "trigger": "Call `list_tools` to discover canonical tool names.",
+                            }
+                        ],
+                    },
                     next_steps=[
                         "Call `list_tools` to discover canonical tool names.",
                         "Retry with the canonical snake_case tool name.",
@@ -1515,12 +1674,42 @@ class ToolProviderManager:
         effective_program_info = requested_program_info or session_program_info or self.program_info
 
         if requested_program_key and effective_program_info is None:
+            prereq_calls: list[dict[str, Any]] = []
+            try:
+                response = await self.call_tool("list-project-files", {"__auto_prereq_invocation": True})
+                output: Any
+                success: bool
+                if response and isinstance(response[0], types.TextContent):
+                    raw_text = str(response[0].text)
+                    try:
+                        parsed = _json.loads(raw_text)
+                    except Exception:
+                        parsed = {"raw": raw_text}
+                    output = parsed
+                    success = not (isinstance(parsed, dict) and parsed.get("success") is False)
+                else:
+                    output = {"raw": str(response)}
+                    success = True
+
+                prereq_calls.append(
+                    {
+                        "tool": "list-project-files",
+                        "arguments": {},
+                        "success": success,
+                        "output": output,
+                        "trigger": "Call `list-project-files` to discover the exact program path available in this session.",
+                    }
+                )
+            except Exception as prereq_exc:
+                logger.debug("Failed auto prerequisite list-project-files call: %s", prereq_exc)
+
             return create_error_response(
                 ActionableError(
                     f"Program path '{requested_program_key}' was provided but could not be resolved/opened from the current project or shared repository session.",
                     context={
                         "state": "program-resolution-failed",
                         "requestedProgramPath": requested_program_key,
+                        **({"prerequisiteCalls": prereq_calls} if prereq_calls else {}),
                     },
                     next_steps=[
                         "Call `list-project-files` to discover the exact program path available in this session.",

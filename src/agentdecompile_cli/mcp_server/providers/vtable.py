@@ -6,17 +6,15 @@ Modes: analyze, callers, containing.
 from __future__ import annotations
 
 import logging
-
 from typing import Any
 
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
+    DEFAULT_MAX_ENTRIES,
+    DEFAULT_PAGE_LIMIT,
     ToolProvider,
     create_success_response,
-    n,
-    DEFAULT_PAGE_LIMIT,
-    DEFAULT_MAX_ENTRIES,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,15 +27,24 @@ class VtableToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="analyze-vtables",
-                description="Analyze virtual function tables at an address",
+                description="Find and examine virtual function tables (vtables) belonging to C++ classes. A vtable is an array of function pointers used for dynamic dispatch in object-oriented programs. Use this to rebuild class inheritance or find virtual methods of an object.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string", "description": "Address of vtable or class"},
-                        "mode": {"type": "string", "enum": ["analyze", "callers", "containing"], "default": "analyze"},
-                        "maxEntries": {"type": "integer", "default": 200},
-                        "limit": {"type": "integer", "default": 100},
+                        "programPath": {"type": "string", "description": "The path to the program containing the virtual tables."},
+                        "addressOrSymbol": {"type": "string", "description": "The starting address or symbol name representing the vtable location or the class constructor."},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["analyze", "callers", "containing"],
+                            "default": "analyze",
+                            "description": "What to do: 'analyze' lists the actual function pointers inside a specific vtable. 'containing' scans the whole program for arrays that look like vtables. 'callers' finds code that references/uses a specific vtable.",
+                        },
+                        "maxEntries": {
+                            "type": "integer",
+                            "default": 200,
+                            "description": "When analyzing a specific vtable, the maximum number of pointers to parse before stopping.",
+                        },
+                        "limit": {"type": "integer", "default": 100, "description": "Maximum number of results (for containing or callers mode) to return."},
                     },
                     "required": [],
                 },
@@ -48,6 +55,7 @@ class VtableToolProvider(ToolProvider):
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
 
+        assert self.program_info is not None  # for type checker
         return await self._dispatch_handler(
             args,
             mode,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import Any, cast
 
 from mcp import types
 
@@ -16,6 +16,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
+)
+from agentdecompile_cli.mcp_server.providers._collectors import (
+    collect_structure_fields,
+    collect_structures,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,30 +34,32 @@ class StructureToolProvider(ToolProvider):
         **Performance**: O(n) where n = number of structures in the data type manager.
         For programs with many structures, this may be slow. Consider caching if needed.
         """
-        for struct in dtm.getAllStructures():
-            if struct.getName() == name:
+        assert self.program_info is not None
+        for row in collect_structures(self.program_info.program):
+            struct = row.get("structure")
+            if struct is not None and struct.getName() == name:
                 return struct
         return None
 
     @staticmethod
     def _new_data_type_parser(dtm: Any) -> Any:
         """Create a ``DataTypeParser`` configured for broad type support."""
-        from ghidra.util.data import DataTypeParser
+        from ghidra.util.data import DataTypeParser # pyright: ignore[reportMissingModuleSource]
 
-        return DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
+        return DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
 
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
                 name="manage-structures",
-                description="Manage structures and unions (create, modify, apply, parse C headers)",
+                description="Create, list, apply, parse, and edit complex data structures (like C structs and unions) to map out memory layouts.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
+                        "programPath": {"type": "string", "description": "The active program project."},
                         "mode": {
                             "type": "string",
-                            "description": "Operation mode",
+                            "description": "What operation to perform on the structure data.",
                             "enum": [
                                 "parse",
                                 "validate",
@@ -68,22 +74,22 @@ class StructureToolProvider(ToolProvider):
                                 "parse_header",
                             ],
                         },
-                        "name": {"type": "string", "description": "Structure name"},
-                        "structureName": {"type": "string"},
-                        "categoryPath": {"type": "string", "default": "/"},
-                        "size": {"type": "integer"},
-                        "cDefinition": {"type": "string", "description": "C struct definition"},
-                        "fieldName": {"type": "string"},
-                        "fieldType": {"type": "string"},
-                        "fieldOffset": {"type": "integer"},
-                        "fieldComment": {"type": "string"},
-                        "fields": {"type": "array", "items": {"type": "object"}},
-                        "addressOrSymbol": {"type": "string"},
-                        "isUnion": {"type": "boolean", "default": False},
-                        "nameFilter": {"type": "string", "description": "Case-insensitive structure-name filter"},
-                        "query": {"type": "string", "description": "Alias for nameFilter"},
-                        "filter": {"type": "string", "description": "Alias for nameFilter"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "name": {"type": "string", "description": "The EXACT name of the structure you want to interact with."},
+                        "structureName": {"type": "string", "description": "Alternative parameter for name."},
+                        "categoryPath": {"type": "string", "default": "/", "description": "The organizational folder path where the structure is stored."},
+                        "size": {"type": "integer", "description": "The total byte size of the structure when creating an empty block."},
+                        "cDefinition": {"type": "string", "description": "A block of C-code text defining a struct (e.g., 'struct foo { int a; char b; };'). Used for parse and modify_from_c."},
+                        "fieldName": {"type": "string", "description": "The name of a specific member field within the struct."},
+                        "fieldType": {"type": "string", "description": "The data type of the member field (e.g., 'int', 'char *', 'void *')."},
+                        "fieldOffset": {"type": "integer", "description": "The exact byte offset from the start of the struct where the field begins."},
+                        "fieldComment": {"type": "string", "description": "An optional explanation attached to a specific member field."},
+                        "fields": {"type": "array", "items": {"type": "object"}, "description": "An array of multiple field definitions to apply at once."},
+                        "addressOrSymbol": {"type": "string", "description": "The memory address where you want to drop/apply the struct template."},
+                        "isUnion": {"type": "boolean", "default": False, "description": "If true, treats the object as a C-union (all fields overlap at offset 0)."},
+                        "nameFilter": {"type": "string", "description": "Case-insensitive text to filter the struct list by."},
+                        "query": {"type": "string", "description": "Alternative parameter for nameFilter."},
+                        "filter": {"type": "string", "description": "Alternative parameter for nameFilter."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
                     },
                     "required": [],
                 },
@@ -112,33 +118,34 @@ class StructureToolProvider(ToolProvider):
         return await handler(args)
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
-        dtm = program.getDataTypeManager()
         max_results = self._get_int(args, "maxresults", "limit", default=100)
         cat_path = self._get_str(args, "categorypath", "category")
         name_filter = self._get_str(args, "namefilter", "query", "filter", "search", "pattern").strip().lower()
 
         results = []
-        for dt in dtm.getAllStructures():
+        for row in collect_structures(program):
             if len(results) >= max_results:
                 break
-            if cat_path and str(dt.getCategoryPath()) != cat_path:
+            if cat_path and str(row.get("categoryPath", "")) != cat_path:
                 continue
-            if name_filter and name_filter not in str(dt.getName()).lower():
+            if name_filter and name_filter not in str(row.get("name", "")).lower():
                 continue
             results.append(
                 {
-                    "name": dt.getName(),
-                    "path": str(dt.getCategoryPath()),
-                    "length": dt.getLength(),
-                    "numComponents": dt.getNumComponents(),
-                    "isUnion": hasattr(dt, "isUnion") and dt.isUnion(),
+                    "name": row.get("name", ""),
+                    "path": row.get("categoryPath", ""),
+                    "length": row.get("length", 0),
+                    "numComponents": row.get("numComponents", 0),
+                    "isUnion": row.get("isUnion", False),
                 },
             )
         return create_success_response({"action": "list", "structures": results, "count": len(results)})
 
     async def _info(self, args: dict[str, Any]) -> list[types.TextContent]:
         name = self._require_str(args, "name", "structurename", "structure", name="name")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -146,18 +153,10 @@ class StructureToolProvider(ToolProvider):
         if dt is None:
             raise ValueError(f"Structure not found: {name}")
 
-        fields = []
-        for i in range(dt.getNumComponents()):
-            comp = dt.getComponent(i)
-            fields.append(
-                {
-                    "offset": comp.getOffset(),
-                    "name": comp.getFieldName() or f"field_{i}",
-                    "type": str(comp.getDataType()),
-                    "length": comp.getLength(),
-                    "comment": comp.getComment() or "",
-                },
-            )
+        fields = collect_structure_fields(dt)
+        for i, field in enumerate(fields):
+            if not field.get("name"):
+                field["name"] = f"field_{i}"
 
         return create_success_response(
             {
@@ -176,18 +175,19 @@ class StructureToolProvider(ToolProvider):
         cat_path = self._get_str(args, "categorypath", "category", default="/")
         is_union = self._get_bool(args, "isunion", default=False)
 
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
-        from ghidra.program.model.data import CategoryPath
+        from ghidra.program.model.data import CategoryPath # pyright: ignore[reportMissingModuleSource]
 
         def _create_structure() -> None:
             if is_union:
-                from ghidra.program.model.data import UnionDataType
+                from ghidra.program.model.data import UnionDataType # pyright: ignore[reportMissingModuleSource]
 
                 dt = UnionDataType(CategoryPath(cat_path), name, dtm)
             else:
-                from ghidra.program.model.data import StructureDataType
+                from ghidra.program.model.data import StructureDataType  # pyright: ignore[reportMissingModuleSource]
 
                 dt = StructureDataType(CategoryPath(cat_path), name, size, dtm)
             dtm.addDataType(dt, None)
@@ -198,6 +198,7 @@ class StructureToolProvider(ToolProvider):
 
     async def _add_field(self, args: dict[str, Any]) -> list[types.TextContent]:
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -247,6 +248,7 @@ class StructureToolProvider(ToolProvider):
         field_type = self._get_str(args, "fieldtype", "type")
         field_comment = self._get_str(args, "fieldcomment", "comment")
 
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -274,6 +276,7 @@ class StructureToolProvider(ToolProvider):
 
     async def _modify_from_c(self, args: dict[str, Any]) -> list[types.TextContent]:
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", "c", name="cDefinition")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -306,6 +309,7 @@ class StructureToolProvider(ToolProvider):
 
     async def _validate(self, args: dict[str, Any]) -> list[types.TextContent]:
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", name="cDefinition")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -321,6 +325,7 @@ class StructureToolProvider(ToolProvider):
     async def _apply(self, args: dict[str, Any]) -> list[types.TextContent]:
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -359,6 +364,7 @@ class StructureToolProvider(ToolProvider):
 
     async def _delete(self, args: dict[str, Any]) -> list[types.TextContent]:
         name = self._require_str(args, "name", "structurename", name="name")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 

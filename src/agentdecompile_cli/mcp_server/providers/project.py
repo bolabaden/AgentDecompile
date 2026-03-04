@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import socket
 import time
 from pathlib import Path
@@ -39,6 +38,8 @@ if TYPE_CHECKING:
         def getRootFolder(self) -> ProjectData: ...
         @abstractmethod
         def createFolder(self, folderPath: str) -> ProjectData: ...
+        @abstractmethod
+        def getPathname(self) -> str: ...
 
     class RepoItem(ABC):
         @abstractmethod
@@ -79,99 +80,93 @@ class ProjectToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="open",
-                description="Open a program or project",
+                description="Open a program or project.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path to program or project file"},
-                        "filePath": {"type": "string"},
-                        "path": {"type": "string"},
-                        "extensions": {"type": "array", "items": {"type": "string"}},
-                        "openAllPrograms": {"type": "boolean", "default": True},
-                        "destinationFolder": {"type": "string", "default": "/"},
-                        "analyzeAfterImport": {"type": "boolean", "default": True},
-                        "enableVersionControl": {"type": "boolean", "default": True},
-                        "serverUsername": {"type": "string"},
-                        "serverPassword": {"type": "string"},
-                        "serverHost": {"type": "string"},
-                        "serverPort": {"type": "integer"},
+                        "programPath": {"type": "string", "description": "Program path or repo name."},
+                        "filePath": {"type": "string", "description": "Alias for programPath."},
+                        "path": {"type": "string", "description": "Alias for programPath."},
+                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "File extensions filter."},
+                        "openAllPrograms": {"type": "boolean", "default": True, "description": "Open all matches in folder mode."},
+                        "destinationFolder": {"type": "string", "default": "/", "description": "Destination project folder."},
+                        "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import."},
+                        "enableVersionControl": {"type": "boolean", "default": True, "description": "Enable version control."},
+                        "serverUsername": {"type": "string", "description": "Server username."},
+                        "serverPassword": {"type": "string", "description": "Server password."},
+                        "serverHost": {"type": "string", "description": "Server host."},
+                        "serverPort": {"type": "integer", "description": "Server port."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="get-current-program",
-                description="Get info about the currently loaded program",
+                description="Get current program info.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "binary": {"type": "string"},
+                        "programPath": {"type": "string", "description": "Program path."},
+                        "binary": {"type": "string", "description": "Alias for programPath."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="list-project-files",
-                description="List files in the current project",
+                description="List project files.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "binary": {"type": "string"},
-                        "folder": {"type": "string", "default": "/"},
-                        "path": {"type": "string"},
-                        "maxResults": {"type": "integer", "default": 100},
+                        "programPath": {"type": "string", "description": "Program path."},
+                        "binary": {"type": "string", "description": "Alias for programPath."},
+                        "folder": {"type": "string", "default": "/", "description": "Project folder."},
+                        "path": {"type": "string", "description": "Filesystem path (non-project mode)."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Max results."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="sync-shared-project",
-                description="Synchronize active shared repository content with the local Ghidra project",
+                description="Sync with shared repository.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "description": "Sync direction (aliases: syncDirection, direction, action, operation)",
+                            "description": "Sync direction.",
                             "enum": ["pull", "push", "bidirectional"],
                             "default": "pull",
                         },
-                        "path": {"type": "string", "default": "/"},
-                        "sourcePath": {"type": "string"},
-                        "newPath": {"type": "string", "default": "/"},
-                        "destinationPath": {"type": "string"},
-                        "destinationFolder": {"type": "string"},
-                        "recursive": {"type": "boolean", "default": True},
-                        "maxResults": {"type": "integer", "default": 100000},
-                        "force": {"type": "boolean", "default": False},
-                        "dryRun": {"type": "boolean", "default": False},
+                        "path": {"type": "string", "default": "/", "description": "Path to sync."},
+                        "sourcePath": {"type": "string", "description": "Source path."},
+                        "newPath": {"type": "string", "default": "/", "description": "Target path."},
+                        "destinationPath": {"type": "string", "description": "Destination path."},
+                        "destinationFolder": {"type": "string", "description": "Destination folder."},
+                        "recursive": {"type": "boolean", "default": True, "description": "Include subfolders."},
+                        "maxResults": {"type": "integer", "default": 100000, "description": "Max items."},
+                        "force": {"type": "boolean", "default": False, "description": "Overwrite conflicts."},
+                        "dryRun": {"type": "boolean", "default": False, "description": "Simulate only."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="manage-files",
-                description="Manage project and filesystem files (import/export/list/info/create/edit/move/version-control)",
+                description="Manage project files.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "description": "Operation mode",
+                            "description": "Operation mode.",
                             "enum": [
+                                "change-processor",
                                 "rename",
                                 "delete",
-                                "copy",
                                 "move",
-                                "info",
                                 "list",
-                                "mkdir",
-                                "touch",
-                                "read",
-                                "write",
-                                "append",
                                 "import",
                                 "export",
                                 "download-shared",
@@ -183,59 +178,63 @@ class ProjectToolProvider(ToolProvider):
                                 "unhijack",
                             ],
                         },
-                        "filePath": {"type": "string"},
-                        "path": {"type": "string"},
-                        "sourcePath": {"type": "string"},
-                        "programPath": {"type": "string"},
+                        "filePath": {"type": "string", "description": "Target file."},
+                        "path": {"type": "string", "description": "Alias for filePath."},
+                        "sourcePath": {"type": "string", "description": "Source path."},
+                        "programPath": {"type": "string", "description": "Program path."},
+                        "processor": {"type": "string", "description": "Processor."},
+                        "languageId": {"type": "string", "description": "Language ID."},
+                        "compilerSpecId": {"type": "string", "description": "Compiler spec ID."},
+                        "endian": {"type": "string", "description": "Endianness."},
                         "syncDirection": {
                             "type": "string",
-                            "description": "Direction for sync-shared mode",
+                            "description": "Sync direction.",
                             "enum": ["pull", "push", "bidirectional"],
                         },
-                        "newPath": {"type": "string"},
-                        "destinationPath": {"type": "string"},
-                        "destinationFolder": {"type": "string"},
-                        "newName": {"type": "string"},
-                        "content": {"type": "string"},
-                        "encoding": {"type": "string", "default": "utf-8"},
-                        "createParents": {"type": "boolean", "default": True},
-                        "keep": {"type": "boolean", "default": False},
-                        "force": {"type": "boolean", "default": False},
-                        "exclusive": {"type": "boolean", "default": False},
-                        "recursive": {"type": "boolean", "default": False},
-                        "dryRun": {"type": "boolean", "default": False},
-                        "maxResults": {"type": "integer", "default": 200},
-                        "maxDepth": {"type": "integer", "default": 16},
-                        "analyzeAfterImport": {"type": "boolean", "default": False},
+                        "newPath": {"type": "string", "description": "New path."},
+                        "destinationPath": {"type": "string", "description": "Destination path."},
+                        "destinationFolder": {"type": "string", "description": "Destination folder."},
+                        "newName": {"type": "string", "description": "New name."},
+                        "content": {"type": "string", "description": "File content."},
+                        "encoding": {"type": "string", "default": "utf-8", "description": "Text encoding."},
+                        "createParents": {"type": "boolean", "default": True, "description": "Create missing parent folders."},
+                        "keep": {"type": "boolean", "default": False, "description": "Keep original file."},
+                        "force": {"type": "boolean", "default": False, "description": "Force overwrite."},
+                        "exclusive": {"type": "boolean", "default": False, "description": "Exclusive checkout."},
+                        "recursive": {"type": "boolean", "default": False, "description": "Recursive mode."},
+                        "dryRun": {"type": "boolean", "default": False, "description": "Simulate only."},
+                        "maxResults": {"type": "integer", "default": 200, "description": "Max results."},
+                        "maxDepth": {"type": "integer", "default": 16, "description": "Max depth."},
+                        "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="list-project-binaries",
-                description="List program binaries in current project",
+                description="List project binaries.",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
                 name="list-project-binary-metadata",
-                description="Get metadata for a project binary",
+                description="Get binary metadata.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "binaryName": {"type": "string"},
-                        "binary_name": {"type": "string"},
-                        "programPath": {"type": "string"},
+                        "binaryName": {"type": "string", "description": "Binary name."},
+                        "binary_name": {"type": "string", "description": "Alias for binaryName."},
+                        "programPath": {"type": "string", "description": "Alias for binaryName."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="delete-project-binary",
-                description="Delete a binary from the project",
+                description="Delete a project binary.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "binaryName": {"type": "string"},
+                        "binaryName": {"type": "string", "description": "Binary name."},
                         "binary_name": {"type": "string"},
                         "programPath": {"type": "string"},
                     },
@@ -844,6 +843,9 @@ class ProjectToolProvider(ToolProvider):
         except Exception as e:
             logger.debug(f"Auto-open failed for stateless request ({requested_program}): {e}")
 
+    async def _ensure_program_loaded_for_args(self, args: dict[str, Any]) -> None:
+        await self._ensure_program_loaded_for_stateless_request(args)
+
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation: str = self._require_str(args, "mode", "action", "operation", name="mode")
 
@@ -851,6 +853,7 @@ class ProjectToolProvider(ToolProvider):
             args,
             operation,
             {
+                "changeprocessor": "_handle_change_processor",
                 "import": "_handle_import",
                 "export": "_handle_export",
                 "downloadshared": "_handle_sync_shared",
@@ -873,18 +876,33 @@ class ProjectToolProvider(ToolProvider):
                 "checkout": "_handle_checkout",
                 "uncheckout": "_handle_uncheckout",
                 "unhijack": "_handle_unhijack",
-                "mkdir": "_handle_mkdir",
-                "touch": "_handle_touch",
                 "list": "_handle_list_files",
-                "info": "_handle_info",
-                "read": "_handle_read",
-                "write": "_handle_write",
-                "append": "_handle_append",
+                "mkdir": "_handle_filesystem_operation_blocked",
+                "touch": "_handle_filesystem_operation_blocked",
+                "info": "_handle_filesystem_operation_blocked",
+                "read": "_handle_filesystem_operation_blocked",
+                "write": "_handle_filesystem_operation_blocked",
+                "append": "_handle_filesystem_operation_blocked",
                 "rename": "_handle_rename",
                 "delete": "_handle_delete",
-                "copy": "_handle_copy",
+                "copy": "_handle_filesystem_operation_blocked",
                 "move": "_handle_move",
             },
+        )
+
+    async def _handle_filesystem_operation_blocked(self, args: dict[str, Any]) -> list[types.TextContent]:
+        operation = self._get_str(args, "mode", "action", "operation", default="unknown")
+        raise ActionableError(
+            f"Filesystem operation '{operation}' is disabled",
+            context={
+                "operation": operation,
+                "scope": "filesystem",
+                "allowedFilesystemOperations": ["list", "import", "export"],
+            },
+            next_steps=[
+                "Use `manage-files` `mode=list`, `mode=import`, or `mode=export` for filesystem operations.",
+                "Use project paths (for example `/K1/k1_win_gog_swkotor.exe`) with `mode=rename`, `mode=move`, or `mode=delete` for project-domain changes.",
+            ],
         )
 
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -902,6 +920,85 @@ class ProjectToolProvider(ToolProvider):
 
     async def _handle_export(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._export_current_program(args)
+
+    async def _handle_change_processor(self, args: dict[str, Any]) -> list[types.TextContent]:
+        await self._ensure_program_loaded_for_args(args)
+        self._require_program()
+        assert self.program_info is not None
+
+        language = self._get_str(args, "languageid", "language", "lang")
+        processor = self._get_str(args, "processor")
+        compiler = self._get_str(args, "compilerspecid", "compiler", "compilerspec")
+        endian = self._get_str(args, "endian")
+
+        if not language:
+            if processor and ":" in processor:
+                language = processor
+            else:
+                raise ActionableError(
+                    "languageId is required (or provide processor as a full language ID, e.g. x86:LE:64:default)",
+                    context={
+                        "operation": "change-processor",
+                        "state": "missing-language",
+                        "processor": processor,
+                        "endian": endian,
+                    },
+                    next_steps=[
+                        "Call `manage-files` with `mode=change-processor` and `languageId` set to a valid Ghidra language ID.",
+                        "Optionally set `compilerSpecId` to override compiler selection.",
+                    ],
+                )
+
+        program = self.program_info.program
+        try:
+            from ghidra.program.model.lang import CompilerSpecID, LanguageID  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+            def _change_processor() -> None:
+                language_id = LanguageID(language)
+                language_service = DefaultLanguageService.getLanguageService()
+                language_obj = language_service.getLanguage(language_id)
+                if language_obj is None:
+                    raise RuntimeError(f"Unable to resolve language: {language}")
+
+                compiler_spec_id = CompilerSpecID(compiler) if compiler else language_obj.getDefaultCompilerSpec().getCompilerSpecID()
+
+                try:
+                    program.setLanguage(language_obj, compiler_spec_id, True, TaskMonitor.DUMMY)
+                except Exception:
+                    compiler_spec = language_obj.getDefaultCompilerSpec()
+                    if compiler:
+                        try:
+                            compiler_spec = language_obj.getCompilerSpecByID(compiler_spec_id)
+                        except Exception:
+                            compiler_spec = language_obj.getDefaultCompilerSpec()
+                    program.setLanguage(language_obj, compiler_spec, True, TaskMonitor.DUMMY)
+
+            self._run_program_transaction(program, "change-processor", _change_processor)
+
+            return create_success_response(
+                {
+                    "operation": "change-processor",
+                    "processor": processor,
+                    "language": language,
+                    "compiler": compiler or "(default)",
+                    "endian": endian,
+                    "success": True,
+                },
+            )
+        except Exception as exc:
+            return create_success_response(
+                {
+                    "operation": "change-processor",
+                    "processor": processor,
+                    "language": language,
+                    "compiler": compiler or "(default)",
+                    "endian": endian,
+                    "success": False,
+                    "error": str(exc),
+                },
+            )
 
     async def _handle_sync_shared(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation = self._get_str(args, "mode", "action", "operation", default="syncshared")
@@ -922,6 +1019,7 @@ class ProjectToolProvider(ToolProvider):
         exclusive = self._get_bool(args, "exclusive", default=False)
         if hasattr(domain_file, "checkout"):
             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
             domain_file.checkout(exclusive, TaskMonitor.DUMMY)
         return create_success_response(
             {
@@ -1001,32 +1099,10 @@ class ProjectToolProvider(ToolProvider):
         )
 
     async def _handle_mkdir(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required for mkdir",
-                context={"operation": "mkdir", "state": "missing-path"},
-                next_steps=["Call `manage-files` with `mode=mkdir` and a target `path`."],
-            )
-        create_parents: bool = self._get_bool(args, "createparents", default=True)
-        target_dir = Path(file_path).expanduser().resolve()
-        target_dir.mkdir(parents=create_parents, exist_ok=True)
-        return create_success_response({"operation": "mkdir", "path": str(target_dir), "success": True})
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_touch(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required for touch",
-                context={"operation": "touch", "state": "missing-path"},
-                next_steps=["Call `manage-files` with `mode=touch` and a target `path`."],
-            )
-        create_parents: bool = self._get_bool(args, "createparents", default=True)
-        target_file = Path(file_path).expanduser().resolve()
-        if create_parents:
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-        target_file.touch(exist_ok=True)
-        return create_success_response({"operation": "touch", "path": str(target_file), "success": True})
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_list_files(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
@@ -1046,7 +1122,7 @@ class ProjectToolProvider(ToolProvider):
                 f"Path is not a directory: {base_path}",
                 context={"operation": "list", "path": str(base_path), "state": "path-type-mismatch"},
                 next_steps=[
-                    "Use `manage-files` `mode=read` or `mode=info` for file paths.",
+                    "Use a directory path for filesystem listing.",
                     "Use `mode=list` only with directory paths.",
                 ],
             )
@@ -1072,126 +1148,26 @@ class ProjectToolProvider(ToolProvider):
         )
 
     async def _handle_info(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required",
-                context={"operation": "info", "state": "missing-path"},
-                next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
-                ],
-            )
-        target = Path(file_path).expanduser().resolve()
-        return create_success_response(
-            {
-                "operation": "info",
-                "path": str(target),
-                "exists": target.exists(),
-                "isDirectory": target.is_dir() if target.exists() else False,
-                "size": None if (not target.exists() or target.is_dir()) else target.stat().st_size,
-            },
-        )
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_read(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required",
-                context={"operation": "read", "state": "missing-path"},
-                next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
-                ],
-            )
-        encoding: str = self._get_str(args, "encoding", default="utf-8")
-        target = Path(file_path).expanduser().resolve()
-        if not target.exists() or target.is_dir():
-            raise ActionableError(
-                f"Path is not a readable file: {target}",
-                context={"operation": "read", "path": str(target), "state": "path-type-mismatch"},
-                next_steps=[
-                    "Call `manage-files` `mode=info` on the same path to confirm it is a file.",
-                    "Use `mode=list` for directories.",
-                ],
-            )
-        file_text = target.read_text(encoding=encoding)
-        return create_success_response(
-            {
-                "operation": "read",
-                "path": str(target),
-                "encoding": encoding,
-                "content": file_text,
-                "size": len(file_text),
-            },
-        )
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_write(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required",
-                context={"operation": "write", "state": "missing-path"},
-                next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
-                ],
-            )
-        content: str = self._get_str(args, "content", default="")
-        encoding: str = self._get_str(args, "encoding", default="utf-8")
-        create_parents: bool = self._get_bool(args, "createparents", default=True)
-        target = Path(file_path).expanduser().resolve()
-        if create_parents:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding=encoding)
-        return create_success_response(
-            {
-                "operation": "write",
-                "path": str(target),
-                "encoding": encoding,
-                "written": len(content),
-                "success": True,
-            },
-        )
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_append(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required",
-                context={"operation": "append", "state": "missing-path"},
-                next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
-                ],
-            )
-        content: str = self._get_str(args, "content", default="")
-        encoding: str = self._get_str(args, "encoding", default="utf-8")
-        create_parents: bool = self._get_bool(args, "createparents", default=True)
-        target = Path(file_path).expanduser().resolve()
-        if create_parents:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a", encoding=encoding) as handle:
-            handle.write(content)
-        return create_success_response(
-            {
-                "operation": "append",
-                "path": str(target),
-                "encoding": encoding,
-                "appended": len(content),
-                "success": True,
-            },
-        )
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_rename(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        if not program_path:
             raise ActionableError(
                 "path/filePath is required",
                 context={"operation": "rename", "state": "missing-path"},
                 next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                    "Provide a project path such as `/K1/k1_win_gog_swkotor.exe`.",
+                    "Use `list-project-files` first to discover valid project paths.",
                 ],
             )
         new_name: str | None = self._get_str(args, "newname")
@@ -1201,98 +1177,84 @@ class ProjectToolProvider(ToolProvider):
                 context={"operation": "rename", "state": "missing-parameter", "missingParameter": "newName"},
                 next_steps=["Provide `newName` and retry `manage-files` with `mode=rename`."],
             )
-        target = Path(file_path).expanduser().resolve()
-        if not target.exists():
+        if "/" in new_name or "\\" in new_name:
             raise ActionableError(
-                f"Path not found: {target}",
-                context={"operation": "rename", "path": str(target), "state": "path-not-found"},
+                "newName must be a file name only (no folder separators)",
+                context={"operation": "rename", "newName": new_name, "state": "invalid-name"},
                 next_steps=[
-                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
-                    "Retry with a valid existing path.",
+                    "For path relocation use `mode=move` with `newPath`.",
+                    "Use `newName` with just the filename component.",
                 ],
             )
-        new_path = target.with_name(new_name)
-        target.rename(new_path)
-        return create_success_response({"operation": "rename", "path": str(target), "newPath": str(new_path), "success": True})
+
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("rename", program_path)
+
+        old_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(program_path)
+        try:
+            if hasattr(domain_file, "setName"):
+                domain_file.setName(new_name)
+            elif hasattr(domain_file, "rename"):
+                domain_file.rename(new_name)
+            else:
+                raise RuntimeError("Domain file rename API unavailable")
+        except Exception as exc:
+            raise ActionableError(
+                f"Failed to rename project domain file: {exc}",
+                context={"operation": "rename", "path": old_path, "newName": new_name},
+                next_steps=[
+                    "Verify the target program is project-backed and checked out if required.",
+                    "Retry rename with the exact path from `list-project-files`.",
+                ],
+            ) from exc
+
+        new_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else old_path
+        return create_success_response({"operation": "rename", "scope": "project-domain", "path": old_path, "newPath": new_path, "success": True})
 
     async def _handle_delete(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        if not program_path:
             raise ActionableError(
                 "path/filePath is required",
                 context={"operation": "delete", "state": "missing-path"},
                 next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                    "Provide a project path such as `/K1/k1_win_gog_swkotor.exe`.",
+                    "Use `list-project-files` first to discover valid project paths.",
                 ],
             )
-        recursive: bool = self._get_bool(args, "recursive", default=False)
-        target = Path(file_path).expanduser().resolve()
-        if not target.exists():
+
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("delete", program_path)
+
+        target_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(program_path)
+        try:
+            deleted = bool(domain_file.delete()) if hasattr(domain_file, "delete") else False
+        except Exception as exc:
             raise ActionableError(
-                f"Path not found: {target}",
-                context={"operation": "delete", "path": str(target), "state": "path-not-found"},
+                f"Failed to delete project domain file: {exc}",
+                context={"operation": "delete", "path": target_path},
                 next_steps=[
-                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
-                    "Retry with a valid existing path.",
+                    "Verify the target program is project-backed and checked out if required.",
+                    "Retry delete with the exact path from `list-project-files`.",
                 ],
-            )
-        if target.is_dir():
-            if recursive:
-                import shutil
-                shutil.rmtree(target)
-            else:
-                target.rmdir()
-        else:
-            target.unlink()
-        return create_success_response({"operation": "delete", "path": str(target), "success": True})
+            ) from exc
+
+        return create_success_response({"operation": "delete", "scope": "project-domain", "path": target_path, "success": deleted})
 
     async def _handle_copy(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
-            raise ActionableError(
-                "path/filePath is required",
-                context={"operation": "copy", "state": "missing-path"},
-                next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
-                ],
-            )
-        destination: str | None = self._get_str(args, "newpath", "destinationpath")
-        if not destination:
-            raise ActionableError(
-                "newPath/destinationPath is required for copy",
-                context={"operation": "copy", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
-                next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=copy`."],
-            )
-        target = Path(file_path).expanduser().resolve()
-        if not target.exists():
-            raise ActionableError(
-                f"Path not found: {target}",
-                context={"operation": "copy", "path": str(target), "state": "path-not-found"},
-                next_steps=[
-                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
-                    "Retry with a valid existing path.",
-                ],
-            )
-        dst = Path(destination).expanduser().resolve()
-        import shutil
-        if target.is_dir():
-            shutil.copytree(target, dst, dirs_exist_ok=True)
-        else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, dst)
-        return create_success_response({"operation": "copy", "path": str(target), "newPath": str(dst), "success": True})
+        return await self._handle_filesystem_operation_blocked(args)
 
     async def _handle_move(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        if not file_path:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        if not program_path:
             raise ActionableError(
                 "path/filePath is required",
                 context={"operation": "move", "state": "missing-path"},
                 next_steps=[
-                    "Provide `path`/`filePath` for this operation.",
-                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                    "Provide a project path such as `/K1/k1_win_gog_swkotor.exe`.",
+                    "Use `list-project-files` first to discover valid project paths.",
                 ],
             )
         destination: str | None = self._get_str(args, "newpath", "destinationpath")
@@ -1302,21 +1264,64 @@ class ProjectToolProvider(ToolProvider):
                 context={"operation": "move", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
                 next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=move`."],
             )
-        target = Path(file_path).expanduser().resolve()
-        if not target.exists():
+
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("move", program_path)
+
+        project_data = self._get_active_project_data()
+        if project_data is None:
             raise ActionableError(
-                f"Path not found: {target}",
-                context={"operation": "move", "path": str(target), "state": "path-not-found"},
+                "No active project context available for move",
+                context={"operation": "move", "programPath": program_path, "state": "missing-project-data"},
                 next_steps=[
-                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
-                    "Retry with a valid existing path.",
+                    "Open a project-backed program first.",
+                    "Retry with a valid path from `list-project-files`.",
                 ],
             )
-        dst = Path(destination).expanduser().resolve()
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.move(str(target), str(dst))
-        return create_success_response({"operation": "move", "path": str(target), "newPath": str(dst), "success": True})
+
+        destination_folder_hint: str = self._get_str(args, "destinationfolder")
+        normalized_destination = self._normalize_repo_path(destination)
+        current_name = str(domain_file.getName()) if hasattr(domain_file, "getName") else Path(str(program_path)).name
+        if destination_folder_hint:
+            destination_folder_path = self._normalize_repo_path(destination_folder_hint)
+            new_name = current_name
+        else:
+            destination_folder_path, maybe_name = normalized_destination.rsplit("/", 1)
+            destination_folder_path = destination_folder_path or "/"
+            new_name = maybe_name or current_name
+
+        destination_folder = self._ensure_project_folder(project_data, destination_folder_path)
+        old_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(program_path)
+
+        try:
+            if hasattr(domain_file, "moveTo"):
+                domain_file.moveTo(destination_folder)
+            elif hasattr(domain_file, "move"):
+                domain_file.move(destination_folder)
+            else:
+                raise RuntimeError("Domain file move API unavailable")
+
+            current_after_move = str(domain_file.getName()) if hasattr(domain_file, "getName") else current_name
+            if new_name and new_name != current_after_move:
+                if hasattr(domain_file, "setName"):
+                    domain_file.setName(new_name)
+                elif hasattr(domain_file, "rename"):
+                    domain_file.rename(new_name)
+                else:
+                    raise RuntimeError("Domain file rename API unavailable after move")
+        except Exception as exc:
+            raise ActionableError(
+                f"Failed to move project domain file: {exc}",
+                context={"operation": "move", "path": old_path, "newPath": normalized_destination},
+                next_steps=[
+                    "Verify the target program is project-backed and checked out if required.",
+                    "Retry move with exact source and destination project paths.",
+                ],
+            ) from exc
+
+        new_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else normalized_destination
+        return create_success_response({"operation": "move", "scope": "project-domain", "path": old_path, "newPath": new_path, "success": True})
 
     async def _handle_sync_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")
@@ -1324,7 +1329,7 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._handle_sync_shared_project(args)
 
-    def _resolve_domain_file(self, program_path: str | None):
+    def _resolve_domain_file(self, program_path: str | None) -> Any:
         if not program_path:
             if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
                 try:
@@ -1614,7 +1619,7 @@ class ProjectToolProvider(ToolProvider):
         raise RuntimeError("Unable to open domain object")
 
     def _set_active_program_info(self, program: Any, program_path: str) -> None:
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 
@@ -2127,7 +2132,7 @@ class ProjectToolProvider(ToolProvider):
                     if remote_domain_obj is None:
                         raise ValueError(f"Failed to fetch remote domain object for '{program_path}'")
                     try:
-                        domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                        domain_file = parent_folder.createFile(item_name, remote_domain_obj, monitor)  # pyright: ignore[reportAttributeAccessIssue]
                     finally:
                         try:
                             remote_domain_obj.release(consumer)
@@ -2149,7 +2154,7 @@ class ProjectToolProvider(ToolProvider):
                         except Exception:
                             pass
                     if not opened:
-                        domain_obj = self._get_domain_object_compat(domain_file, monitor) # pyright: ignore[reportAttributeAccessIssue]
+                        domain_obj = self._get_domain_object_compat(domain_file, monitor)  # pyright: ignore[reportAttributeAccessIssue]
                         if domain_obj is not None:
                             program = domain_obj
                             logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
@@ -2174,7 +2179,7 @@ class ProjectToolProvider(ToolProvider):
         if program is None:
             try:
                 version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
-                managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0) # pyright: ignore[reportAttributeAccessIssue]
+                managed_db = repository_adapter.openDatabase(folder_path, item_name, version, 0)  # pyright: ignore[reportAttributeAccessIssue]
                 db_handle = DBHandle(managed_db)
                 try:
                     program = ProgramDB(db_handle, OpenMode.UPDATE, monitor, JavaObject())
@@ -2194,7 +2199,7 @@ class ProjectToolProvider(ToolProvider):
             raise ValueError(f"Failed to open '{program_path}' from repository")
 
         # Build ProgramInfo
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 

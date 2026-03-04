@@ -79,8 +79,11 @@ class TestProjectProviderSchema:
         props = tool.inputSchema["properties"]
         assert "mode" in props
         enum_vals = props["mode"]["enum"]
-        for action in ("rename", "delete", "copy", "move"):
+        assert "change-processor" in enum_vals
+        for action in ("rename", "delete", "move"):
             assert action in enum_vals
+        for blocked in ("copy", "mkdir", "touch", "info", "read", "write", "append"):
+            assert blocked not in enum_vals
         assert "download-shared" in enum_vals
         assert "pull-shared" in enum_vals
         assert "push-shared" in enum_vals
@@ -144,6 +147,19 @@ class TestProjectProviderHandlers:
 
 
 class TestProjectProviderValidation:
+    @pytest.mark.asyncio
+    async def test_manage_files_change_processor_dispatches(self):
+        p = _make_provider(with_program=False)
+        called: dict[str, bool] = {"value": False}
+
+        async def _stub(args):
+            called["value"] = True
+            return []
+
+        p._handle_change_processor = _stub  # type: ignore[method-assign]
+        await p._handle_manage({"mode": "change-processor", "languageId": "x86:LE:32:default"})
+        assert called["value"] is True
+
     @pytest.mark.asyncio
     async def test_list_project_files_without_program(self):
         """list-project-files may work even without a loaded program (returns empty or error)."""
@@ -287,6 +303,88 @@ class TestProjectProviderValidation:
         assert result.get("mode") == "bidirectional"
         assert result.get("success") is False
         assert "shared-server" in str(result.get("error", ""))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["mkdir", "touch", "info", "read", "write", "append", "copy"])
+    async def test_manage_files_blocks_disallowed_filesystem_modes(self, mode):
+        p = _make_provider(with_program=False)
+        resp = await p.call_tool("manage-files", {"mode": mode, "path": "/tmp/example"})
+        result = _parse(resp)
+        assert result.get("success") is False
+        assert "disabled" in str(result.get("error", "")).lower()
+
+    @pytest.mark.asyncio
+    async def test_manage_files_rename_uses_project_domain_file(self):
+        p = _make_provider(with_program=True)
+        domain_file = MagicMock()
+        domain_file.getPathname.side_effect = ["/K1/swkotor.exe", "/K1/k1_win_gog_swkotor.exe"]
+
+        p._resolve_domain_file = MagicMock(return_value=domain_file)
+
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "mode": "rename",
+                "path": "/K1/swkotor.exe",
+                "newName": "k1_win_gog_swkotor.exe",
+            },
+        )
+        result = _parse(resp)
+
+        assert result.get("success") is True
+        assert result.get("scope") == "project-domain"
+        domain_file.setName.assert_called_once_with("k1_win_gog_swkotor.exe")
+
+    @pytest.mark.asyncio
+    async def test_manage_files_move_uses_project_domain_file(self):
+        p = _make_provider(with_program=True)
+        domain_file = MagicMock()
+        domain_file.getName.side_effect = ["swkotor.exe", "swkotor.exe"]
+        domain_file.getPathname.side_effect = ["/K1/swkotor.exe", "/K1/k1_win_gog_swkotor.exe"]
+
+        destination_folder = MagicMock()
+        project_data = MagicMock()
+
+        p._resolve_domain_file = MagicMock(return_value=domain_file)
+        p._get_active_project_data = MagicMock(return_value=project_data)
+        p._ensure_project_folder = MagicMock(return_value=destination_folder)
+
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "mode": "move",
+                "path": "/K1/swkotor.exe",
+                "newPath": "/K1/k1_win_gog_swkotor.exe",
+            },
+        )
+        result = _parse(resp)
+
+        assert result.get("success") is True
+        assert result.get("scope") == "project-domain"
+        domain_file.moveTo.assert_called_once_with(destination_folder)
+        domain_file.setName.assert_called_once_with("k1_win_gog_swkotor.exe")
+
+    @pytest.mark.asyncio
+    async def test_manage_files_delete_uses_project_domain_file(self):
+        p = _make_provider(with_program=True)
+        domain_file = MagicMock()
+        domain_file.getPathname.return_value = "/K1/swkotor.exe"
+        domain_file.delete.return_value = True
+
+        p._resolve_domain_file = MagicMock(return_value=domain_file)
+
+        resp = await p.call_tool(
+            "manage-files",
+            {
+                "mode": "delete",
+                "path": "/K1/swkotor.exe",
+            },
+        )
+        result = _parse(resp)
+
+        assert result.get("success") is True
+        assert result.get("scope") == "project-domain"
+        domain_file.delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_open_project_domain_path_when_filesystem_path_missing(self):

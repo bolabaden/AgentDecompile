@@ -7,14 +7,18 @@ from __future__ import annotations
 
 import logging
 import re
-
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine
 
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+)
+from agentdecompile_cli.mcp_server.providers._collectors import (
+    collect_exports,
+    collect_imports,
+    collect_symbols,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,7 +41,7 @@ class SymbolToolProvider(ToolProvider):
         base_manage_schema = {
             "type": "object",
             "properties": {
-                "programPath": {"type": "string"},
+                "programPath": {"type": "string", "description": "The active program project."},
                 "mode": {
                     "type": "string",
                     "enum": [
@@ -52,15 +56,15 @@ class SymbolToolProvider(ToolProvider):
                         "demangle",
                     ],
                     "default": "symbols",
-                    "description": "Operation mode",
+                    "description": "What operation to perform regarding symbols (names assigned to addresses).",
                 },
-                "query": {"type": "string", "description": "Search query / pattern"},
-                "addressOrSymbol": {"type": "string"},
-                "labelName": {"type": "string"},
-                "newName": {"type": "string"},
-                "filterDefaultNames": {"type": "boolean", "default": True},
-                "limit": {"type": "integer", "default": 100},
-                "offset": {"type": "integer", "default": 0},
+                "query": {"type": "string", "description": "Regex pattern or exact text to find matching labels."},
+                "addressOrSymbol": {"type": "string", "description": "The hex memory address or existing symbol name you want to interact with."},
+                "labelName": {"type": "string", "description": "The new label name to apply (if creating/renaming)."},
+                "newName": {"type": "string", "description": "Alternative parameter for labelName."},
+                "filterDefaultNames": {"type": "boolean", "default": True, "description": "Ignore auto-generated messy labels like 'FUN_00101000'."},
+                "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
             },
             "required": [],
         }
@@ -68,58 +72,72 @@ class SymbolToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="manage-symbols",
-                description="Manage symbols: list, search, create labels, rename, demangle, imports/exports",
+                description="Central utility to search, rename, count, and categorize all programmatic labels (symbols, imports, exports) in the program.",
                 inputSchema=base_manage_schema,
             ),
             types.Tool(
                 name="search-symbols-by-name",
-                description="Search symbols by name pattern",
+                description="Look up a list of program symbols by matching parts of their names.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "query": {"type": "string"},
-                        "namePattern": {"type": "string"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "query": {"type": "string", "description": "Regex or substring to match text."},
+                        "namePattern": {"type": "string", "description": "Alternative parameter for query."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="search-symbols",
-                description="Search symbols by name pattern (alias)",
+                description="Look up a list of program symbols by matching parts of their names.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "query": {"type": "string"},
-                        "namePattern": {"type": "string"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "query": {"type": "string", "description": "Regex or substring to match text."},
+                        "namePattern": {"type": "string", "description": "Alternative parameter for query."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="list-imports",
-                description="List imported symbols (alias for manage-symbols mode=imports)",
-                inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}, "limit": {"type": "integer", "default": 100}}, "required": []},
-            ),
-            types.Tool(
-                name="list-exports",
-                description="List exported symbols (alias for manage-symbols mode=exports)",
-                inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}, "limit": {"type": "integer", "default": 100}}, "required": []},
-            ),
-            types.Tool(
-                name="create-label",
-                description="Create a label at address (alias for manage-symbols mode=create_label)",
+                description="Retrieve a list of all external library functions the program loads to function.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "labelName": {"type": "string"},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="list-exports",
+                description="Retrieve a list of all internal library functions the program exposes for others to use.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="create-label",
+                description="Slap a custom string tag (label) onto a specific memory address.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "addressOrSymbol": {"type": "string", "description": "Where to place the label (hex address)."},
+                        "labelName": {"type": "string", "description": "The text tag to apply."},
                     },
                     "required": [],
                 },
@@ -128,22 +146,22 @@ class SymbolToolProvider(ToolProvider):
 
     async def _handle_mode_alias(self, args: dict[str, Any], mode: str) -> list[types.TextContent]:
         """Forward to _handle with mode preset (helper for alias dispatch).
-        
+
         Consolidates the repeated pattern of:
             1. Copy args
             2. Set default mode
             3. Call _handle()
-        
+
         This pattern appears in _handle_list_imports_alias and _handle_list_exports_alias.
         By factoring out this common flow, we:
             - Reduce duplication by 6+ lines per alias handler
             - Make the mode dispatch intention explicit in handler names
             - Enable future alias handlers to reuse this pattern
-        
+
         Args:
             args: Original arguments from caller
             mode: Mode to forward (imports, exports, etc.)
-            
+
         Returns:
             Result from _handle() after setting mode
         """
@@ -162,7 +180,7 @@ class SymbolToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Dispatch to mode-specific handler.
-        
+
         Modes: symbols, classes, namespaces, imports, exports, create_label, count, rename_data, demangle.
         Uses normalized mode string (lowercase a-z only) to select handler function.
         """
@@ -171,7 +189,7 @@ class SymbolToolProvider(ToolProvider):
 
         # Dispatch table: mode → handler function.
         # Each handler is responsible for its own validation and error handling.
-        dispatch: dict[str, Callable[[dict[str, Any]], list[types.TextContent]]] = {
+        dispatch: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, list[types.TextContent]]]] = {
             "symbols": self._list_symbols,
             "classes": self._list_classes,
             "namespaces": self._list_namespaces,
@@ -187,12 +205,12 @@ class SymbolToolProvider(ToolProvider):
 
     async def _handle_search(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search for symbols by name pattern across the program.
-        
+
         Consolidates symbol search operations to find matching function/variable names
         across the entire program. Supports both GhidraTools semantic search (if available)
         and fallback to direct symbol iteration via Ghidra API. Results are paginated to
         handle large programs efficiently.
-        
+
         Parameters
         ----------
         query : str
@@ -201,12 +219,12 @@ class SymbolToolProvider(ToolProvider):
             Pagination start offset
         maxresults/limit : int, default=100
             Maximum number of results to return
-            
+
         Returns
         -------
         list[TextContent]
             Paginated response with matching symbols, count, total, and hasMore flag
-            
+
         Examples
         --------
         >>> await provider._handle_search({"query": "malloc", "limit": 10})
@@ -226,14 +244,15 @@ class SymbolToolProvider(ToolProvider):
                 pass
 
         # Direct API
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
+        all_symbols = collect_symbols(program)
         results: list[dict[str, Any]] = []
         count: int = 0
 
         pat = re.compile(query, re.IGNORECASE) if query else None
-        for sym in st.getAllSymbols(True):
-            name = sym.getName()
+        for sym in all_symbols:
+            name = str(sym.get("name", ""))
             if pat and not pat.search(name):
                 continue
             if count < offset:
@@ -245,10 +264,10 @@ class SymbolToolProvider(ToolProvider):
             results.append(
                 {
                     "name": name,
-                    "address": str(sym.getAddress()),
-                    "type": str(sym.getSymbolType()),
-                    "namespace": str(sym.getParentNamespace()),
-                    "source": str(sym.getSource()),
+                    "address": str(sym.get("address", "")),
+                    "type": str(sym.get("symbolType", "")),
+                    "namespace": str(sym.get("namespace", "")),
+                    "source": str(sym.get("source", "")),
                 },
             )
             count += 1
@@ -285,11 +304,12 @@ class SymbolToolProvider(ToolProvider):
         return await self._handle_search(args)
 
     async def _list_classes(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
-        from ghidra.program.model.symbol import SymbolType
+        from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingModuleSource]
 
         classes: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
@@ -300,11 +320,12 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "classes", "results": classes, "count": len(classes)})
 
     async def _list_namespaces(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
-        from ghidra.program.model.symbol import SymbolType
+        from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingModuleSource]
 
         namespaces: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
@@ -326,11 +347,9 @@ class SymbolToolProvider(ToolProvider):
             except Exception:
                 pass
 
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
-        imports: list[dict[str, Any]] = []
-        for sym in st.getExternalSymbols():
-            imports.append({"name": sym.getName(), "address": str(sym.getAddress()), "namespace": str(sym.getParentNamespace())})
+        imports = collect_imports(program)
         paginated, has_more = self._paginate_results(imports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(imports), mode="imports")
 
@@ -346,12 +365,12 @@ class SymbolToolProvider(ToolProvider):
             except Exception:
                 pass
 
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
-        exports: list[dict[str, Any]] = []
-        for sym in st.getAllSymbols(True):
-            if sym.isExternalEntryPoint():
-                exports.append({"name": sym.getName(), "address": str(sym.getAddress())})
+        exports = [
+            {"name": row.get("name", ""), "address": row.get("address", "")}
+            for row in collect_exports(program)
+        ]
         paginated, has_more = self._paginate_results(exports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(exports), mode="exports")
 
@@ -359,8 +378,9 @@ class SymbolToolProvider(ToolProvider):
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         label = self._require_str(args, "labelname", "label", "name", name="labelName")
 
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        from ghidra.program.model.symbol import SourceType
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
         # Batch support
         addr_list = self._get_list(args, "addressorsymbol", "addresses")
@@ -370,7 +390,7 @@ class SymbolToolProvider(ToolProvider):
             st = self._get_symbol_table(program)
 
             def _create_labels_batch() -> None:
-                for a, l in zip(addr_list, label_list):
+                for a, l in zip(addr_list, label_list):  # noqa: E741
                     try:
                         addr = self._resolve_address(str(a), program=program)
                         st.createLabel(addr, str(l), SourceType.USER_DEFINED)
@@ -391,6 +411,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "create_label", "address": str(addr), "label": label, "success": True})
 
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
         return create_success_response({"mode": "count", "totalSymbols": st.getNumSymbols()})
@@ -399,8 +420,9 @@ class SymbolToolProvider(ToolProvider):
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         new_name = self._require_str(args, "newname", "name", "labelname", name="newName")
 
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        from ghidra.program.model.symbol import SourceType
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
         addr: Any = self._resolve_address(addr_str, program=program)
         st: Any = self._get_symbol_table(program)
@@ -418,11 +440,12 @@ class SymbolToolProvider(ToolProvider):
         query: str = self._get_str(args, "query", "symbol", "name", "addressorsymbol")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 
+        assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         results: list[dict[str, Any]] = []
 
         try:
-            from ghidra.app.util.demangler import DemanglerUtil
+            from ghidra.app.util.demangler import DemanglerUtil  # pyright: ignore[reportMissingModuleSource]
 
             st: Any = self._get_symbol_table(program)
             for sym in st.getAllSymbols(True):

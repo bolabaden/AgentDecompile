@@ -17,6 +17,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.mcp_server.providers._collectors import collect_bookmarks
 
 logger = logging.getLogger(__name__)
 
@@ -30,34 +31,23 @@ class BookmarkToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="manage-bookmarks",
-                description="Manage bookmarks in the program",
+                description="Create, read, search, or delete bookmarks. A bookmark is a simple saved location in the binary, useful for returning to an important address later and marking an area as a 'Note', 'Warning', 'Bug', 'TODO', or 'Analysis' item.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path to the program/binary file"},
-                        "mode": {
-                            "type": "string",
-                            "description": "Operation mode (destructive clear requires mode=remove_all_bookmarks plus explicit safety args)",
-                            "enum": ["set", "get", "search", "remove", "remove_all", "remove_all_bookmarks", "categories"],
-                        },
-                        "addressOrSymbol": {"type": "string", "description": "Address or symbol for bookmark"},
-                        "type": {"type": "string", "description": "Bookmark type", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
-                        "category": {"type": "string", "description": "Bookmark category"},
-                        "comment": {"type": "string", "description": "Bookmark comment"},
-                        "bookmarks": {"type": "array", "description": "Batch bookmarks", "items": {"type": "object"}},
-                        "query": {"type": "string", "description": "Search text in bookmarks"},
-                        "limit": {"type": "integer", "description": "Maximum results", "default": 100},
-                        "offset": {"type": "integer", "description": "Pagination offset", "default": 0},
-                        "removeAll": {"type": "boolean", "description": "Remove all bookmarks", "default": False},
-                        "confirmRemoveAll": {
-                            "type": "boolean",
-                            "description": "Required true for destructive clear-all operations",
-                            "default": False,
-                        },
-                        "removeAllToken": {
-                            "type": "string",
-                            "description": "Required exact safety token: REMOVE_ALL_BOOKMARKS",
-                        },
+                        "programPath": {"type": "string", "description": "The path to the Ghidra project file analyzing the binary."},
+                        "mode": {"type": "string", "description": "What to do with bookmarks: 'set' (create a bookmark), 'get' (read bookmarks at an address), 'search' (find bookmarks globally), 'remove' (delete a bookmark), or 'categories' (list available bookmark groups). Destructive operations like 'remove_all' require explicit safety parameters.", "enum": ["set", "get", "search", "remove", "remove_all", "remove_all_bookmarks", "categories"]},
+                        "addressOrSymbol": {"type": "string", "description": "The memory address or function symbol to attach the bookmark to, or read it from."},
+                        "type": {"type": "string", "description": "The severity or label group for the bookmark.", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
+                        "category": {"type": "string", "description": "Optional sub-grouping label for the bookmark."},
+                        "comment": {"type": "string", "description": "The actual text you want to save inside the bookmark."},
+                        "bookmarks": {"type": "array", "description": "Allows creating or processing a batch of multiple bookmarks at once.", "items": {"type": "object"}},
+                        "query": {"type": "string", "description": "If mode is 'search', the text to look for inside existing bookmarks."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results to return."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination text start index."},
+                        "removeAll": {"type": "boolean", "description": "A safety toggle needed when deleting all bookmarks.", "default": False},
+                        "confirmRemoveAll": {"type": "boolean", "description": "Required to be true to proceed with clearing every single bookmark.", "default": False},
+                        "removeAllToken": {"type": "string", "description": "You must supply the exact string 'REMOVE_ALL_BOOKMARKS' here to execute a delete-all operation."},
                     },
                     "required": [],
                 },
@@ -123,7 +113,7 @@ class BookmarkToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _add_single(self, bm: dict[str, Any]) -> dict[str, Any]:
-        norm = {n(k): v for k, v in bm.items()}
+        norm: dict[str, Any] = {n(k): v for k, v in bm.items()}
         addr_str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
         if not addr_str:
             raise ValueError("addressOrSymbol is required for bookmark")
@@ -131,6 +121,7 @@ class BookmarkToolProvider(ToolProvider):
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
 
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         bm_type = self._get_str(norm, "type") or "Note"
         category = self._get_str(norm, "category") or "AgentDecompile"
@@ -151,7 +142,7 @@ class BookmarkToolProvider(ToolProvider):
                     "type": bm_type,
                     "category": category,
                 },
-            )
+            ) # pyright: ignore[reportReturnType]
         except Exception:
             return {
                 "success": True,
@@ -172,6 +163,7 @@ class BookmarkToolProvider(ToolProvider):
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
         try:
+            assert self.program_info is not None  # for type checker
             bm_mgr = self.program_info.program.getBookmarkManager()
 
             def _remove_bookmarks() -> None:
@@ -192,6 +184,7 @@ class BookmarkToolProvider(ToolProvider):
     async def _remove_all(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_explicit_remove_all_intent(args)
         try:
+            assert self.program_info is not None  # for type checker
             bm_mgr = self.program_info.program.getBookmarkManager()
 
             def _remove_all_bookmarks() -> None:
@@ -212,29 +205,18 @@ class BookmarkToolProvider(ToolProvider):
         offset, limit = self._get_pagination_params(args, default_limit=100)
         bm_type = self._get_str(args, "type")
         category = self._get_str(args, "category")
-        results: list[dict[str, Any]] = []
         try:
-            bm_mgr = self.program_info.program.getBookmarkManager()
-            matched_count = 0
-            for bm in bm_mgr.getBookmarksIterator():
-                if bm_type and bm.getTypeString() != bm_type:
-                    continue
-                if category and bm.getCategory() != category:
-                    continue
-                comment_text = bm.getComment() or ""
-                if search and search.lower() not in comment_text.lower():
-                    continue
-
-                if matched_count >= offset and len(results) < limit:
-                    results.append(
-                        {
-                            "address": str(bm.getAddress()),
-                            "type": bm.getTypeString(),
-                            "category": bm.getCategory(),
-                            "comment": comment_text,
-                        }
-                    )
-                matched_count += 1
+            assert self.program_info is not None  # for type checker
+            all_bookmarks = collect_bookmarks(self.program_info.program)
+            filtered = [
+                row
+                for row in all_bookmarks
+                if (not bm_type or row.get("type") == bm_type)
+                and (not category or row.get("category") == category)
+                and (not search or search.lower() in str(row.get("comment", "")).lower())
+            ]
+            results = filtered[offset : offset + limit]
+            matched_count = len(filtered)
 
             return self._create_paginated_response(results, offset, limit, total=matched_count, mode="search")
         except Exception:
@@ -248,6 +230,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle_categories(self, args: dict[str, Any]) -> list[types.TextContent]:
         try:
+            assert self.program_info is not None  # for type checker
             bm_mgr = self.program_info.program.getBookmarkManager()
             cats = set()
             for bm in bm_mgr.getBookmarksIterator():
