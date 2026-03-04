@@ -649,7 +649,6 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "analyze-program",
     "analyze-vtables",
     "checkin-program",
-    "decompile-function",
     "execute-script",
     "get-call-graph",
     "get-functions",
