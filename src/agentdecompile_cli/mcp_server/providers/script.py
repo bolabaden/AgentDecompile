@@ -34,25 +34,25 @@ class ScriptToolProvider(ToolProvider):
             types.Tool(
                 name="execute-script",
                 description=(
-                    "Execute arbitrary Ghidra/PyGhidra Python code. "
-                    "The full Ghidra API is available (currentProgram, flatApi, monitor, "
-                    "state, decompiler, Transaction, AddressFactory, etc.). "
-                    "Returns stdout/stderr output and the value of the last expression (stored as __result__)."
+                    "Run an unrestricted Python script directly inside the Ghidra environment. "
+                    "Use this tool as a last resort or for advanced bulk processing tasks when no other existing tool provides the required capability. "
+                    "You have full access to Ghidra Java/Python APIs (like flatApi, currentProgram, monitor, getState()). "
+                    "To return a value back to your agent, assign the final data to a global variable named `__result__`."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": ("Python code to execute in the Ghidra JVM context. Assign to __result__ to return a value."),
+                            "description": ("The raw Python source code to execute. To pass data out, assign your output to the `__result__` variable (e.g. `__result__ = currentProgram.getName()`)."),
                         },
                         "programPath": {
                             "type": "string",
-                            "description": "Program path (optional in GUI mode, required headless)",
+                            "description": "Path to the program in Ghidra to provide as `currentProgram` to the script.",
                         },
                         "timeout": {
                             "type": "integer",
-                            "description": "Max execution time in seconds (default: 30)",
+                            "description": "Maximum number of seconds to let the script run before forcefully terminating it (default: 30). Used to prevent infinite loops.",
                             "default": 30,
                         },
                     },

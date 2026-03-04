@@ -29,27 +29,51 @@ class DataToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="get-data",
-                description="Get data at an address",
+                description="View raw bytes or structured data at a specific memory address. Use this to inspect what is stored in memory (e.g., checking if an address contains an integer, a string, or uninitialized padding).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string", "description": "Address or symbol"},
-                        "length": {"type": "integer", "default": 16},
-                        "format": {"type": "string", "enum": ["hex", "ascii", "both"], "default": "both"},
+                        "programPath": {
+                            "type": "string",
+                            "description": "Path to the binary project file in Ghidra."
+                        },
+                        "addressOrSymbol": {
+                            "type": "string",
+                            "description": "The exact address or known symbol name where the data is located."
+                        },
+                        "length": {
+                            "type": "integer",
+                            "default": 16,
+                            "description": "How many bytes of data to read from this address."
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["hex", "ascii", "both"],
+                            "default": "both",
+                            "description": "How to format the output. 'hex' shows hexadecimal bytes, 'ascii' shows printable characters, 'both' shows both."
+                        },
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="apply-data-type",
-                description="Apply a data type at an address",
+                description="Label a specific memory address as containing a certain data type (like 'int', 'char*', or a custom struct). This helps the decompiler produce cleaner code by understanding how the memory is being used.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "dataType": {"type": "string", "description": "Data type name (e.g., int, char*, struct_name)"},
+                        "programPath": {
+                            "type": "string",
+                            "description": "Path to the binary project file in Ghidra."
+                        },
+                        "addressOrSymbol": {
+                            "type": "string",
+                            "description": "The exact address or known symbol name to label."
+                        },
+                        "dataType": {
+                            "type": "string",
+                            "description": "The name of the data type to apply (e.g., 'int', 'char*', 'my_struct_t'). The type must already exist in the program's type manager."
+                        },
                     },
                     "required": [],
                 },

@@ -490,72 +490,59 @@ class GhidraTools:
         similarity_threshold: float,
         include_full_code: bool,
         preview_length: int,
-        total_functions: int,  # Added total_functions to correctly calculate semantic_total
-    ) -> tuple[list[CodeSearchResult], int]:  # Changed return type to int for semantic_total
+        total_functions: int,
+    ) -> tuple[list[CodeSearchResult], int]:
+        """Perform semantic search using vector similarity.
+
+        Returns search results and estimated total matches above threshold.
+        """
         assert self.program_info.code_collection is not None
         search_results: list[CodeSearchResult] = []
-        # Semantic search
+
+        # Query for more results than needed to account for filtering
         results = self.program_info.code_collection.query(
             query_texts=[query],
             n_results=limit + offset,
         )
 
-        docs_list = results.get("documents") if results else None
-        semantic_total = total_functions  # Initialize semantic_total here
+        if not results or not results.get("documents"):
+            return search_results, 0
 
-        if results and docs_list and len(docs_list) > 0 and docs_list[0]:
-            # Apply offset
-            docs = docs_list[0][offset:]
-            metadatas_list = results.get("metadatas")
-            distances_list = results.get("distances")
-            metadatas = metadatas_list[0][offset:] if metadatas_list and len(metadatas_list) > 0 else []
-            distances = distances_list[0][offset:] if distances_list and len(distances_list) > 0 else []
+        docs = results["documents"][0][offset:]
+        metadatas = results.get("metadatas", [[]])[0][offset:]
+        distances = results.get("distances", [[]])[0][offset:]
 
-            for i, doc in enumerate(docs):
-                metadata = metadatas[i] if i < len(metadatas) else {}
-                distance = distances[i] if i < len(distances) else 0
-                # ChromaDB uses L2 distance by default (0 = identical, can be > 1)
-                # Normalize to 0-1 range where 1 = identical
-                similarity = 1 / (1 + distance)
+        for i, doc in enumerate(docs):
+            metadata = metadatas[i] if i < len(metadatas) else {}
+            distance = distances[i] if i < len(distances) else 0
 
-                # Skip results below similarity threshold
-                if similarity < similarity_threshold:
-                    continue
+            # Convert L2 distance to similarity score (0-1, where 1 = identical)
+            similarity = 1 / (1 + distance)
 
-                code = doc
-                preview = None
+            if similarity < similarity_threshold:
+                continue
 
-                if not include_full_code:
-                    preview = code[:preview_length] + "..." if len(code) > preview_length else code
-                    code = preview
+            code = doc
+            preview = None
+            if not include_full_code:
+                preview = code[:preview_length] + "..." if len(code) > preview_length else code
+                code = preview
 
-                search_results.append(
-                    CodeSearchResult(
-                        function_name=str(metadata.get("function_name", "unknown") if isinstance(metadata, dict) else "unknown"),
-                        code=code,
-                        similarity=similarity,
-                        search_mode=SearchMode.SEMANTIC,
-                        preview=preview,
-                    ),
-                )
+            search_results.append(
+                CodeSearchResult(
+                    function_name=str(metadata.get("function_name", "unknown") if isinstance(metadata, dict) else "unknown"),
+                    code=code,
+                    similarity=similarity,
+                    search_mode=SearchMode.SEMANTIC,
+                    preview=preview,
+                ),
+            )
 
-            # Refine semantic_total
-            # If we got fewer results than requested limit (after filtering),
-            # providing we fetched enough (n_results was limit+offset)
-            # and we processed strictly what we asked for.
-            # Actually, if the RAW result count was less than n_results, we know we exhausted
-            # the DB.
-            # If valid_results_count < limit, we *might* have exhausted matches above threshold
-            # in this batch.
-            # A better heuristic: if result count < limit, we found everything.
-            if len(search_results) < limit:
-                # This is only accurate if we assume we found "the end".
-                # However, since we queried limit + offset, if we got less than limit (and we
-                # started at offset),
-                # it implies we are at the tail.
-                semantic_total = offset + len(search_results)
+        # Estimate total: if we got fewer results than requested, we likely exhausted matches
+        # Otherwise, assume there are more matches available
+        estimated_total = offset + len(search_results) if len(search_results) < limit else total_functions
 
-        return search_results, semantic_total
+        return search_results, estimated_total
 
     @handle_exceptions
     def search_code(
@@ -623,6 +610,14 @@ class GhidraTools:
             total_functions=total_functions,
         )
 
+    def _build_string_search_result(self, doc: str, metadata: dict, similarity: float) -> StringSearchResult:
+        """Build a StringSearchResult from document and metadata."""
+        return StringSearchResult(
+            value=doc,
+            address=str(metadata["address"]),
+            similarity=similarity,
+        )
+
     @handle_exceptions
     def search_strings(self, query: str, limit: int = 100) -> list[StringSearchResult]:
         """Searches for strings within a binary."""
@@ -630,31 +625,24 @@ class GhidraTools:
             raise ValueError("String indexing is not complete for this binary. Please try again later.")
 
         search_results = []
-        results = self.program_info.strings_collection.get(where_document={"$contains": query}, limit=limit)
-        if results and results["documents"]:
-            for i, doc in enumerate(results["documents"]):
-                metadata = results["metadatas"][i]  # type: ignore
-                search_results.append(
-                    StringSearchResult(
-                        value=doc,
-                        address=str(metadata["address"]),
-                        similarity=1,
-                    ),
-                )
-            limit -= len(results["documents"])
 
-        results = self.program_info.strings_collection.query(query_texts=[query], n_results=limit)
-        if results and results["documents"]:
-            for i, doc in enumerate(results["documents"][0]):
-                metadata = results["metadatas"][0][i]  # type: ignore
-                distance = results["distances"][0][i]  # type: ignore
-                search_results.append(
-                    StringSearchResult(
-                        value=doc,
-                        address=str(metadata["address"]),
-                        similarity=1 - distance,
-                    ),
-                )
+        # Literal search first
+        literal_results = self.program_info.strings_collection.get(where_document={"$contains": query}, limit=limit)
+        if literal_results and literal_results["documents"]:
+            for i, doc in enumerate(literal_results["documents"]):
+                metadata = literal_results["metadatas"][i]
+                search_results.append(self._build_string_search_result(doc, metadata, similarity=1.0))
+            limit -= len(literal_results["documents"])
+
+        # Semantic search for remaining limit
+        if limit > 0:
+            semantic_results = self.program_info.strings_collection.query(query_texts=[query], n_results=limit)
+            if semantic_results and semantic_results["documents"]:
+                for i, doc in enumerate(semantic_results["documents"][0]):
+                    metadata = semantic_results["metadatas"][0][i]
+                    distance = semantic_results["distances"][0][i]
+                    similarity = 1 - distance
+                    search_results.append(self._build_string_search_result(doc, metadata, similarity))
 
         return search_results
 

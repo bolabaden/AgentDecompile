@@ -30,14 +30,14 @@ class SuggestionToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="suggest",
-                description="Get analysis suggestions for a function or address",
+                description="Generate smart analysis suggestions based on the immediate function code context. Note: Only supplies localized advice without executing changes.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path to the target program"},
+                        "programPath": {"type": "string", "description": "The active program project."},
                         "suggestionType": {
                             "type": "string",
-                            "description": "Category of suggestion to generate",
+                            "description": "What kind of analysis suggestion to ask the automated engine for.",
                             "enum": [
                                 "comment_type",
                                 "comment_text",
@@ -47,12 +47,12 @@ class SuggestionToolProvider(ToolProvider):
                                 "data_type",
                             ],
                         },
-                        "addressOrSymbol": {"type": "string", "description": "Target address (hex) or symbol name"},
-                        "functionIdentifier": {"type": "string", "description": "Function name or address to scope suggestions"},
-                        "variableName": {"type": "string", "description": "Variable name for variable-rename suggestions"},
-                        "maxContext": {"type": "integer", "default": 5, "description": "Maximum number of context lines to include"},
-                        "includeCallers": {"type": "boolean", "default": False, "description": "Include caller context in suggestions"},
-                        "includeCallees": {"type": "boolean", "default": False, "description": "Include callee context in suggestions"},
+                        "addressOrSymbol": {"type": "string", "description": "The target address (hex) or symbol name defining the context for the suggestion."},
+                        "functionIdentifier": {"type": "string", "description": "Alternative parameter for the target function name or address."},
+                        "variableName": {"type": "string", "description": "If asking for variable_name, the current name of the local variable."},
+                        "maxContext": {"type": "integer", "default": 5, "description": "How many surrounding source/decompile lines to feed into the suggestion engine."},
+                        "includeCallers": {"type": "boolean", "default": False, "description": "Whether to analyze the functions that call the target."},
+                        "includeCallees": {"type": "boolean", "default": False, "description": "Whether to analyze the child functions the target calls."},
                     },
                     "required": [],
                 },

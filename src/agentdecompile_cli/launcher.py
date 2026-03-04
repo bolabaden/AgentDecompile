@@ -24,7 +24,7 @@ import tempfile
 import time
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -229,17 +229,33 @@ class PyGhidraContext:
             symbols_path: Path to local symbol store.
             sym_file_path: Path to a specific PDB file.
         """
+        self._init_basic_attributes(project_name, project_path)
+        self._init_project_and_programs()
+        self._init_agentdecompile_directory(agentdecompile_dir)
+        self._init_chromadb_client()
+        self._init_analysis_options(force_analysis, verbose_analysis, no_symbols, gdts, program_options)
+        self._init_symbol_configuration(symbols_path, sym_file_path, gzfs_path)
+        self._init_threading_and_executors(threaded, max_workers, wait_for_analysis)
+
+    def _init_basic_attributes(self, project_name: str, project_path: str | Path) -> None:
+        """Initialize basic project attributes."""
         self.project_name: str = project_name
         self.project_path: Path = Path(project_path)
-        self.project: GhidraProject = self._get_or_create_project()
 
+    def _init_project_and_programs(self) -> None:
+        """Initialize the Ghidra project and existing programs."""
+        self.project: GhidraProject = self._get_or_create_project()
         self.programs: dict[str, ProgramInfo] = {}
         self._init_project_programs()
 
+    def _init_agentdecompile_directory(self, agentdecompile_dir: Path | None) -> None:
+        """Initialize the agentdecompile working directory."""
         self.agentdecompile_dir = (
             self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
         )
 
+    def _init_chromadb_client(self) -> None:
+        """Initialize the ChromaDB client for semantic search."""
         self.chroma_client: Any | None = None
         if chromadb is not None and Settings is not None:
             chromadb_path = _ensure_directory(self.agentdecompile_dir / "chromadb")
@@ -250,20 +266,41 @@ class PyGhidraContext:
         else:
             logger.warning("chromadb is unavailable; semantic collections are disabled")
 
-        # From GhidraDiffEngine
+    def _init_analysis_options(
+        self,
+        force_analysis: bool,
+        verbose_analysis: bool,
+        no_symbols: bool,
+        gdts: list[str] | None,
+        program_options: dict[str, Any] | None,
+    ) -> None:
+        """Initialize analysis-related options."""
         self.force_analysis: bool = force_analysis
         self.verbose_analysis: bool = verbose_analysis
         self.no_symbols: bool = no_symbols
         self.gdts: list[str] = [] if gdts is None else gdts
+        self.program_options: dict[str, Any] = {} if program_options is None else program_options
 
-        # Symbol configuration
+    def _init_symbol_configuration(
+        self,
+        symbols_path: str | Path | None,
+        sym_file_path: str | Path | None,
+        gzfs_path: str | Path | None,
+    ) -> None:
+        """Initialize symbol and GZF storage configuration."""
         self.symbols_path: Path = Path(symbols_path) if symbols_path else self.agentdecompile_dir / "symbols"
         self.sym_file_path: Path | None = None if sym_file_path is None else Path(sym_file_path)
-        self.program_options: dict[str, Any] = {} if program_options is None else program_options
         self.gzfs_path: Path = _ensure_directory(
             self.agentdecompile_dir / "gzfs" if gzfs_path is None else Path(gzfs_path)
         )
 
+    def _init_threading_and_executors(
+        self,
+        threaded: bool,
+        max_workers: int | None,
+        wait_for_analysis: bool,
+    ) -> None:
+        """Initialize threading configuration and executors."""
         self.threaded: bool = bool(threaded)
         cpu_count: int = multiprocessing.cpu_count() or 4
         self.max_workers: int = cpu_count if max_workers is None else max_workers
@@ -271,8 +308,13 @@ class PyGhidraContext:
         if not self.threaded:
             logger.warning("--no-threaded flag forcing max_workers to 1")
             self.max_workers = 1
-        self.executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.threaded else None
-        self.import_executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(max_workers=1) if self.threaded else None
+
+        self.executor: concurrent.futures.ThreadPoolExecutor | None = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.threaded else None
+        )
+        self.import_executor: concurrent.futures.ThreadPoolExecutor | None = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=1) if self.threaded else None
+        )
         self.wait_for_analysis: bool = bool(wait_for_analysis)
 
     def close(self, save: bool = True):
@@ -318,15 +360,17 @@ class PyGhidraContext:
     def _init_project_programs(self):
         """Initializes the programs dictionary with existing programs in the project."""
         for binary_path_str in self.list_binaries():
-            binary_path: Path = Path(binary_path_str)
+            # Use PurePosixPath because Ghidra virtual paths are always POSIX-style
+            # (e.g. "/SomeBinary"). Using pathlib.Path on Windows converts the leading
+            # "/" to a Windows root, making str(parent) return "\\" instead of "/",
+            # which causes GhidraProject.openProgram to raise:
+            # IllegalArgumentException: Absolute path must begin with '/'
+            binary_path: PurePosixPath = PurePosixPath(binary_path_str)
             program: Program | None = self.project.openProgram(
                 str(binary_path.parent),
                 binary_path.name,
                 False,
             )
-            if program is None:
-                logger.error(f"Failed to init program: {binary_path_str} during the open process")
-                continue
             program_info: ProgramInfo = self._init_program_info(program)
             self.programs[binary_path_str] = program_info
 
@@ -622,7 +666,7 @@ class PyGhidraContext:
         return program_info
 
     def _init_program_info(self, program: Program | None) -> ProgramInfo | None:
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
+        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
         if program is None:
             logger.error("Program is None")
@@ -728,7 +772,7 @@ class PyGhidraContext:
         Returns:
             Tuple of (documents, ids, metadatas)
         """
-        from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         
         tools = GhidraTools(program_info)
         functions = tools.get_all_functions()

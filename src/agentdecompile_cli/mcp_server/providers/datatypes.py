@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import Any, cast
 
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
-    n,
 )
+from agentdecompile_cli.mcp_server.providers._collectors import collect_data_type_archives
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +27,17 @@ class DataTypeToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="manage-data-types",
-                description="Manage data types: list archives, list types by category, parse from string, apply at address",
+                description="List, parse, or apply standard C data types (like 'int', 'char*', 'FILE*', or struct names) to raw memory addresses. This enables the decompiler to see what variables mean. Use this when variables show up as 'undefined' or a raw number, but you know they are holding a specific structure or pointer type.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "mode": {"type": "string", "description": "Operation mode", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
-                        "categoryPath": {"type": "string", "description": "Category path (e.g., /MyTypes)"},
-                        "dataTypeString": {"type": "string", "description": "Data type as string (e.g., int, char*)"},
-                        "addressOrSymbol": {"type": "string"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The path to the program containing the data types."},
+                        "mode": {"type": "string", "description": "Action to perform: 'archives' (list available standard libraries), 'list' (find all loaded types), 'by_string' (try converting a string into a Ghidra type), or 'apply' (cast an address to this type).", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
+                        "categoryPath": {"type": "string", "description": "Used when mode is 'list' to restrict search to a Ghidra folder category (e.g. '/MyTypes')."},
+                        "dataTypeString": {"type": "string", "description": "The C-style text definition of the type you want to apply or parse (e.g., 'unsigned int', 'char *')."},
+                        "addressOrSymbol": {"type": "string", "description": "If mode is 'apply', the address or symbol name where you want to stick this data type label."},
+                        "limit": {"type": "integer", "default": 100, "description": "Maximum number of data type listing results."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],
                 },
@@ -58,35 +58,14 @@ class DataTypeToolProvider(ToolProvider):
         return await handler(args)
 
     async def _archives(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
-        dtm = program.getDataTypeManager()
-
-        archives = []
-        try:
-            # List data type manager info
-            archives.append(
-                {
-                    "name": dtm.getName(),
-                    "type": "program",
-                    "categoryCount": dtm.getCategoryCount(),
-                    "dataTypeCount": dtm.getDataTypeCount(True),
-                },
-            )
-            # Try to get source archives
-            for sa in dtm.getSourceArchives():
-                archives.append(
-                    {
-                        "name": sa.getName(),
-                        "type": "source",
-                        "id": str(sa.getSourceArchiveID()),
-                    },
-                )
-        except Exception as e:
-            logger.warning(f"Archive listing error: {e}")
+        archives = collect_data_type_archives(program)
 
         return create_success_response({"action": "archives", "archives": archives, "count": len(archives)})
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
         cat_path = self._get_str(args, "categorypath", "category", "path")
@@ -94,7 +73,7 @@ class DataTypeToolProvider(ToolProvider):
 
         results = []
         if cat_path:
-            from ghidra.program.model.data import CategoryPath
+            from ghidra.program.model.data import CategoryPath  # pyright: ignore[reportMissingModuleSource]
 
             cat = dtm.getCategory(CategoryPath(cat_path))
             if cat is None:
@@ -152,13 +131,14 @@ class DataTypeToolProvider(ToolProvider):
 
     async def _by_string(self, args: dict[str, Any]) -> list[types.TextContent]:
         dt_str = self._require_str(args, "datatypestring", "datatype", "typestring", "type", name="dataTypeString")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
         try:
-            from ghidra.util.data import DataTypeParser
+            from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-            parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
+            parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
             dt = parser.parse(dt_str)
             return create_success_response(
                 {
@@ -179,6 +159,7 @@ class DataTypeToolProvider(ToolProvider):
     async def _apply(self, args: dict[str, Any]) -> list[types.TextContent]:
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         dt_str = self._require_str(args, "datatypestring", "datatype", "type", name="dataTypeString")
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
@@ -186,9 +167,9 @@ class DataTypeToolProvider(ToolProvider):
         addr_list = self._get_list(args, "addressorsymbol", "addresses")
         if addr_list and len(addr_list) > 1:
             # Batch mode
-            from ghidra.util.data import DataTypeParser
+            from ghidra.util.data import DataTypeParser # pyright: ignore[reportMissingModuleSource]
 
-            parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
+            parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
             dt = parser.parse(dt_str)
             results = []
 
@@ -207,9 +188,9 @@ class DataTypeToolProvider(ToolProvider):
             return create_success_response({"action": "apply", "batch": True, "results": results, "count": len(results)})
 
         # Single
-        from ghidra.util.data import DataTypeParser
+        from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-        parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
+        parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
         dt = parser.parse(dt_str)
         addr = self._resolve_address(addr_str, program=program)
 

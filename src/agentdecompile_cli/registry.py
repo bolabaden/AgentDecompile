@@ -134,6 +134,7 @@ TOOLS = [
     "read-bytes",
     "search-code",
     "search-constants",
+    "search-everything",
     "search-strings",
     "search-symbols",
     "search-symbols-by-name",
@@ -243,7 +244,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
     "manage-comments": _params( "programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange" ),
     "manage-data-types": _params( "programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol" ),
-    "manage-files": _params( "mode", "path", "sourcePath", "filePath", "programPath", "newPath", "destinationPath", "newName", "content", "encoding", "createParents", "keep", "force", "exclusive", "dryRun", "maxResults", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl", "exportType", "format", "includeParameters", "includeVariables", "includeComments" ),
+    "manage-files": _params( "mode", "path", "sourcePath", "filePath", "programPath", "newPath", "destinationPath", "newName", "content", "encoding", "createParents", "keep", "force", "exclusive", "dryRun", "maxResults", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl", "exportType", "format", "includeParameters", "includeVariables", "includeComments", "processor", "languageId", "compilerSpecId", "endian" ),
     "manage-function-tags": _params("programPath", "function", "mode", "tags"),
     "manage-function": _params( "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions" ),
     "manage-strings": _params( "programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions" ),
@@ -256,6 +257,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "read-bytes": _params("programPath", "address", "length"),
     "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
+    "search-everything": _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
     "search-symbols-by-name": _params("programPath", "query", "maxResults", "offset"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
@@ -380,6 +382,10 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "find-constant-uses": "search-constants",
     "find-constants-in-range": "search-constants",
     "list-common-constants": "search-constants",
+    # search-everything overloads
+    "global-search": "search-everything",
+    "search-anything": "search-everything",
+    "unified-search": "search-everything",
     # search-symbols legacy
     "search-functions-by-name": "search-symbols",
 }
@@ -642,7 +648,6 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "analyze-data-flow",
     "analyze-program",
     "analyze-vtables",
-    "change-processor",
     "checkin-program",
     "decompile-function",
     "execute-script",
@@ -664,6 +669,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "match-function",
     "open",
     "search-constants",
+    "search-everything",
 )
 
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (

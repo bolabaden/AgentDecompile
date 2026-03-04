@@ -6,7 +6,7 @@ from typing import Any, ClassVar, cast
 import pytest
 
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
-from agentdecompile_cli.mcp_server.tool_providers import ToolProvider, ToolProviderManager, create_success_response
+from agentdecompile_cli.mcp_server.tool_providers import ActionableError, ToolProvider, ToolProviderManager, create_success_response
 from mcp import types
 
 from tests.helpers import parse_single_text_content_json
@@ -37,6 +37,29 @@ class _RoutingProvider(ToolProvider):
         if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
             program_name = self.program_info.program.getName()
         return create_success_response({"programName": program_name})
+
+
+class _ActionableRoutingProvider(ToolProvider):
+    HANDLERS: ClassVar[dict[str, str]] = {"explode": "_handle_explode"}
+
+    def list_tools(self) -> list[types.Tool]:
+        return [
+            types.Tool(
+                name="explode",
+                description="raises actionable error for prerequisite auto-call tests",
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            )
+        ]
+
+    async def _handle_explode(self, args: dict[str, object]) -> list[types.TextContent]:
+        raise ActionableError(
+            "Synthetic failure for prerequisite call testing",
+            context={"state": "program-resolution-failed"},
+            next_steps=[
+                "Call `list-project-files` to discover the exact program path available in this session.",
+                "Then retry this tool.",
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -93,3 +116,40 @@ async def test_manager_accepts_hidden_alias_tool_name() -> None:
 
     assert "error" in payload
     assert "Unknown tool" not in str(payload.get("error", ""))
+
+
+@pytest.mark.asyncio
+async def test_provider_actionable_errors_include_prerequisite_call_outputs() -> None:
+    manager = ToolProviderManager()
+    manager.register_all_providers()
+    manager._register(_ActionableRoutingProvider())
+
+    response = await manager.call_tool("explode", {})
+    payload = parse_single_text_content_json(response)
+
+    assert payload.get("success") is False
+    context = payload.get("context", {})
+    prereq_calls = context.get("prerequisiteCalls", [])
+    assert isinstance(prereq_calls, list)
+    assert prereq_calls
+    assert any(call.get("tool") == "list-project-files" for call in prereq_calls if isinstance(call, dict))
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_error_includes_list_tools_output() -> None:
+    manager = ToolProviderManager()
+    manager.register_all_providers()
+
+    response = await manager.call_tool("definitely-not-a-real-tool", {})
+    payload = parse_single_text_content_json(response)
+
+    assert payload.get("success") is False
+    context = payload.get("context", {})
+    prereq_calls = context.get("prerequisiteCalls", [])
+    assert isinstance(prereq_calls, list)
+    assert prereq_calls
+    first = prereq_calls[0]
+    assert isinstance(first, dict)
+    assert first.get("tool") == "list_tools"
+    assert isinstance(first.get("output"), dict)
+    assert isinstance(first["output"].get("count"), int)

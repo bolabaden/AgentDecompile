@@ -18,6 +18,7 @@ from .dataflow import DataFlowToolProvider
 from .constants import ConstantSearchToolProvider
 from .vtable import VtableToolProvider
 from .script import ScriptToolProvider
+from .search_everything import SearchEverythingToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
 
@@ -37,6 +38,7 @@ __all__ = [
     "MemoryToolProvider",
     "ProjectToolProvider",
     "ScriptToolProvider",
+    "SearchEverythingToolProvider",
     "StringToolProvider",
     "StructureToolProvider",
     "SuggestionToolProvider",

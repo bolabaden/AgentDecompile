@@ -14,7 +14,6 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
-    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,31 +29,36 @@ class CrossReferencesToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="get-references",
-                description="Get cross-references to/from an address or symbol",
+                description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "target": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"], "default": "to"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name to analyze."},
+                        "target": {"type": "string", "description": "Alternative parameter for addressOrSymbol."},
+                        "mode": {
+                            "type": "string",
+                            "description": "Which direction the cross-references should be tracked. 'to' means finding who refers to this address. 'from' means finding what this address refers out to.",
+                            "enum": ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"],
+                            "default": "to",
+                        },
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="list-cross-references",
-                description="List cross references to/from target (alias for get-references mode=both)",
+                description="Extract every interaction mapping to and from a specific target address simultaneously.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "addressOrSymbol": {"type": "string"},
-                        "target": {"type": "string"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "addressOrSymbol": {"type": "string", "description": "The target address to investigate."},
+                        "target": {"type": "string", "description": "Alternative parameter for address."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
                 },
@@ -72,6 +76,7 @@ class CrossReferencesToolProvider(ToolProvider):
         mode = self._get_str(args, "mode", "direction", default="to")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         addr = self._resolve_address(addr_str, program=program)
         ref_mgr = program.getReferenceManager()
@@ -199,8 +204,8 @@ class CrossReferencesToolProvider(ToolProvider):
     async def _handle_referencers_decomp(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
         results = []
         try:
-            from ghidra.app.decompiler import DecompInterface
-            from ghidra.util.task import ConsoleTaskMonitor
+            from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             decomp = DecompInterface()
             decomp.openProgram(program)

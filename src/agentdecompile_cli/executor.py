@@ -840,107 +840,72 @@ class DynamicToolExecutor:
         if value is None:
             return None
 
-        # List/array parameters (checked first, based on known array parameters from docs)
-        array_params: set[str] = {
-            "address",
-            "labelname",
-            "newname",
-            "identifiers",
-            "functionidentifier",
-            "functions",
-            "prototype",
-            "propagateprogrampaths",
-            "tags",
-            "targetprogrampaths",
-            "fields",
-            "comments",
-            "bookmarks",
-            "commenttypes",
-            "addresses",
-            "names",
-            "symbols",
-        }
-        if param_name.lower() in array_params:
-            if isinstance(value, list):
-                return value
-            # Return non-list values unchanged; callers handle wrapping if needed
-            return value
+        # Check array parameters first
+        if self._is_array_parameter(param_name):
+            return value if isinstance(value, list) else value
 
-        # Boolean parameters
-        if (
-            any(
-                keyword in param_name.lower()
-                for keyword in (
-                    "analyze",
-                    "disable",
-                    "enable",
-                    "exclude",
-                    "filter",
-                    "include",
-                    "remove",
-                    "resolve",
-                    "set",
-                )
-            )
-            or "sensitive" in param_name.lower()
-        ):
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                lower = value.lower()
-                if lower in ("true", "1", "yes", "on", "enabled"):
-                    return True
-                if lower in ("false", "0", "no", "off", "disabled"):
-                    return False
-                return value  # Not a bool-looking string; return unchanged
-            if isinstance(value, int):
-                return value != 0
-            return bool(value)
+        # Check boolean parameters
+        if self._is_boolean_parameter(param_name):
+            return self._coerce_to_boolean(value)
 
-        # Integer parameters
-        if any(
-            keyword in param_name.lower()
-            for keyword in (
-                "count",
-                "depth",
-                "index",
-                "length",
-                "limit",
-                "max",
-                "min",
-                "offset",
-                "size",
-                "timeout",
-            )
-        ):
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str):
-                try:
-                    return int(value)
-                except ValueError:
-                    return value  # Not an int-looking string; return unchanged
-            return int(value) if value else 0
-
-        # String parameters (most common - checked last)
-        if any(
-            keyword in param_name.lower()
-            for keyword in [
-                "address",
-                "format",
-                "mode",
-                "name",
-                "path",
-                "string",
-                "symbol",
-                "text",
-                "type",
-            ]
-        ):
-            return str(value)
+        # Check integer parameters
+        if self._is_integer_parameter(param_name):
+            return self._coerce_to_integer(value)
 
         # Default to string
         return str(value)
+
+    def _is_array_parameter(self, param_name: str) -> bool:
+        """Check if parameter should be treated as an array."""
+        array_params: set[str] = {
+            "address", "labelname", "newname", "identifiers", "functionidentifier",
+            "functions", "prototype", "propagateprogrampaths", "tags",
+            "targetprogrampaths", "fields", "comments", "bookmarks", "commenttypes",
+            "addresses", "names", "symbols",
+        }
+        return param_name.lower() in array_params
+
+    def _is_boolean_parameter(self, param_name: str) -> bool:
+        """Check if parameter should be treated as a boolean."""
+        boolean_keywords = {
+            "analyze", "disable", "enable", "exclude", "filter", "include",
+            "remove", "resolve", "set", "sensitive",
+        }
+        return any(keyword in param_name.lower() for keyword in boolean_keywords)
+
+    def _is_integer_parameter(self, param_name: str) -> bool:
+        """Check if parameter should be treated as an integer."""
+        integer_keywords = {
+            "count", "depth", "index", "length", "limit", "max", "min",
+            "offset", "size", "timeout",
+        }
+        return any(keyword in param_name.lower() for keyword in integer_keywords)
+
+    def _coerce_to_boolean(self, value: Any) -> bool:
+        """Coerce value to boolean with intelligent string parsing."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lower = value.lower()
+            if lower in ("true", "1", "yes", "on", "enabled"):
+                return True
+            if lower in ("false", "0", "no", "off", "disabled"):
+                return False
+            return value  # Not a bool-looking string; return unchanged
+        if isinstance(value, int):
+            return value != 0
+        return bool(value)
+
+    def _coerce_to_integer(self, value: Any) -> Any:
+        """Coerce value to integer if possible."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return value  # Not an int-looking string; return unchanged
+        return int(value) if value else 0
 
     def _validate_arguments_dynamically(
         self,
@@ -949,8 +914,19 @@ class DynamicToolExecutor:
     ) -> None:
         """Validate arguments dynamically based on tool requirements."""
         normalized_tool_name = normalize_identifier(canonical_tool_name)
+        required_params = self._get_required_params_for_tool(normalized_tool_name)
+        normalized_present = {normalize_identifier(param_name) for param_name, value in parsed_args.items() if value is not None}
 
-        required_params: dict[str, list[str]] = {
+        for param in required_params:
+            if normalize_identifier(param) not in normalized_present:
+                raise ValueError(f"Required parameter '{param}' is missing for tool '{canonical_tool_name}'")
+
+        # Additional validations based on parameter patterns
+        self._validate_parameter_constraints(parsed_args)
+
+    def _get_required_params_for_tool(self, normalized_tool_name: str) -> list[str]:
+        """Get the list of required parameters for a tool."""
+        required_params_map: dict[str, list[str]] = {
             "analyzedataflow": ["programpath"],
             "analyzeprogram": ["programpath"],
             "analyzevtables": ["programpath", "mode"],
@@ -979,16 +955,10 @@ class DynamicToolExecutor:
             "searchstrings": ["binaryname", "query"],
             "searchsymbolsbyname": ["binaryname", "query"],
         }
+        return required_params_map.get(normalized_tool_name, [])
 
-        required: list[str] = required_params.get(normalized_tool_name, [])
-        normalized_present: set[str] = {normalize_identifier(param_name) for param_name, value in parsed_args.items() if value is not None}
-
-        for param in required:
-            if normalize_identifier(param) in normalized_present:
-                continue
-            raise ValueError(f"Required parameter '{param}' is missing for tool '{canonical_tool_name}'")
-
-        # Additional validations based on parameter patterns
+    def _validate_parameter_constraints(self, parsed_args: dict[str, Any]) -> None:
+        """Validate parameter values based on their types and constraints."""
         for param_name, value in parsed_args.items():
             if "path" in param_name.lower() and value is not None:
                 if not isinstance(value, str) or not value.strip():

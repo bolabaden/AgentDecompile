@@ -10,7 +10,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
   - [Table of Contents](#table-of-contents)
-  - [Canonical Tools (52)](#canonical-tools-52)
+  - [Canonical Tools (53)](#canonical-tools-53)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
@@ -60,6 +60,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`read-bytes`](#read-bytes)
     - [`search-code`](#search-code)
     - [`search-constants`](#search-constants)
+    - [`search-everything`](#search-everything)
     - [`search-strings`](#search-strings)
     - [`search-symbols`](#search-symbols)
     - [`search-symbols-by-name`](#search-symbols-by-name)
@@ -1094,12 +1095,12 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - List types: `manage-data-types programPath="/bin.exe" mode="list" categoryPath="/structs" includeSubcategories=true`.
 ### `manage-files`
 
-**Description**: Manages project files, including import/export, local filesystem operations, project version-control helpers, and shared-repository transfer orchestration.
+**Description**: Manages project files and shared-repository workflow with strict filesystem limits. Physical filesystem access is limited to `list`, `import`, and `export`. Project-domain mutation operations (`rename`, `move`, `delete`) target Ghidra project/repository paths (for example `/K1/swkotor.exe`) rather than raw host filesystem paths.
 
 **Parameters**:
-- `mode` (string, optional): File operation selector and shared-sync direction (`rename`, `delete`, `copy`, `move`, `info`, `list`, `mkdir`, `touch`, `read`, `write`, `append`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, `pull`, `push`, `bidirectional`).
+- `mode` (string, optional): File operation selector and shared-sync direction (`change-processor`, `rename`, `delete`, `move`, `list`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, `pull`, `push`, `bidirectional`).
   - Synonyms: `mode`, `direction`, `syncMode`, `syncDirection`.
-- `filePath` (string, required for import/export): File path.
+- `filePath` (string, optional): Source path for `import`, output path for `export`, or project-domain source path for `rename`/`move`/`delete`.
   - Synonyms: `filePath`, `filep`.
 - `path` (string, optional): Primary source/scope path.
   - Synonyms: `path`, `sourcePath`, `folder`.
@@ -1109,6 +1110,14 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `recurse`, `recursive`
 - `dryRun` (boolean, optional): Plan changes without mutating project/shared data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
+- `processor` (string, optional): Processor name or full language ID when using `mode="change-processor"`.
+  - Synonyms: `processor`.
+- `languageId` (string, optional): Full Ghidra language ID used by `mode="change-processor"`.
+  - Synonyms: `languageId`, `language`, `lang`.
+- `compilerSpecId` (string, optional): Compiler specification ID override for `mode="change-processor"`.
+  - Synonyms: `compilerSpecId`, `compilerSpec`, `compiler`.
+- `endian` (string, optional): Optional endianness hint (`little`/`big`) retained for compatibility.
+  - Synonyms: `endian`, `byteOrder`.
 **Overloads**:
 - `manage-files(mode, filePath, path, destination, recursive, dryRun)` canonical signature.
 
@@ -1117,6 +1126,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**:
 - Manage import: `manage-files action="import" filePath="/newfile.exe" destination="/imports"`.
+- List filesystem directory: `manage-files mode="list" path="/work"`.
+- Rename project-domain binary: `manage-files mode="rename" path="/K1/swkotor.exe" newName="k1_win_gog_swkotor.exe"`.
+- Move project-domain binary: `manage-files mode="move" path="/K1/swkotor.exe" newPath="/K1/archive/swkotor.exe"`.
+- Change processor/language: `manage-files mode="change-processor" languageId="x86:LE:64:default" compilerSpecId="gcc"`.
 - Pull shared scope via manage-files: `manage-files action="pull-shared" mode="pull" path="/K1" newPath="/K1" recursive=true`.
 - Push local changes via manage-files: `manage-files action="push-shared" mode="push" path="/K1" recursive=true`.
 - Plan bidirectional sync via manage-files: `manage-files action="sync-shared" mode="bidirectional" path="/K1" dryRun=true`.
@@ -1526,6 +1539,55 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**:
 - Search constant: `search-constants programPath="/bin.exe" mode="specific" value="0xdeadbeef"`.
+
+### `search-everything`
+
+**Description**: CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED MULTI-DOMAIN SEARCH OVER STRING-BEARING ANALYSIS DATA.
+
+**Parameters**:
+- `programPath` (string or array, optional): Program path(s). If omitted, searches all programs in the current project when available.
+  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
+- `programName` (string or array, optional): Alias for programPath.
+  - Synonyms: `programName`.
+- `binaryName` (string or array, optional): Alias for programPath.
+  - Synonyms: `binaryName`.
+- `query` (string, optional): Single search term/pattern.
+  - Synonyms: `query`, `pattern`, `search`, `searchString`, `text`, `filter`.
+- `queries` (array, optional): Multiple terms/patterns.
+  - Synonyms: `queries`, `patterns`, `terms`.
+- `mode` (string, optional): Match mode (`auto`, `literal`, `regex`, `fuzzy`, default: `auto`).
+  - Synonyms: `mode`, `searchMode`.
+- `scopes` (array, optional): Search scopes (`functions`, `function_signatures`, `function_parameters`, `function_tags`, `bookmarks`, `comments`, `constants`, `decompilation`, `disassembly`, `symbols`, `imports`, `exports`, `namespaces`, `classes`, `strings`, `data_types`, `data_type_archives`, `structures`, `structure_fields`; default: all listed here).
+  - Synonyms: `scopes`, `scope`, `domains`, `sources`, `types`.
+- `caseSensitive` (boolean, optional): Case-sensitive matching (default: false).
+  - Synonyms: `caseSensitive`.
+- `similarityThreshold` (number, optional): Fuzzy threshold (0.0-1.0, default: 0.7).
+  - Synonyms: `similarityThreshold`, `threshold`.
+- `offset` (integer, optional): Pagination offset.
+  - Synonyms: `offset`, `startIndex`.
+- `limit` (integer, optional): Maximum returned results.
+  - Synonyms: `limit`, `maxResults`, `maxCount`.
+- `perScopeLimit` (integer, optional): Pre-pagination cap per scope (default: 300).
+  - Synonyms: `perScopeLimit`, `scopeLimit`.
+- `maxFunctionsScan` (integer, optional): Function scan cap for expensive scopes (default: 500).
+  - Synonyms: `maxFunctionsScan`, `maxFunctions`.
+- `maxInstructionsScan` (integer, optional): Instruction scan cap for disassembly scope (default: 200000).
+  - Synonyms: `maxInstructionsScan`, `maxInstructions`.
+- `decompileTimeout` (integer, optional): Decompiler timeout per function in seconds for decompilation scope (default: 10).
+  - Synonyms: `decompileTimeout`, `timeout`.
+- `groupByFunction` (boolean, optional): When true, merges function-centric matches into grouped entries with `relatedResults` and guided `nextTools` (default: true).
+  - Synonyms: `groupByFunction`.
+**Overloads**:
+- `global-search(...)` → forwards to `search-everything`.
+- `search-anything(...)` → forwards to `search-everything`.
+- `unified-search(...)` → forwards to `search-everything`.
+
+**Synonyms**: `search-everything`, `global-search`, `search-anything`, `unified-search`
+
+**Examples**:
+- Search all domains with auto mode: `search-everything query="crypto"`.
+- Regex only in comments and symbols: `search-everything mode="regex" query="AES_[0-9]+" scopes=["comments","symbols"]`.
+
 ### `search-strings`
 
 **Description**: Legacy compatibility forward.

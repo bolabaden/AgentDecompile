@@ -47,15 +47,15 @@ class DecompilerToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="decompile-function",
-                description="Decompile a function to C pseudocode",
+                description="Convert machine code representing a function into high-level, human-readable C-like pseudocode. Use this tool to easily read and understand what a function does without having to read assembly instructions.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "function": {"type": "string", "description": "Function name or address"},
-                        "addressOrSymbol": {"type": "string"},
-                        "functionIdentifier": {"type": "string"},
-                        "timeout": {"type": "integer", "default": 60},
+                        "programPath": {"type": "string", "description": "The path to the program containing the function to be decompiled."},
+                        "function": {"type": "string", "description": "The name or address of the function you want to decompile (e.g. 'main', '0x1000')."},
+                        "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function by its exact address or symbol name."},
+                        "functionIdentifier": {"type": "string", "description": "Another alternative to specify the target function's identifier."},
+                        "timeout": {"type": "integer", "default": 60, "description": "Maximum time in seconds to wait for the decompiler to finish before aborting."},
                     },
                     "required": [],
                 },
@@ -79,106 +79,35 @@ class DecompilerToolProvider(ToolProvider):
                     result = result.model_dump()
                 return create_success_response(result)
             except Exception as e:
-                logger.warning(f"DecompileTool failed: {e}")
+                logger.warning(f"DecompileTool failed: {e.__class__.__name__}: {e}")
 
         # Fallback: use Ghidra API directly
+        assert self.program_info is not None  # for type checker
         program = self.program_info.program
         target_func = self._resolve_function(func_id, program=program)
 
         if target_func is None:
             raise ValueError(f"Function not found: {func_id}")
 
+        return await self._decompile_with_ghidra_api(target_func, program, timeout)
+
+    async def _decompile_with_ghidra_api(self, target_func, program, timeout: int) -> list[types.TextContent]:
+        """Decompile a function using Ghidra's DecompInterface."""
         try:
-            from ghidra.app.decompiler import DecompInterface
-            from ghidra.app.decompiler import DecompileOptions
             from ghidra.util.task import ConsoleTaskMonitor
 
             monitor = ConsoleTaskMonitor()
-
             session_decomp = getattr(self.program_info, "decompiler", None)
-            decomp = session_decomp
-            owns_decomp = False
-
-            if decomp is None:
-                decomp = DecompInterface()
-                options = DecompileOptions()
-                options.grabFromProgram(program)
-                decomp.setOptions(options)
-                decomp.openProgram(program)
-                owns_decomp = True
-            else:
-                try:
-                    options = DecompileOptions()
-                    options.grabFromProgram(program)
-                    decomp.setOptions(options)
-                except Exception:
-                    pass
-
-            dr = decomp.decompileFunction(target_func, timeout, monitor)
-
-            completed = bool(dr and dr.decompileCompleted())
-            err_msg = ""
-            if dr is not None:
-                try:
-                    err_msg = dr.getErrorMessage() or ""
-                except Exception:
-                    err_msg = ""
-
-            # Retry once with a fresh interface if the session decompiler failed.
-            if not completed and session_decomp is not None:
-                retry = DecompInterface()
-                retry_options = DecompileOptions()
-                retry_options.grabFromProgram(program)
-                retry.setOptions(retry_options)
-                retry.openProgram(program)
-                retry_dr = retry.decompileFunction(target_func, timeout, monitor)
-                if retry_dr and retry_dr.decompileCompleted():
-                    retry_df = retry_dr.getDecompiledFunction()
-                    c_code = retry_df.getC() if retry_df else "// Decompilation produced no output"
-                    sig = retry_df.getSignature() if retry_df else str(target_func.getSignature())
-                    retry.dispose()
-                    if owns_decomp:
-                        decomp.dispose()
-                    return create_success_response(
-                        {
-                            "function": target_func.getName(),
-                            "address": str(target_func.getEntryPoint()),
-                            "signature": sig,
-                            "decompilation": c_code,
-                        },
-                    )
-                try:
-                    retry_err = retry_dr.getErrorMessage() if retry_dr else ""
-                except Exception:
-                    retry_err = ""
-                if retry_err:
-                    err_msg = retry_err
-                retry.dispose()
-
-            if completed:
-                df = dr.getDecompiledFunction()
-                c_code = df.getC() if df else "// Decompilation produced no output"
-                sig = df.getSignature() if df else str(target_func.getSignature())
-            else:
-                if not err_msg:
-                    try:
-                        err_msg = decomp.getLastMessage() or ""
-                    except Exception:
-                        err_msg = ""
-                c_code = self._build_decompile_fallback(program, target_func, err_msg)
-                sig = str(target_func.getSignature())
-
-            if owns_decomp:
-                decomp.dispose()
-
-            return create_success_response(
-                {
-                    "function": target_func.getName(),
-                    "address": str(target_func.getEntryPoint()),
-                    "signature": sig,
-                    "decompilation": c_code,
-                },
-            )
+            
+            decomp, owns_decomp = self._setup_decompiler(session_decomp, program)
+            
+            try:
+                result = self._perform_decompilation(decomp, target_func, timeout, monitor, session_decomp)
+                return create_success_response(result)
+            finally:
+                if owns_decomp:
+                    decomp.dispose()
+                    
         except ImportError:
             return create_success_response(
                 {
@@ -187,3 +116,109 @@ class DecompilerToolProvider(ToolProvider):
                     "note": "DecompInterface not available in this environment",
                 },
             )
+
+    def _setup_decompiler(self, session_decomp, program):
+        """Set up the decompiler interface, returning (decomp, owns_decomp)."""
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+
+        if session_decomp is None:
+            decomp = DecompInterface()
+            options = DecompileOptions()
+            options.grabFromProgram(program)
+            decomp.setOptions(options)
+            decomp.openProgram(program)
+            owns_decomp = True
+        else:
+            decomp = session_decomp
+            owns_decomp = False
+            try:
+                options = DecompileOptions()
+                options.grabFromProgram(program)
+                decomp.setOptions(options)
+            except Exception:
+                pass
+        
+        return decomp, owns_decomp
+
+    def _perform_decompilation(self, decomp, target_func, timeout: int, monitor, session_decomp):
+        """Perform the actual decompilation with retry logic."""
+        dr = decomp.decompileFunction(target_func, timeout, monitor)
+        
+        if dr and dr.decompileCompleted():
+            return self._extract_successful_decompilation(dr, target_func)
+        
+        # Try retry with fresh interface if session decomp failed
+        if session_decomp is not None:
+            retry_result = self._try_retry_decompilation(target_func, timeout, monitor, decomp)
+            if retry_result:
+                return retry_result
+        
+        # Fallback to error handling
+        return self._handle_decompilation_failure(dr, decomp, target_func)
+
+    def _extract_successful_decompilation(self, dr, target_func):
+        """Extract results from a successful decompilation."""
+        df = dr.getDecompiledFunction()
+        c_code = df.getC() if df else "// Decompilation produced no output"
+        sig = df.getSignature() if df else str(target_func.getSignature())
+        
+        return {
+            "function": target_func.getName(),
+            "address": str(target_func.getEntryPoint()),
+            "signature": sig,
+            "decompilation": c_code,
+        }
+
+    def _try_retry_decompilation(self, target_func, timeout: int, monitor, original_decomp):
+        """Try decompilation again with a fresh DecompInterface."""
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+        
+        try:
+            retry = DecompInterface()
+            program = original_decomp.getProgram()
+            retry_options = DecompileOptions()
+            retry_options.grabFromProgram(program)
+            retry.setOptions(retry_options)
+            retry.openProgram(program)
+            
+            retry_dr = retry.decompileFunction(target_func, timeout, monitor)
+            if retry_dr and retry_dr.decompileCompleted():
+                result = self._extract_successful_decompilation(retry_dr, target_func)
+                retry.dispose()
+                return result
+            
+            retry.dispose()
+        except Exception:
+            pass
+        
+        return None
+
+    def _handle_decompilation_failure(self, dr, decomp, target_func):
+        """Handle failed decompilation by extracting error and providing fallback."""
+        err_msg = self._extract_error_message(dr, decomp)
+        c_code = self._build_decompile_fallback(decomp.getProgram(), target_func, err_msg)
+        sig = str(target_func.getSignature())
+        
+        return {
+            "function": target_func.getName(),
+            "address": str(target_func.getEntryPoint()),
+            "signature": sig,
+            "decompilation": c_code,
+        }
+
+    def _extract_error_message(self, dr, decomp):
+        """Extract error message from decompilation result."""
+        err_msg = ""
+        if dr is not None:
+            try:
+                err_msg = dr.getErrorMessage() or ""
+            except Exception:
+                err_msg = ""
+        
+        if not err_msg:
+            try:
+                err_msg = decomp.getLastMessage() or ""
+            except Exception:
+                err_msg = ""
+        
+        return err_msg

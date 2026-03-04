@@ -1,18 +1,18 @@
 """Strings Tool Provider - manage-strings.
 
-Modes: list, regex, count, similarity.
+Modes: list, search, count.
 """
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
-import heapq
-
 from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_strings
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -34,64 +34,79 @@ class StringToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="manage-strings",
-                description="Search and manage string data in the program",
+                description="Search, filter, list, and measure literal text strings embedded in the compiled program's data segments.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["list", "regex", "count", "similarity"], "default": "list"},
-                        "query": {"type": "string", "description": "Search query or regex pattern"},
-                        "minLength": {"type": "integer", "default": 4},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
-                        "includeReferencingFunctions": {"type": "boolean", "default": False},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "mode": {
+                            "type": "string",
+                            "description": "What operation to perform on the text data.",
+                            "enum": ["list", "search", "count"],
+                            "default": "list",
+                        },
+                        "query": {"type": "string", "description": "Search query or regex pattern to look for in the program strings."},
+                        "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100), only set if you need a different page size."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset; omit unless fetching beyond the first page."},
+                        "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "If true, also looks up what exact function uses this string (can be slow)."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="list-strings",
-                description="List strings (alias for manage-strings mode=list)",
+                description="Dump all recognized text strings found in the current program's memory.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "minLength": {"type": "integer", "default": 4},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
-                        "includeReferencingFunctions": {"type": "boolean", "default": False},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset; omit unless fetching beyond the first page."},
+                        "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "If true, identifies exactly which function references the text."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="search-strings",
-                description="Search strings (alias for manage-strings mode=regex/similarity/list)",
+                description="Search the program's defined strings for a specific text pattern.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "query": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["regex", "similarity", "list"], "default": "list"},
-                        "limit": {"type": "integer", "default": 100},
-                        "offset": {"type": "integer", "default": 0},
-                        "includeReferencingFunctions": {"type": "boolean", "default": False},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "query": {"type": "string", "description": "The exact text or regex to find."},
+                        "mode": {
+                            "type": "string",
+                            "description": "Internal routing fallback logic.",
+                            "enum": ["search", "list"],
+                            "default": "list",
+                        },
+                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default (100)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
+                        "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "Find referencing functions."},
                     },
                     "required": [],
                 },
             ),
             types.Tool(
                 name="search-code",
-                description="Search code using semantic/literal strategies (falls back to function-name literal search when semantic index is unavailable)",
+                description="Scan all function names across the entire program looking for a specific text string.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string"},
-                        "binaryName": {"type": "string"},
-                        "query": {"type": "string"},
-                        "searchMode": {"type": "string", "enum": ["semantic", "literal"], "default": "semantic"},
-                        "limit": {"type": "integer", "default": 10},
-                        "offset": {"type": "integer", "default": 0},
+                        "programPath": {"type": "string", "description": "The active program project."},
+                        "binaryName": {"type": "string", "description": "Alternative parameter for programPath."},
+                        "query": {"type": "string", "description": "The function name fragment to hunt for."},
+                        "searchMode": {
+                            "type": "string",
+                            "description": "How to match the text against functions.",
+                            "enum": ["semantic", "literal"],
+                            "default": "semantic",
+                        },
+                        "limit": {"type": "integer", "default": 10, "description": "Max results; omit to use default (10)."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": ["query"],
                 },
@@ -106,7 +121,7 @@ class StringToolProvider(ToolProvider):
     async def _handle_search_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
         updated = dict(args)
         if not self._get_str(updated, "mode"):
-            updated["mode"] = "list"
+            updated["mode"] = "search"
         return await self._handle(updated)
 
     async def _handle_search_code(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -133,6 +148,7 @@ class StringToolProvider(ToolProvider):
             except Exception as e:
                 logger.warning(f"search-code semantic/literal backend unavailable, using fallback search: {e}")
 
+        assert self.program_info is not None, "Program info is required for search-code"
         program = self.program_info.program
         fm = self._get_function_manager(program)
 
@@ -178,87 +194,79 @@ class StringToolProvider(ToolProvider):
         # Collect strings using GhidraTools or direct API
         strings = self._collect_strings(min_len)
 
-        return await self._dispatch_handler(args, mode, {
-            "list": "_handle_list",
-            "regex": "_handle_regex", 
-            "count": "_handle_count",
-            "similarity": "_handle_similarity",
-        }, strings=strings, pattern=pattern, min_len=min_len, offset=offset, max_results=max_results, include_refs=include_refs)
+        return await self._dispatch_handler(
+            args,
+            mode,
+            {
+                "list": "_handle_list",
+                "search": "_handle_search",
+                "regex": "_handle_regex",
+                "count": "_handle_count",
+                "similarity": "_handle_search",
+            },
+            strings=strings,
+            pattern=pattern,
+            min_len=min_len,
+            offset=offset,
+            max_results=max_results,
+            include_refs=include_refs,
+        )
 
     def _collect_strings(self, min_len: int) -> list[dict]:
         """Collect all strings from the program using GhidraTools or direct API."""
-        # Try GhidraTools first
-        if self.ghidra_tools is not None:
-            try:
-                return self.ghidra_tools.get_all_strings()
-            except Exception as e:
-                logger.warning(f"GhidraTools.get_all_strings failed: {e}")
-
-        # Direct Ghidra API
+        assert self.program_info is not None, "Program info is required to collect strings"
         program = self.program_info.program
-        strings = []
-        try:
-            from ghidra.program.util import DefinedDataIterator
+        return collect_strings(
+            program,
+            min_len=min_len,
+            ghidra_tools=self.ghidra_tools,
+        )
 
-            for data in DefinedDataIterator.definedStrings(program):
-                val = str(data.getValue()) if data.getValue() else ""
-                if len(val) < min_len:
-                    continue
-                strings.append(
-                    {
-                        "address": str(data.getAddress()),
-                        "value": val,
-                        "length": len(val),
-                        "dataType": str(data.getDataType()),
-                    },
-                )
-        except Exception as e:
-            logger.warning(f"String iteration error: {e}")
-
-        return strings
-
-    async def _handle_list(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+    async def _handle_list(
+        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+    ) -> list[types.TextContent]:
         return self._filter_strings(strings, "list", "", min_len, max_results, offset, include_refs)
 
-    async def _handle_regex(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+    async def _handle_regex(
+        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+    ) -> list[types.TextContent]:
         return self._filter_strings(strings, "regex", pattern, min_len, max_results, offset, include_refs)
 
-    async def _handle_count(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
-        return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
+    async def _handle_search(
+        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+    ) -> list[types.TextContent]:
+        return self._filter_strings(strings, "search", pattern, min_len, max_results, offset, include_refs)
 
-    async def _handle_similarity(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
-        return self._filter_strings(strings, "similarity", pattern, min_len, max_results, offset, include_refs)
+    async def _handle_count(
+        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+    ) -> list[types.TextContent]:
+        return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(self, strings: list, mode: str, pattern: str, min_len: int, max_results: int, offset: int, include_refs: bool) -> list[types.TextContent]:
         """Filter and format strings based on search mode and pattern.
-        
-        Consolidates multiple string search/filtering pipelines (regex, similarity,
+
+        Consolidates multiple string search/filtering pipelines (regex, fuzzy,
         substring) into a single method to reduce code duplication across list/search
         operations. Handles pagination separately from filtering.
-        
+
         **Filtering Modes**:
         - count: Return total count only (no results)
-        - regex: Match pattern as regex expression (case-insensitive)
-        - similarity: Score matches by query length / result length, rank by score
+        - search: Unified search mode (regex/literal/fuzzy heuristic)
+        - regex: Legacy alias for regex matching (case-insensitive)
         - literal (default): Substring match, case-insensitive
-        
-        **Similarity Scoring**: Used for fuzzy matching where shorter matches score
-        higher than longer matches containing the query. Example:
-            query="str" in "string" → score=0.33 (3/9)
-            query="str" in "str" → score=1.0 (3/3)
-        
+
         **Performance Notes**:
         - Regex compilation happens once per call (not per-string)
-        - Similarity mode uses heapq.nlargest for efficient top-k selection
+        - Fuzzy mode uses SequenceMatcher scoring for ranking
         - Pagination happens after filtering to avoid over-iterating
         - Reference lookup is optional and only when explicitly requested
-        
+
         Parameters
         ----------
         strings : list[dict]
             Input strings with address and value keys
         mode : str
-            Filter mode: 'count', 'regex', 'similarity', or default (literal)
+            Filter mode: 'count', 'search', 'regex', or default (literal)
         pattern : str
             Search pattern/regex for filtering
         min_len : int
@@ -269,7 +277,7 @@ class StringToolProvider(ToolProvider):
             Pagination offset
         include_refs : bool
             Whether to add referencing functions to each string result
-            
+
         Returns
         -------
         list[TextContent]
@@ -281,6 +289,37 @@ class StringToolProvider(ToolProvider):
         if mode_n == "count":
             return create_success_response({"mode": "count", "totalStrings": len(strings)})
 
+        if mode_n in {"search", "similarity"} and pattern:
+            search_text = pattern.strip()
+            regex_hint = bool(re.search(r"[\[\]\\(){}|*+?^$.]", search_text))
+            if regex_hint:
+                try:
+                    pat = re.compile(search_text, re.IGNORECASE)
+                    strings = [s for s in strings if pat.search(s.get("value", ""))]
+                    total = len(strings)
+                    strings, has_more = self._paginate_results(strings, offset, max_results)
+                    return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+                except re.error:
+                    pass
+
+            query_lower = search_text.lower()
+            scored: list[tuple[float, dict[str, Any]]] = []
+            for s in strings:
+                val = str(s.get("value", ""))
+                val_lower = val.lower()
+                if query_lower in val_lower:
+                    score = 1.0
+                else:
+                    score = difflib.SequenceMatcher(None, query_lower, val_lower).ratio()
+                if score >= 0.6:
+                    scored.append((score, s))
+
+            scored.sort(key=lambda item: item[0], reverse=True)
+            total = len(scored)
+            strings = [s for _, s in scored]
+            strings, has_more = self._paginate_results(strings, offset, max_results)
+            return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+
         if mode_n == "regex" and pattern:
             try:
                 pat = re.compile(pattern, re.IGNORECASE)
@@ -288,27 +327,12 @@ class StringToolProvider(ToolProvider):
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
 
-        elif mode_n == "similarity" and pattern:
-            query_lower = pattern.lower()
-            scored = []
-            top_k = max(offset + max_results, 1)
-            for s in strings:
-                val = s.get("value", "").lower()
-                if query_lower in val:
-                    score = len(query_lower) / max(len(val), 1)
-                    scored.append((score, s))
-
-            total = len(scored)
-            ranked = heapq.nlargest(top_k, scored, key=lambda item: item[0])
-            strings = [s for _, s in ranked]
-
         elif pattern:
             p_lower = pattern.lower()
             strings = [s for s in strings if p_lower in s.get("value", "").lower()]
 
-        if mode_n != "similarity" or not pattern:
-            total = len(strings)
-        
+        total = len(strings)
+
         strings, has_more = self._paginate_results(strings, offset, max_results)
 
         if include_refs and self.program_info:
