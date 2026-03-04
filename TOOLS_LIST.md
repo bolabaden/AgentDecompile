@@ -1269,8 +1269,10 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `force`
 - `nameFilter` (string, optional): Filter.
   - Synonyms: `nameFilter`, `namef`.
+- `query` (string, optional): Alias for structure-name filter in `mode="list"` (case-insensitive substring).
+  - Synonyms: `query`, `filter`, `search`, `pattern`.
 - `includeBuiltIn` (boolean, optional): Include built-ins (default: false).
-  - Synonyms: `mode`, `cDef`, `header`, `structName`, `sz`, `tp`, `cat`, `pack`, `desc`, `flds`, `addr`, `clear`, `includeBuiltIn`.
+  - Synonyms: `mode`, `cDef`, `header`, `structName`, `sz`, `tp`, `cat`, `pack`, `desc`, `flds`, `addr`, `clear`, `includeBuiltIn`, `query`, `filter`.
 - `fieldName` (string, optional): Field name for add/modify field operations.
   - Synonyms: `fieldName`, `field`.
 - `dataType` (string, optional): Data type string for field operations.
@@ -1306,6 +1308,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**:
 - Create struct: `manage-structures programPath="/bin.exe" mode="create" cDefinition="struct MyStruct { int x; char y; };"`.
+- List only save-related structures: `manage-structures programPath="/K1/k1_win_gog_swkotor.exe" mode="list" query="Save" limit=30`.
 ### `manage-symbols`
 
 **Description**: Manages symbols, including listing classes/namespaces/imports/exports, renaming, creating labels, and demangling. This tool groups by library, filters defaults, and supports pagination for large symbol tables.

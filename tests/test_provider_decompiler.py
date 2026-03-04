@@ -8,11 +8,12 @@ Covers:
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agentdecompile_cli.mcp_server.providers.decompiler import DecompilerToolProvider
+from agentdecompile_cli.tools.decompile_tool import DecompileTool
 from agentdecompile_cli.registry import normalize_identifier as n
 from tests.helpers import assert_tool_schema_invariants, parse_single_text_content_json
 
@@ -115,3 +116,36 @@ class TestDecompilerProviderValidation:
         p._handle = capture
         await p.call_tool("decompile-function", {"addressOrSymbol": "0x401000"})
         assert "addressorsymbol" in received
+
+
+class TestDecompilerProviderWiring:
+    def test_get_decomp_tool_passes_session_decompiler(self):
+        p = _make_provider(with_program=True)
+        assert p.program_info is not None
+        p.program_info.decompiler = object()
+
+        captured = {}
+
+        class _FakeDecompileTool:
+            def __init__(self, program_info, decompiler=None):
+                captured["program_info"] = program_info
+                captured["decompiler"] = decompiler
+
+        with patch("agentdecompile_cli.tools.decompile_tool.DecompileTool", _FakeDecompileTool):
+            p._decomp_tool = None
+            p._get_decomp_tool()
+
+        assert captured["program_info"] is p.program_info
+        assert captured["decompiler"] is p.program_info.decompiler
+
+
+class TestDecompileToolInit:
+    def test_init_defaults_program_and_decompiler_from_program_info(self):
+        pi = MagicMock()
+        pi.program = object()
+        pi.decompiler = object()
+
+        tool = DecompileTool(pi)
+
+        assert tool.program is pi.program
+        assert tool.decompiler is pi.decompiler

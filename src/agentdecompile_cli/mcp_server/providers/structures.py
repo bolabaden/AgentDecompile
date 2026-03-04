@@ -62,6 +62,9 @@ class StructureToolProvider(ToolProvider):
                         "fields": {"type": "array", "items": {"type": "object"}},
                         "addressOrSymbol": {"type": "string"},
                         "isUnion": {"type": "boolean", "default": False},
+                        "nameFilter": {"type": "string", "description": "Case-insensitive structure-name filter"},
+                        "query": {"type": "string", "description": "Alias for nameFilter"},
+                        "filter": {"type": "string", "description": "Alias for nameFilter"},
                         "maxResults": {"type": "integer", "default": 100},
                     },
                     "required": [],
@@ -97,12 +100,15 @@ class StructureToolProvider(ToolProvider):
         dtm = program.getDataTypeManager()
         max_results = self._get_int(args, "maxresults", "limit", default=100)
         cat_path = self._get_str(args, "categorypath", "category")
+        name_filter = self._get_str(args, "namefilter", "query", "filter", "search", "pattern").strip().lower()
 
         results = []
         for dt in dtm.getAllStructures():
             if len(results) >= max_results:
                 break
             if cat_path and str(dt.getCategoryPath()) != cat_path:
+                continue
+            if name_filter and name_filter not in str(dt.getName()).lower():
                 continue
             results.append(
                 {

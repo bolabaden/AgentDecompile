@@ -36,8 +36,8 @@ class DecompileTool:
 
     def __init__(self, program_info: ProgramInfo | None = None, decompiler: GhidraDecompInterface | None = None):
         self.program_info = program_info
-        self.program = program_info.current_program if program_info else None
-        self.decompiler = decompiler
+        self.program = getattr(program_info, "program", None) if program_info else None
+        self.decompiler = decompiler if decompiler is not None else (getattr(program_info, "decompiler", None) if program_info else None)
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
