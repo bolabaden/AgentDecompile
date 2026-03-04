@@ -87,18 +87,36 @@ class ResourceProviderManager:
         uri: str,
         program_info: ProgramInfo | None = None,
     ) -> str:
-        """Read a resource by URI."""
+        """Read a resource by URI.
+        
+        Attempts to read the resource from each registered provider.
+        Logs which providers are tried and why they failed.
+        """
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
+        logger.debug(f"Attempting to read resource: {uri}")
+        attempted_providers = []
+
         for provider in self.providers:
+            provider_name = provider.__class__.__name__
+            attempted_providers.append(provider_name)
+            
             try:
+                logger.debug(f"  Trying provider: {provider_name}")
                 result: str = await provider.read_resource(uri)
+                logger.debug(f"  Provider {provider_name} succeeded")
                 return result
-            except NotImplementedError:
+            except NotImplementedError as e:
+                logger.debug(f"  Provider {provider_name} does not handle this URI: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"  Provider {provider_name} raised exception: {type(e).__name__}: {e}")
                 continue
 
-        raise ValueError(f"Unknown resource: {uri}")
+        error_msg = f"Unknown resource: {uri}. Attempted providers: {', '.join(attempted_providers)}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     def program_opened(self, program_path: str) -> None:
         """Notify all providers that a program was opened."""
