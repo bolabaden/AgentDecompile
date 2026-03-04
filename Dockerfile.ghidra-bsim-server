@@ -1,4 +1,5 @@
-FROM alpine:latest AS build
+ARG ALPINE_BASE_IMAGE="public.ecr.aws/docker/library/alpine:latest"
+FROM ${ALPINE_BASE_IMAGE} AS build
 
 ARG GHIDRA_HOME="/ghidra"
 ENV GHIDRA_HOME=${GHIDRA_HOME}
@@ -129,7 +130,7 @@ RUN set -eux; \
 COPY docker/start-ghidra-bsim-server.sh /ghidra/docker/start-ghidra-bsim-server.sh
 RUN sed -i 's/\r$//' /ghidra/docker/start-ghidra-bsim-server.sh && chmod +x /ghidra/docker/start-ghidra-bsim-server.sh
 
-FROM alpine:latest AS runtime
+FROM ${ALPINE_BASE_IMAGE} AS runtime
 
 ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
 ENV JAVA_HOME=${JAVA_HOME}
@@ -164,10 +165,10 @@ RUN set -eux; \
     adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
 WORKDIR ${GHIDRA_HOME}
-COPY --from=build ${GHIDRA_HOME} ${GHIDRA_HOME}
+COPY --from=build --chown=${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} ${GHIDRA_HOME}
 
 RUN mkdir -p /work /projects \
-    && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} /work /projects
+    && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} /work /projects
 
 USER ${GHIDRA_USER}
 
