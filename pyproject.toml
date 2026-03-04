@@ -147,13 +147,13 @@ exclude = '''
 )/
 '''
 include = '\.pyi?$'
-line-length = 325
+line-length = 300
 skip-magic-trailing-comma = false
 target-version = ['py38']
 
 [tool.isort]
 atomic = true
-line_length = 325
+line_length = 300
 multi_line_output = 3
 profile = "black"
 skip_gitignore = true
@@ -185,7 +185,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pylintrc]
-max-line-length = 325
+max-line-length = 300
 
 [tool.pyright]
 analyzeUnannotatedFunctions = true
@@ -394,7 +394,7 @@ required-imports = ["from __future__ import annotations"]
 "__init__.py" = ["F401", "I001", "I002", "TID252"]
 
 [tool.ruff.lint.pycodestyle]
-max-doc-length = 325
+max-doc-length = 300
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -413,7 +413,7 @@ ALLOW_SPLIT_BEFORE_DEFAULT_OR_NAMED_ASSIGNS = false
 ALLOW_SPLIT_BEFORE_DICT_VALUE = false
 DISABLE_SPLIT_LIST_WITH_COMMENT = true
 INDENT_DICTIONARY_VALUE = true
-column_limit = 325
+column_limit = 300
 join_multiple_lines = false
 no_spaces_around_selected_binary_operators = "*,/"
 split_before_dict_set_generator = true
