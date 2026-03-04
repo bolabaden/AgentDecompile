@@ -42,38 +42,6 @@ class DecompilerToolProvider(ToolProvider):
                 pass
         return self._decomp_tool
 
-    @staticmethod
-    def _build_decompile_fallback(program: Any, target_func: Any, reason: str | None = None) -> str:
-        listing = program.getListing()
-        body = target_func.getBody()
-        lines: list[str] = []
-        max_instructions = 300
-
-        if body:
-            instr_iter = listing.getInstructions(body, True)
-            count = 0
-            while instr_iter.hasNext() and count < max_instructions:
-                instr = instr_iter.next()
-                lines.append(f"{instr.getAddress()}: {instr}")
-                count += 1
-
-        reason_text = reason.strip() if reason else "native decompiler unavailable"
-        signature = str(target_func.getSignature())
-        fallback = [
-            f"/* Fallback decompilation ({reason_text}) */",
-            f"/* Function: {target_func.getName()} @ {target_func.getEntryPoint()} */",
-            f"/* Signature: {signature} */",
-            "",
-            "/* Disassembly */",
-        ]
-
-        if lines:
-            fallback.extend(lines)
-        else:
-            fallback.append("<no instructions available>")
-
-        return "\n".join(fallback)
-
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
@@ -95,7 +63,7 @@ class DecompilerToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "addr", "symbol", "name")
+        func_id = self._get_address_or_symbol(args)
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
 
@@ -106,29 +74,15 @@ class DecompilerToolProvider(ToolProvider):
         if dt is not None:
             try:
                 result = dt.decompile_function_for_mcp(func_id, timeout=timeout)
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump()
                 return create_success_response(result)
             except Exception as e:
                 logger.warning(f"DecompileTool failed: {e}")
 
         # Fallback: use Ghidra API directly
         program = self.program_info.program
-        fm = program.getFunctionManager()
-
-        # Find function
-        target_func = None
-        for f in fm.getFunctions(True):
-            if f.getName() == func_id or str(f.getEntryPoint()) == func_id:
-                target_func = f
-                break
-
-        if target_func is None:
-            try:
-                from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-                addr = AddressUtil.resolve_address_or_symbol(program, func_id)
-                target_func = fm.getFunctionContaining(addr)
-            except Exception:
-                pass
+        target_func = self._resolve_function(func_id, program=program)
 
         if target_func is None:
             raise ValueError(f"Function not found: {func_id}")

@@ -58,16 +58,14 @@ class DataToolProvider(ToolProvider):
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
+        addr_str = self._require_address_or_symbol(args)
         length = self._get_int(args, "length", "size", "len", default=16)
         fmt = self._get_str(args, "format", default="both")
 
         program = self.program_info.program
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+        addr = self._resolve_address(addr_str, program=program)
 
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-
-        memory = program.getMemory()
+        memory = self._get_memory(program)
         buf = bytearray(min(length, 10000))
         actual = memory.getBytes(addr, buf)
 
@@ -78,7 +76,7 @@ class DataToolProvider(ToolProvider):
             result["ascii"] = "".join(chr(b) if 32 <= b < 127 else "." for b in buf[:actual])
 
         # Also check for defined data at address
-        listing = program.getListing()
+        listing = self._get_listing(program)
         data = listing.getDataAt(addr)
         if data is not None:
             result["definedType"] = str(data.getDataType())
@@ -90,13 +88,11 @@ class DataToolProvider(ToolProvider):
 
     async def _handle_apply(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", name="addressOrSymbol")
+        addr_str = self._require_address_or_symbol(args)
         dt_name = self._require_str(args, "datatype", "datatypestring", "type", "typename", name="dataType")
 
         program = self.program_info.program
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        addr = self._resolve_address(addr_str, program=program)
 
         # Parse data type
         from ghidra.util.data import DataTypeParser
@@ -105,13 +101,9 @@ class DataToolProvider(ToolProvider):
         parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
         dt = parser.parse(dt_name)
 
-        tx = program.startTransaction("apply-data-type")
-        try:
-            listing = program.getListing()
+        def _apply_data_type() -> None:
+            listing = self._get_listing(program)
             listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
             listing.createData(addr, dt)
-            program.endTransaction(tx, True)
-        except Exception:
-            program.endTransaction(tx, False)
-            raise
+        self._run_program_transaction(program, "apply-data-type", _apply_data_type)
         return create_success_response({"address": str(addr), "dataType": dt_name, "success": True})

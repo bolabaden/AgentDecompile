@@ -6,6 +6,7 @@ Modes: graph, tree, callers, callees, callers_decomp, common_callers.
 from __future__ import annotations
 
 import logging
+from itertools import islice
 
 from typing import Any
 
@@ -78,7 +79,7 @@ class CallGraphToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        func = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "addr", "symbol", "target")
+        func = self._get_address_or_symbol(args)
         if not func:
             raise ValueError("function or addressOrSymbol is required")
 
@@ -127,40 +128,20 @@ class CallGraphToolProvider(ToolProvider):
         try:
             assert self.program_info is not None, "Program info is not available"
             program = self.program_info.program
-            fm = program.getFunctionManager()
-            listing = program.getListing()
+            fm = self._get_function_manager(program)
 
-            target_func: Any = None
-            # Try to find the function
-            for f in fm.getFunctions(True):
-                if f.getName() == func or str(f.getEntryPoint()) == func:
-                    target_func = f
-                    break
-            if target_func is None:
-                # Try as address
-                try:
-                    from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-                    addr_obj = AddressUtil.resolve_address_or_symbol(program, func)
-                    if addr_obj:
-                        target_func = fm.getFunctionContaining(addr_obj)
-                except Exception:
-                    pass
+            target_func: Any = self._resolve_function(func, program=program)
 
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
 
             mode_n = n(mode)
             if mode_n in ("callers", "callersdecomp", "commoncallers"):
-                callers = list(target_func.getCallingFunctions(None))[:max_nodes]
+                callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
                 caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
 
                 if mode_n == "commoncallers" and second:
-                    second_func = None
-                    for f in fm.getFunctions(True):
-                        if f.getName() == second or str(f.getEntryPoint()) == second:
-                            second_func = f
-                            break
+                    second_func = self._resolve_function(second, program=program)
                     if second_func:
                         second_callers = {c.getName() for c in second_func.getCallingFunctions(None)}
                         common = [c for c in caller_info if c["name"] in second_callers]
@@ -183,7 +164,7 @@ class CallGraphToolProvider(ToolProvider):
                     },
                 )
             if mode_n == "callees":
-                callees = list(target_func.getCalledFunctions(None))[:max_nodes]
+                callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
                 callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
                 return create_success_response(
                     {
@@ -194,8 +175,8 @@ class CallGraphToolProvider(ToolProvider):
                     },
                 )
             # graph/tree mode
-            callers = list(target_func.getCallingFunctions(None))[:max_nodes]
-            callees = list(target_func.getCalledFunctions(None))[:max_nodes]
+            callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
+            callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
             return create_success_response(
                 {
                     "function": func,

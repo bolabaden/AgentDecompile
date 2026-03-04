@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import heapq
 
 from typing import Any
 
@@ -111,8 +112,7 @@ class StringToolProvider(ToolProvider):
     async def _handle_search_code(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         query = self._require_str(args, "query", "pattern", "text", name="query")
-        limit = self._get_int(args, "limit", "maxresults", default=10)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, limit = self._get_pagination_params(args, default_limit=10)
         mode = self._get_str(args, "searchmode", "mode", default="semantic")
 
         if self.ghidra_tools is not None:
@@ -134,7 +134,7 @@ class StringToolProvider(ToolProvider):
                 logger.warning(f"search-code semantic/literal backend unavailable, using fallback search: {e}")
 
         program = self.program_info.program
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
 
         matches = []
         skipped = 0
@@ -172,8 +172,7 @@ class StringToolProvider(ToolProvider):
         mode = self._get_str(args, "mode", default="list")
         pattern = self._get_str(args, "pattern", "query", "search", "text", "regex", "searchstring", "filter")
         min_len = self._get_int(args, "minlength", "minlen", default=4)
-        max_results = self._get_int(args, "maxresults", "limit", "max", "maxcount", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
         include_refs = self._get_bool(args, "includereferencingfunctions", "includerefs", default=False)
 
         # Try GhidraTools first
@@ -208,7 +207,53 @@ class StringToolProvider(ToolProvider):
         return self._filter_strings(strings, mode, pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(self, strings: list, mode: str, pattern: str, min_len: int, max_results: int, offset: int, include_refs: bool) -> list[types.TextContent]:
+        """Filter and format strings based on search mode and pattern.
+        
+        Consolidates multiple string search/filtering pipelines (regex, similarity,
+        substring) into a single method to reduce code duplication across list/search
+        operations. Handles pagination separately from filtering.
+        
+        **Filtering Modes**:
+        - count: Return total count only (no results)
+        - regex: Match pattern as regex expression (case-insensitive)
+        - similarity: Score matches by query length / result length, rank by score
+        - literal (default): Substring match, case-insensitive
+        
+        **Similarity Scoring**: Used for fuzzy matching where shorter matches score
+        higher than longer matches containing the query. Example:
+            query="str" in "string" → score=0.33 (3/9)
+            query="str" in "str" → score=1.0 (3/3)
+        
+        **Performance Notes**:
+        - Regex compilation happens once per call (not per-string)
+        - Similarity mode uses heapq.nlargest for efficient top-k selection
+        - Pagination happens after filtering to avoid over-iterating
+        - Reference lookup is optional and only when explicitly requested
+        
+        Parameters
+        ----------
+        strings : list[dict]
+            Input strings with address and value keys
+        mode : str
+            Filter mode: 'count', 'regex', 'similarity', or default (literal)
+        pattern : str
+            Search pattern/regex for filtering
+        min_len : int
+            Minimum string length to include (unused in this method; pre-filtered)
+        max_results : int
+            Maximum number of results to return after pagination
+        offset : int
+            Pagination offset
+        include_refs : bool
+            Whether to add referencing functions to each string result
+            
+        Returns
+        -------
+        list[TextContent]
+            Paginated response with filtered results
+        """
         mode_n = n(mode)
+        total = len(strings)
 
         if mode_n == "count":
             return create_success_response({"mode": "count", "totalStrings": len(strings)})
@@ -223,34 +268,40 @@ class StringToolProvider(ToolProvider):
         elif mode_n == "similarity" and pattern:
             query_lower = pattern.lower()
             scored = []
+            top_k = max(offset + max_results, 1)
             for s in strings:
                 val = s.get("value", "").lower()
                 if query_lower in val:
                     score = len(query_lower) / max(len(val), 1)
                     scored.append((score, s))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            strings = [s for _, s in scored]
+
+            total = len(scored)
+            ranked = heapq.nlargest(top_k, scored, key=lambda item: item[0])
+            strings = [s for _, s in ranked]
 
         elif pattern:
             p_lower = pattern.lower()
             strings = [s for s in strings if p_lower in s.get("value", "").lower()]
 
-        total = len(strings)
-        strings = strings[offset : offset + max_results]
+        if mode_n != "similarity" or not pattern:
+            total = len(strings)
+        
+        strings, has_more = self._paginate_results(strings, offset, max_results)
 
         if include_refs and self.program_info:
             try:
                 program = self.program_info.program
                 ref_mgr = program.getReferenceManager()
-                fm = program.getFunctionManager()
+                fm = self._get_function_manager(program)
                 for s in strings:
                     try:
-                        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-                        addr = AddressUtil.resolve_address_or_symbol(program, s["address"])
-                        refs = list(ref_mgr.getReferencesTo(addr))
+                        addr = self._resolve_address(s["address"], program=program)
                         funcs = set()
-                        for ref in refs[:20]:
+                        ref_count = 0
+                        for ref in ref_mgr.getReferencesTo(addr):
+                            if ref_count >= 20:
+                                break
+                            ref_count += 1
                             f = fm.getFunctionContaining(ref.getFromAddress())
                             if f:
                                 funcs.add(f.getName())
@@ -260,13 +311,4 @@ class StringToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        return create_success_response(
-            {
-                "mode": mode,
-                "results": strings,
-                "count": len(strings),
-                "total": total,
-                "offset": offset,
-                "hasMore": offset + len(strings) < total,
-            },
-        )
+        return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)

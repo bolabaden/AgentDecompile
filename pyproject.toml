@@ -247,7 +247,7 @@ timeout_method = "thread" # Use thread-based timeout (works on Windows)
 [tool.ruff]
 fix = true
 force-exclude = true
-line-length = 325
+line-length = 300
 output-format = "grouped" # Group violations by containing file.
 # Enable preview features.
 preview = false

@@ -5,6 +5,7 @@ import json
 import re
 import sys
 
+from collections import deque
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
@@ -110,6 +111,11 @@ class CallGraph:
         for src, dst in self.graph.items():
             print(f"{src}-->{dst}")
 
+    @staticmethod
+    def _snapshot_items(graph: dict[str, list[tuple[str, int, int, str]]]) -> list[tuple[str, list[tuple[str, int, int, str]]]]:
+        """Return a stable snapshot of graph items for mutation-safe iteration."""
+        return list(graph.items())
+
     def root_at_end(self) -> bool:
         """Determines the direction of the graph"""
         # if the root has no links, the root is at the end
@@ -132,33 +138,30 @@ class CallGraph:
         end_nodes: set[str] = set()
 
         if not self.root_at_end():
-            for src in list(self.graph):
-                dst = self.graph[src]
+            for src, dst in self._snapshot_items(self.graph):
                 # special case of loop
                 if len(dst) == 0 or (len(dst) == 1 and dst[0] == src):
                     end_nodes.add(src)
         else:
-            destinations: list[str] = []
+            destinations: set[str] = set()
 
-            for src in list(self.graph):
-                dst = self.graph[src]
+            for src, dst in self._snapshot_items(self.graph):
                 # special case of loop
                 if len(dst) == 1 and dst[0] == src:
                     # don't append to destinations in this case
                     continue
 
                 for d in dst:
-                    destinations.append(d[0])
+                    destinations.add(d[0])
 
-            end_nodes = set(self.graph.keys()).difference(set(destinations))
+            end_nodes = set(self.graph.keys()).difference(destinations)
 
         return list(end_nodes)
 
     def get_count_at_depth(self, depth: int) -> int:
         """Returns count for nodes at a specific depth"""
         count: int = 0
-        for src in list(self.graph):
-            dst = self.graph[src]
+        for _, dst in self._snapshot_items(self.graph):
             for d in dst:
                 if d[1] == depth:
                     count += 1
@@ -168,8 +171,7 @@ class CallGraph:
     def links_count(self) -> int:
         """Returns count of edges"""
         count: int = 0
-        for src in list(self.graph):
-            dst = self.graph[src]
+        for _, dst in self._snapshot_items(self.graph):
 
             for d in dst:
                 count += 1
@@ -184,11 +186,11 @@ class CallGraph:
         if source_func == dest_func:
             return True
 
-        queue: list[str] = [source_func]
+        queue: deque[str] = deque([source_func])
         visited: set[str] = {source_func}
 
         while queue:
-            current_func = queue.pop(0)
+            current_func = queue.popleft()
 
             # In this graph, an edge (u, v) means u calls v.
             # self.graph[current_func] is a list of (neighbor, depth, count, ref_type)
@@ -460,9 +462,9 @@ class CallGraph:
         else:
             # --- Step 11: Full graph rendering ---
             # Iterate through nodes and edges, building Mermaid links
-            for src in list(graph_to_use):
+            for src, src_nodes in self._snapshot_items(graph_to_use):
                 src_style_class = f":::{shade_key}" if shaded_nodes and src in shaded_nodes else ""
-                for node in list(graph_to_use[src]):
+                for node in src_nodes:
                     depth = node[1]
                     fname = node[0]
                     ref_type = node[3]
@@ -524,8 +526,7 @@ class CallGraph:
 
         destinations: list[tuple[str, int, int, str]] = []
 
-        for src in list(self.graph):
-            dst = self.graph[src]
+        for _, dst in self._snapshot_items(self.graph):
             for d in dst:
                 destinations.append(d)
 

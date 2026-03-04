@@ -45,27 +45,25 @@ class VtableToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
-        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "vtableaddress", "functionaddress")
+        addr_str = self._get_address_or_symbol(args)
         max_entries = self._get_int(args, "maxentries", default=200)
-        max_results = self._get_int(args, "maxresults", "limit", default=100)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         program = self.program_info.program
-        listing = program.getListing()
-        memory = program.getMemory()
-        fm = program.getFunctionManager()
+        listing = self._get_listing(program)
+        memory = self._get_memory(program)
+        fm = self._get_function_manager(program)
 
         mode_n = n(mode)
 
         if mode_n == "containing":
             # Find vtables in the program by scanning for pointer arrays
-            results = []
+            all_results: list[dict[str, Any]] = []
             for data in listing.getDefinedData(True):
-                if len(results) >= max_results:
-                    break
                 dt = data.getDataType()
                 dt_name = dt.getName().lower() if dt else ""
                 if "vtable" in dt_name or "vftable" in dt_name:
-                    results.append(
+                    all_results.append(
                         {
                             "address": str(data.getAddress()),
                             "name": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else dt_name,
@@ -73,14 +71,13 @@ class VtableToolProvider(ToolProvider):
                             "size": data.getLength(),
                         },
                     )
-            return create_success_response({"mode": "containing", "vtables": results, "count": len(results)})
+            paginated, has_more = self._paginate_results(all_results, offset, max_results)
+            return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="containing")
 
         if not addr_str:
             raise ValueError("addressOrSymbol required for analyze/callers mode")
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        addr = self._resolve_address(addr_str, program=program)
 
         if mode_n == "analyze":
             # Read vtable entries (pointers to functions)
@@ -122,25 +119,18 @@ class VtableToolProvider(ToolProvider):
         if mode_n == "callers":
             # Find references to vtable entries
             ref_mgr = program.getReferenceManager()
-            callers = []
-            refs = list(ref_mgr.getReferencesTo(addr))
-            for ref in refs[:max_results]:
+            all_callers = []
+            for ref in ref_mgr.getReferencesTo(addr):
                 from_addr = ref.getFromAddress()
                 func = fm.getFunctionContaining(from_addr)
-                callers.append(
+                all_callers.append(
                     {
                         "fromAddress": str(from_addr),
                         "function": func.getName() if func else None,
                         "refType": str(ref.getReferenceType()),
                     },
                 )
-            return create_success_response(
-                {
-                    "mode": "callers",
-                    "vtableAddress": str(addr),
-                    "callers": callers,
-                    "count": len(callers),
-                },
-            )
+            paginated, has_more = self._paginate_results(all_callers, offset, max_results)
+            return self._create_paginated_response(paginated, offset, max_results, total=len(all_callers), mode="callers", vtableAddress=str(addr))
 
         raise ValueError(f"Unknown mode: {mode}")

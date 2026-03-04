@@ -24,6 +24,29 @@ logger = logging.getLogger(__name__)
 class DataFlowToolProvider(ToolProvider):
     HANDLERS = {"analyzedataflow": "_handle"}
 
+    @staticmethod
+    def _empty_response(
+        direction: str,
+        addr: Any,
+        *,
+        func_name: str | None = None,
+        note: str | None = None,
+        error: str | None = None,
+    ) -> list[types.TextContent]:
+        """Create a standardized empty-result response payload."""
+        payload: dict[str, Any] = {
+            "direction": direction,
+            "address": str(addr),
+            "pcode": [],
+        }
+        if func_name is not None:
+            payload["function"] = func_name
+        if note is not None:
+            payload["note"] = note
+        if error is not None:
+            payload["error"] = error
+        return create_success_response(payload)
+
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
@@ -46,8 +69,36 @@ class DataFlowToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Analyze data flow at a specific address using P-code decompilation.
+        
+        Uses Ghidra's DecompInterface to analyze data dependence at a given address.
+        Supports three analysis modes:
+        - backward: Find inputs that affect this address (data dependencies)
+        - forward: Find outputs affected by this address (transitive dependents)
+        - variable_accesses: Map high-level variable accesses and storage
+        
+        **Performance Considerations**:
+        - Decompilation is expensive; limit maxOps and timeout for large functions
+        - P-code analysis respects SSA form for accurate dependency tracking
+        - Variable mode requires high-function representation (not always available)
+        
+        Parameters
+        ----------
+        addressOrSymbol : str
+            Address or symbol where analysis begins
+        direction : str
+            Analysis direction: 'backward', 'forward', or 'variable_accesses'
+        maxOps : int, default=500
+            Maximum P-code operations to analyze
+        timeout : int, default=30
+            Decompilation timeout in seconds
+            
+        Returns
+        -------
+        response with P-code operations and metadata
+        """
         self._require_program()
-        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "symbol", "functionidentifier", "functionaddress", "startaddress")
+        addr_str = self._get_address_or_symbol(args)
         if not addr_str:
             raise ValueError("addressOrSymbol or functionIdentifier required")
 
@@ -56,45 +107,37 @@ class DataFlowToolProvider(ToolProvider):
         timeout_s = self._get_int(args, "timeout", default=30)
 
         program = self.program_info.program
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+        addr = self._resolve_address(addr_str, program=program)
 
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
         func = fm.getFunctionContaining(addr)
         if func is None:
             raise ValueError(f"No function found containing {addr_str}")
 
+        decomp = None
         try:
             from ghidra.app.decompiler import DecompInterface
+            from ghidra.util.task import ConsoleTaskMonitor
 
             decomp = DecompInterface()
             decomp.openProgram(program)
-            result = decomp.decompileFunction(func, timeout_s, None)
+            result = decomp.decompileFunction(func, timeout_s, ConsoleTaskMonitor())
 
             if result is None or not result.decompileCompleted():
-                decomp.dispose()
-                return create_success_response(
-                    {
-                        "direction": direction,
-                        "address": str(addr),
-                        "function": func.getName(),
-                        "note": "Decompilation failed or timed out",
-                        "pcode": [],
-                    },
+                return self._empty_response(
+                    direction,
+                    addr,
+                    func_name=func.getName(),
+                    note="Decompilation failed or timed out",
                 )
 
             hfunc = result.getHighFunction()
             if hfunc is None:
-                decomp.dispose()
-                return create_success_response(
-                    {
-                        "direction": direction,
-                        "address": str(addr),
-                        "function": func.getName(),
-                        "note": "No high-level function available",
-                        "pcode": [],
-                    },
+                return self._empty_response(
+                    direction,
+                    addr,
+                    func_name=func.getName(),
+                    note="No high-level function available",
                 )
 
             pcode_ops = []
@@ -111,8 +154,6 @@ class DataFlowToolProvider(ToolProvider):
                     },
                 )
                 count += 1
-
-            decomp.dispose()
 
             if direction in ("variableaccesses", "variable_accesses"):
                 # Gather variable info from high function
@@ -150,21 +191,13 @@ class DataFlowToolProvider(ToolProvider):
             )
 
         except ImportError:
-            return create_success_response(
-                {
-                    "direction": direction,
-                    "address": str(addr),
-                    "note": "DecompInterface not available in this environment",
-                    "pcode": [],
-                },
-            )
+            return self._empty_response(direction, addr, note="DecompInterface not available in this environment")
         except Exception as e:
             logger.error(f"Data flow analysis error: {e}")
-            return create_success_response(
-                {
-                    "direction": direction,
-                    "address": str(addr),
-                    "error": str(e),
-                    "pcode": [],
-                },
-            )
+            return self._empty_response(direction, addr, error=str(e))
+        finally:
+            if decomp is not None:
+                try:
+                    decomp.dispose()
+                except Exception:
+                    pass

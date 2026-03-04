@@ -1,14 +1,13 @@
-"""Symbol utility functions for AgentDecompile Python implementation.
-
-Provides symbol validation and filtering, .
-"""
+"""Symbol utility helpers for validation, grouping, and relevance sorting."""
 
 from __future__ import annotations
+
+import re
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports]
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
@@ -30,6 +29,8 @@ DEFAULT_SYMBOL_PATTERNS = [
     r"^ENUM_[0-9a-fA-F]+$",  # Enums: ENUM_00408000
 ]
 
+COMPILED_DEFAULT_SYMBOL_PATTERNS = [re.compile(pattern) for pattern in DEFAULT_SYMBOL_PATTERNS]
+
 
 class SymbolUtil:
     """Utility functions for symbol validation and filtering."""
@@ -49,12 +50,10 @@ class SymbolUtil:
         if symbol_name is None:
             return False
 
-        import re
-
         symbol_name = symbol_name.strip()
 
-        for pattern in DEFAULT_SYMBOL_PATTERNS:
-            if re.match(pattern, symbol_name):
+        for pattern in COMPILED_DEFAULT_SYMBOL_PATTERNS:
+            if pattern.match(symbol_name):
                 return True
 
         return False
@@ -231,8 +230,6 @@ class SymbolUtil:
         grouped: dict[str, list[GhidraSymbol]] = {}
         for symbol in symbols:
             namespace = SymbolUtil.get_symbol_namespace_path(symbol)
-            if namespace not in grouped:
-                grouped[namespace] = []
-            grouped[namespace].append(symbol)
+            grouped.setdefault(namespace, []).append(symbol)
 
         return grouped

@@ -50,13 +50,12 @@ class ConstantSearchToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = n(self._get_str(args, "mode", default="common"))
-        max_results = self._get_int(args, "maxresults", "limit", default=1000)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=1000)
         max_instr = self._get_int(args, "maxinstructions", default=2000000)
         samples_per = self._get_int(args, "samplesperconstant", default=5)
 
         program = self.program_info.program
-        listing = program.getListing()
+        listing = self._get_listing(program)
 
         # Gather constants from instructions
         constants: dict[int, list[dict]] = {}
@@ -104,15 +103,9 @@ class ConstantSearchToolProvider(ToolProvider):
 
         # Format results
         sorted_vals = sorted(constants.keys(), key=lambda v: len(constants[v]), reverse=True)
-        results = []
-        count = 0
+        all_results = []
         for val in sorted_vals:
-            if count < offset:
-                count += 1
-                continue
-            if len(results) >= max_results:
-                break
-            results.append(
+            all_results.append(
                 {
                     "value": val,
                     "hex": hex(val),
@@ -120,14 +113,6 @@ class ConstantSearchToolProvider(ToolProvider):
                     "samples": constants[val],
                 },
             )
-            count += 1
 
-        return create_success_response(
-            {
-                "mode": mode,
-                "results": results,
-                "count": len(results),
-                "instructionsScanned": instr_count,
-                "hasMore": count < len(sorted_vals),
-            },
-        )
+        paginated, has_more = self._paginate_results(all_results, offset, max_results)
+        return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode=mode, instructionsScanned=instr_count)

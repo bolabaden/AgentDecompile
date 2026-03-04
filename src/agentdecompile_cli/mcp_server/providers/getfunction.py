@@ -5,7 +5,9 @@ Covers function modification, tagging, and matching/comparison.
 
 from __future__ import annotations
 
+import heapq
 import logging
+from itertools import islice
 
 from typing import Any
 
@@ -81,114 +83,86 @@ class GetFunctionToolProvider(ToolProvider):
             ),
         ]
 
-    def _find_function(self, func_id: str):
-        program = self.program_info.program
-        fm = program.getFunctionManager()
-        for f in fm.getFunctions(True):
-            if f.getName() == func_id or str(f.getEntryPoint()) == func_id:
-                return f
-        try:
-            from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-            addr = AddressUtil.resolve_address_or_symbol(program, func_id)
-            return fm.getFunctionContaining(addr)
-        except Exception:
-            return None
-
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         action = self._require_str(args, "mode", "action", "operation", name="mode")
-        func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "name", "addr", "symbol")
+        func_id = self._get_address_or_symbol(args)
+        assert self.program_info is not None, "program_info should not be None after _require_program()"
         program = self.program_info.program
 
         action_n = n(action)
 
         if action_n == "create":
-            addr_str = self._require_str(args, "address", "addressorsymbol", "addr", name="address")
-            from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-            addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+            addr_str = self._require_address_or_symbol(args)
+            addr = self._resolve_address(addr_str, program=program)
             name = self._get_str(args, "newname", "name", "functionname", default="")
-            tx = program.startTransaction("create-function")
-            try:
-                fm = program.getFunctionManager()
-                from ghidra.program.model.symbol import SourceType
 
-                func = fm.createFunction(name or None, addr, None, SourceType.USER_DEFINED)
-                program.endTransaction(tx, True)
-                return create_success_response({"action": "create", "address": str(addr), "name": func.getName(), "success": True})
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+            def _create_function():
+                fm = self._get_function_manager(program)
+                from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
+                return fm.createFunction(name or None, addr, None, SourceType.USER_DEFINED)
+
+            func = self._run_program_transaction(program, "create-function", _create_function)
+            return create_success_response({"action": "create", "address": str(addr), "name": func.getName(), "success": True})
 
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
-        func = self._find_function(func_id)
+        func = self._resolve_function(func_id, program=program)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
         if action_n == "rename":
             new_name = self._require_str(args, "newname", "name", name="newName")
-            tx = program.startTransaction("rename-function")
-            try:
-                from ghidra.program.model.symbol import SourceType
+
+            def _rename_function() -> None:
+                from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
                 func.setName(new_name, SourceType.USER_DEFINED)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "rename-function", _rename_function)
             return create_success_response({"action": "rename", "oldName": func_id, "newName": new_name, "success": True})
 
         if action_n == "setprototype":
             proto = self._require_str(args, "prototype", "signature", name="prototype")
-            tx = program.startTransaction("set-prototype")
-            try:
+
+            def _set_prototype() -> None:
                 # Use Ghidra's function signature parser
                 func.setSignature(proto)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "set-prototype", _set_prototype)
             return create_success_response({"action": "set_prototype", "function": func.getName(), "prototype": proto, "success": True})
 
         if action_n in ("setcallingconvention", "callingconvention"):
             cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
-            tx = program.startTransaction("set-calling-convention")
-            try:
+
+            def _set_calling_convention() -> None:
                 func.setCallingConvention(cc)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "set-calling-convention", _set_calling_convention)
             return create_success_response({"action": "set_calling_convention", "function": func.getName(), "callingConvention": cc, "success": True})
 
         if action_n in ("setreturntype", "returntype"):
-            rt_str = self._require_str(args, "returntype", "type", name="returnType")
-            from ghidra.util.data import DataTypeParser
+            rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
+            from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
             dtm = program.getDataTypeManager()
             parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
             rt = parser.parse(rt_str)
-            tx = program.startTransaction("set-return-type")
-            try:
-                from ghidra.program.model.symbol import SourceType
+
+            def _set_return_type() -> None:
+                from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
                 func.setReturnType(rt, SourceType.USER_DEFINED)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "set-return-type", _set_return_type)
             return create_success_response({"action": "set_return_type", "function": func.getName(), "returnType": rt_str, "success": True})
 
         if action_n == "delete":
-            tx = program.startTransaction("delete-function")
-            try:
-                program.getFunctionManager().removeFunction(func.getEntryPoint())
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+            def _delete_function() -> None:
+                self._get_function_manager(program).removeFunction(func.getEntryPoint())
+
+            self._run_program_transaction(program, "delete-function", _delete_function)
             return create_success_response({"action": "delete", "function": func_id, "success": True})
 
         raise ValueError(f"Unknown action: {action}")
@@ -196,15 +170,16 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
-        func_id = self._get_str(args, "function", "addressorsymbol", "functionidentifier")
+        func_id = self._get_address_or_symbol(args)
         tag_name = self._get_str(args, "tag", "tagname", "tags", "name")
+        assert self.program_info is not None, "program_info should not be None after _require_program()"
         program = self.program_info.program
 
         action_n = n(action)
 
         if action_n == "search":
             # Search for functions with a specific tag
-            fm = program.getFunctionManager()
+            fm = self._get_function_manager(program)
             results = []
             for func in fm.getFunctions(True):
                 tags = list(func.getTags())
@@ -215,14 +190,14 @@ class GetFunctionToolProvider(ToolProvider):
 
         if not func_id:
             # List all known tags
-            fm = program.getFunctionManager()
+            fm = self._get_function_manager(program)
             all_tags = set()
             for func in fm.getFunctions(True):
                 for t in func.getTags():
                     all_tags.add(t.getName())
             return create_success_response({"action": "list", "tags": sorted(all_tags), "count": len(all_tags)})
 
-        func = self._find_function(func_id)
+        func = self._resolve_function(func_id, program=program)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
@@ -233,46 +208,43 @@ class GetFunctionToolProvider(ToolProvider):
         if action_n in ("add", "set"):
             if not tag_name:
                 raise ValueError("tag or tagName required")
-            tx = program.startTransaction("add-function-tag")
-            try:
+
+            def _add_function_tag() -> None:
                 func.addTag(tag_name)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "add-function-tag", _add_function_tag)
             return create_success_response({"action": "add", "function": func.getName(), "tag": tag_name, "success": True})
 
         if action_n in ("remove", "delete"):
             if not tag_name:
                 raise ValueError("tag or tagName required")
-            tx = program.startTransaction("remove-function-tag")
-            try:
+
+            def _remove_function_tag() -> None:
                 func.removeTag(tag_name)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "remove-function-tag", _remove_function_tag)
             return create_success_response({"action": "remove", "function": func.getName(), "tag": tag_name, "success": True})
 
         raise ValueError(f"Unknown tag action: {action}")
 
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        func_id = self._require_str(args, "function", "addressorsymbol", "functionidentifier", name="function")
+        func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")
         max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)
 
-        func = self._find_function(func_id)
+        func = self._resolve_function(func_id)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
+        assert self.program_info is not None, "program_info should not be None after _require_program()"
         program = self.program_info.program
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
 
         mode_n = n(mode)
 
         if mode_n == "callers":
-            callers = list(func.getCallingFunctions(None))[:max_results]
+            callers = list(islice(func.getCallingFunctions(None), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -283,7 +255,7 @@ class GetFunctionToolProvider(ToolProvider):
             )
 
         if mode_n == "callees":
-            callees = list(func.getCalledFunctions(None))[:max_results]
+            callees = list(islice(func.getCalledFunctions(None), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -320,6 +292,7 @@ class GetFunctionToolProvider(ToolProvider):
         my_callees = {c.getName() for c in func.getCalledFunctions(None)}
         my_callers = {c.getName() for c in func.getCallingFunctions(None)}
         scores = []
+        top_k = max(max_results, 1)
         for f in fm.getFunctions(True):
             if f == func:
                 continue
@@ -328,8 +301,8 @@ class GetFunctionToolProvider(ToolProvider):
             overlap = len(my_callees & f_callees) + len(my_callers & f_callers)
             if overlap > 0:
                 scores.append((overlap, f))
-        scores.sort(key=lambda x: x[0], reverse=True)
-        similar = [{"name": f.getName(), "address": str(f.getEntryPoint()), "similarityScore": s} for s, f in scores[:max_results]]
+        top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
+        similar = [{"name": f.getName(), "address": str(f.getEntryPoint()), "similarityScore": s} for s, f in top_matches]
         return create_success_response(
             {
                 "function": func.getName(),

@@ -136,6 +136,16 @@ def _get_opts(ctx: click.Context) -> dict[str, Any]:
 
 
 def _client(ctx: click.Context) -> Any:
+    """Create an MCP HTTP client connected to the backend.
+    
+    Reads server host/port/url from CLI context options and creates
+    an AgentDecompileMcpClient connected to the specified backend.
+    
+    Prefers explicit --server-url over --host/--port.
+    
+    Returns:
+        AgentDecompileMcpClient: Configured MCP client ready to call tools.
+    """
     opts = _get_opts(ctx)
     url = resolve_backend_url(
         opts.get("server_url"),
@@ -151,6 +161,10 @@ def _client(ctx: click.Context) -> Any:
 
 
 def _fmt(ctx: click.Context) -> str:
+    """Get the output format setting from CLI context options.
+    
+    Returns configured format (json, text, yaml, etc.) or default.
+    """
     return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
 
 
@@ -599,6 +613,16 @@ def _validate_known_tool(name: str) -> None:
 
 
 def _run_async(coro: Coroutine[Any, Any, None]) -> None:
+    """Run an async coroutine in a new event loop and handle errors.
+    
+    Wrapper that:
+    1. Runs the coroutine via asyncio.run()
+    2. Catches cancellation and general exceptions
+    3. Formats errors for CLI output
+    4. Exits with code 1 on error
+    
+    Used by most CLI commands that need to call async MCP tools.
+    """
     try:
         run_async(coro)
     except (asyncio.CancelledError, Exception) as e:

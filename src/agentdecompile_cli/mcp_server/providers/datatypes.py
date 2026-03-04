@@ -54,9 +54,7 @@ class DataTypeToolProvider(ToolProvider):
             "bystring": self._by_string,
             "apply": self._apply,
         }
-        handler = dispatch.get(n(action))
-        if handler is None:
-            raise ValueError(f"Unknown action: {action}. Valid: archives, list, by_string, apply")
+        handler = self._dispatch_handler(dispatch, action, "action")
         return await handler(args)
 
     async def _archives(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -92,8 +90,7 @@ class DataTypeToolProvider(ToolProvider):
         program = self.program_info.program
         dtm = program.getDataTypeManager()
         cat_path = self._get_str(args, "categorypath", "category", "path")
-        max_results = self._get_int(args, "maxresults", "limit", "maxcount", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         results = []
         if cat_path:
@@ -191,46 +188,37 @@ class DataTypeToolProvider(ToolProvider):
             # Batch mode
             from ghidra.util.data import DataTypeParser
 
-            from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
             parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
             dt = parser.parse(dt_str)
             results = []
-            tx = program.startTransaction("batch-apply-datatype")
-            try:
-                listing = program.getListing()
+
+            def _batch_apply_datatype() -> None:
+                listing = self._get_listing(program)
                 for a in addr_list:
                     try:
-                        addr = AddressUtil.resolve_address_or_symbol(program, str(a))
+                        addr = self._resolve_address(str(a), program=program)
                         listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
                         listing.createData(addr, dt)
                         results.append({"address": str(addr), "success": True})
                     except Exception as e:
                         results.append({"address": str(a), "success": False, "error": str(e)})
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "batch-apply-datatype", _batch_apply_datatype)
             return create_success_response({"action": "apply", "batch": True, "results": results, "count": len(results)})
 
         # Single
         from ghidra.util.data import DataTypeParser
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
         parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
         dt = parser.parse(dt_str)
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        addr = self._resolve_address(addr_str, program=program)
 
-        tx = program.startTransaction("apply-datatype")
-        try:
-            listing = program.getListing()
+        def _apply_datatype() -> None:
+            listing = self._get_listing(program)
             listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
             listing.createData(addr, dt)
-            program.endTransaction(tx, True)
-        except Exception:
-            program.endTransaction(tx, False)
-            raise
+
+        self._run_program_transaction(program, "apply-datatype", _apply_datatype)
         return create_success_response(
             {
                 "action": "apply",

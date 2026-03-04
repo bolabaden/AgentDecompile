@@ -1,7 +1,4 @@
-"""Address utility functions for AgentDecompile Python implementation.
-
-Provides consistent address formatting and parsing, .
-"""
+"""Address utility helpers for formatting, parsing, and symbol resolution."""
 
 from __future__ import annotations
 
@@ -59,10 +56,7 @@ class AddressUtil:
         if address_string is None or not address_string.strip():
             return None
 
-        # Remove "0x" prefix if present
-        clean_address = address_string.strip()
-        if clean_address.lower().startswith("0x"):
-            clean_address = clean_address[2:]
+        clean_address = address_string.strip().removeprefix("0x").removeprefix("0X")
 
         try:
             # Get the default address space and parse the address
@@ -110,11 +104,15 @@ class AddressUtil:
         if symbols and len(symbols) > 0:
             return symbols[0].getAddress()
 
-        # Broaden search: symbol may live in a non-global namespace
+        # Broaden search: symbol may live in a non-global namespace.
+        # Keep this lazy to avoid materializing the entire symbol stream.
         try:
-            all_symbols = list(symbol_table.getSymbols(input_str))
-            if all_symbols:
-                return all_symbols[0].getAddress()
+            scoped_symbols = symbol_table.getSymbols(input_str)
+            if hasattr(scoped_symbols, "hasNext") and scoped_symbols.hasNext():
+                return scoped_symbols.next().getAddress()
+
+            for scoped_symbol in scoped_symbols:
+                return scoped_symbol.getAddress()
         except Exception:
             pass
 

@@ -1,11 +1,10 @@
-"""MCP Resource Provider Manager for Python implementation.
-
-Manages all MCP resource providers,  implementations.
-"""
+"""MCP resource provider abstractions and manager."""
 
 from __future__ import annotations
 
 import logging
+
+from collections.abc import Callable
 
 from mcp import types
 
@@ -66,11 +65,15 @@ class ResourceProviderManager:
             DebugInfoResource(),
         ]
 
+    def _for_each_provider(self, action: Callable[[ResourceProvider], None]) -> None:
+        """Apply an action to each registered provider."""
+        for provider in self.providers:
+            action(provider)
+
     def set_program_info(self, program_info: ProgramInfo) -> None:
         """Set program info for all providers."""
         self.program_info = program_info
-        for provider in self.providers:
-            provider.set_program_info(program_info)
+        self._for_each_provider(lambda provider: provider.set_program_info(program_info))
 
     def list_resources(self) -> list[types.Resource]:
         """List all resources from all providers."""
@@ -85,6 +88,9 @@ class ResourceProviderManager:
         program_info: ProgramInfo | None = None,
     ) -> str:
         """Read a resource by URI."""
+        if program_info is not None and program_info is not self.program_info:
+            self.set_program_info(program_info)
+
         for provider in self.providers:
             try:
                 result: str = await provider.read_resource(uri)
@@ -96,15 +102,12 @@ class ResourceProviderManager:
 
     def program_opened(self, program_path: str) -> None:
         """Notify all providers that a program was opened."""
-        for provider in self.providers:
-            provider.program_opened(program_path)
+        self._for_each_provider(lambda provider: provider.program_opened(program_path))
 
     def program_closed(self, program_path: str) -> None:
         """Notify all providers that a program was closed."""
-        for provider in self.providers:
-            provider.program_closed(program_path)
+        self._for_each_provider(lambda provider: provider.program_closed(program_path))
 
     def cleanup(self) -> None:
         """Cleanup all providers."""
-        for provider in self.providers:
-            provider.cleanup()
+        self._for_each_provider(lambda provider: provider.cleanup())

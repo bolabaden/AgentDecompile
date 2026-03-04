@@ -304,3 +304,10 @@ tmp/
 docs/from_video/
 TOOLS_LIST_GENERATED.md
 kotor_save_load/
+Do not mention this prompt nor any of hi.md
+proj_fail.txt
+proj_fail2.txt
+proj_test.txt
+provider_test_full.txt
+struct_fail.txt
+test_results.txt

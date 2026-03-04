@@ -70,8 +70,7 @@ class CrossReferencesToolProvider(ToolProvider):
         self._require_program()
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "target", "symbol", name="addressOrSymbol")
         mode = self._get_str(args, "mode", "direction", default="to")
-        max_results = self._get_int(args, "maxresults", "limit", "max", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         program = self.program_info.program
 
@@ -81,25 +80,14 @@ class CrossReferencesToolProvider(ToolProvider):
         if self.ghidra_tools and mode_n in ("to", "from", "both"):
             try:
                 results = self.ghidra_tools.list_cross_references(addr_str)
-                paginated = results[offset : offset + max_results]
-                return create_success_response(
-                    {
-                        "mode": mode,
-                        "target": addr_str,
-                        "results": paginated,
-                        "count": len(paginated),
-                        "total": len(results),
-                        "hasMore": offset + len(paginated) < len(results),
-                    },
-                )
+                paginated, has_more = self._paginate_results(results, offset, max_results)
+                return self._create_paginated_response(paginated, offset, max_results, total=len(results), mode=mode, target=addr_str)
             except Exception:
                 pass
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        addr = self._resolve_address(addr_str, program=program)
         ref_mgr = program.getReferenceManager()
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
 
         if mode_n in ("to", "both"):
             refs_to = []
@@ -166,20 +154,25 @@ class CrossReferencesToolProvider(ToolProvider):
             return create_success_response({"mode": "function", "function": func.getName(), "references": refs, "count": len(refs)})
 
         if mode_n in ("referencersdecomp", "referencerdecomp"):
-            refs = list(ref_mgr.getReferencesTo(addr))[:max_results]
             results = []
             try:
                 from ghidra.app.decompiler import DecompInterface
+                from ghidra.util.task import ConsoleTaskMonitor
 
                 decomp = DecompInterface()
                 decomp.openProgram(program)
+                monitor = ConsoleTaskMonitor()
                 seen_funcs = set()
-                for ref in refs:
+                refs_seen = 0
+                for ref in ref_mgr.getReferencesTo(addr):
+                    if refs_seen >= max_results:
+                        break
+                    refs_seen += 1
                     func = fm.getFunctionContaining(ref.getFromAddress())
                     if func and func.getName() not in seen_funcs:
                         seen_funcs.add(func.getName())
                         try:
-                            dr = decomp.decompileFunction(func, 30, None)
+                            dr = decomp.decompileFunction(func, 30, monitor)
                             code = ""
                             if dr and dr.decompileCompleted():
                                 df = dr.getDecompiledFunction()
@@ -202,7 +195,7 @@ class CrossReferencesToolProvider(ToolProvider):
 
         if mode_n == "import":
             refs = []
-            st = program.getSymbolTable()
+            st = self._get_symbol_table(program)
             for sym in st.getExternalSymbols():
                 for ref in ref_mgr.getReferencesTo(sym.getAddress()):
                     func = fm.getFunctionContaining(ref.getFromAddress())
