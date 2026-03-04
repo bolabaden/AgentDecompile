@@ -22,14 +22,12 @@ import socket
 import sys
 import tempfile
 import time
-
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 try:
     import chromadb
-
     from chromadb.config import Settings
 except Exception:
     chromadb = None  # type: ignore[assignment]
@@ -41,7 +39,7 @@ from agentdecompile_cli.tools.wrappers import GhidraTools
 if TYPE_CHECKING:
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface,
-        DecompiledFunction,
+        #    DecompiledFunction,
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
@@ -51,11 +49,11 @@ if TYPE_CHECKING:
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        Program,
         Program as GhidraProgram,
     )
 
     from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: F401
+    from agentdecompile_cli.models import DecompiledFunction
 
 # Configure logging
 logging.basicConfig(
@@ -166,7 +164,7 @@ class ProgramInfo:
     """Information about a loaded program"""
 
     name: str
-    program: Program
+    program: GhidraProgram
     flat_api: FlatProgramAPI | None
     decompiler: DecompInterface
     metadata: dict[str, Any]  # Ghidra program metadata
@@ -182,12 +180,12 @@ class ProgramInfo:
         return self.ghidra_analysis_complete
 
     @property
-    def current_program(self) -> Program | None:
+    def current_program(self) -> GhidraProgram | None:
         """Get the current program."""
         return self.program
 
     @current_program.setter
-    def current_program(self, program: Program) -> None:
+    def current_program(self, program: GhidraProgram) -> None:
         """Set the current program."""
         self.program = program
 
@@ -320,7 +318,7 @@ class PyGhidraContext:
     def close(self, save: bool = True):
         """Saves changes to all open programs and closes the project."""
         for _program_name, program_info in self.programs.items():
-            program: Program = program_info.program
+            program: GhidraProgram = program_info.program
             self.project.close(program)
 
         if self.executor is not None:
@@ -359,20 +357,46 @@ class PyGhidraContext:
 
     def _init_project_programs(self):
         """Initializes the programs dictionary with existing programs in the project."""
-        for binary_path_str in self.list_binaries():
+        try:
+            binaries = self.list_binaries()
+        except Exception as e:
+            logger.warning(f"Failed to list binaries in project: {type(e).__name__}: {e}. Starting with empty program list.")
+            return
+        
+        if not binaries:
+            logger.info("No programs found in project. Server will start with empty program list.")
+            return
+        
+        logger.info(f"Found {len(binaries)} program(s) in project. Opening...")
+        success_count = 0
+        for binary_path_str in binaries:
             # Use PurePosixPath because Ghidra virtual paths are always POSIX-style
             # (e.g. "/SomeBinary"). Using pathlib.Path on Windows converts the leading
             # "/" to a Windows root, making str(parent) return "\\" instead of "/",
             # which causes GhidraProject.openProgram to raise:
             # IllegalArgumentException: Absolute path must begin with '/'
             binary_path: PurePosixPath = PurePosixPath(binary_path_str)
-            program: Program | None = self.project.openProgram(
-                str(binary_path.parent),
-                binary_path.name,
-                False,
-            )
-            program_info: ProgramInfo = self._init_program_info(program)
-            self.programs[binary_path_str] = program_info
+            try:
+                program: GhidraProgram | None = self.project.openProgram(
+                    str(binary_path.parent),
+                    binary_path.name,
+                    False,
+                )
+                program_info: ProgramInfo | None = self._init_program_info(program)
+                if program_info is None:
+                    raise ImportError(f"Failed to initialize program info for: {binary_path_str}")
+                self.programs[binary_path_str] = program_info
+                success_count += 1
+                logger.debug(f"Successfully opened program: {binary_path_str}")
+            except Exception as e:
+                # Log warning but continue - individual program failures shouldn't crash server
+                logger.warning(
+                    f"Failed to open program '{binary_path_str}' during initialization: {e.__class__.__name__}: {e}. "
+                    f"This program will be skipped but the server will continue."
+                )
+                continue
+        
+        logger.info(f"Successfully opened {success_count}/{len(binaries)} program(s). Server is ready.")
 
     def list_binaries(self) -> list[str]:
         """List all the binaries within the Ghidra project."""
@@ -405,8 +429,8 @@ class PyGhidraContext:
         logger.info(f"Deleting program: {program_name}")
         try:
             _assert_type(program_info, ProgramInfo, "Program info")
-            program_to_delete: Program = program_info.program
-            _assert_type(program_to_delete, Program, "Program")
+            program_to_delete: GhidraProgram = program_info.program
+            _assert_type(program_to_delete, GhidraProgram, "Program")
             
             program_to_delete_df: DomainFile = program_to_delete.getDomainFile()
             _assert_type(program_to_delete_df, DomainFile, "Domain file")
@@ -441,7 +465,7 @@ class PyGhidraContext:
 
         program_name = PyGhidraContext._gen_unique_bin_name(binary_path)
 
-        program: Program | None = None
+        program: GhidraProgram | None = None
         root_folder = self.project.getRootFolder()
 
         # Create folder hierarchy if relative_path is provided
@@ -459,7 +483,7 @@ class PyGhidraContext:
         else:
             logger.info(f"Importing new program: {program_name}")
             program = self.project.importProgram(binary_path)
-            _assert_type(program, Program, "Program")
+            _assert_type(program, GhidraProgram, "Program")
             program.name = program_name
             if program:
                 self.project.saveAs(program, ghidra_folder.pathname, program_name, True)
@@ -554,7 +578,7 @@ class PyGhidraContext:
                     relative_path=relative_path,
                 )
             except Exception as e:
-                logger.error(f"Failed to import {bin_path}: {e}")
+                logger.error(f"Failed to import {bin_path}: {e.__class__.__name__}: {e}")
 
     def _is_binary_file(self, path: Path) -> bool:
         # return self._detect_binary_format(path) is not None
@@ -665,7 +689,7 @@ class PyGhidraContext:
             )
         return program_info
 
-    def _init_program_info(self, program: Program | None) -> ProgramInfo | None:
+    def _init_program_info(self, program: GhidraProgram | None) -> ProgramInfo | None:
         from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
         if program is None:
@@ -912,7 +936,7 @@ class PyGhidraContext:
         completed_count: int = 0
 
         if self.executor is not None:
-            futures: list[concurrent.futures.Future[DomainFile | Program | None]] = [
+            futures: list[concurrent.futures.Future[DomainFile | GhidraProgram | None]] = [
                 self.executor.submit(
                     self.analyze_program,
                     domainFile,
@@ -924,16 +948,16 @@ class PyGhidraContext:
             ]
 
             for future in concurrent.futures.as_completed(futures):
-                result: DomainFile | Program | None = future.result()
+                result: DomainFile | GhidraProgram | None = future.result()
                 if result is None:
-                    logger.error("Analysis result is None, expected DomainFile or Program?")
+                    logger.error("Analysis result is None, expected DomainFile or GhidraProgram?")
                     continue
                 if isinstance(result, DomainFile):
                     logger.info(f"Analysis complete for {result.getName()}")
-                elif isinstance(result, Program):
+                elif isinstance(result, GhidraProgram):
                     logger.info(f"Analysis complete for {result.name}")
                 else:
-                    logger.error(f"Analysis result is {type(result)}, expected DomainFile or Program?")
+                    logger.error(f"Analysis result is {type(result)}, expected DomainFile or GhidraProgram?")
                     continue
                 completed_count += 1
                 logger.info(f"Completed {completed_count}/{prog_count} programs")
@@ -955,7 +979,7 @@ class PyGhidraContext:
 
     def analyze_program(  # noqa C901
         self,
-        df_or_prog: DomainFile | Program,
+        df_or_prog: DomainFile | GhidraProgram,
         require_symbols: bool = True,
         force_analysis: bool = False,
         verbose_analysis: bool = False,
@@ -963,7 +987,7 @@ class PyGhidraContext:
         from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
@@ -978,7 +1002,7 @@ class PyGhidraContext:
         df: DomainFile | None = None
         if isinstance(df_or_prog, DomainFile):
             df = df_or_prog
-        elif isinstance(df_or_prog, Program):
+        elif isinstance(df_or_prog, GhidraProgram):
             df = df_or_prog.getDomainFile()
         else:
             raise ValueError(f"Invalid domain file or program: {df_or_prog}")
@@ -1003,7 +1027,7 @@ class PyGhidraContext:
 
         logger.info(f"Analyzing program: {program}")
 
-        assert isinstance(program, Program), "Program is not a Program object"
+        assert isinstance(program, GhidraProgram), "Program is not a GhidraProgram object"
 
         for gdt in self.gdts:
             logger.info(f"Loading GDT: {gdt}")
@@ -1096,7 +1120,7 @@ class PyGhidraContext:
 
     def set_analysis_option(  # noqa: C901
         self,
-        prog: Program,
+        prog: GhidraProgram,
         option_name: str,
         value: Any,
     ) -> None:
@@ -1104,9 +1128,9 @@ class PyGhidraContext:
 
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports]
 
-        prog_options: ToolOptions = prog.getOptions(Program.ANALYSIS_PROPERTIES)
+        prog_options: ToolOptions = prog.getOptions(GhidraProgram.ANALYSIS_PROPERTIES)
         option_type = prog_options.getType(option_name)
 
         match str(option_type):
@@ -1202,15 +1226,15 @@ class PyGhidraContext:
 
     def apply_gdt(
         self,
-        program: Program,
+        program: GhidraProgram,
         gdt_path: str | Path,
         verbose: bool = False,
     ):
         """Apply GDT to program"""
         from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-        from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from java.io import File  # pyright: ignore[reportMissingImports]
         from java.util import List  # pyright: ignore[reportMissingImports]
 
@@ -1236,13 +1260,13 @@ class PyGhidraContext:
         )
         cmd.applyTo(program, monitor)
 
-    def get_metadata(self, prog: Program) -> dict[str, Any]:
+    def get_metadata(self, prog: GhidraProgram) -> dict[str, Any]:
         """Generate dict from program metadata"""
         meta: dict[str, Any] = prog.getMetadata()
         return dict(meta)
 
-    def setup_decompiler(self, program: Program) -> DecompInterface:
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports]
+    def setup_decompiler(self, program: GhidraProgram) -> DecompInterface:
+        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options = DecompileOptions()
 
@@ -1346,8 +1370,8 @@ class ProjectManager:
         ------
             ImportError: If Ghidra/PyGhidra not available
         """
-        from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.framework.model import ProjectLocator  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         project_name, project_path = self.get_or_create_project()
 
