@@ -1822,7 +1822,8 @@ class ProjectToolProvider(ToolProvider):
 
             try:
                 if existing is not None and force and hasattr(existing, "delete"):
-                logger.info("shared-sync pull deleting existing target due to force target=%s", target_path)
+                    logger.info("shared-sync pull deleting existing target due to force target=%s", target_path)
+                    existing.delete()
 
                 parent_folder: Any = self._ensure_project_folder(project_data, target_parent_path)
                 remote_domain_obj: Any = None
