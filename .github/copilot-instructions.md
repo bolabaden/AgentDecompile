@@ -16,14 +16,7 @@
 
 ## What is AgentDecompile?
 
-AgentDecompile provides a comprehensive Model Context Protocol (MCP) server that allows AI clients to interact with Ghidra/PyGhidra for reverse engineering. It surfaces **49 tools** across 6 functional domains:
-
-1. **Symbol management** – `manage-symbols`, `search-symbols-by-name`
-2. **Function analysis** – `list-functions`, `manage-function`, `get-functions`, `match-function`
-3. **Memory & data** – `inspect-memory`, `manage-strings`, `manage-data-types`, `manage-structures`
-4. **Control flow** – `get-call-graph`, `get-references`, `analyze-data-flow`, `analyze-vtables`
-5. **Annotations** – `manage-comments`, `manage-bookmarks`, `manage-function-tags`
-6. **Project management** – `open`, `list-project-files`, `manage-files`, `import-binary`, `export`
+AgentDecompile provides a comprehensive Model Context Protocol (MCP) server that allows AI clients to interact with Ghidra/PyGhidra for reverse engineering.
 
 Full specification: [TOOLS_LIST.md](../TOOLS_LIST.md)
 
