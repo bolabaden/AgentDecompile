@@ -140,6 +140,27 @@ CONNECT_TIMEOUT = 10.0
 # Timeout for backend operations (tool calls, list_resources, etc.)
 BACKEND_OP_TIMEOUT = 120.0
 
+_TRANSPORT_ERROR_KEYWORDS = (
+    "ConnectError",
+    "ConnectTimeout",
+    "ConnectionRefused",
+    "BrokenResource",
+    "ClosedResource",
+    "connection reset",
+    "Timed out",
+    "TimeoutException",
+)
+
+
+def _is_transport_connection_error(exc: BaseException) -> bool:
+    """Return True if *exc* is likely a backend transport/connection failure."""
+    if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
+        return True
+    err_str = str(exc)
+    return any(keyword in err_str for keyword in _TRANSPORT_ERROR_KEYWORDS)
+
 
 class RawMcpHttpBackend:
     """Speaks the MCP Streamable-HTTP transport using plain httpx.
@@ -376,24 +397,7 @@ class AgentDecompileMcpClient:
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """Return True if *exc* is a transport/connection failure."""
-        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
-            return True
-        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
-            return True
-        err_str = str(exc)
-        return any(
-            kw in err_str
-            for kw in (
-                "ConnectError",
-                "ConnectTimeout",
-                "ConnectionRefused",
-                "BrokenResource",
-                "ClosedResource",
-                "connection reset",
-                "Timed out",
-                "TimeoutException",
-            )
-        )
+        return _is_transport_connection_error(exc)
 
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""
@@ -821,24 +825,7 @@ class AgentDecompileStdioBridge:
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """Return True if *exc* is a transport/connection failure."""
-        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
-            return True
-        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
-            return True
-        err_str = str(exc)
-        return any(
-            kw in err_str
-            for kw in (
-                "ConnectError",
-                "ConnectTimeout",
-                "ConnectionRefused",
-                "BrokenResource",
-                "ClosedResource",
-                "connection reset",
-                "Timed out",
-                "TimeoutException",
-            )
-        )
+        return _is_transport_connection_error(exc)
 
     @staticmethod
     def _raw_tool_to_mcp(raw: dict[str, Any]) -> Tool:
