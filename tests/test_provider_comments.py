@@ -170,7 +170,7 @@ class TestCommentProviderValidation:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"action": "set"})
 
-        p._set = fake_set
+        p._handle_set = fake_set
         await p.call_tool("manage-comments", {"action": "add", "addressOrSymbol": "0x1000", "comment": "test"})
         assert len(called) == 1
 
@@ -186,6 +186,6 @@ class TestCommentProviderValidation:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"action": "remove"})
 
-        p._remove = fake_remove
+        p._handle_remove = fake_remove
         await p.call_tool("manage-comments", {"action": "delete", "addressOrSymbol": "0x1000"})
         assert len(called) == 1

@@ -60,22 +60,21 @@ class CommentToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = self._get_str(args, "mode", "action", "operation", default="get")
+        mode = self._get_str(args, "mode", "action", "operation", default="get")
+        
+        return await self._dispatch_handler(args, mode, {
+            "set": "_handle_set",
+            "add": "_handle_set",  # alias
+            "get": "_handle_get",
+            "list": "_handle_get",  # alias
+            "remove": "_handle_remove",
+            "delete": "_handle_remove",  # alias
+            "search": "_handle_search",
+            "search_decomp": "_handle_search_decomp",
+            "searchdecomp": "_handle_search_decomp",  # alias
+        })
 
-        dispatch = {
-            "set": self._set,
-            "add": self._set,
-            "get": self._get_comments,
-            "list": self._get_comments,
-            "remove": self._remove,
-            "delete": self._remove,
-            "search": self._search,
-            "searchdecomp": self._search_decomp,
-        }
-        handler = self._dispatch_handler(dispatch, action, "action")
-        return await handler(args)
-
-    async def _set(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
         assert self.program_info is not None, "Program info is required to set comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -110,7 +109,7 @@ class CommentToolProvider(ToolProvider):
         self._run_program_transaction(program, "set-comment", _set_comment)
         return create_success_response({"action": "set", "address": str(addr), "type": ctype, "comment": text, "success": True})
 
-    async def _get_comments(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         assert self.program_info is not None, "Program info is required to get comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -123,7 +122,7 @@ class CommentToolProvider(ToolProvider):
                 comments[name] = c
         return create_success_response({"action": "get", "address": str(addr), "comments": comments})
 
-    async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_remove(self, args: dict[str, Any]) -> list[types.TextContent]:
         assert self.program_info is not None, "Program info is required to remove comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -136,7 +135,7 @@ class CommentToolProvider(ToolProvider):
         self._run_program_transaction(program, "remove-comment", _remove_comment)
         return create_success_response({"action": "remove", "address": str(addr), "type": ctype, "success": True})
 
-    async def _search(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_search(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search for comments in the program by text content.
         
         Iterates through all code units in the program, checking all comment types
@@ -187,7 +186,7 @@ class CommentToolProvider(ToolProvider):
         paginated, has_more = self._paginate_results(all_results, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="search", query=query)
 
-    async def _search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search comments in decompiled output."""
         assert self.program_info is not None, "Program info is required for decomp search"
         program = self.program_info.program

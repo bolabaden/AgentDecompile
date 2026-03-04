@@ -128,8 +128,9 @@ class FunctionToolProvider(ToolProvider):
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         func_id: str = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
-        view: str = n(self._get_str(args, "view", "mode", default="info"))
+        view: str = self._get_str(args, "view", "mode", default="info")
         max_results: int = self._get_int(args, "limit", "maxresults", default=100)
+        timeout: int = self._get_int(args, "timeout", "decompiletimeout", default=60)
 
         program = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getFunctionManager"):
@@ -145,121 +146,149 @@ class FunctionToolProvider(ToolProvider):
         if target_func is None:
             raise ValueError(f"Function not found: {func_id}")
 
+        return await self._dispatch_handler(args, view, {
+            "info": "_handle_info",
+            "calls": "_handle_calls", 
+            "decompile": "_handle_decompile",
+            "disassemble": "_handle_disassemble",
+        }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+
+    async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
         result: dict[str, Any] = {
             "name": target_func.getName(),
             "address": str(target_func.getEntryPoint()),
             "signature": str(target_func.getSignature()),
-            "view": view,
+            "view": "info",
+            "size": target_func.getBody().getNumAddresses() if target_func.getBody() else 0,
+            "isExternal": target_func.isExternal(),
+            "isThunk": target_func.isThunk(),
+            "parameterCount": target_func.getParameterCount(),
+            "parameters": [{"name": p.getName(), "type": str(p.getDataType()), "ordinal": p.getOrdinal()} for p in target_func.getParameters()],
+            "returnType": str(target_func.getReturnType()),
+            "callingConvention": target_func.getCallingConventionName(),
+            "hasVarArgs": target_func.hasVarArgs(),
         }
+        return create_success_response(result)
 
-        if view in ("info",):
-            result.update(
-                {
-                    "size": target_func.getBody().getNumAddresses() if target_func.getBody() else 0,
-                    "isExternal": target_func.isExternal(),
-                    "isThunk": target_func.isThunk(),
-                    "parameterCount": target_func.getParameterCount(),
-                    "parameters": [{"name": p.getName(), "type": str(p.getDataType()), "ordinal": p.getOrdinal()} for p in target_func.getParameters()],
-                    "returnType": str(target_func.getReturnType()),
-                    "callingConvention": target_func.getCallingConventionName(),
-                    "hasVarArgs": target_func.hasVarArgs(),
-                },
-            )
-        elif view in ("calls",):
-            callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
-            callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
-            result.update({"callers": callers, "callees": callees, "callerCount": len(callers), "calleeCount": len(callees)})
-        elif view in ("decompile",):
-            try:
-                from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
-                from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
+    async def _handle_calls(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
+        callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
+        result: dict[str, Any] = {
+            "name": target_func.getName(),
+            "address": str(target_func.getEntryPoint()),
+            "signature": str(target_func.getSignature()),
+            "view": "calls",
+            "callers": callers,
+            "callees": callees,
+            "callerCount": len(callers),
+            "calleeCount": len(callees),
+        }
+        return create_success_response(result)
 
-                timeout = self._get_int(args, "timeout", "decompiletimeout", default=60)
-                monitor = ConsoleTaskMonitor()
+    async def _handle_decompile(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        result: dict[str, Any] = {
+            "name": target_func.getName(),
+            "address": str(target_func.getEntryPoint()),
+            "signature": str(target_func.getSignature()),
+            "view": "decompile",
+        }
+        try:
+            from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
-                session_decomp = getattr(self.program_info, "decompiler", None)
-                decomp = session_decomp
-                owns_decomp = False
+            monitor = ConsoleTaskMonitor()
 
-                if decomp is None:
-                    decomp = DecompInterface()
+            session_decomp = getattr(self.program_info, "decompiler", None)
+            decomp = session_decomp
+            owns_decomp = False
+
+            if decomp is None:
+                decomp = DecompInterface()
+                options = DecompileOptions()
+                options.grabFromProgram(program)
+                decomp.setOptions(options)
+                decomp.openProgram(program)
+                owns_decomp = True
+            else:
+                try:
                     options = DecompileOptions()
                     options.grabFromProgram(program)
                     decomp.setOptions(options)
-                    decomp.openProgram(program)
-                    owns_decomp = True
-                else:
+                except Exception:
+                    pass
+
+            dr = decomp.decompileFunction(target_func, timeout, monitor)
+            if dr and dr.decompileCompleted():
+                df = dr.getDecompiledFunction()
+                result["decompilation"] = df.getC() if df else "// No output"
+            else:
+                err_msg = ""
+                if dr is not None:
                     try:
-                        options = DecompileOptions()
-                        options.grabFromProgram(program)
-                        decomp.setOptions(options)
+                        err_msg = dr.getErrorMessage() or ""
                     except Exception:
-                        pass
+                        err_msg = ""
 
-                dr = decomp.decompileFunction(target_func, timeout, monitor)
-                if dr and dr.decompileCompleted():
-                    df = dr.getDecompiledFunction()
-                    result["decompilation"] = df.getC() if df else "// No output"
-                else:
-                    err_msg = ""
-                    if dr is not None:
-                        try:
-                            err_msg = dr.getErrorMessage() or ""
-                        except Exception:
-                            err_msg = ""
-
-                    # Retry once with a fresh interface if the shared/session
-                    # decompiler failed, to recover from stale interface state.
-                    if session_decomp is not None:
-                        retry = DecompInterface()
-                        retry_options = DecompileOptions()
-                        retry_options.grabFromProgram(program)
-                        retry.setOptions(retry_options)
-                        retry.openProgram(program)
-                        retry_dr = retry.decompileFunction(target_func, timeout, monitor)
-                        if retry_dr and retry_dr.decompileCompleted():
-                            retry_df = retry_dr.getDecompiledFunction()
-                            result["decompilation"] = retry_df.getC() if retry_df else "// No output"
-                            retry.dispose()
-                            return create_success_response(result)
-                        try:
-                            retry_err = retry_dr.getErrorMessage() if retry_dr else ""
-                        except Exception:
-                            retry_err = ""
+                # Retry once with a fresh interface if the shared/session
+                # decompiler failed, to recover from stale interface state.
+                if session_decomp is not None:
+                    retry = DecompInterface()
+                    retry_options = DecompileOptions()
+                    retry_options.grabFromProgram(program)
+                    retry.setOptions(retry_options)
+                    retry.openProgram(program)
+                    retry_dr = retry.decompileFunction(target_func, timeout, monitor)
+                    if retry_dr and retry_dr.decompileCompleted():
+                        retry_df = retry_dr.getDecompiledFunction()
+                        result["decompilation"] = retry_df.getC() if retry_df else "// No output"
                         retry.dispose()
-                        if retry_err:
-                            err_msg = retry_err
+                        return create_success_response(result)
+                    try:
+                        retry_err = retry_dr.getErrorMessage() if retry_dr else ""
+                    except Exception:
+                        retry_err = ""
+                    retry.dispose()
+                    if retry_err:
+                        err_msg = retry_err
 
-                    if not err_msg:
-                        try:
-                            err_msg = decomp.getLastMessage() or ""
-                        except Exception:
-                            err_msg = ""
+                if not err_msg:
+                    try:
+                        err_msg = decomp.getLastMessage() or ""
+                    except Exception:
+                        err_msg = ""
 
-                    result["decompilation"] = self._build_decompile_fallback(program, target_func, err_msg, max_instructions=400)
+                result["decompilation"] = self._build_decompile_fallback(program, target_func, err_msg, max_instructions=400)
 
-                if owns_decomp:
-                    decomp.dispose()
-            except Exception as e:
-                result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e), max_instructions=400)
-        elif view in ("disassemble",):
-            instructions: list[dict[str, Any]] = []
-            listing: Any = self._get_listing(program)
-            body: Any = target_func.getBody()
-            if body:
-                instr_iter: Any = listing.getInstructions(body, True)
-                while instr_iter.hasNext() and len(instructions) < max_results:
-                    instr = instr_iter.next()
-                    instructions.append(
-                        {
-                            "address": str(instr.getAddress()),
-                            "mnemonic": instr.getMnemonicString(),
-                            "operands": str(instr),
-                            "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
-                        },
-                    )
-            result["instructions"] = instructions
-            result["instructionCount"] = len(instructions)
+            if owns_decomp:
+                decomp.dispose()
+        except Exception as e:
+            result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e), max_instructions=400)
+        
+        return create_success_response(result)
 
+    async def _handle_disassemble(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        instructions: list[dict[str, Any]] = []
+        listing: Any = self._get_listing(program)
+        body: Any = target_func.getBody()
+        if body:
+            instr_iter: Any = listing.getInstructions(body, True)
+            while instr_iter.hasNext() and len(instructions) < max_results:
+                instr = instr_iter.next()
+                instructions.append(
+                    {
+                        "address": str(instr.getAddress()),
+                        "mnemonic": instr.getMnemonicString(),
+                        "operands": str(instr),
+                        "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
+                    },
+                )
+        result: dict[str, Any] = {
+            "name": target_func.getName(),
+            "address": str(target_func.getEntryPoint()),
+            "signature": str(target_func.getSignature()),
+            "view": "disassemble",
+            "instructions": instructions,
+            "instructionCount": len(instructions),
+        }
         return create_success_response(result)
 

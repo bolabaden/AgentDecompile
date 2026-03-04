@@ -44,6 +44,10 @@ _NL_KV_PATTERN = re.compile(
     rf"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{{1,80}}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>{_NL_VALUE_PATTERN})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
     flags=re.IGNORECASE,
 )
+_NL_PHRASE_VALUE_PATTERN_TEMPLATE = (
+    rf"(?:\bwith\b|\band\b|^|[,;\n])\s*(?:__PHRASE_RE__)\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*"
+    rf"(?P<value>{_NL_VALUE_PATTERN})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)"
+)
 
 # Program path cleanup patterns
 _PROGRAM_PATH_CLEANUP_PATTERN = re.compile(
@@ -52,6 +56,17 @@ _PROGRAM_PATH_CLEANUP_PATTERN = re.compile(
 )
 _PROGRAM_PATH_SCOPE_PATTERN = re.compile(r"\s+to\s+", flags=re.IGNORECASE)
 _QUOTED_PATH_PATTERN = re.compile(r'"[^"]+"|\'[^\']+\'')
+
+
+@lru_cache(maxsize=512)
+def _compile_nl_phrase_pattern(phrase: str) -> re.Pattern[str]:
+    """Return cached regex used to capture values for a normalized NL phrase."""
+    phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
+    pattern_text = _NL_PHRASE_VALUE_PATTERN_TEMPLATE.replace("__PHRASE_RE__", phrase_re)
+    return re.compile(
+        pattern_text,
+        flags=re.IGNORECASE,
+    )
 
 # NL phrase preprocessing patterns (used in _preprocess_nl_phrases)
 _NL_PHRASE_PATTERNS = [
@@ -369,9 +384,9 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "search-functions-by-name": "search-symbols",
 }
 
-# TODO: GUI Only tools/commands
-# Disabled for MCP/CLI usage in this headless-focused surface.
-# Re-enable when a GUI capability flag is introduced.
+# GUI-only tools disabled for headless MCP/CLI usage.
+# These tools require a graphical interface and are not available in server/headless mode.
+# They remain defined for completeness but are filtered out of advertised tool lists.
 DISABLED_GUI_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "get-current-address",
@@ -428,7 +443,15 @@ def normalize_identifier(s: str) -> str:
 
 
 def _find_repo_root_for_tools_list() -> Path | None:
-    """Best-effort discovery of repository root containing TOOLS_LIST.md."""
+    """Best-effort discovery of repository root containing TOOLS_LIST.md.
+
+    Walks up the directory tree from the current file location to find a directory
+    containing TOOLS_LIST.md. This allows the registry to dynamically load tool
+    specifications and aliases from documentation.
+
+    Returns:
+        Path to the repository root directory, or None if TOOLS_LIST.md not found
+    """
     current = Path(__file__).resolve()
     for parent in [current.parent, *current.parents]:
         candidate = parent / "TOOLS_LIST.md"
@@ -440,8 +463,19 @@ def _find_repo_root_for_tools_list() -> Path | None:
 def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dict[str, set[str]]], dict[str, str]]:
     """Parse TOOLS_LIST.md and extract parameter names, param aliases, and tool aliases.
 
+    Reads the TOOLS_LIST.md file and extracts:
+    - Tool parameter definitions
+    - Parameter aliases/synonyms
+    - Tool aliases (forwarding relationships)
+
+    This enables dynamic synchronization between documentation and code,
+    ensuring tool specifications stay in sync with the implementation.
+
     Returns:
-        (params_by_tool, param_aliases_by_tool_norm, tool_aliases_by_norm)
+        Tuple of (params_by_tool, param_aliases_by_tool_norm, tool_aliases_by_norm):
+        - params_by_tool: dict[tool_name, list[param_names]]
+        - param_aliases_by_tool_norm: dict[normalized_tool_name, dict[normalized_alias, set[normalized_canonicals]]]
+        - tool_aliases_by_norm: dict[normalized_alias_tool, canonical_tool_name]
     """
     root = _find_repo_root_for_tools_list()
     if root is None:
@@ -536,7 +570,19 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
 
 
 def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Merge TOOLS_LIST parameter names into TOOL_PARAMS without losing existing names."""
+    """Merge TOOLS_LIST parameter names into TOOL_PARAMS without losing existing names.
+
+    Combines parameter definitions from code (TOOL_PARAMS) with those extracted from
+    TOOLS_LIST.md documentation. Preserves existing parameters while adding any
+    new ones found in the documentation, ensuring comprehensive parameter coverage.
+
+    Args:
+        base: Base parameter definitions from code (TOOL_PARAMS)
+        extra: Additional parameters extracted from TOOLS_LIST.md
+
+    Returns:
+        Merged parameter dictionary with all parameters from both sources
+    """
     merged = {k: list(v) for k, v in base.items()}
     for tool, params in extra.items():
         if tool not in merged:
@@ -715,7 +761,25 @@ _TOOL_SUFFIXES = (
 
 
 def resolve_tool_name(tool_name: str) -> str | None:
-    """Resolve arbitrary tool aliases/noisy variants to canonical kebab-case tool names."""
+    """Resolve arbitrary tool aliases/noisy variants to canonical kebab-case tool names.
+
+    Handles fuzzy matching by normalizing tool names (removing non-alphabetic characters,
+    case-insensitive comparison) and checking against known tools and aliases. Also
+    strips common prefixes/suffixes like "agentdecompile", "tool", "action", etc.
+
+    Examples::
+        resolve_tool_name("analyze-data-flow")     # -> "analyze-data-flow"
+        resolve_tool_name("analyze_data_flow")     # -> "analyze-data-flow"
+        resolve_tool_name("Analyze Data Flow")     # -> "analyze-data-flow"
+        resolve_tool_name("tool-analyze-data-flow") # -> "analyze-data-flow"
+        resolve_tool_name("search-symbols-by-name") # -> "manage-symbols" (alias)
+
+    Args:
+        tool_name: The tool name to resolve (any format/casing/separators)
+
+    Returns:
+        The canonical kebab-case tool name, or None if no match found
+    """
     norm = normalize_identifier(tool_name)
     if not norm:
         return None
@@ -921,9 +985,13 @@ class ToolRegistry:
 
         expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
         param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
+        normalized_argument_keys: dict[str, str] = {
+            key: normalize_identifier(key)
+            for key in augmented_arguments
+        }
         normalized_arguments: dict[str, Any] = {}
         for key, value in augmented_arguments.items():
-            normalized_arguments.setdefault(normalize_identifier(key), value)
+            normalized_arguments.setdefault(normalized_argument_keys[key], value)
 
         parsed_args: dict[str, Any] = {}
 
@@ -957,7 +1025,7 @@ class ToolRegistry:
         # manage-symbols).  The server-side normalization handles the rest.
         parsed_norms: set[str] = {normalize_identifier(k) for k in parsed_args}
         for key, value in augmented_arguments.items():
-            if normalize_identifier(key) not in parsed_norms:
+            if normalized_argument_keys[key] not in parsed_norms:
                 parsed_args[key] = value
 
         return parsed_args
@@ -1066,19 +1134,13 @@ class ToolRegistry:
             phrase = phrase.replace("_", " ").replace("-", " ").strip().lower()
             phrases_by_param.setdefault(canonical_param, set()).add(phrase)
             if alias_norm:
-                alias_phrase = " ".join(re.findall(r"[a-z]+", alias_norm))
-                if alias_phrase:
-                    phrases_by_param[canonical_param].add(alias_phrase)
+                phrases_by_param[canonical_param].add(alias_norm)
 
         for canonical_param, phrases in phrases_by_param.items():
             for phrase in sorted(phrases, key=len, reverse=True):
                 if not phrase:
                     continue
-                phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
-                pattern = re.compile(
-                    rf"(?:\bwith\b|\band\b|^|[,;\n])\s*(?:{phrase_re})\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>{_NL_VALUE_PATTERN})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
-                    flags=re.IGNORECASE,
-                )
+                pattern = _compile_nl_phrase_pattern(phrase)
                 for match in pattern.finditer(text):
                     value_raw = match.group("value").strip()
                     extracted[canonical_param] = self._coerce_natural_language_value(value_raw)
@@ -1092,52 +1154,7 @@ class ToolRegistry:
             )
 
         # Common phrase fallback extraction to improve NL robustness.
-        def _capture(name: str, pattern: str, *, flags: int = re.IGNORECASE, transform=None) -> None:
-            m = re.search(pattern, text, flags=flags)
-            if not m:
-                return
-            value_raw = m.group("value") if "value" in m.groupdict() else m.group(1)
-            value: Any = self._coerce_natural_language_value(value_raw.strip())
-            if transform is not None:
-                value = transform(value)
-            if name not in extracted or extracted.get(name) in (None, "", f"{name}"):
-                extracted[name] = value
-
-        # Path/program patterns
-        _capture(
-            "programPath",
-            r"\bprogram\s+path\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)",
-        )
-        _capture(
-            "programPath",
-            r"\bprogram\s+(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)",
-        )
-
-        # Address/target/function
-        _capture("addressOrSymbol", r"\baddress\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>0x[0-9a-fA-F]+)")
-        _capture("addressOrSymbol", r"\bat\s+(?P<value>0x[0-9a-fA-F]+)")
-        _capture("target", r"\btarget\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
-        _capture("function", r"\bfunction\s+(?P<value>[A-Za-z_][A-Za-z0-9_]*)")
-
-        # String/search patterns
-        _capture("pattern", r"\bpattern\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
-        _capture("query", r"\bquery\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)")
-        _capture("comment", r"\bcomment\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+')")
-        _capture("mode", r"\bmode\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)")
-
-        # Boolean flags
-        _capture("includeRefContext", r"\binclude\s+ref\s+context\s+(?P<value>true|false)")
-        _capture("includeDataRefs", r"\binclude\s+data\s+refs\s+(?P<value>true|false)")
-        _capture("skipAnalysis", r"\bskip\s+analysis\s+(?P<value>true|false)")
-
-        # Numeric options
-        _capture("limit", r"\blimit\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("maxResults", r"\bmax\s+results\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("maxCount", r"\bmax\s+count\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("startIndex", r"\bstart\s+index\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("minLength", r"\bmin\s+length\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("maxDepth", r"\bmax\s+depth\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
-        _capture("length", r"\blength\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)")
+        self._extract_common_nl_patterns(text, extracted)
 
         # Cleanup common artifacts again after fallback.
         if "programPath" in extracted and isinstance(extracted["programPath"], str):
@@ -1150,6 +1167,49 @@ class ToolRegistry:
             extracted["address"] = extracted["addressOrSymbol"]
 
         return extracted
+
+    def _capture_nl_pattern(self, text: str, extracted: dict[str, Any], param_name: str, pattern: str, flags: int = re.IGNORECASE) -> None:
+        """Capture a natural language pattern and extract the value if not already present."""
+        m = re.search(pattern, text, flags=flags)
+        if not m:
+            return
+        value_raw = m.group("value") if "value" in m.groupdict() else m.group(1)
+        value: Any = self._coerce_natural_language_value(value_raw.strip())
+        if param_name not in extracted or extracted.get(param_name) in (None, "", f"{param_name}"):
+            extracted[param_name] = value
+
+    def _extract_common_nl_patterns(self, text: str, extracted: dict[str, Any]) -> None:
+        """Extract common natural language patterns using predefined capture rules."""
+        capture_patterns = [
+            # Path/program patterns
+            ("programPath", r"\bprogram\s+path\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)"),
+            ("programPath", r"\bprogram\s+(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)"),
+            # Address/target/function patterns
+            ("addressOrSymbol", r"\baddress\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>0x[0-9a-fA-F]+)"),
+            ("addressOrSymbol", r"\bat\s+(?P<value>0x[0-9a-fA-F]+)"),
+            ("target", r"\btarget\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)"),
+            ("function", r"\bfunction\s+(?P<value>[A-Za-z_][A-Za-z0-9_]*)"),
+            # String/search patterns
+            ("pattern", r"\bpattern\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)"),
+            ("query", r"\bquery\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|[^,;\n\s]+)"),
+            ("comment", r"\bcomment\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+')"),
+            ("mode", r"\bmode\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)"),
+            # Boolean flags
+            ("includeRefContext", r"\binclude\s+ref\s+context\s+(?P<value>true|false)"),
+            ("includeDataRefs", r"\binclude\s+data\s+refs\s+(?P<value>true|false)"),
+            ("skipAnalysis", r"\bskip\s+analysis\s+(?P<value>true|false)"),
+            # Numeric options
+            ("limit", r"\blimit\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("maxResults", r"\bmax\s+results\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("maxCount", r"\bmax\s+count\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("startIndex", r"\bstart\s+index\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("minLength", r"\bmin\s+length\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("maxDepth", r"\bmax\s+depth\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+            ("length", r"\blength\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>-?\d+)"),
+        ]
+
+        for param_name, pattern in capture_patterns:
+            self._capture_nl_pattern(text, extracted, param_name, pattern)
 
     def _normalize_extracted_program_path(
         self,
@@ -1175,7 +1235,26 @@ class ToolRegistry:
         return self._coerce_natural_language_value(cleaned)
 
     def _coerce_natural_language_value(self, raw_value: str) -> Any:
-        """Coerce natural-language scalar text to bool/int/float/json/string."""
+        """Coerce natural-language scalar text to appropriate Python types.
+
+        Attempts to parse string values extracted from natural language into
+        their most appropriate Python types: booleans, integers, floats, JSON objects,
+        or strings. Handles quoted strings, boolean literals, numeric values,
+        and JSON structures.
+
+        Examples:
+            "true" -> True
+            "42" -> 42
+            "3.14" -> 3.14
+            '"hello"' -> "hello"
+            '{"key": "value"}' -> {"key": "value"}
+
+        Args:
+            raw_value: Raw string value from natural language extraction
+
+        Returns:
+            Coerced value in appropriate Python type, or original string if coercion fails
+        """
         value = raw_value.strip()
         if not value:
             return value
@@ -1313,14 +1392,18 @@ class ToolRegistry:
     ) -> None:
         """Validate that required arguments are present for a tool.
 
+        Checks that all mandatory parameters for a given tool are provided in the
+        arguments dictionary. Required parameters vary by tool - for example,
+        most program-scoped tools require a programPath, while some operations
+        require additional parameters like mode or addressOrSymbol.
+
         Args:
-        ----
-            arguments: Parsed arguments
-            tool_name: Tool name
+            arguments: Parsed arguments dictionary to validate
+            tool_name: Name of the tool to validate arguments for
 
         Raises:
-        -------
-            ValueError: If required arguments are missing
+            ValueError: If any required arguments are missing, with details about
+                       which parameters are required for the tool
         """
         resolved_tool = self.resolve_tool_name(tool_name) or tool_name
         canonical_name: str = self.canonicalize_tool_name(resolved_tool)
@@ -1472,15 +1555,20 @@ class ToolRegistry:
     ) -> Any:
         """Execute a tool via CLI client.
 
+        Creates a standardized tool call payload and executes it using the provided
+        MCP client session. Handles argument parsing, validation, and tool resolution
+        before dispatching to the backend.
+
         Args:
-        ----
-            tool_name: Tool name
-            arguments: Tool arguments
-            client: MCP client instance
+            tool_name: Name of the tool to execute
+            arguments: Raw tool arguments (will be parsed and validated)
+            client: MCP client session for tool execution
 
         Returns:
-        -------
-            Tool execution result
+            Tool execution result from the MCP server
+
+        Raises:
+            ValueError: If client is not provided or tool execution fails
         """
         if client is None:
             raise ValueError("MCP client is required")
@@ -1498,14 +1586,16 @@ class ToolRegistry:
     ) -> str:
         """Format tool response for CLI output.
 
+        Converts MCP tool response content into various human-readable formats
+        for CLI display. Supports JSON, plain text, and table formats depending
+        on the data structure and user preference.
+
         Args:
-        ----
-            response: MCP tool response
-            output_format: Output format (json, text, table)
+            response: MCP tool response containing text content with JSON data
+            output_format: Desired output format - "json", "text", or "table"
 
         Returns:
-        -------
-            Formatted response string
+            Formatted response string suitable for CLI display
         """
         if not response:
             return ""

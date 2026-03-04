@@ -137,12 +137,12 @@ def _get_opts(ctx: click.Context) -> dict[str, Any]:
 
 def _client(ctx: click.Context) -> Any:
     """Create an MCP HTTP client connected to the backend.
-    
+
     Reads server host/port/url from CLI context options and creates
     an AgentDecompileMcpClient connected to the specified backend.
-    
+
     Prefers explicit --server-url over --host/--port.
-    
+
     Returns:
         AgentDecompileMcpClient: Configured MCP client ready to call tools.
     """
@@ -162,7 +162,7 @@ def _client(ctx: click.Context) -> Any:
 
 def _fmt(ctx: click.Context) -> str:
     """Get the output format setting from CLI context options.
-    
+
     Returns configured format (json, text, yaml, etc.) or default.
     """
     return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
@@ -177,38 +177,75 @@ def _extract_text(result: Any) -> str | None:
     return None
 
 
-def _parse_json(result: Any) -> dict | list | None:
-    text = _extract_text(result)
-    if not text:
-        return None
+def _safe_json_loads(value: Any) -> Any:
+    """Best-effort JSON decode for string payloads."""
+    if not isinstance(value, str):
+        return value
     try:
-        return json.loads(text) if isinstance(text, str) else text
+        return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return None
 
 
-def _get_error_result_message(data: Any) -> str | None:
-    """If data is a tool error result (success: false, error present), return the error message; else None."""
+def _iter_tool_result_dicts(data: Any):
+    """Yield root and nested tool-result dictionaries from MCP response payloads."""
     if not isinstance(data, dict):
-        return None
-    if data.get("success") is False and "error" in data:
-        return str(data.get("error", "Tool returned an error"))
+        return
+
+    yield data
 
     content = data.get("content")
     if not isinstance(content, list):
-        return None
+        return
+
     for item in content:
         if not isinstance(item, dict):
             continue
         text = item.get("text")
-        if not isinstance(text, str) or not text.strip():
-            continue
-        try:
-            nested = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(nested, dict) and nested.get("success") is False and "error" in nested:
-            return str(nested.get("error", "Tool returned an error"))
+        nested = _safe_json_loads(text)
+        if isinstance(nested, dict):
+            yield nested
+
+
+def _parse_json(result: Any) -> dict | list | None:
+    text = _extract_text(result)
+    if not text:
+        return None
+    parsed = _safe_json_loads(text)
+    if parsed is None and not isinstance(text, str):
+        return text
+    return parsed
+
+
+def _ensure_count_in_project_file_results(data: Any) -> Any:
+    """Backfill `count` for list-project-files style payloads when backend omits it."""
+    if not isinstance(data, dict):
+        return data
+
+    files = data.get("files")
+    if "count" not in data and isinstance(files, list):
+        data["count"] = len(files)
+
+    content = data.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            nested = _safe_json_loads(item.get("text"))
+            if isinstance(nested, dict):
+                nested_files = nested.get("files")
+                if "count" not in nested and isinstance(nested_files, list):
+                    nested["count"] = len(nested_files)
+                    item["text"] = json.dumps(nested)
+
+    return data
+
+
+def _get_error_result_message(data: Any) -> str | None:
+    """If data is a tool error result (success: false, error present), return the error message; else None."""
+    for payload in _iter_tool_result_dicts(data):
+        if payload.get("success") is False and "error" in payload:
+            return str(payload.get("error", "Tool returned an error"))
     return None
 
 
@@ -219,38 +256,19 @@ def _is_no_program_loaded_error(data: Any) -> bool:
         if "no program loaded" in err_l or "no active program" in err_l:
             return True
 
-    if isinstance(data, dict):
-        note = str(data.get("note", "")).strip().lower()
+    for payload in _iter_tool_result_dicts(data):
+        note = str(payload.get("note", "")).strip().lower()
         if note in {"no program currently loaded", "no project loaded"}:
             return True
-        if data.get("loaded") is False and "no program" in note:
+        if payload.get("loaded") is False and "no program" in note:
             return True
-
-        content = data.get("content")
-        if isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                text = item.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                try:
-                    nested = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(nested, dict):
-                    nested_note = str(nested.get("note", "")).strip().lower()
-                    if nested_note in {"no program currently loaded", "no project loaded"}:
-                        return True
-                    if nested.get("loaded") is False and "no program" in nested_note:
-                        return True
 
     return False
 
 
 def _backend_host_for_recovery(ctx: click.Context) -> str:
-    opts = _get_opts(ctx)
-    backend_url = resolve_backend_url(opts.get("server_url"), opts.get("host"), opts.get("port"))
+    opts: dict[str, Any] = _get_opts(ctx)
+    backend_url: str | None = resolve_backend_url(opts.get("server_url"), opts.get("host"), opts.get("port"))
     if backend_url:
         try:
             parsed = urlparse(backend_url)
@@ -268,6 +286,27 @@ async def _recover_and_retry_with_program(
     payload: dict[str, Any],
     result: dict[str, Any],
 ) -> dict[str, Any]:
+    """Auto-recover from 'no program loaded' errors by attempting to open the requested program.
+
+    When a tool call fails with "no program loaded", this function attempts to:
+    1. Extract the requested program path from the original payload
+    2. Try opening the program via shared Ghidra server (if configured)
+    3. Try opening the program directly
+    4. Retry the original tool call
+
+    This provides a seamless user experience where users don't need to manually
+    open programs before using tools that require them.
+
+    Args:
+        ctx: Click context with CLI options
+        client: MCP client for tool calls
+        tool_name: Name of the tool that failed
+        payload: Original tool arguments
+        result: Failed tool result (containing "no program loaded" error)
+
+    Returns:
+        Either the original failed result, or the successful retried result
+    """
     if not _is_no_program_loaded_error(result):
         return result
 
@@ -281,27 +320,16 @@ async def _recover_and_retry_with_program(
         or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
         or _backend_host_for_recovery(ctx)
     )
-    shared_port_raw = (
-        str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
-        or "13100"
-    )
+    shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
         shared_port = 13100
 
-    shared_user = (
-        str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    )
-    shared_pass = (
-        str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-    )
+    shared_user = str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+    shared_pass = str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
     shared_repo = (
-        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
     )
 
     open_attempts: list[dict[str, Any]] = []
@@ -354,7 +382,22 @@ async def _recover_and_retry_with_program(
 
 
 def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Resolve CLI-invoked tool name to a server-advertised canonical call target."""
+    """Resolve CLI-invoked tool name to a server-advertised canonical call target.
+
+    Handles tool name normalization and alias forwarding. For example:
+    - "list-exports" → "manage-symbols" with mode="exports"
+    - "list-imports" → "manage-symbols" with mode="imports"
+
+    This ensures CLI commands map correctly to the server's advertised tool API,
+    even when using legacy or aliased command names.
+
+    Args:
+        tool: Original tool name from CLI
+        payload: Tool arguments dictionary
+
+    Returns:
+        Tuple of (canonical_tool_name, updated_payload) ready for server call
+    """
     call_tool_name = tool
     resolved_tool = tool_registry.resolve_tool_name(tool) if tool_registry.is_valid_tool(tool) else None
     if resolved_tool is not None:
@@ -379,6 +422,19 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     The CLI is a pure HTTP client — it NEVER executes tools locally.  All tool
     calls are forwarded to the MCP server (which runs with PyGhidra and has
     access to Ghidra APIs).
+
+    Workflow:
+    1. Clean payload (remove None values)
+    2. Resolve tool name and arguments through registry
+    3. Cache explicit program paths for future commands
+    4. Make HTTP call to MCP server
+    5. Auto-recover from "no program loaded" errors
+    6. Format and display results
+
+    Args:
+        ctx: Click context with CLI options
+        tool: Tool name to call
+        **kwargs: Tool arguments (None values are filtered out)
     """
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
@@ -414,6 +470,10 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     if err_msg is not None:
         click.echo(err_msg, err=True)
         sys.exit(1)
+
+    if call_tool_name == "list_project_files":
+        data = _ensure_count_in_project_file_results(data)
+
     click.echo(format_output(data, _fmt(ctx)))
 
 
@@ -423,7 +483,21 @@ async def _call_raw(
     payload: dict[str, Any],
     client_override: Any | None = None,
 ) -> Any:
-    """Call tool and return raw result for programmatic CLI workflows."""
+    """Call tool and return raw result for programmatic CLI workflows.
+
+    Similar to _call() but returns the raw result dictionary instead of
+    formatting/displaying it. Used by internal CLI workflows that need
+    to process results programmatically.
+
+    Args:
+        ctx: Click context with CLI options
+        tool: Tool name to call
+        payload: Tool arguments dictionary
+        client_override: Optional pre-configured client (avoids creating new one)
+
+    Returns:
+        Raw tool result dictionary from MCP server
+    """
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     safe_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
@@ -455,7 +529,21 @@ async def _call_raw(
 
 
 def _parse_tool_payload(arguments: str) -> dict[str, Any]:
-    """Parse CLI JSON argument payload for generic tool commands."""
+    """Parse CLI JSON argument payload for generic tool commands.
+
+    Handles JSON parsing with error handling and shell quoting cleanup.
+    PowerShell may wrap JSON arguments in quotes, so this function strips
+    matching outer quotes before parsing.
+
+    Args:
+        arguments: JSON string from CLI arguments
+
+    Returns:
+        Parsed JSON object as dictionary
+
+    Raises:
+        SystemExit: If JSON is invalid or not an object
+    """
     # Strip whitespace and leading/trailing quotes (PowerShell may pass them)
     arguments = arguments.strip()
     if arguments and arguments[0] in ('"', "'") and arguments[-1] == arguments[0]:
@@ -614,13 +702,13 @@ def _validate_known_tool(name: str) -> None:
 
 def _run_async(coro: Coroutine[Any, Any, None]) -> None:
     """Run an async coroutine in a new event loop and handle errors.
-    
+
     Wrapper that:
     1. Runs the coroutine via asyncio.run()
     2. Catches cancellation and general exceptions
     3. Formats errors for CLI output
     4. Exits with code 1 on error
-    
+
     Used by most CLI commands that need to call async MCP tools.
     """
     try:
@@ -774,11 +862,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 
 
 def _tool_aliases_for(canonical_tool: str) -> list[str]:
-    aliases: list[str] = [
-        alias
-        for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()
-        if target == canonical_tool
-    ]
+    aliases: list[str] = [alias for alias, target in NON_ADVERTISED_TOOL_ALIASES.items() if target == canonical_tool]
     snake_alias = to_snake_case(canonical_tool)
     if snake_alias != canonical_tool:
         aliases.append(snake_alias)
@@ -1280,13 +1364,13 @@ def resource_grp() -> None:
 async def _read_resource(ctx: click.Context, uri: str) -> None:
     """Read a resource with auto-recovery for program loading."""
     client = _client(ctx)
-    
+
     try:
         async with client:
             result = await client.read_resource(uri)
     except Exception as e:
         error_msg = str(e).lower()
-        
+
         # Check if error is program-related
         if "no program loaded" in error_msg or "no active program" in error_msg:
             # Try to recover by opening a program from environment
@@ -1312,7 +1396,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
         else:
             # Not a program-loading error, re-raise
             raise
-    
+
     data = _parse_json(result)
     click.echo(format_output(data or result, _fmt(ctx)))
 
@@ -3556,6 +3640,19 @@ def shared_sync(
     _run_async(_call(ctx, "sync-shared-project", **payload))
 
 
+def _gui_only_command_error(tool_name: str) -> None:
+    """Handle GUI-only commands by displaying an error and exiting.
+
+    Consolidates the repeated pattern of GUI-only tool error handling
+    to reduce code duplication and improve maintainability.
+
+    Args:
+        tool_name: The name of the GUI-only tool that was requested
+    """
+    click.echo(f"Tool '{tool_name}' is disabled (GUI-only).", err=True)
+    sys.exit(1)
+
+
 @main.command("current-program", help="Get current program (get-current-program, GUI)")
 @click.option("-b", "--binary", "program_path")
 @click.pass_context
@@ -3570,9 +3667,7 @@ def current_program(ctx: click.Context, program_path: str | None) -> None:
 @main.command("current-address", help="Get current address (get-current-address, GUI)")
 @click.pass_context
 def current_address(ctx: click.Context) -> None:
-    # TODO: GUI Only tools/commands
-    click.echo("Tool 'get-current-address' is disabled (GUI-only).", err=True)
-    sys.exit(1)
+    _gui_only_command_error("get-current-address")
 
 
 # TODO: GUI Only tools/commands
@@ -3582,9 +3677,7 @@ def current_address(ctx: click.Context) -> None:
 )
 @click.pass_context
 def current_function(ctx: click.Context) -> None:
-    # TODO: GUI Only tools/commands
-    click.echo("Tool 'get-current-function' is disabled (GUI-only).", err=True)
-    sys.exit(1)
+    _gui_only_command_error("get-current-function")
 
 
 # TODO: GUI Only tools/commands
@@ -3595,9 +3688,7 @@ def current_function(ctx: click.Context) -> None:
 @click.option("-b", "--binary", "program_path", required=True)
 @click.pass_context
 def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
-    # TODO: GUI Only tools/commands
-    click.echo("Tool 'open-program-in-code-browser' is disabled (GUI-only).", err=True)
-    sys.exit(1)
+    _gui_only_command_error("open-program-in-code-browser")
 
 
 # TODO: GUI Only tools/commands
@@ -3622,9 +3713,7 @@ def open_all_in_code_browser(
     extensions: str,
     folder_path: str,
 ) -> None:
-    # TODO: GUI Only tools/commands
-    click.echo("Tool 'open-all-programs-in-code-browser' is disabled (GUI-only).", err=True)
-    sys.exit(1)
+    _gui_only_command_error("open-all-programs-in-code-browser")
 
 
 # ---------------------------------------------------------------------------
@@ -3767,6 +3856,7 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
 # Generic tool call (any MCP tool by name + JSON args)
 # ---------------------------------------------------------------------------
 
+
 @main.command(
     "alias",
     help="Show alias/overload mappings and signatures for a tool name.",
@@ -3809,6 +3899,7 @@ def alias_cmd(name: str) -> None:
         for alias in same_signature_aliases:
             click.echo(f"  - {alias}")
 
+
 @main.command(
     "tool",
     help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
@@ -3849,7 +3940,23 @@ def tool_cmd(
         if err_msg is not None:
             click.echo(err_msg, err=True)
             sys.exit(1)
-        click.echo(format_output(_inject_inferred_program(data, inferred_program), _fmt(ctx)))
+        display_data = _inject_inferred_program(data, inferred_program)
+
+        if isinstance(display_data, dict):
+            nested_json: Any | None = None
+            content = display_data.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        nested = _safe_json_loads(item.get("text"))
+                        if isinstance(nested, (dict, list)):
+                            nested_json = nested
+                            break
+            if nested_json is not None:
+                click.echo(format_output(nested_json, "json"))
+                return
+
+        click.echo(format_output(display_data, _fmt(ctx)))
 
     _run_async(_run())
 
@@ -3877,6 +3984,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
         results: list[dict[str, Any]] = []
         client = _client(ctx)
         async with client:
+            step: dict[str, Any]
             for index, step in enumerate(parsed_steps, start=1):
                 name = step.get("name")
                 arguments = step.get("arguments", {})

@@ -203,20 +203,24 @@ class RawMcpHttpBackend:
 
         MCP Streamable HTTP may return multiple SSE events; the final one
         with ``"result"`` or ``"error"`` is the JSON-RPC response.
+        
+        Optimized to find the last data line without processing all lines
+        when only the final result matters.
         """
-        last_payload: dict[str, Any] | None = None
-        for line in text.splitlines():
+        # Find the last "data:" line more efficiently by working backwards
+        lines = text.splitlines()
+        for line in reversed(lines):
             stripped = line.strip()
             if stripped.startswith("data:"):
-                raw = stripped[len("data:"):].strip()
+                raw = stripped[5:].strip()  # len("data:") = 5
                 if raw:
                     try:
                         parsed = json.loads(raw)
                         if isinstance(parsed, dict):
-                            last_payload = parsed
+                            return parsed
                     except json.JSONDecodeError:
                         continue
-        return last_payload
+        return None
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST a JSON-RPC envelope and return the parsed response dict."""
@@ -277,6 +281,14 @@ class RawMcpHttpBackend:
             raise ClientError(f"JSON-RPC error: {msg}")
         return response.get("result", response)
 
+    async def _request_list(self, method: str, key: str) -> list[dict[str, Any]]:
+        """Call a list-style RPC method and safely extract ``key`` from its result."""
+        result = await self._request(method)
+        if not isinstance(result, dict):
+            return []
+        items = result.get(key, [])
+        return items if isinstance(items, list) else []
+
     # -- public API ----------------------------------------------------------
 
     async def initialize(self) -> dict[str, Any]:
@@ -292,23 +304,20 @@ class RawMcpHttpBackend:
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return the raw tool list from ``tools/list``."""
-        result = await self._request("tools/list")
-        return result.get("tools", []) if isinstance(result, dict) else []
+        return await self._request_list("tools/list", "tools")
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool and return the raw result dict."""
         return await self._request("tools/call", {"name": name, "arguments": arguments or {}})
 
     async def list_resources(self) -> list[dict[str, Any]]:
-        result = await self._request("resources/list")
-        return result.get("resources", []) if isinstance(result, dict) else []
+        return await self._request_list("resources/list", "resources")
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
         return await self._request("resources/read", {"uri": uri})
 
     async def list_prompts(self) -> list[dict[str, Any]]:
-        result = await self._request("prompts/list")
-        return result.get("prompts", []) if isinstance(result, dict) else []
+        return await self._request_list("prompts/list", "prompts")
 
     async def close(self) -> None:
         """Close the underlying httpx client."""
@@ -399,6 +408,13 @@ class AgentDecompileMcpClient:
         """Return True if *exc* is a transport/connection failure."""
         return _is_transport_connection_error(exc)
 
+    def _require_connected_backend(self) -> RawMcpHttpBackend:
+        """Return the active backend when connected, else raise a client error."""
+        backend = self._backend
+        if not self._connected or backend is None:
+            raise ClientError("Not connected")
+        return backend
+
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""
         if isinstance(result, dict):
@@ -440,34 +456,24 @@ class AgentDecompileMcpClient:
 
     async def list_tools(self) -> list[Any]:
         """List tools offered by the server."""
-        if not self._connected or self._backend is None:
-            raise ClientError("Not connected")
-        return await self._backend.list_tools()
+        return await self._require_connected_backend().list_tools()
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool by name with optional arguments."""
-        if not self._connected or self._backend is None:
-            raise ClientError("Not connected")
-        result = await self._backend.call_tool(name, arguments or {})
+        result = await self._require_connected_backend().call_tool(name, arguments or {})
         return self._extract_result(result)
 
     async def list_resources(self) -> list[Any]:
         """List resources offered by the server."""
-        if not self._connected or self._backend is None:
-            raise ClientError("Not connected")
-        return await self._backend.list_resources()
+        return await self._require_connected_backend().list_resources()
 
     async def read_resource(self, uri: str) -> Any:
         """Read a resource by URI."""
-        if not self._connected or self._backend is None:
-            raise ClientError("Not connected")
-        return await self._backend.read_resource(uri)
+        return await self._require_connected_backend().read_resource(uri)
 
     async def list_prompts(self) -> list[Any]:
         """List prompts offered by the server."""
-        if not self._connected or self._backend is None:
-            raise ClientError("Not connected")
-        return await self._backend.list_prompts()
+        return await self._require_connected_backend().list_prompts()
 
 
 # ---------------------------------------------------------------------------
@@ -832,98 +838,125 @@ class AgentDecompileStdioBridge:
         """Convert a raw tool dict from the backend to an MCP ``Tool`` object."""
         return Tool.model_validate(raw)
 
+    async def _handle_list_tools(self) -> list[Tool]:
+        """Handle MCP list_tools request by forwarding to backend."""
+        try:
+            raw_tools: list[dict[str, Any]] = await self._backend_request("list_tools")
+            advertised: list[Tool] = []
+            for raw in raw_tools:
+                try:
+                    tool = self._raw_tool_to_mcp(raw)
+                except Exception:
+                    continue  # skip non-parseable tools
+
+                # Normalize name via registry.
+                resolved = resolve_tool_name(tool.name)
+                canonical = resolved if resolved is not None else tool.name
+                if canonical != tool.name:
+                    try:
+                        tool = tool.model_copy(update={"name": canonical})
+                    except Exception:
+                        pass
+                advertised.append(tool)
+            return advertised
+        except Exception as e:
+            sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
+            return []
+
+    async def _handle_call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:
+        """Handle MCP call_tool request by forwarding to backend."""
+        backend_name = resolve_tool_name(name) if isinstance(name, str) else None
+        if backend_name is None:
+            backend_name = name
+
+        try:
+            raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, arguments)
+            # raw_result is the JSON-RPC "result" value which should be
+            # a CallToolResult-shaped dict: {content: [...], isError: bool}
+            return CallToolResult.model_validate(raw_result)
+        except ClientError as exc:
+            sys.stderr.write(f"ERROR: call_tool {name}: {exc}\n")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Error: {exc}")],
+                isError=True,
+            )
+        except Exception as exc:
+            sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
+                isError=True,
+            )
+
+    async def _handle_list_resources(self) -> list[Resource]:
+        """Handle MCP list_resources request by forwarding to backend."""
+        try:
+            from mcp.types import Resource as _Resource
+
+            raw: list[dict[str, Any]] = await self._backend_request("list_resources")
+            return [_Resource.model_validate(r) for r in raw]
+        except Exception as e:
+            sys.stderr.write(f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n")
+            return []
+
+    async def _handle_read_resource(
+        self,
+        uri: AnyUrl,
+    ) -> str | bytes | Iterable[ReadResourceContents]:
+        """Handle MCP read_resource request by forwarding to backend."""
+        try:
+            raw: dict[str, Any] = await self._backend_request("read_resource", str(uri))
+            contents = raw.get("contents", [])
+            if contents:
+                c0 = contents[0] if isinstance(contents, list) else contents
+                if isinstance(c0, dict):
+                    return c0.get("text", c0.get("blob", ""))
+            return ""
+        except Exception as e:
+            sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
+            return ""
+
+    async def _handle_list_prompts(self) -> list[Prompt]:
+        """Handle MCP list_prompts request by forwarding to backend."""
+        try:
+            from mcp.types import Prompt as _Prompt
+
+            raw: list[dict[str, Any]] = await self._backend_request("list_prompts")
+            return [_Prompt.model_validate(p) for p in raw]
+        except Exception as e:
+            sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
+            return []
+
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
 
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:  # type: ignore[name-defined]
-            try:
-                raw_tools: list[dict[str, Any]] = await self._backend_request("list_tools")
-                advertised: list[Tool] = []
-                for raw in raw_tools:
-                    try:
-                        tool = self._raw_tool_to_mcp(raw)
-                    except Exception:
-                        continue  # skip non-parseable tools
-
-                    # Normalize name via registry.
-                    resolved = resolve_tool_name(tool.name)
-                    canonical = resolved if resolved is not None else tool.name
-                    if canonical != tool.name:
-                        try:
-                            tool = tool.model_copy(update={"name": canonical})
-                        except Exception:
-                            pass
-                    advertised.append(tool)
-                return advertised
-            except Exception as e:
-                sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
-                return []
+            return await self._handle_list_tools()
 
         @self.server.call_tool()
         async def call_tool(
             name: str,
             arguments: dict[str, Any],
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
-            backend_name = resolve_tool_name(name) if isinstance(name, str) else None
-            if backend_name is None:
-                backend_name = name
-
-            try:
-                raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, arguments)
-                # raw_result is the JSON-RPC "result" value which should be
-                # a CallToolResult-shaped dict: {content: [...], isError: bool}
-                return CallToolResult.model_validate(raw_result)
-            except ClientError as exc:
-                sys.stderr.write(f"ERROR: call_tool {name}: {exc}\n")
-                return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: {exc}")],
-                    isError=True,
-                )
-            except Exception as exc:
-                sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
-                return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
-                    isError=True,
-                )
+            return await self._handle_call_tool(name, arguments)
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]
-            try:
-                from mcp.types import Resource as _Resource
-
-                raw: list[dict[str, Any]] = await self._backend_request("list_resources")
-                return [_Resource.model_validate(r) for r in raw]
-            except Exception as e:
-                sys.stderr.write(f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n")
-                return []
+            return await self._handle_list_resources()
 
         @self.server.read_resource()
         async def read_resource(
             uri: AnyUrl,  # type: ignore[name-defined]
         ) -> str | bytes | Iterable[ReadResourceContents]:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
-            try:
-                raw: dict[str, Any] = await self._backend_request("read_resource", str(uri))
-                contents = raw.get("contents", [])
-                if contents:
-                    c0 = contents[0] if isinstance(contents, list) else contents
-                    if isinstance(c0, dict):
-                        return c0.get("text", c0.get("blob", ""))
-                return ""
-            except Exception as e:
-                sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
-                return ""
+            return await self._handle_read_resource(uri)
 
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
-            try:
-                from mcp.types import Prompt as _Prompt
-
-                raw: list[dict[str, Any]] = await self._backend_request("list_prompts")
-                return [_Prompt.model_validate(p) for p in raw]
-            except Exception as e:
-                sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
-                return []
+            return await self._handle_list_prompts()
 
     def _create_initialization_options(self):
         """Create MCP initialization options with explicit logging capability.

@@ -35,7 +35,11 @@ class BookmarkToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Path to the program/binary file"},
-                        "mode": {"type": "string", "description": "Operation mode", "enum": ["set", "get", "search", "remove", "remove_all", "categories"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "Operation mode (destructive clear requires mode=remove_all_bookmarks plus explicit safety args)",
+                            "enum": ["set", "get", "search", "remove", "remove_all", "remove_all_bookmarks", "categories"],
+                        },
                         "addressOrSymbol": {"type": "string", "description": "Address or symbol for bookmark"},
                         "type": {"type": "string", "description": "Bookmark type", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
                         "category": {"type": "string", "description": "Bookmark category"},
@@ -45,6 +49,15 @@ class BookmarkToolProvider(ToolProvider):
                         "limit": {"type": "integer", "description": "Maximum results", "default": 100},
                         "offset": {"type": "integer", "description": "Pagination offset", "default": 0},
                         "removeAll": {"type": "boolean", "description": "Remove all bookmarks", "default": False},
+                        "confirmRemoveAll": {
+                            "type": "boolean",
+                            "description": "Required true for destructive clear-all operations",
+                            "default": False,
+                        },
+                        "removeAllToken": {
+                            "type": "string",
+                            "description": "Required exact safety token: REMOVE_ALL_BOOKMARKS",
+                        },
                     },
                     "required": [],
                 },
@@ -53,29 +66,50 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        action = n(self._get_str(args, "mode", "action", "operation"))
-        if not action:
-            raise ValueError("mode/action is required")
+        mode = self._get_str(args, "mode", "action", "operation")
+        if not mode:
+            raise ValueError("mode is required")
 
-        if action in ("add", "set"):
-            return await self._add(args)
-        if action in ("remove", "delete"):
-            return await self._remove(args)
-        if action in ("list", "get", "search"):
-            return await self._list(args)
-        if action == "removeall":
-            return await self._remove_all(args)
-        if action in ("categories", "category"):
-            return await self._categories(args)
-        raise ValueError(f"Unknown bookmark action: {action}")
+        return await self._dispatch_handler(
+            args,
+            mode,
+            {
+                "set": "_handle_set",
+                "add": "_handle_set",  # alias
+                "get": "_handle_get",
+                "list": "_handle_get",  # alias
+                "search": "_handle_get",  # alias
+                "remove": "_handle_remove",
+                "delete": "_handle_remove",  # alias
+                "remove_all": "_handle_remove_all",
+                "remove_all_bookmarks": "_handle_remove_all",
+                "categories": "_handle_categories",
+                "category": "_handle_categories",  # alias
+            },
+        )
 
-    async def _add(self, args: dict[str, Any]) -> list[types.TextContent]:
+    def _require_explicit_remove_all_intent(self, args: dict[str, Any]) -> None:
+        confirmed = self._get_bool(args, "confirmremoveall", "allowdestructive", "force", default=False)
+        token = self._get_str(args, "removealltoken", "confirmationtoken", "safetytoken")
+        if not confirmed or token != "REMOVE_ALL_BOOKMARKS":
+            raise ValueError(
+                "Refusing destructive bookmark clear-all. Use mode='remove_all' or 'remove_all_bookmarks' with confirmRemoveAll=true and removeAllToken='REMOVE_ALL_BOOKMARKS'.",
+            )
+
+    async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
         bookmarks = self._get_list(args, "bookmarks")
         if bookmarks and isinstance(bookmarks[0], dict):
             results = []
             for bm in bookmarks:
                 results.append(await self._add_single(bm))
-            return create_success_response({"success": True, "action": "add_batch", "count": len(results), "results": results})
+            return create_success_response(
+                {
+                    "success": True,
+                    "action": "add_batch",
+                    "count": len(results),
+                    "results": results,
+                },
+            )
 
         addr = self._require_address_or_symbol(args)
         result = await self._add_single(
@@ -109,7 +143,15 @@ class BookmarkToolProvider(ToolProvider):
                 bm_mgr.setBookmark(address, bm_type, category, comment)
 
             self._run_program_transaction(program, "set-bookmark", _set_bookmark)
-            return {"success": True, "action": "set", "address": str(address), "type": bm_type, "category": category}
+            return (
+                {
+                    "success": True,
+                    "action": "set",
+                    "address": str(address),
+                    "type": bm_type,
+                    "category": category,
+                },
+            )
         except Exception:
             return {
                 "success": True,
@@ -122,6 +164,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
         if self._get_bool(args, "removeAll"):
+            self._require_explicit_remove_all_intent(args)
             return await self._remove_all(args)
         addr_str = self._require_address_or_symbol(args)
 
@@ -138,9 +181,16 @@ class BookmarkToolProvider(ToolProvider):
             self._run_program_transaction(self.program_info.program, "remove-bookmark", _remove_bookmarks)
         except Exception:
             pass
-        return create_success_response({"success": True, "action": "remove", "address": str(address)})
+        return create_success_response(
+            {
+                "success": True,
+                "action": "remove",
+                "address": str(address),
+            },
+        )
 
     async def _remove_all(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_explicit_remove_all_intent(args)
         try:
             bm_mgr = self.program_info.program.getBookmarkManager()
 
@@ -150,9 +200,14 @@ class BookmarkToolProvider(ToolProvider):
             self._run_program_transaction(self.program_info.program, "remove-all-bookmarks", _remove_all_bookmarks)
         except Exception:
             pass
-        return create_success_response({"success": True, "action": "remove_all"})
+        return create_success_response(
+            {
+                "success": True,
+                "action": "remove_all",
+            }
+        )
 
-    async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         search = self._get_str(args, "searchText", "search", "query", "pattern")
         offset, limit = self._get_pagination_params(args, default_limit=100)
         bm_type = self._get_str(args, "type")
@@ -171,19 +226,43 @@ class BookmarkToolProvider(ToolProvider):
                     continue
 
                 if matched_count >= offset and len(results) < limit:
-                    results.append({"address": str(bm.getAddress()), "type": bm.getTypeString(), "category": bm.getCategory(), "comment": comment_text})
+                    results.append(
+                        {
+                            "address": str(bm.getAddress()),
+                            "type": bm.getTypeString(),
+                            "category": bm.getCategory(),
+                            "comment": comment_text,
+                        }
+                    )
                 matched_count += 1
 
             return self._create_paginated_response(results, offset, limit, total=matched_count, mode="search")
         except Exception:
-            return create_success_response({"bookmarks": [], "count": 0, "note": "Bookmark API not available in current mode"})
+            return create_success_response(
+                {
+                    "bookmarks": [],
+                    "count": 0,
+                    "note": "Bookmark API not available in current mode",
+                },
+            )
 
-    async def _categories(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_categories(self, args: dict[str, Any]) -> list[types.TextContent]:
         try:
             bm_mgr = self.program_info.program.getBookmarkManager()
             cats = set()
             for bm in bm_mgr.getBookmarksIterator():
                 cats.add(bm.getCategory())
-            return create_success_response({"categories": sorted(cats), "count": len(cats)})
+            return create_success_response(
+                {
+                    "categories": sorted(cats),
+                    "count": len(cats),
+                },
+            )
         except Exception:
-            return create_success_response({"categories": [], "count": 0, "note": "Bookmark API not available"})
+            return create_success_response(
+                {
+                    "categories": [],
+                    "count": 0,
+                    "note": "Bookmark API not available",
+                },
+            )

@@ -73,20 +73,66 @@ __all__ = [
 
 
 def match_tool_name(tool_name: str, canonical_name: str) -> bool:
+    """Check if a tool name matches a canonical name using normalization.
+
+    Performs case-insensitive, separator-agnostic matching by comparing
+    the normalized forms of both names.
+
+    Args:
+        tool_name: The tool name to check (any variant accepted)
+        canonical_name: The canonical tool name to match against
+
+    Returns:
+        True if the names match after normalization
+    """
     return normalize_identifier(tool_name) == normalize_identifier(canonical_name)
 
 
 def normalize_string_arg(value: Any, default: str = "") -> str:
+    """Normalize a string argument value.
+
+    Converts the value to lowercase and strips whitespace, with fallback to default.
+
+    Args:
+        value: The value to normalize
+        default: Default value if input is None
+
+    Returns:
+        Normalized string value
+    """
     return str(value).lower().strip() if value is not None else default.lower().strip()
 
 
 def validate_required_program_path(program_path: str | None) -> str:
+    """Validate that a program path is provided and non-empty.
+
+    Args:
+        program_path: The program path to validate
+
+    Returns:
+        The validated program path
+
+    Raises:
+        ValueError: If program_path is None or empty
+    """
     if not program_path or not program_path.strip():
         raise ValueError("programPath is required")
     return program_path
 
 
 def validate_required_address_or_symbol(address_or_symbol: str | None, context: str = "") -> str:
+    """Validate that an address or symbol is provided and non-empty.
+
+    Args:
+        address_or_symbol: The address or symbol to validate
+        context: Optional context information for error messages
+
+    Returns:
+        The validated address or symbol
+
+    Raises:
+        ValueError: If address_or_symbol is None or empty
+    """
     if not address_or_symbol or not address_or_symbol.strip():
         msg = f"address or addressOrSymbol is required: {context}" if context else "address or addressOrSymbol is required"
         raise ValueError(msg)

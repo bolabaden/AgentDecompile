@@ -126,16 +126,18 @@ class SymbolUtil:
         if namespace is None:
             return ""
 
-        # Build the namespace path
-        path_parts = []
+        # Build the namespace path by collecting parts child→parent, then reversing.
+        # Using append+reverse is O(n) vs insert(0, …) which would be O(n²).
+        path_parts: list[str] = []
         current = namespace
 
         while current is not None:
             name = current.getName(True)
             if name and name != "Global":
-                path_parts.insert(0, name)
+                path_parts.append(name)
             current = current.getParentNamespace()
 
+        path_parts.reverse()
         return "::".join(path_parts) if path_parts else ""
 
     @staticmethod

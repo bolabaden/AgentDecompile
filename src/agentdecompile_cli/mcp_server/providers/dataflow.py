@@ -69,40 +69,12 @@ class DataFlowToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
-        """Analyze data flow at a specific address using P-code decompilation.
-        
-        Uses Ghidra's DecompInterface to analyze data dependence at a given address.
-        Supports three analysis modes:
-        - backward: Find inputs that affect this address (data dependencies)
-        - forward: Find outputs affected by this address (transitive dependents)
-        - variable_accesses: Map high-level variable accesses and storage
-        
-        **Performance Considerations**:
-        - Decompilation is expensive; limit maxOps and timeout for large functions
-        - P-code analysis respects SSA form for accurate dependency tracking
-        - Variable mode requires high-function representation (not always available)
-        
-        Parameters
-        ----------
-        addressOrSymbol : str
-            Address or symbol where analysis begins
-        direction : str
-            Analysis direction: 'backward', 'forward', or 'variable_accesses'
-        maxOps : int, default=500
-            Maximum P-code operations to analyze
-        timeout : int, default=30
-            Decompilation timeout in seconds
-            
-        Returns
-        -------
-        response with P-code operations and metadata
-        """
         self._require_program()
         addr_str = self._get_address_or_symbol(args)
         if not addr_str:
             raise ValueError("addressOrSymbol or functionIdentifier required")
 
-        direction = n(self._get_str(args, "direction", "mode", default="backward"))
+        direction = self._get_str(args, "direction", "mode", default="backward")
         max_ops = self._get_int(args, "maxops", default=500)
         timeout_s = self._get_int(args, "timeout", default=30)
 
@@ -114,6 +86,23 @@ class DataFlowToolProvider(ToolProvider):
         if func is None:
             raise ValueError(f"No function found containing {addr_str}")
 
+        return await self._dispatch_handler(args, direction, {
+            "backward": "_handle_backward",
+            "forward": "_handle_forward", 
+            "variable_accesses": "_handle_variable_accesses",
+            "variableaccesses": "_handle_variable_accesses",  # alias
+        }, program=program, addr=addr, func=func, max_ops=max_ops, timeout_s=timeout_s)
+
+    async def _handle_backward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        return await self._analyze_data_flow("backward", program, addr, func, max_ops, timeout_s)
+
+    async def _handle_forward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        return await self._analyze_data_flow("forward", program, addr, func, max_ops, timeout_s)
+
+    async def _handle_variable_accesses(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        return await self._analyze_data_flow("variable_accesses", program, addr, func, max_ops, timeout_s)
+
+    async def _analyze_data_flow(self, direction: str, program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         decomp = None
         try:
             from ghidra.app.decompiler import DecompInterface
@@ -140,22 +129,7 @@ class DataFlowToolProvider(ToolProvider):
                     note="No high-level function available",
                 )
 
-            pcode_ops = []
-            op_iter = hfunc.getPcodeOps()
-            count = 0
-            while op_iter.hasNext() and count < max_ops:
-                op = op_iter.next()
-                pcode_ops.append(
-                    {
-                        "address": str(op.getSeqnum().getTarget()),
-                        "mnemonic": str(op.getMnemonic()),
-                        "output": str(op.getOutput()) if op.getOutput() else None,
-                        "inputs": [str(inp) for inp in op.getInputs()],
-                    },
-                )
-                count += 1
-
-            if direction in ("variableaccesses", "variable_accesses"):
+            if direction in ("variable_accesses", "variableaccesses"):
                 # Gather variable info from high function
                 variables = []
                 for sym in hfunc.getLocalSymbolMap().getSymbols():
@@ -178,6 +152,22 @@ class DataFlowToolProvider(ToolProvider):
                         "count": len(variables),
                     },
                 )
+
+            # backward/forward: collect P-code operations
+            pcode_ops = []
+            op_iter = hfunc.getPcodeOps()
+            count = 0
+            while op_iter.hasNext() and count < max_ops:
+                op = op_iter.next()
+                pcode_ops.append(
+                    {
+                        "address": str(op.getSeqnum().getTarget()),
+                        "mnemonic": str(op.getMnemonic()),
+                        "output": str(op.getOutput()) if op.getOutput() else None,
+                        "inputs": [str(inp) for inp in op.getInputs()],
+                    },
+                )
+                count += 1
 
             return create_success_response(
                 {
