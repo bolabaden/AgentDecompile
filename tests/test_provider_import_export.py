@@ -234,6 +234,64 @@ class TestImportExportAnalyzeExecution:
         assert observed["start"] is _TaskMonitor.DUMMY
         program.endTransaction.assert_called_with(1, True)
 
+    @pytest.mark.asyncio
+    async def test_analyze_prefers_address_set_overload(self, monkeypatch):
+        p = _make_provider(with_program=True)
+        p._require_program = MagicMock()
+        program = p.program_info.program
+        program.getName.return_value = "k1_win_gog_swkotor.exe"
+        program.startTransaction.return_value = 2
+
+        class _AddressSet:
+            pass
+
+        addr_set_obj = _AddressSet()
+        memory = MagicMock()
+        memory.getLoadedAndInitializedAddressSet.return_value = addr_set_obj
+        program.getMemory.return_value = memory
+
+        observed = {"reanalyze": None, "start": None}
+
+        class _Mgr:
+            def reAnalyzeAll(self, arg):
+                observed["reanalyze"] = arg
+
+            def startAnalysis(self, monitor):
+                observed["start"] = monitor
+
+        class _AutoAnalysisManager:
+            @staticmethod
+            def getAnalysisManager(_program):
+                return _Mgr()
+
+        class _TaskMonitor:
+            DUMMY = object()
+
+        monkeypatch.setitem(sys.modules, "ghidra", types.ModuleType("ghidra"))
+        monkeypatch.setitem(sys.modules, "ghidra.app", types.ModuleType("ghidra.app"))
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin", types.ModuleType("ghidra.app.plugin"))
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin.core", types.ModuleType("ghidra.app.plugin.core"))
+        analysis_mod = types.ModuleType("ghidra.app.plugin.core.analysis")
+        analysis_mod.AutoAnalysisManager = _AutoAnalysisManager
+        monkeypatch.setitem(sys.modules, "ghidra.app.plugin.core.analysis", analysis_mod)
+        monkeypatch.setitem(sys.modules, "ghidra.util", types.ModuleType("ghidra.util"))
+        task_mod = types.ModuleType("ghidra.util.task")
+        task_mod.TaskMonitor = _TaskMonitor
+        monkeypatch.setitem(sys.modules, "ghidra.util.task", task_mod)
+
+        monkeypatch.setitem(sys.modules, "ghidra.program", types.ModuleType("ghidra.program"))
+        monkeypatch.setitem(sys.modules, "ghidra.program.model", types.ModuleType("ghidra.program.model"))
+        monkeypatch.setitem(sys.modules, "ghidra.program.model.address", types.ModuleType("ghidra.program.model.address"))
+        sys.modules["ghidra.program.model.address"].AddressSet = _AddressSet
+
+        resp = await p._handle_analyze({"analyzers": ["all"]})
+        result = _parse(resp)
+
+        assert result["success"] is True
+        assert observed["reanalyze"] is addr_set_obj
+        assert observed["start"] is _TaskMonitor.DUMMY
+        program.endTransaction.assert_called_with(2, True)
+
 
 class TestImportExportChangeProcessorExecution:
     @pytest.mark.asyncio
