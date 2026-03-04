@@ -135,58 +135,17 @@ class CallGraphToolProvider(ToolProvider):
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
 
-            mode_n = n(mode)
-            if mode_n in ("callers", "callersdecomp", "commoncallers"):
-                callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
-                caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
-
-                if mode_n == "commoncallers" and second:
-                    second_func = self._resolve_function(second, program=program)
-                    if second_func:
-                        second_callers = {c.getName() for c in second_func.getCallingFunctions(None)}
-                        common = [c for c in caller_info if c["name"] in second_callers]
-                        return create_success_response(
-                            {
-                                "function": func,
-                                "secondFunction": second,
-                                "mode": mode,
-                                "commonCallers": common,
-                                "count": len(common),
-                            },
-                        )
-
-                return create_success_response(
-                    {
-                        "function": func,
-                        "mode": mode,
-                        "callers": caller_info,
-                        "count": len(caller_info),
-                    },
-                )
-            if mode_n == "callees":
-                callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
-                callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
-                return create_success_response(
-                    {
-                        "function": func,
-                        "mode": mode,
-                        "callees": callee_info,
-                        "count": len(callee_info),
-                    },
-                )
-            # graph/tree mode
-            callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
-            callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
-            return create_success_response(
-                {
-                    "function": func,
-                    "mode": mode,
-                    "callers": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers],
-                    "callees": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees],
-                    "callerCount": len(callers),
-                    "calleeCount": len(callees),
-                },
-            )
+            # Use dispatch table to map modes to handlers for clarity
+            return await self._dispatch_handler(args, mode, {
+                "callers": "_handle_callers",
+                "callers_decomp": "_handle_callers",
+                "callersdecomp": "_handle_callers",
+                "common_callers": "_handle_callers",
+                "commoncallers": "_handle_callers",
+                "callees": "_handle_callees",
+                "graph": "_handle_graph",
+                "tree": "_handle_graph",
+            }, program=program, target_func=target_func, func=func, second=second, max_nodes=max_nodes)
         except ValueError:
             raise
         except Exception as e:
@@ -198,3 +157,38 @@ class CallGraphToolProvider(ToolProvider):
                     "graph": {},
                 },
             )
+
+    async def _handle_callers(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
+        caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
+
+        mode = self._get_str(args, "mode", default="callers")
+        mode_n = n(mode)
+        if mode_n in ("commoncallers", "common_callers") and second:
+            second_func = self._resolve_function(second, program=program)
+            if second_func:
+                second_callers = {c.getName() for c in second_func.getCallingFunctions(None)}
+                common = [c for c in caller_info if c["name"] in second_callers]
+                return create_success_response({"function": func, "secondFunction": second, "mode": mode, "commonCallers": common, "count": len(common)})
+
+        return create_success_response({"function": func, "mode": mode, "callers": caller_info, "count": len(caller_info)})
+
+    async def _handle_callees(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
+        callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
+        mode = self._get_str(args, "mode", default="callees")
+        return create_success_response({"function": func, "mode": mode, "callees": callee_info, "count": len(callee_info)})
+
+    async def _handle_graph(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
+        callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
+        return create_success_response(
+            {
+                "function": func,
+                "mode": self._get_str(args, "mode", default="graph"),
+                "callers": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers],
+                "callees": [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees],
+                "callerCount": len(callers),
+                "calleeCount": len(callees),
+            },
+        )

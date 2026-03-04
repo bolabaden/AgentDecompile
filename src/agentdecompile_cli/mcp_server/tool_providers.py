@@ -48,6 +48,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------  
+# Default limits and constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAGE_LIMIT = 100
+DEFAULT_LARGE_PAGE_LIMIT = 1000
+DEFAULT_MAX_INSTRUCTIONS = 2000000
+DEFAULT_SAMPLES_PER_CONSTANT = 5
+DEFAULT_MAX_ENTRIES = 200
+DEFAULT_TIMEOUT_SECONDS = 60
+
 # ---------------------------------------------------------------------------
 # Canonical normalize – ``re.sub(r'[^a-z]', '', s.lower())``.
 # Imported from registry.py.  Everything else imports from HERE.
@@ -724,7 +735,7 @@ class ToolProvider:
             raise ValueError("Required parameter missing: address or symbol")
         return result
 
-    def _get_pagination_params(self, args: dict[str, Any], default_limit: int = 100) -> tuple[int, int]:
+    def _get_pagination_params(self, args: dict[str, Any], default_limit: int = DEFAULT_PAGE_LIMIT) -> tuple[int, int]:
         """Extract pagination parameters (offset, limit) from args.
         
         Consolidates two repeated extraction calls:
@@ -751,6 +762,67 @@ class ToolProvider:
         offset = self._get_int(args, "offset", "startindex", default=0)
         limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=default_limit)
         return offset, limit
+
+    def _dispatch_handler(
+        self,
+        *args,
+        **kwargs
+    ) -> Any:
+        """Unified handler dispatch with error handling.
+        
+        Supports two calling patterns:
+        1. _dispatch_handler(dispatch_dict, key, param_name) -> callable
+        2. _dispatch_handler(args, mode, dispatch_dict, **extra_kwargs) -> awaitable result
+        
+        **Pattern 1 (legacy):** Returns handler function for manual calling
+        **Pattern 2 (new):** Calls handler directly and returns result
+        
+        Args:
+            For pattern 1: dispatch, key, param_name
+            For pattern 2: args_dict, mode_key, dispatch_dict, **handler_kwargs
+            
+        Returns:
+            For pattern 1: handler function
+            For pattern 2: result of await handler(args, **kwargs)
+            
+        Raises:
+            ActionableError: If mode/key not found in dispatch
+        """
+        if len(args) == 3 and isinstance(args[0], dict) and isinstance(args[1], str) and isinstance(args[2], str):
+            # Pattern 1: _dispatch_handler(dispatch, key, param_name) -> callable
+            dispatch, key, param_name = args
+            handler = dispatch.get(key)
+            if handler is None:
+                available = list(dispatch.keys())
+                raise ActionableError(
+                    f"Unsupported {param_name}: '{key}'",
+                    context={"state": "unsupported-parameter-value", "parameter": param_name, "value": key, "available": available},
+                    next_steps=[
+                        f"Use one of the supported {param_name} values: {', '.join(available)}",
+                        "Check the tool's inputSchema for valid enum values.",
+                    ],
+                )
+            return handler
+        elif len(args) == 3 and isinstance(args[2], dict):
+            # Pattern 2: _dispatch_handler(args, mode, dispatch_dict, **kwargs) -> result
+            args_dict, mode_key, dispatch_dict = args
+            mode_norm = n(mode_key)
+            normalized_dispatch = {n(k): v for k, v in dispatch_dict.items()}
+            handler_name = normalized_dispatch.get(mode_norm)
+            if handler_name is None:
+                available = list(normalized_dispatch.keys())
+                raise ActionableError(
+                    f"Unsupported mode: '{mode_key}'",
+                    context={"state": "unsupported-parameter-value", "parameter": "mode", "value": mode_key, "available": available},
+                    next_steps=[
+                        f"Use one of the supported mode values: {', '.join(available)}",
+                        "Check the tool's inputSchema for valid enum values.",
+                    ],
+                )
+            handler = getattr(self, handler_name)
+            return handler(args_dict, **kwargs)
+        else:
+            raise ValueError("Invalid _dispatch_handler call signature")
 
     # ------------------------------------------------------------------
     # Program guards
@@ -950,50 +1022,44 @@ class ToolProvider:
         has_more = offset + len(paginated) < len(all_results)
         return paginated, has_more
 
-    def _dispatch_handler(
+    async def _handle_paginated_search(
         self,
-        dispatch: dict[str, Callable],
-        action: str,
-        action_name: str = "action",
-    ) -> Callable:
-        """Dispatch to a handler from a dict, raise ValueError if not found.
+        args: dict[str, Any],
+        search_func: Callable[[dict[str, Any]], Awaitable[list[dict[str, Any]]]],
+        mode: str = "search",
+        **extra_response_fields: Any,
+    ) -> list[types.TextContent]:
+        """Handle a paginated search operation with common boilerplate.
         
-        Consolidates the repeated pattern across multiple providers:
-            dispatch = {"create": self._create, "delete": self._delete, ...}
-            handler = dispatch.get(n(action))
-            if handler is None:
-                raise ValueError(f"Unknown {action_name}: {action}")
-            return await handler(args)
+        Consolidates the repeated pattern of:
+            self._require_program()
+            query = self._get_str(args, "query", ...)
+            offset, limit = self._get_pagination_params(args)
+            results = await search_func(args)
+            paginated, has_more = self._paginate_results(results, offset, limit)
+            return self._create_paginated_response(paginated, offset, limit, mode=mode, **extra)
         
-        This helper eliminates ~3 lines of duplication per provider method
-        that uses dispatch tables. The pattern appears in comments, structures,
-        symbols, datatypes providers and others.
+        This helper eliminates 8-12 lines of duplication per search method
+        across providers like symbols, strings, bookmarks, etc.
         
         Args:
         ----
-            dispatch: Dict mapping normalized names to handler callables
-            action: The action name (will be normalized)
-            action_name: Friendly name for error message (e.g., "mode", "action")
+            args: Normalized arguments dict
+            search_func: Async function that takes args and returns list of results
+            mode: Response mode string
+            extra_response_fields: Additional fields for response
             
         Returns:
         -------
-            The handler callable from dispatch dict
-            
-        Raises:
-        ------
-            ValueError: If action is not found in dispatch dict
-            
-        Example:
-        -------
-            >>> dispatch = {"create": self._create, "delete": self._delete}
-            >>> handler = self._dispatch_handler(dispatch, mode)
-            >>> return await handler(args)
+            Paginated MCP response
         """
-        norm_action = n(action)
-        handler = dispatch.get(norm_action)
-        if handler is None:
-            raise ValueError(f"Unknown {action_name}: {action}")
-        return handler
+        self._require_program()
+        offset, limit = self._get_pagination_params(args)
+        results = await search_func(args)
+        paginated, _ = self._paginate_results(results, offset, limit)
+        return self._create_paginated_response(
+            paginated, offset, limit, total=len(results), mode=mode, **extra_response_fields
+        )
 
     def _create_paginated_response(
         self,

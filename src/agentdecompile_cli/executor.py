@@ -239,7 +239,17 @@ def show_connection_error() -> None:
 
 
 def run_async(coro: Any) -> Any:
-    """Run an async coroutine."""
+    """Run an async coroutine to completion in the current event loop.
+
+    This is a convenience wrapper around asyncio.run() for running
+    async coroutines in synchronous contexts.
+
+    Args:
+        coro: The coroutine to run
+
+    Returns:
+        The result of the coroutine execution
+    """
     return asyncio.run(coro)
 
 
@@ -319,7 +329,18 @@ def execute_tool_dynamically(
 
 
 def safe_int_conversion(value: Any, default: int = 0) -> int:
-    """Safely convert value to int."""
+    """Safely convert a value to an integer with fallback to default.
+
+    Handles None values, string representations of integers, and type conversion errors
+    by returning the specified default value.
+
+    Args:
+        value: The value to convert to int
+        default: Default value to return on conversion failure (default: 0)
+
+    Returns:
+        Integer representation of value, or default if conversion fails
+    """
     try:
         return int(value) if value is not None else default
     except (ValueError, TypeError):
@@ -327,7 +348,18 @@ def safe_int_conversion(value: Any, default: int = 0) -> int:
 
 
 def safe_bool_conversion(value: Any, default: bool = False) -> bool:
-    """Safely convert value to bool."""
+    """Safely convert a value to a boolean with intelligent string parsing.
+
+    Recognizes common boolean string representations: 'true', '1', 'yes', 'on', 'enabled'
+    (case-insensitive). Falls back to Python's bool() conversion for other types.
+
+    Args:
+        value: The value to convert to bool
+        default: Default value to return if value is None (default: False)
+
+    Returns:
+        Boolean representation of value
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -336,7 +368,17 @@ def safe_bool_conversion(value: Any, default: bool = False) -> bool:
 
 
 def safe_str_conversion(value: Any, default: str = "") -> str:
-    """Safely convert value to str."""
+    """Safely convert a value to a string.
+
+    Handles None values by returning the default empty string.
+
+    Args:
+        value: The value to convert to string
+        default: Default value to return if value is None (default: "")
+
+    Returns:
+        String representation of value, or default if value is None
+    """
     return str(value) if value is not None else default
 
 
@@ -346,7 +388,16 @@ def safe_str_conversion(value: Any, default: str = "") -> str:
 
 
 def extract_json_from_response(response_text: str) -> dict[str, Any] | None:
-    """Extract JSON from HTTP response text."""
+    """Extract JSON data from HTTP response text.
+
+    Safely parses JSON from response content, returning None if parsing fails.
+
+    Args:
+        response_text: The raw response text to parse as JSON
+
+    Returns:
+        Parsed JSON dictionary, or None if parsing fails
+    """
     try:
         return _json.loads(response_text)
     except _json.JSONDecodeError:
@@ -354,7 +405,17 @@ def extract_json_from_response(response_text: str) -> dict[str, Any] | None:
 
 
 def build_http_url(base_url: str, endpoint: str) -> str:
-    """Build HTTP URL from base and endpoint."""
+    """Build a complete HTTP URL from base URL and endpoint path.
+
+    Ensures proper URL construction by adding/removing slashes as needed.
+
+    Args:
+        base_url: The base URL (e.g., "http://localhost:8080")
+        endpoint: The endpoint path (e.g., "/api/data")
+
+    Returns:
+        Complete URL with proper slash handling
+    """
     if not base_url.endswith("/"):
         base_url += "/"
     endpoint = endpoint.removeprefix("/")
@@ -362,7 +423,17 @@ def build_http_url(base_url: str, endpoint: str) -> str:
 
 
 def parse_http_response(response: Any) -> dict[str, Any] | None:
-    """Parse HTTP response into dictionary."""
+    """Parse HTTP response object into a dictionary.
+
+    Attempts to extract JSON data from various response object types,
+    falling back gracefully if JSON parsing fails.
+
+    Args:
+        response: HTTP response object with .json() method or .text attribute
+
+    Returns:
+        Parsed JSON dictionary, or None if parsing fails
+    """
     if hasattr(response, "json"):
         try:
             return response.json()
@@ -384,7 +455,20 @@ def parse_http_response(response: Any) -> dict[str, Any] | None:
 
 
 async def run_async_in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Run async function in thread."""
+    """Run a synchronous function in a separate thread from an async context.
+
+    Creates a new event loop and runs the synchronous function in a thread pool,
+    allowing blocking operations to be called from async code without blocking
+    the event loop.
+
+    Args:
+        func: The synchronous function to run
+        *args: Positional arguments to pass to the function
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        The result of the function execution
+    """
     loop = asyncio.new_event_loop()
     try:
         return await loop.run_in_executor(None, func, *args, **kwargs)
@@ -393,7 +477,19 @@ async def run_async_in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 def run_sync_in_async(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Run sync function in async context."""
+    """Run a synchronous function in an async context using the current event loop.
+
+    This is a convenience wrapper around asyncio.get_event_loop().run_in_executor()
+    for running blocking operations in async code.
+
+    Args:
+        func: The synchronous function to run
+        *args: Positional arguments to pass to the function
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        A coroutine that resolves to the function result
+    """
     return asyncio.get_event_loop().run_in_executor(None, func, *args, **kwargs)
 
 

@@ -323,8 +323,8 @@ class AgentDecompileCLI:
             self.cleanup()
 
 
-def main():
-    """Main entry point for mcp-agentdecompile command."""
+def _setup_main_argument_parser() -> argparse.ArgumentParser:
+    """Set up the argument parser for the main CLI."""
     parser = argparse.ArgumentParser(
         description="AgentDecompile MCP server with stdio transport for Claude CLI integration",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -379,7 +379,102 @@ def main():
         action="version",
         version=f"%(prog)s {__version__}",
     )
+    return parser
 
+
+def _handle_connect_mode(args: argparse.Namespace) -> None:
+    """Handle connect mode to existing MCP server."""
+    cli = AgentDecompileCLI(
+        launcher=None,
+        project_manager=None,
+        backend=args.server_url,
+    )
+    try:
+        run_async(cli.run())
+    except KeyboardInterrupt:
+        sys.stderr.write("\nShutdown complete\n")
+        sys.exit(0)
+    except (asyncio.exceptions.CancelledError, Exception) as e:
+        handle_command_error(e)
+        sys.exit(1)
+
+
+def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompileLauncher, ProjectManager, int]:
+    """Perform blocking PyGhidra initialization and return components."""
+    # Save original stdout/stderr
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    try:
+        # Install filters BEFORE PyGhidra initializes
+        stderr_filter = StderrFilter(original_stderr)
+        sys.stderr = stderr_filter  # type: ignore[assignment]
+        stdout_filter = StdoutFilter(original_stdout)
+        sys.stdout = stdout_filter  # type: ignore[assignment]
+
+        # Initialize PyGhidra (blocking, 3-5 seconds)
+        sys.stderr.write("Initializing PyGhidra...\n")
+        try:
+            import pyghidra
+        except ImportError:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            sys.stderr.write(
+                "PyGhidra is not installed for local spawn mode.\n"
+                'Install with the local extra (e.g. `pip install "agentdecompile[local]"`) '
+                "or connect to an existing server using --server-url.\n",
+            )
+            sys.exit(1)
+
+        pyghidra.start(verbose=args.verbose)
+
+        # CRITICAL: Redirect Java's System.out/System.err AFTER PyGhidra starts
+        _redirect_java_outputs()
+
+        sys.stderr.write("PyGhidra initialized\n")
+
+        # Force garbage collection to clean up any lingering references
+        import gc
+        gc.collect()
+
+        project_manager = ProjectManager()
+        launcher = AgentDecompileLauncher(config_file=args.config, use_random_port=True)
+        port = launcher.start()
+        sys.stderr.write(f"AgentDecompile server ready on port {port}\n")
+
+        return launcher, project_manager, port
+
+    except Exception as e:
+        # Restore stdout/stderr even on error
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        sys.stderr.write(f"Initialization error: {e.__class__.__name__}: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_async_execution(launcher: AgentDecompileLauncher, project_manager: ProjectManager, port: int) -> None:
+    """Run the async stdio bridge with initialized components."""
+    cli = AgentDecompileCLI(
+        launcher=launcher,
+        project_manager=project_manager,
+        backend=port,
+    )
+
+    try:
+        run_async(cli.run())
+    except KeyboardInterrupt:
+        sys.stderr.write("\nShutdown complete\n")
+        sys.exit(0)
+    except (asyncio.exceptions.CancelledError, Exception) as e:
+        handle_command_error(e)
+        sys.exit(1)
+
+
+def main():
+    """Main entry point for mcp-agentdecompile command."""
+    parser = _setup_main_argument_parser()
     args = parser.parse_args()
 
     backend_url: str | None = resolve_backend_url(
@@ -401,112 +496,14 @@ def main():
             sys.stderr.write(
                 "Note: --config is ignored when connecting to an existing MCP server.\n",
             )
-        cli = AgentDecompileCLI(
-            launcher=None,
-            project_manager=None,
-            backend=backend_url,
-        )
-        try:
-            run_async(cli.run())
-        except KeyboardInterrupt:
-            sys.stderr.write("\nShutdown complete\n")
-            sys.exit(0)
-        except (asyncio.exceptions.CancelledError, Exception) as e:
-            handle_command_error(e)
-            sys.exit(1)
+        _handle_connect_mode(args)
         return
 
-    # =========================================================================
-    # BLOCKING INITIALIZATION (before async event loop)
-    # =========================================================================
-    # All blocking operations happen here to avoid blocking the event loop
-    # This ensures the stdio bridge can start immediately when asyncio.run() is called
-    #
-    # CRITICAL: PyGhidra and Python code may write log messages to stdout during both
-    # initialization and runtime. We install a stdout filter that intercepts all writes:
-    # - JSON-RPC messages (for MCP protocol) are passed through to real stdout
-    # - All other output (logs, prints, etc.) is redirected to stderr
-    # This prevents non-JSON text from corrupting the MCP stdio JSON-RPC stream.
+    # Blocking initialization (before async event loop)
+    launcher, project_manager, port = _initialize_pygidra_blocking(args)
 
-    # Save original stdout/stderr
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-
-    try:
-        # Install filters BEFORE PyGhidra initializes
-        # - stdout: Only allows JSON-RPC messages through
-        # - stderr: Wraps all writes in JSON-RPC notifications
-        # This ensures ALL output is valid JSON and won't corrupt the MCP stdio stream
-        # IMPORTANT: Install stderr filter first, then stdout filter (which uses sys.stderr)
-        stderr_filter = StderrFilter(original_stderr)
-        sys.stderr = stderr_filter  # type: ignore[assignment]
-        stdout_filter = StdoutFilter(original_stdout)
-        sys.stdout = stdout_filter  # type: ignore[assignment]
-
-        # Initialize PyGhidra (blocking, 3-5 seconds)
-        # Any stdout writes from PyGhidra will be caught by the filter and sent to stderr
-        sys.stderr.write("Initializing PyGhidra...\n")
-        try:
-            import pyghidra
-        except ImportError:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            sys.stderr.write(
-                "PyGhidra is not installed for local spawn mode.\n"
-                'Install with the local extra (e.g. `pip install "agentdecompile[local]"`) '
-                "or connect to an existing server using --server-url.\n",
-            )
-            sys.exit(1)
-
-        pyghidra.start(verbose=args.verbose)
-
-        # CRITICAL: Redirect Java's System.out/System.err AFTER PyGhidra starts (for compatibility)
-        # This ensures Java/Ghidra log messages go through our Python filters
-        _redirect_java_outputs()
-
-        sys.stderr.write("PyGhidra initialized\n")
-
-        # Force garbage collection to clean up any lingering references
-        import gc
-
-        gc.collect()
-
-        project_manager = ProjectManager()
-        launcher = AgentDecompileLauncher(config_file=args.config, use_random_port=True)
-        port = launcher.start()
-        sys.stderr.write(f"AgentDecompile server ready on port {port}\n")
-
-        # NOTE: stdout filter remains in place - do NOT restore original_stdout
-        # The filter will allow JSON-RPC messages through while redirecting everything else
-
-    except Exception as e:
-        # Restore stdout/stderr even on error
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        sys.stderr.write(f"Initialization error: {e.__class__.__name__}: {e}\n")
-        import traceback
-
-        traceback.print_exc(file=sys.stderr)
-        sys.exit(1)
-
-    # =========================================================================
-    # ASYNC EXECUTION (stdio bridge only)
-    # =========================================================================
-    # Create CLI with pre-initialized components
-    cli = AgentDecompileCLI(
-        launcher=launcher,
-        project_manager=project_manager,
-        backend=port,
-    )
-
-    try:
-        run_async(cli.run())
-    except KeyboardInterrupt:
-        sys.stderr.write("\nShutdown complete\n")
-        sys.exit(0)
-    except (asyncio.exceptions.CancelledError, Exception) as e:
-        handle_command_error(e)
-        sys.exit(1)
+    # Async execution (stdio bridge only)
+    _run_async_execution(launcher, project_manager, port)
 
 
 if __name__ == "__main__":

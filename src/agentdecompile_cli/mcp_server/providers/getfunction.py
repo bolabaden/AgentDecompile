@@ -9,7 +9,7 @@ import heapq
 import logging
 from itertools import islice
 
-from typing import Any
+from typing import Any, cast
 
 from mcp import types
 
@@ -40,7 +40,11 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string"},
                         "function": {"type": "string"},
                         "addressOrSymbol": {"type": "string"},
-                        "mode": {"type": "string", "description": "Operation mode", "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "Operation mode",
+                            "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"],
+                        },
                         "newName": {"type": "string"},
                         "prototype": {"type": "string"},
                         "callingConvention": {"type": "string"},
@@ -91,7 +95,7 @@ class GetFunctionToolProvider(ToolProvider):
         program = self.program_info.program
 
         action_n = n(action)
-
+        # Handle create early (no target function required)
         if action_n == "create":
             addr_str = self._require_address_or_symbol(args)
             addr = self._resolve_address(addr_str, program=program)
@@ -106,66 +110,116 @@ class GetFunctionToolProvider(ToolProvider):
             func = self._run_program_transaction(program, "create-function", _create_function)
             return create_success_response({"action": "create", "address": str(addr), "name": func.getName(), "success": True})
 
+        # For other actions, ensure function specified
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
         func = self._resolve_function(func_id, program=program)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
-        if action_n == "rename":
-            new_name = self._require_str(args, "newname", "name", name="newName")
+        # Dispatch remaining actions to dedicated handlers to reduce inline branching
+        return await self._dispatch_handler(
+            args,
+            action,
+            {
+                "rename": "_handle_rename",
+                "setprototype": "_handle_set_prototype",
+                "setcallingconvention": "_handle_set_calling_convention",
+                "callingconvention": "_handle_set_calling_convention",
+                "setreturntype": "_handle_set_return_type",
+                "returntype": "_handle_set_return_type",
+                "delete": "_handle_delete",
+            },
+            program=program,
+            func=func,
+            func_id=func_id,
+        )
 
-            def _rename_function() -> None:
-                from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+    async def _handle_rename(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+        new_name = self._require_str(args, "newname", "name", name="newName")
 
-                func.setName(new_name, SourceType.USER_DEFINED)
+        def _rename_function() -> None:
+            from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
-            self._run_program_transaction(program, "rename-function", _rename_function)
-            return create_success_response({"action": "rename", "oldName": func_id, "newName": new_name, "success": True})
+            func.setName(new_name, SourceType.USER_DEFINED)
 
-        if action_n == "setprototype":
-            proto = self._require_str(args, "prototype", "signature", name="prototype")
+        self._run_program_transaction(program, "rename-function", _rename_function)
+        return create_success_response(
+            {
+                "action": "rename",
+                "oldName": func_id,
+                "newName": new_name,
+                "success": True,
+            },
+        )
 
-            def _set_prototype() -> None:
-                # Use Ghidra's function signature parser
-                func.setSignature(proto)
+    async def _handle_set_prototype(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+        proto = self._require_str(args, "prototype", "signature", name="prototype")
 
-            self._run_program_transaction(program, "set-prototype", _set_prototype)
-            return create_success_response({"action": "set_prototype", "function": func.getName(), "prototype": proto, "success": True})
+        def _set_prototype() -> None:
+            func.setSignature(proto)
 
-        if action_n in ("setcallingconvention", "callingconvention"):
-            cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
+        self._run_program_transaction(program, "set-prototype", _set_prototype)
+        return create_success_response(
+            {
+                "action": "set_prototype",
+                "function": func.getName(),
+                "prototype": proto,
+                "success": True,
+            },
+        )
 
-            def _set_calling_convention() -> None:
-                func.setCallingConvention(cc)
+    async def _handle_set_calling_convention(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+        cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
 
-            self._run_program_transaction(program, "set-calling-convention", _set_calling_convention)
-            return create_success_response({"action": "set_calling_convention", "function": func.getName(), "callingConvention": cc, "success": True})
+        def _set_calling_convention() -> None:
+            func.setCallingConvention(cc)
 
-        if action_n in ("setreturntype", "returntype"):
-            rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
-            from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
+        self._run_program_transaction(program, "set-calling-convention", _set_calling_convention)
+        return create_success_response(
+            {
+                "action": "set_calling_convention",
+                "function": func.getName(),
+                "callingConvention": cc,
+                "success": True,
+            },
+        )
 
-            dtm = program.getDataTypeManager()
-            parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
-            rt = parser.parse(rt_str)
+    async def _handle_set_return_type(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+        rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
+        from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-            def _set_return_type() -> None:
-                from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+        dtm = program.getDataTypeManager()
+        parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        rt = parser.parse(rt_str)
 
-                func.setReturnType(rt, SourceType.USER_DEFINED)
+        def _set_return_type() -> None:
+            from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
-            self._run_program_transaction(program, "set-return-type", _set_return_type)
-            return create_success_response({"action": "set_return_type", "function": func.getName(), "returnType": rt_str, "success": True})
+            func.setReturnType(rt, SourceType.USER_DEFINED)
 
-        if action_n == "delete":
-            def _delete_function() -> None:
-                self._get_function_manager(program).removeFunction(func.getEntryPoint())
+        self._run_program_transaction(program, "set-return-type", _set_return_type)
+        return create_success_response(
+            {
+                "action": "set_return_type",
+                "function": func.getName(),
+                "returnType": rt_str,
+                "success": True,
+            },
+        )
 
-            self._run_program_transaction(program, "delete-function", _delete_function)
-            return create_success_response({"action": "delete", "function": func_id, "success": True})
+    async def _handle_delete(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+        def _delete_function() -> None:
+            self._get_function_manager(program).removeFunction(func.getEntryPoint())
 
-        raise ValueError(f"Unknown action: {action}")
+        self._run_program_transaction(program, "delete-function", _delete_function)
+        return create_success_response(
+            {
+                "action": "delete",
+                "function": func_id,
+                "success": True,
+            },
+        )
 
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
@@ -203,7 +257,13 @@ class GetFunctionToolProvider(ToolProvider):
 
         if action_n == "list":
             tags = [t.getName() for t in func.getTags()]
-            return create_success_response({"function": func.getName(), "tags": tags, "count": len(tags)})
+            return create_success_response(
+                {
+                    "function": func.getName(),
+                    "tags": tags,
+                    "count": len(tags),
+                },
+            )
 
         if action_n in ("add", "set"):
             if not tag_name:
@@ -213,7 +273,14 @@ class GetFunctionToolProvider(ToolProvider):
                 func.addTag(tag_name)
 
             self._run_program_transaction(program, "add-function-tag", _add_function_tag)
-            return create_success_response({"action": "add", "function": func.getName(), "tag": tag_name, "success": True})
+            return create_success_response(
+                {
+                    "action": "add",
+                    "function": func.getName(),
+                    "tag": tag_name,
+                    "success": True,
+                },
+            )
 
         if action_n in ("remove", "delete"):
             if not tag_name:
@@ -223,7 +290,14 @@ class GetFunctionToolProvider(ToolProvider):
                 func.removeTag(tag_name)
 
             self._run_program_transaction(program, "remove-function-tag", _remove_function_tag)
-            return create_success_response({"action": "remove", "function": func.getName(), "tag": tag_name, "success": True})
+            return create_success_response(
+                {
+                    "action": "remove",
+                    "function": func.getName(),
+                    "tag": tag_name,
+                    "success": True,
+                },
+            )
 
         raise ValueError(f"Unknown tag action: {action}")
 

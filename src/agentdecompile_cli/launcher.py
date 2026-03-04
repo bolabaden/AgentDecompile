@@ -305,9 +305,7 @@ class PyGhidraContext:
 
         locator = ProjectLocator(project_dir_str, self.project_name)
 
-        # TODO: determine if it should be:
-        # if locator.getMarkerFile().exists() and locator.getProjectDir().exists():
-        if locator.exists():
+        if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
             logger.info(f"Opening existing project: {self.project_name}")
             return GhidraProject.openProject(project_dir_str, self.project_name, False)
         logger.info(f"Creating new project: {self.project_name}")
@@ -918,12 +916,12 @@ class PyGhidraContext:
         force_analysis: bool = False,
         verbose_analysis: bool = False,
     ):
-        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports]
-        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports]
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
-        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
+        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         # Import symbol utilities from ghidrecomp
         from agentdecompile_cli.ghidrecomp.utility import (
@@ -1127,7 +1125,7 @@ class PyGhidraContext:
         allow_remote: bool = True,
     ):
         """Configures symbol servers and attempts to load PDBs for programs."""
-        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports]
+        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource]
             PdbAnalyzer,
             PdbUniversalAnalyzer,
         )
@@ -1165,7 +1163,7 @@ class PyGhidraContext:
         verbose: bool = False,
     ):
         """Apply GDT to program"""
-        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports]
+        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
         from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports]
         from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports]
         from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]

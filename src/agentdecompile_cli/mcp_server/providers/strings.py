@@ -175,11 +175,22 @@ class StringToolProvider(ToolProvider):
         offset, max_results = self._get_pagination_params(args, default_limit=100)
         include_refs = self._get_bool(args, "includereferencingfunctions", "includerefs", default=False)
 
+        # Collect strings using GhidraTools or direct API
+        strings = self._collect_strings(min_len)
+
+        return await self._dispatch_handler(args, mode, {
+            "list": "_handle_list",
+            "regex": "_handle_regex", 
+            "count": "_handle_count",
+            "similarity": "_handle_similarity",
+        }, strings=strings, pattern=pattern, min_len=min_len, offset=offset, max_results=max_results, include_refs=include_refs)
+
+    def _collect_strings(self, min_len: int) -> list[dict]:
+        """Collect all strings from the program using GhidraTools or direct API."""
         # Try GhidraTools first
         if self.ghidra_tools is not None:
             try:
-                all_strings = self.ghidra_tools.get_all_strings()
-                return self._filter_strings(all_strings, mode, pattern, min_len, max_results, offset, include_refs)
+                return self.ghidra_tools.get_all_strings()
             except Exception as e:
                 logger.warning(f"GhidraTools.get_all_strings failed: {e}")
 
@@ -204,7 +215,19 @@ class StringToolProvider(ToolProvider):
         except Exception as e:
             logger.warning(f"String iteration error: {e}")
 
-        return self._filter_strings(strings, mode, pattern, min_len, max_results, offset, include_refs)
+        return strings
+
+    async def _handle_list(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+        return self._filter_strings(strings, "list", "", min_len, max_results, offset, include_refs)
+
+    async def _handle_regex(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+        return self._filter_strings(strings, "regex", pattern, min_len, max_results, offset, include_refs)
+
+    async def _handle_count(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+        return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
+
+    async def _handle_similarity(self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool) -> list[types.TextContent]:
+        return self._filter_strings(strings, "similarity", pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(self, strings: list, mode: str, pattern: str, min_len: int, max_results: int, offset: int, include_refs: bool) -> list[types.TextContent]:
         """Filter and format strings based on search mode and pattern.

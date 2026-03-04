@@ -21,6 +21,7 @@ Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ import sys
 import time
 
 from pathlib import Path
+from typing import Any
 
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.launcher import AgentDecompileLauncher
@@ -40,6 +42,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_HTTP_TRANSPORTS: frozenset[str] = frozenset({"streamable-http", "http", "sse"})
 
 
 def init_agentdecompile_context(
@@ -219,6 +223,162 @@ def _resolve_proxy_backend_url(
     return normalize_backend_url(raw.strip())
 
 
+def _configure_http_debug_logging(verbose: bool) -> None:
+    level = logging.INFO if verbose else logging.WARNING
+    logging.getLogger("httpx").setLevel(level)
+    logging.getLogger("httpcore").setLevel(level)
+
+
+def _validate_proxy_mode_args(parser: Any, args: Any) -> None:
+    if args.list_project_binaries:
+        parser.error("--list-project-binaries is not supported with --backend-url proxy mode")
+    if args.delete_project_binary:
+        parser.error("--delete-project-binary is not supported with --backend-url proxy mode")
+    if args.input_paths:
+        parser.error("input_paths import is not supported with --backend-url proxy mode")
+
+
+def _configure_logging(verbose: bool) -> None:
+    """Configure root and HTTP client logging levels."""
+    logging.getLogger().setLevel(logging.DEBUG if verbose else logging.WARNING)
+    _configure_http_debug_logging(verbose)
+
+
+def _set_env_from_args(args: Any) -> None:
+    """Populate AGENT_DECOMPILE_* env vars from CLI args when provided."""
+    mappings = {
+        "server_host": "AGENT_DECOMPILE_SERVER_HOST",
+        "server_port": "AGENT_DECOMPILE_SERVER_PORT",
+        "server_username": "AGENT_DECOMPILE_SERVER_USERNAME",
+        "server_password": "AGENT_DECOMPILE_SERVER_PASSWORD",
+        "ghidra_server_repository": "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+    }
+    for arg_name, env_name in mappings.items():
+        value = getattr(args, arg_name, None)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        os.environ[env_name] = str(value)
+
+
+def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
+    """Resolve and validate project path inputs into directory/name/.gpr tuple."""
+    project_path = _resolve_default_project_path(args.project_path).resolve()
+    if project_path.suffix.lower() == ".gpr":
+        if args.project_name != "my_project":
+            parser.error("Cannot use --project-name with a .gpr file")
+        return str(project_path.parent), project_path.stem, project_path
+    return str(project_path), args.project_name, None
+
+
+def _initialize_pyghidra(verbose_analysis: bool) -> None:
+    """Initialize PyGhidra and apply session/output patches."""
+    from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+
+    _apply_mcp_session_fix()
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    try:
+        from agentdecompile_cli.__main__ import StderrFilter, StdoutFilter, _redirect_java_outputs
+    except ImportError:
+        StderrFilter = None
+        StdoutFilter = None
+        _redirect_java_outputs = None
+
+    if StderrFilter is not None and StdoutFilter is not None:
+        sys.stderr = StderrFilter(original_stderr)
+        sys.stdout = StdoutFilter(original_stdout)
+
+    try:
+        sys.stderr.write("Initializing PyGhidra...\n")
+        try:
+            import pyghidra
+        except ImportError:
+            sys.stderr.write(
+                "PyGhidra is not installed. Install with: pip install 'agentdecompile[local]'\n",
+            )
+            sys.exit(1)
+        pyghidra.start(verbose=verbose_analysis)
+        if _redirect_java_outputs:
+            _redirect_java_outputs()
+        sys.stderr.write("PyGhidra initialized\n")
+    except Exception:
+        if sys.stdout != original_stdout:
+            sys.stdout = original_stdout
+        if sys.stderr != original_stderr:
+            sys.stderr = original_stderr
+        raise
+
+
+async def _run_stdio_mode(
+    launcher: Any | None,
+    project_manager: Any | None,
+    backend: str | int,
+) -> None:
+    """Run stdio MCP bridge mode."""
+    from agentdecompile_cli.__main__ import AgentDecompileCLI
+
+    cli = AgentDecompileCLI(
+        launcher=launcher,
+        project_manager=project_manager,
+        backend=backend,
+    )
+    await cli.run()
+
+
+async def _run_http_mode(host: str, port: int | None) -> None:
+    """Run HTTP mode loop after launcher startup."""
+    if port is None:
+        raise RuntimeError("Launcher did not provide a server port")
+    sys.stderr.write(f"AgentDecompile server running at http://{host}:{port}/mcp/message\n")
+    sys.stderr.write("Press Ctrl+C to stop.\n")
+    while True:
+        await asyncio.sleep(3600)
+
+
+async def _run_proxy_mode(host: str, port: int, backend_url: str) -> None:
+    """Run HTTP proxy mode and forward all requests to backend_url."""
+    from agentdecompile_cli.mcp_server.proxy_server import (
+        AgentDecompileMcpProxyServer,
+        ProxyServerConfig,
+    )
+
+    proxy_server = AgentDecompileMcpProxyServer(
+        ProxyServerConfig(
+            host=host,
+            port=port,
+            backend_url=backend_url,
+        ),
+    )
+    started_port = proxy_server.start()
+    try:
+        sys.stderr.write(
+            f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
+        )
+        sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
+        sys.stderr.write("Press Ctrl+C to stop.\n")
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        proxy_server.stop()
+
+
+def _cleanup_resources(
+    launcher: AgentDecompileLauncher | None,
+    project_manager: ProjectManager | None,
+) -> None:
+    """Release launcher and project manager resources."""
+    if launcher:
+        launcher.stop()
+    if project_manager and hasattr(project_manager, "cleanup"):
+        try:
+            project_manager.cleanup()
+        except Exception:
+            pass
+
+
 def main() -> None:
     """Parse server options and run init + transport."""
     import argparse
@@ -369,191 +529,82 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=None, help="AgentDecompile config file")
     args = parser.parse_args()
 
-    logging.getLogger().setLevel(logging.DEBUG if args.verbose else logging.WARNING)
-    if args.verbose:
-        logging.getLogger("httpx").setLevel(logging.INFO)
-        logging.getLogger("httpcore").setLevel(logging.INFO)
-    else:
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # Configure logging
+    _configure_logging(args.verbose)
 
-    if args.server_host:
-        os.environ["AGENT_DECOMPILE_SERVER_HOST"] = str(args.server_host)
-    if args.server_port is not None:
-        os.environ["AGENT_DECOMPILE_SERVER_PORT"] = str(args.server_port)
-    if args.server_username:
-        os.environ["AGENT_DECOMPILE_SERVER_USERNAME"] = str(args.server_username)
-    if args.server_password:
-        os.environ["AGENT_DECOMPILE_SERVER_PASSWORD"] = str(args.server_password)
-    if args.ghidra_server_repository:
-        os.environ["AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY"] = str(args.ghidra_server_repository)
+    # Set environment variables from args
+    _set_env_from_args(args)
 
-    # Apply env defaults for host/port (1:1 Java headless)
+    # Resolve transport configuration
+    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
-    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
 
+    # Handle proxy mode
     if backend_url:
         from agentdecompile_cli.bridge import _apply_mcp_session_fix
 
         _apply_mcp_session_fix()
-
-        if args.list_project_binaries:
-            parser.error("--list-project-binaries is not supported with --backend-url proxy mode")
-        if args.delete_project_binary:
-            parser.error("--delete-project-binary is not supported with --backend-url proxy mode")
-        if args.input_paths:
-            parser.error("input_paths import is not supported with --backend-url proxy mode")
+        _validate_proxy_mode_args(parser, args)
 
         try:
             if args.transport == "stdio":
-                from agentdecompile_cli.__main__ import AgentDecompileCLI
-
-                cli = AgentDecompileCLI(
-                    launcher=None,
-                    project_manager=None,
-                    backend=backend_url,
-                )
-                run_async(cli.run())
-            elif args.transport in ["streamable-http", "http", "sse"]:
-                from agentdecompile_cli.mcp_server.proxy_server import (
-                    AgentDecompileMcpProxyServer,
-                    ProxyServerConfig,
-                )
-
-                proxy_server = AgentDecompileMcpProxyServer(
-                    ProxyServerConfig(
-                        host=host,
-                        port=port,
-                        backend_url=backend_url,
-                    ),
-                )
-                started_port = proxy_server.start()
-                sys.stderr.write(
-                    f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
-                )
-                sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
-                sys.stderr.write("Press Ctrl+C to stop.\n")
-                while True:
-                    time.sleep(3600)
+                run_async(_run_stdio_mode(None, None, backend_url))
+            elif args.transport in _HTTP_TRANSPORTS:
+                run_async(_run_proxy_mode(host, port, backend_url))
             else:
                 sys.stderr.write(f"Unknown transport: {args.transport}\n")
                 sys.exit(1)
         except KeyboardInterrupt:
             sys.stderr.write("\nShutdown complete\n")
-        finally:
-            if args.transport in ["streamable-http", "http", "sse"] and "proxy_server" in locals():
-                proxy_server.stop()
         return
 
-    # Resolve project path (.gpr vs directory)
-    project_path = _resolve_default_project_path(args.project_path).resolve()
-    if project_path.suffix.lower() == ".gpr":
-        if args.project_name != "my_project":
-            parser.error("Cannot use --project-name with a .gpr file")
-        project_directory = str(project_path.parent)
-        project_name = project_path.stem
-        project_path_gpr = project_path
-    else:
-        project_directory = str(project_path)
-        project_name = args.project_name
-        project_path_gpr = None
+    # Setup project paths
+    project_directory, project_name, project_path_gpr = _setup_project_paths(parser, args)
 
-    # PyGhidra and filters (same as __main__)
-    from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+    # Initialize PyGhidra
+    _initialize_pyghidra(args.verbose_analysis)
 
-    _apply_mcp_session_fix()
+    launcher, project_manager = init_agentdecompile_context(
+        input_paths=args.input_paths,
+        project_name=project_name,
+        project_directory=project_directory,
+        project_path_gpr=project_path_gpr,
+        force_analysis=args.force_analysis,
+        verbose_analysis=args.verbose_analysis,
+        no_symbols=args.no_symbols,
+        gdts=[str(p) for p in args.gdt] if args.gdt else [],
+        program_options_path=str(args.program_options) if args.program_options else None,
+        gzfs_path=str(args.gzfs_path) if args.gzfs_path else None,
+        threaded=args.threaded,
+        max_workers=args.max_workers,
+        wait_for_analysis=args.wait_for_analysis,
+        list_project_binaries=args.list_project_binaries,
+        delete_project_binary=args.delete_project_binary,
+        symbols_path=str(args.symbols_path) if args.symbols_path else None,
+        sym_file_path=str(args.sym_file_path) if args.sym_file_path else None,
+        port=port if args.transport != "stdio" else None,
+        host=host if args.transport != "stdio" else None,
+        config_file=args.config,
+    )
 
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
+    # Run the appropriate transport mode
     try:
-        from agentdecompile_cli.__main__ import StderrFilter, StdoutFilter, _redirect_java_outputs
-    except ImportError:
-        StderrFilter = None
-        StdoutFilter = None
-        _redirect_java_outputs = None
+        runtime_port = launcher.get_port()
+        if runtime_port is None:
+            raise RuntimeError("Launcher did not provide a server port")
 
-    if StderrFilter is not None and StdoutFilter is not None:
-        sys.stderr = StderrFilter(original_stderr)
-        sys.stdout = StdoutFilter(original_stdout)
-
-    try:
-        sys.stderr.write("Initializing PyGhidra...\n")
-        try:
-            import pyghidra
-        except ImportError:
-            sys.stderr.write(
-                "PyGhidra is not installed. Install with: pip install 'agentdecompile[local]'\n",
-            )
-            sys.exit(1)
-        pyghidra.start(verbose=args.verbose_analysis)
-        if _redirect_java_outputs:
-            _redirect_java_outputs()
-        sys.stderr.write("PyGhidra initialized\n")
-
-        launcher, project_manager = init_agentdecompile_context(
-            input_paths=args.input_paths,
-            project_name=project_name,
-            project_directory=project_directory,
-            project_path_gpr=project_path_gpr,
-            force_analysis=args.force_analysis,
-            verbose_analysis=args.verbose_analysis,
-            no_symbols=args.no_symbols,
-            gdts=[str(p) for p in args.gdt] if args.gdt else [],
-            program_options_path=str(args.program_options) if args.program_options else None,
-            gzfs_path=str(args.gzfs_path) if args.gzfs_path else None,
-            threaded=args.threaded,
-            max_workers=args.max_workers,
-            wait_for_analysis=args.wait_for_analysis,
-            list_project_binaries=args.list_project_binaries,
-            delete_project_binary=args.delete_project_binary,
-            symbols_path=str(args.symbols_path) if args.symbols_path else None,
-            sym_file_path=str(args.sym_file_path) if args.sym_file_path else None,
-            port=port if args.transport != "stdio" else None,
-            host=host if args.transport != "stdio" else None,
-            config_file=args.config,
-        )
-    except Exception as e:
-        if sys.stdout != original_stdout:
-            sys.stdout = original_stdout
-        if sys.stderr != original_stderr:
-            sys.stderr = original_stderr
-        sys.stderr.write(f"Initialization error: {e}\n")
-        raise
-        # sys.exit(1)
-
-    port = launcher.get_port()
-    assert port is not None
-
-    try:
         if args.transport == "stdio":
-            from agentdecompile_cli.__main__ import AgentDecompileCLI
-
-            cli = AgentDecompileCLI(
-                launcher=launcher,
-                project_manager=project_manager,
-                backend=port,
-            )
-            run_async(cli.run())
-        elif args.transport in ["streamable-http", "http", "sse"]:
-            bind_host = host
-            sys.stderr.write(f"AgentDecompile server running at http://{bind_host}:{port}/mcp/message\n")
-            sys.stderr.write("Press Ctrl+C to stop.\n")
-            while True:
-                time.sleep(3600)
+            run_async(_run_stdio_mode(launcher, project_manager, runtime_port))
+        elif args.transport in _HTTP_TRANSPORTS:
+            run_async(_run_http_mode(host, runtime_port))
         else:
             sys.stderr.write(f"Unknown transport: {args.transport}\n")
             sys.exit(1)
     except KeyboardInterrupt:
         sys.stderr.write("\nShutdown complete\n")
     finally:
-        if launcher:
-            launcher.stop()
-        if project_manager and hasattr(project_manager, "cleanup"):
-            try:
-                project_manager.cleanup()
-            except Exception:
-                pass
+        _cleanup_resources(launcher, project_manager)
 
 
 if __name__ == "__main__":

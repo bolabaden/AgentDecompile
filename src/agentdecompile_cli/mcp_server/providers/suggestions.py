@@ -34,9 +34,10 @@ class SuggestionToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "program_path": {"type": "string"},
-                        "suggestion_type": {
+                        "programPath": {"type": "string", "description": "Path to the target program"},
+                        "suggestionType": {
                             "type": "string",
+                            "description": "Category of suggestion to generate",
                             "enum": [
                                 "comment_type",
                                 "comment_text",
@@ -46,13 +47,12 @@ class SuggestionToolProvider(ToolProvider):
                                 "data_type",
                             ],
                         },
-                        "address": {"type": "string"},
-                        "address_or_symbol": {"type": "string"},
-                        "function_identifier": {"type": "string"},
-                        "variable_name": {"type": "string"},
-                        "max_context": {"type": "integer", "default": 5},
-                        "include_callers": {"type": "boolean", "default": False},
-                        "include_callees": {"type": "boolean", "default": False},
+                        "addressOrSymbol": {"type": "string", "description": "Target address (hex) or symbol name"},
+                        "functionIdentifier": {"type": "string", "description": "Function name or address to scope suggestions"},
+                        "variableName": {"type": "string", "description": "Variable name for variable-rename suggestions"},
+                        "maxContext": {"type": "integer", "default": 5, "description": "Maximum number of context lines to include"},
+                        "includeCallers": {"type": "boolean", "default": False, "description": "Include caller context in suggestions"},
+                        "includeCallees": {"type": "boolean", "default": False, "description": "Include callee context in suggestions"},
                     },
                     "required": [],
                 },
@@ -93,7 +93,7 @@ class SuggestionToolProvider(ToolProvider):
         return create_success_response(
             {
                 "suggestionType": suggestion_type,
-                "address": address,
+                "address": addr,
                 "variableName": variable_name,
                 "context": response_context,
             },

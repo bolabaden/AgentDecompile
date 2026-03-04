@@ -14,6 +14,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    DEFAULT_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class DecompilerToolProvider(ToolProvider):
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
 
-        timeout = self._get_int(args, "timeout", default=60)
+        timeout = self._get_int(args, "timeout", default=DEFAULT_TIMEOUT_SECONDS)
 
         # Try DecompileTool first
         dt = self._get_decomp_tool()

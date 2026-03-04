@@ -25,7 +25,11 @@ class StructureToolProvider(ToolProvider):
     HANDLERS = {"managestructures": "_handle"}
 
     def _find_structure(self, dtm: Any, name: str) -> Any:
-        """Return a structure by exact name, or ``None`` when not found."""
+        """Return a structure by exact name, or ``None`` when not found.
+        
+        **Performance**: O(n) where n = number of structures in the data type manager.
+        For programs with many structures, this may be slow. Consider caching if needed.
+        """
         for struct in dtm.getAllStructures():
             if struct.getName() == name:
                 return struct

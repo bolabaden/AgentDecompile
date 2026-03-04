@@ -772,7 +772,7 @@ class ProjectToolProvider(ToolProvider):
                         "source": "shared-server-session",
                     },
                 )
-            return create_success_response({"files": [], "note": "No project loaded"})
+            return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
 
         try:
             project_data = self._get_active_project_data()
@@ -846,350 +846,477 @@ class ProjectToolProvider(ToolProvider):
 
     async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation: str = self._require_str(args, "mode", "action", "operation", name="mode")
+
+        return await self._dispatch_handler(
+            args,
+            operation,
+            {
+                "import": "_handle_import",
+                "export": "_handle_export",
+                "downloadshared": "_handle_sync_shared",
+                "downloadsharedproject": "_handle_sync_shared",
+                "downloadsharedrepository": "_handle_sync_shared",
+                "pullshared": "_handle_sync_shared",
+                "pullsharedproject": "_handle_sync_shared",
+                "pullsharedrepository": "_handle_sync_shared",
+                "importtoshared": "_handle_sync_shared",
+                "pushshared": "_handle_sync_shared",
+                "pushsharedproject": "_handle_sync_shared",
+                "pushsharedrepository": "_handle_sync_shared",
+                "uploadshared": "_handle_sync_shared",
+                "uploadsharedrepository": "_handle_sync_shared",
+                "mirrorshared": "_handle_sync_shared",
+                "syncshared": "_handle_sync_shared",
+                "syncsharedproject": "_handle_sync_shared",
+                "syncsharedrepository": "_handle_sync_shared",
+                "syncwithshared": "_handle_sync_shared",
+                "checkout": "_handle_checkout",
+                "uncheckout": "_handle_uncheckout",
+                "unhijack": "_handle_unhijack",
+                "mkdir": "_handle_mkdir",
+                "touch": "_handle_touch",
+                "list": "_handle_list_files",
+                "info": "_handle_info",
+                "read": "_handle_read",
+                "write": "_handle_write",
+                "append": "_handle_append",
+                "rename": "_handle_rename",
+                "delete": "_handle_delete",
+                "copy": "_handle_copy",
+                "move": "_handle_move",
+            },
+        )
+
+    async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
-        destination: str | None = self._get_str(args, "newpath", "destinationpath")
-        new_name: str | None = self._get_str(args, "newname")
-        content: str = self._get_str(args, "content", default="")
-        encoding: str = self._get_str(args, "encoding", default="utf-8")
-        create_parents: bool = self._get_bool(args, "createparents", default=True)
-        max_results: int = self._get_int(args, "maxresults", default=200)
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required for import",
+                context={"operation": "import", "state": "missing-path"},
+                next_steps=[
+                    "Call `manage-files` with `mode=import` and `path` pointing to an existing file or directory.",
+                    "Use `manage-files` `mode=list` first if you need to discover valid paths.",
+                ],
+            )
+        return await self._import_file(file_path, args)
 
-        op: str = n(operation)
-        if op == "import":
-            if not file_path:
-                raise ActionableError(
-                    "path/filePath is required for import",
-                    context={"operation": "import", "state": "missing-path"},
-                    next_steps=[
-                        "Call `manage-files` with `mode=import` and `path` pointing to an existing file or directory.",
-                        "Use `manage-files` `mode=list` first if you need to discover valid paths.",
-                    ],
-                )
-            return await self._import_file(file_path, args)
+    async def _handle_export(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._export_current_program(args)
 
-        if op == "export":
-            return await self._export_current_program(args)
-
-        pull_aliases = {
-            "downloadshared",
-            "downloadsharedproject",
-            "downloadsharedrepository",
-            "pullshared",
-            "pullsharedproject",
-            "pullsharedrepository",
-        }
-        push_aliases = {
-            "importtoshared",
-            "pushshared",
-            "pushsharedproject",
-            "pushsharedrepository",
-            "uploadshared",
-            "uploadsharedrepository",
-        }
-        sync_aliases = {
-            "mirrorshared",
-            "syncshared",
-            "syncsharedproject",
-            "syncsharedrepository",
-            "syncwithshared",
-        }
-        if op in pull_aliases:
+    async def _handle_sync_shared(self, args: dict[str, Any]) -> list[types.TextContent]:
+        operation = self._get_str(args, "mode", "action", "operation", default="syncshared")
+        op = n(operation)
+        if op in {"downloadshared", "downloadsharedproject", "downloadsharedrepository", "pullshared", "pullsharedproject", "pullsharedrepository"}:
             return await self._sync_shared_repository(args, default_mode="pull")
-        if op in push_aliases:
+        if op in {"importtoshared", "pushshared", "pushsharedproject", "pushsharedrepository", "uploadshared", "uploadsharedrepository"}:
             return await self._sync_shared_repository(args, default_mode="push")
-        if op in sync_aliases:
+        if op in {"mirrorshared", "syncshared", "syncsharedproject", "syncsharedrepository", "syncwithshared"}:
             return await self._sync_shared_repository(args, default_mode="bidirectional")
+        raise ActionableError(f"Unsupported sync operation: {operation}")
 
-        if op in {"checkout", "uncheckout", "unhijack"}:
-            domain_file = self._resolve_domain_file(program_path)
-            if domain_file is None:
-                # Provide diagnostic info
-                has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
-                has_df = False
-                df_path = None
-                if has_program:
-                    try:
-                        assert self.program_info is not None, "program_info should not be None if has_program is True"
-                        df = self.program_info.program.getDomainFile()
-                        has_df = df is not None
-                        df_path = str(df.getPathname()) if df else None
-                    except Exception:
-                        pass
-                pd = self._get_active_project_data()
-                raise ActionableError(
-                    "No project-backed domain file found for the requested programPath",
-                    context={
-                        "operation": op,
-                        "programPath": program_path,
-                        "diagnostics": {
-                            "hasActiveProgram": has_program,
-                            "activeDomainFile": has_df,
-                            "activeDomainFilePath": df_path,
-                            "hasProjectData": pd is not None,
-                        },
-                    },
-                    next_steps=[
-                        "Call `open` for the target program path so a project-backed domain file is active.",
-                        "Call `list-project-files` to confirm the program exists in the current project/session.",
-                    ],
-                )
+    async def _handle_checkout(self, args: dict[str, Any]) -> list[types.TextContent]:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("checkout", program_path)
+        exclusive = self._get_bool(args, "exclusive", default=False)
+        if hasattr(domain_file, "checkout"):
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            domain_file.checkout(exclusive, TaskMonitor.DUMMY)
+        return create_success_response(
+            {
+                "operation": "checkout",
+                "programPath": program_path,
+                "exclusive": exclusive,
+                "success": True,
+            },
+        )
 
+    async def _handle_uncheckout(self, args: dict[str, Any]) -> list[types.TextContent]:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("uncheckout", program_path)
+        keep = self._get_bool(args, "keep", default=False)
+        force = self._get_bool(args, "force", default=False)
+        if hasattr(domain_file, "undoCheckout"):
+            domain_file.undoCheckout(keep, force)
+        return create_success_response(
+            {
+                "operation": "uncheckout",
+                "programPath": program_path,
+                "keep": keep,
+                "force": force,
+                "success": True,
+            },
+        )
+
+    async def _handle_unhijack(self, args: dict[str, Any]) -> list[types.TextContent]:
+        program_path: str | None = self._get_str(args, "programpath", "filepath", "file", "path")
+        domain_file = self._resolve_domain_file(program_path)
+        if domain_file is None:
+            self._raise_domain_file_error("unhijack", program_path)
+        force = self._get_bool(args, "force", default=False)
+        if hasattr(domain_file, "unhijack"):
+            domain_file.unhijack(force)
+        return create_success_response(
+            {
+                "operation": "unhijack",
+                "programPath": program_path,
+                "force": force,
+                "success": True,
+            },
+        )
+
+    def _raise_domain_file_error(self, operation: str, program_path: str | None) -> None:
+        """Helper to raise consistent domain file errors for version control operations."""
+        has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
+        has_df = False
+        df_path = None
+        if has_program:
             try:
-                if op == "checkout":
-                    exclusive = self._get_bool(args, "exclusive", default=False)
-                    if hasattr(domain_file, "checkout"):
-                        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-                        domain_file.checkout(exclusive, TaskMonitor.DUMMY)
-                    return create_success_response(
-                        {
-                            "operation": "checkout",
-                            "programPath": program_path,
-                            "exclusive": exclusive,
-                            "success": True,
-                        },
-                    )
-
-                if op == "uncheckout":
-                    keep = self._get_bool(args, "keep", default=False)
-                    force = self._get_bool(args, "force", default=False)
-                    if hasattr(domain_file, "undoCheckout"):
-                        domain_file.undoCheckout(keep, force)
-                    return create_success_response(
-                        {
-                            "operation": "uncheckout",
-                            "programPath": program_path,
-                            "keep": keep,
-                            "force": force,
-                            "success": True,
-                        },
-                    )
-
-                force = self._get_bool(args, "force", default=False)
-                if hasattr(domain_file, "unhijack"):
-                    domain_file.unhijack(force)
-                return create_success_response(
-                    {
-                        "operation": "unhijack",
-                        "programPath": program_path,
-                        "force": force,
-                        "success": True,
-                    },
-                )
-            except Exception as exc:
-                raise ActionableError(
-                    str(exc),
-                    context={"operation": op, "programPath": program_path},
-                    next_steps=[
-                        "Verify project version-control state for the domain file.",
-                        "Retry after resolving checkout/hijack conflicts.",
-                    ],
-                )
-
-        if op == "mkdir":
-            if not file_path:
-                raise ActionableError(
-                    "path/filePath is required for mkdir",
-                    context={"operation": "mkdir", "state": "missing-path"},
-                    next_steps=["Call `manage-files` with `mode=mkdir` and a target `path`."],
-                )
-            target_dir = Path(file_path).expanduser().resolve()
-            target_dir.mkdir(parents=create_parents, exist_ok=True)
-            return create_success_response({"operation": "mkdir", "path": str(target_dir), "success": True})
-
-        if op == "touch":
-            if not file_path:
-                raise ActionableError(
-                    "path/filePath is required for touch",
-                    context={"operation": "touch", "state": "missing-path"},
-                    next_steps=["Call `manage-files` with `mode=touch` and a target `path`."],
-                )
-            target_file = Path(file_path).expanduser().resolve()
-            if create_parents:
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.touch(exist_ok=True)
-            return create_success_response({"operation": "touch", "path": str(target_file), "success": True})
-
-        if op == "list":
-            base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
-            if not base_path.exists():
-                raise ActionableError(
-                    f"Path not found: {base_path}",
-                    context={"operation": "list", "path": str(base_path), "state": "path-not-found"},
-                    next_steps=[
-                        "Run `manage-files` `mode=list` on the parent directory to discover valid paths.",
-                        "Retry with an existing directory path.",
-                    ],
-                )
-            if not base_path.is_dir():
-                raise ActionableError(
-                    f"Path is not a directory: {base_path}",
-                    context={"operation": "list", "path": str(base_path), "state": "path-type-mismatch"},
-                    next_steps=[
-                        "Use `manage-files` `mode=read` or `mode=info` for file paths.",
-                        "Use `mode=list` only with directory paths.",
-                    ],
-                )
-
-            entries: list[dict[str, Any]] = []
-            for item in sorted(base_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))[:max_results]:
-                entries.append(
-                    {
-                        "name": item.name,
-                        "path": str(item),
-                        "isDirectory": item.is_dir(),
-                        "size": None if item.is_dir() else item.stat().st_size,
-                    },
-                )
-            return create_success_response(
-                {
-                    "operation": "list",
-                    "path": str(base_path),
-                    "entries": entries,
-                    "count": len(entries),
-                    "maxResults": max_results,
+                assert self.program_info is not None
+                df = self.program_info.program.getDomainFile()
+                has_df = df is not None
+                df_path = str(df.getPathname()) if df else None
+            except Exception:
+                pass
+        pd = self._get_active_project_data()
+        raise ActionableError(
+            "No project-backed domain file found for the requested programPath",
+            context={
+                "operation": operation,
+                "programPath": program_path,
+                "diagnostics": {
+                    "hasActiveProgram": has_program,
+                    "activeDomainFile": has_df,
+                    "activeDomainFilePath": df_path,
+                    "hasProjectData": pd is not None,
                 },
+            },
+            next_steps=[
+                "Call `open` for the target program path so a project-backed domain file is active.",
+                "Call `list-project-files` to confirm the program exists in the current project/session.",
+            ],
+        )
+
+    async def _handle_mkdir(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required for mkdir",
+                context={"operation": "mkdir", "state": "missing-path"},
+                next_steps=["Call `manage-files` with `mode=mkdir` and a target `path`."],
+            )
+        create_parents: bool = self._get_bool(args, "createparents", default=True)
+        target_dir = Path(file_path).expanduser().resolve()
+        target_dir.mkdir(parents=create_parents, exist_ok=True)
+        return create_success_response({"operation": "mkdir", "path": str(target_dir), "success": True})
+
+    async def _handle_touch(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required for touch",
+                context={"operation": "touch", "state": "missing-path"},
+                next_steps=["Call `manage-files` with `mode=touch` and a target `path`."],
+            )
+        create_parents: bool = self._get_bool(args, "createparents", default=True)
+        target_file = Path(file_path).expanduser().resolve()
+        if create_parents:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+        target_file.touch(exist_ok=True)
+        return create_success_response({"operation": "touch", "path": str(target_file), "success": True})
+
+    async def _handle_list_files(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        max_results: int = self._get_int(args, "maxresults", default=200)
+        base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
+        if not base_path.exists():
+            raise ActionableError(
+                f"Path not found: {base_path}",
+                context={"operation": "list", "path": str(base_path), "state": "path-not-found"},
+                next_steps=[
+                    "Run `manage-files` `mode=list` on the parent directory to discover valid paths.",
+                    "Retry with an existing directory path.",
+                ],
+            )
+        if not base_path.is_dir():
+            raise ActionableError(
+                f"Path is not a directory: {base_path}",
+                context={"operation": "list", "path": str(base_path), "state": "path-type-mismatch"},
+                next_steps=[
+                    "Use `manage-files` `mode=read` or `mode=info` for file paths.",
+                    "Use `mode=list` only with directory paths.",
+                ],
             )
 
+        entries: list[dict[str, Any]] = []
+        for item in sorted(base_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))[:max_results]:
+            entries.append(
+                {
+                    "name": item.name,
+                    "path": str(item),
+                    "isDirectory": item.is_dir(),
+                    "size": None if item.is_dir() else item.stat().st_size,
+                },
+            )
+        return create_success_response(
+            {
+                "operation": "list",
+                "path": str(base_path),
+                "entries": entries,
+                "count": len(entries),
+                "maxResults": max_results,
+            },
+        )
+
+    async def _handle_info(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
         if not file_path:
             raise ActionableError(
                 "path/filePath is required",
-                context={"operation": op, "state": "missing-path"},
+                context={"operation": "info", "state": "missing-path"},
                 next_steps=[
                     "Provide `path`/`filePath` for this operation.",
                     "Use `manage-files` `mode=list` first if path discovery is needed.",
                 ],
             )
-
         target = Path(file_path).expanduser().resolve()
-        if op == "info":
-            return create_success_response(
-                {
-                    "operation": "info",
-                    "path": str(target),
-                    "exists": target.exists(),
-                    "isDirectory": target.is_dir() if target.exists() else False,
-                    "size": None if (not target.exists() or target.is_dir()) else target.stat().st_size,
-                },
-            )
+        return create_success_response(
+            {
+                "operation": "info",
+                "path": str(target),
+                "exists": target.exists(),
+                "isDirectory": target.is_dir() if target.exists() else False,
+                "size": None if (not target.exists() or target.is_dir()) else target.stat().st_size,
+            },
+        )
 
-        if op == "read":
-            if not target.exists() or target.is_dir():
-                raise ActionableError(
-                    f"Path is not a readable file: {target}",
-                    context={"operation": "read", "path": str(target), "state": "path-type-mismatch"},
-                    next_steps=[
-                        "Call `manage-files` `mode=info` on the same path to confirm it is a file.",
-                        "Use `mode=list` for directories.",
-                    ],
-                )
-            file_text = target.read_text(encoding=encoding)
-            return create_success_response(
-                {
-                    "operation": "read",
-                    "path": str(target),
-                    "encoding": encoding,
-                    "content": file_text,
-                    "size": len(file_text),
-                },
+    async def _handle_read(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "read", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
             )
-
-        if op == "write":
-            if create_parents:
-                target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding=encoding)
-            return create_success_response(
-                {
-                    "operation": "write",
-                    "path": str(target),
-                    "encoding": encoding,
-                    "written": len(content),
-                    "success": True,
-                },
+        encoding: str = self._get_str(args, "encoding", default="utf-8")
+        target = Path(file_path).expanduser().resolve()
+        if not target.exists() or target.is_dir():
+            raise ActionableError(
+                f"Path is not a readable file: {target}",
+                context={"operation": "read", "path": str(target), "state": "path-type-mismatch"},
+                next_steps=[
+                    "Call `manage-files` `mode=info` on the same path to confirm it is a file.",
+                    "Use `mode=list` for directories.",
+                ],
             )
+        file_text = target.read_text(encoding=encoding)
+        return create_success_response(
+            {
+                "operation": "read",
+                "path": str(target),
+                "encoding": encoding,
+                "content": file_text,
+                "size": len(file_text),
+            },
+        )
 
-        if op == "append":
-            if create_parents:
-                target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("a", encoding=encoding) as handle:
-                handle.write(content)
-            return create_success_response(
-                {
-                    "operation": "append",
-                    "path": str(target),
-                    "encoding": encoding,
-                    "appended": len(content),
-                    "success": True,
-                },
+    async def _handle_write(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "write", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
             )
+        content: str = self._get_str(args, "content", default="")
+        encoding: str = self._get_str(args, "encoding", default="utf-8")
+        create_parents: bool = self._get_bool(args, "createparents", default=True)
+        target = Path(file_path).expanduser().resolve()
+        if create_parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding=encoding)
+        return create_success_response(
+            {
+                "operation": "write",
+                "path": str(target),
+                "encoding": encoding,
+                "written": len(content),
+                "success": True,
+            },
+        )
 
+    async def _handle_append(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "append", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
+            )
+        content: str = self._get_str(args, "content", default="")
+        encoding: str = self._get_str(args, "encoding", default="utf-8")
+        create_parents: bool = self._get_bool(args, "createparents", default=True)
+        target = Path(file_path).expanduser().resolve()
+        if create_parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding=encoding) as handle:
+            handle.write(content)
+        return create_success_response(
+            {
+                "operation": "append",
+                "path": str(target),
+                "encoding": encoding,
+                "appended": len(content),
+                "success": True,
+            },
+        )
+
+    async def _handle_rename(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "rename", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
+            )
+        new_name: str | None = self._get_str(args, "newname")
+        if not new_name:
+            raise ActionableError(
+                "newName is required for rename",
+                context={"operation": "rename", "state": "missing-parameter", "missingParameter": "newName"},
+                next_steps=["Provide `newName` and retry `manage-files` with `mode=rename`."],
+            )
+        target = Path(file_path).expanduser().resolve()
         if not target.exists():
             raise ActionableError(
                 f"Path not found: {target}",
-                context={"operation": op, "path": str(target), "state": "path-not-found"},
+                context={"operation": "rename", "path": str(target), "state": "path-not-found"},
                 next_steps=[
                     "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
                     "Retry with a valid existing path.",
                 ],
             )
+        new_path = target.with_name(new_name)
+        target.rename(new_path)
+        return create_success_response({"operation": "rename", "path": str(target), "newPath": str(new_path), "success": True})
 
-        if op == "rename":
-            if not new_name:
-                raise ActionableError(
-                    "newName is required for rename",
-                    context={"operation": "rename", "state": "missing-parameter", "missingParameter": "newName"},
-                    next_steps=["Provide `newName` and retry `manage-files` with `mode=rename`."],
-                )
-            new_path = target.with_name(new_name)
-            target.rename(new_path)
-            return create_success_response({"operation": "rename", "path": str(target), "newPath": str(new_path), "success": True})
-
-        if op == "delete":
-            recursive = self._get_bool(args, "recursive", default=False)
-            if target.is_dir():
-                if recursive:
-                    shutil.rmtree(target)
-                else:
-                    target.rmdir()
+    async def _handle_delete(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "delete", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
+            )
+        recursive: bool = self._get_bool(args, "recursive", default=False)
+        target = Path(file_path).expanduser().resolve()
+        if not target.exists():
+            raise ActionableError(
+                f"Path not found: {target}",
+                context={"operation": "delete", "path": str(target), "state": "path-not-found"},
+                next_steps=[
+                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
+                    "Retry with a valid existing path.",
+                ],
+            )
+        if target.is_dir():
+            if recursive:
+                import shutil
+                shutil.rmtree(target)
             else:
-                target.unlink()
-            return create_success_response({"operation": "delete", "path": str(target), "success": True})
+                target.rmdir()
+        else:
+            target.unlink()
+        return create_success_response({"operation": "delete", "path": str(target), "success": True})
 
-        if op == "copy":
-            if not destination:
-                raise ActionableError(
-                    "newPath/destinationPath is required for copy",
-                    context={"operation": "copy", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
-                    next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=copy`."],
-                )
-            dst = Path(destination).expanduser().resolve()
-            if target.is_dir():
-                shutil.copytree(target, dst, dirs_exist_ok=True)
-            else:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, dst)
-            return create_success_response({"operation": "copy", "path": str(target), "newPath": str(dst), "success": True})
-
-        if op == "move":
-            if not destination:
-                raise ActionableError(
-                    "newPath/destinationPath is required for move",
-                    context={"operation": "move", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
-                    next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=move`."],
-                )
-            dst = Path(destination).expanduser().resolve()
+    async def _handle_copy(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "copy", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
+            )
+        destination: str | None = self._get_str(args, "newpath", "destinationpath")
+        if not destination:
+            raise ActionableError(
+                "newPath/destinationPath is required for copy",
+                context={"operation": "copy", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
+                next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=copy`."],
+            )
+        target = Path(file_path).expanduser().resolve()
+        if not target.exists():
+            raise ActionableError(
+                f"Path not found: {target}",
+                context={"operation": "copy", "path": str(target), "state": "path-not-found"},
+                next_steps=[
+                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
+                    "Retry with a valid existing path.",
+                ],
+            )
+        dst = Path(destination).expanduser().resolve()
+        import shutil
+        if target.is_dir():
+            shutil.copytree(target, dst, dirs_exist_ok=True)
+        else:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(target), str(dst))
-            return create_success_response({"operation": "move", "path": str(target), "newPath": str(dst), "success": True})
+            shutil.copy2(target, dst)
+        return create_success_response({"operation": "copy", "path": str(target), "newPath": str(dst), "success": True})
 
-        raise ActionableError(
-            f"Unsupported manage-files operation: {operation}",
-            context={"operation": str(operation), "state": "unsupported-operation"},
-            next_steps=[
-                "Use one of the documented `manage-files` modes (list/read/write/append/mkdir/touch/import/export/copy/move/rename/delete/checkout/uncheckout/unhijack).",
-                "Call `list_tools` if you need to inspect current advertised schemas.",
-            ],
-        )
+    async def _handle_move(self, args: dict[str, Any]) -> list[types.TextContent]:
+        file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
+        if not file_path:
+            raise ActionableError(
+                "path/filePath is required",
+                context={"operation": "move", "state": "missing-path"},
+                next_steps=[
+                    "Provide `path`/`filePath` for this operation.",
+                    "Use `manage-files` `mode=list` first if path discovery is needed.",
+                ],
+            )
+        destination: str | None = self._get_str(args, "newpath", "destinationpath")
+        if not destination:
+            raise ActionableError(
+                "newPath/destinationPath is required for move",
+                context={"operation": "move", "state": "missing-parameter", "missingParameter": "newPath|destinationPath"},
+                next_steps=["Provide `newPath` (or `destinationPath`) and retry `mode=move`."],
+            )
+        target = Path(file_path).expanduser().resolve()
+        if not target.exists():
+            raise ActionableError(
+                f"Path not found: {target}",
+                context={"operation": "move", "path": str(target), "state": "path-not-found"},
+                next_steps=[
+                    "Call `manage-files` `mode=list` on the parent directory to verify available entries.",
+                    "Retry with a valid existing path.",
+                ],
+            )
+        dst = Path(destination).expanduser().resolve()
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.move(str(target), str(dst))
+        return create_success_response({"operation": "move", "path": str(target), "newPath": str(dst), "success": True})
 
     async def _handle_sync_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")

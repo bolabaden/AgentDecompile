@@ -192,9 +192,7 @@ class PyGhidraContext:
 
         locator = ProjectLocator(project_dir_str, self.project_name)
 
-        # TODO: determine if it should be:
-        # if locator.getMarkerFile().exists() and locator.getProjectDir().exists():
-        if locator.exists():
+        if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
             logger.info(f"Opening existing project: {self.project_name}")
             return GhidraProject.openProject(project_dir_str, self.project_name, False)
         logger.info(f"Creating new project: {self.project_name}")

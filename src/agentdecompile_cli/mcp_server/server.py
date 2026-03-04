@@ -28,6 +28,7 @@ from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderMana
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 
 logger = logging.getLogger(__name__)
+_TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
 
 
 class ServerConfig(BaseModel):
@@ -194,6 +195,20 @@ class PythonMcpServer:
         self.tool_providers.program_closed(program_path)
         self.resource_providers.program_closed(program_path)
 
+    @staticmethod
+    def _is_truthy_env(value: str | None) -> bool:
+        if value is None:
+            return False
+        return value.strip().lower() in _TRUTHY_ENV_VALUES
+
+    @staticmethod
+    def _cleanup_provider(provider: Any, provider_name: str) -> None:
+        """Run provider cleanup when available; log if provider is not set."""
+        if provider is None:
+            logger.warning("%s are not set! Cannot cleanup!", provider_name)
+            return
+        provider.cleanup()
+
     def start(self) -> int:
         """Start the MCP server.
 
@@ -217,8 +232,7 @@ class PythonMcpServer:
         self._shutdown_event.clear()
 
         # Enable debug logging if configured
-        debug_env: str = os.getenv("AGENT_DECOMPILE_DEBUG", "").lower()
-        if debug_env in ("true", "1", "yes", "on"):
+        if self._is_truthy_env(os.getenv("AGENT_DECOMPILE_DEBUG")):
             DebugLogger.set_debug_enabled(True)
             DebugLogger.debug(self, "Debug logging enabled")
 
@@ -236,7 +250,7 @@ class PythonMcpServer:
                 raise RuntimeError("Server failed to start within timeout")
             time.sleep(0.1)
 
-        logger.info(f"MCP server started on {self.config.host}:{self.config.port}")
+        logger.info("MCP server started on %s:%s", self.config.host, self.config.port)
         DebugLogger.debug_tool_execution(self, "server_startup", "SUCCESS", f"Server ready on port {self.config.port}")
         return self.config.port
 
@@ -266,7 +280,7 @@ class PythonMcpServer:
             # Run server until shutdown
             asyncio.run(server.serve())
         except Exception as e:
-            logger.error(f"Server error: {e}")
+            logger.error("Server error: %s", e)
         finally:
             self._running = False
 
@@ -294,15 +308,8 @@ class PythonMcpServer:
         self._shutdown_event.set()
 
         # Cleanup providers
-        if self.tool_providers is None:
-            logger.warning("Tool providers are not set! Cannot cleanup!")
-        else:
-            self.tool_providers.cleanup()
-
-        if self.resource_providers is None:
-            logger.warning("Resource providers are not set! Cannot cleanup!")
-        else:
-            self.resource_providers.cleanup()
+        self._cleanup_provider(self.tool_providers, "Tool providers")
+        self._cleanup_provider(self.resource_providers, "Resource providers")
 
         # Stop the server thread
         if self._server_thread is not None and self._server_thread.is_alive():

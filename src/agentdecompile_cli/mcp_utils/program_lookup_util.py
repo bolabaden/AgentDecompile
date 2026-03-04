@@ -116,7 +116,7 @@ class ProgramLookupUtil:
         return "\n".join(lines)
 
     @staticmethod
-    def suggest_similar_programs(target_path: str, available_programs: list[Program], max_suggestions: int = 3) -> list[str]:
+    def suggest_similar_programs(target_path: str, available_programs: list[GhidraProgram], max_suggestions: int = 3) -> list[str]:
         """Suggest similar program names based on fuzzy matching.
 
         Args:
@@ -175,7 +175,7 @@ class ProgramLookupUtil:
         return len(path.name) > 0
 
     @staticmethod
-    def get_program_display_name(program: Program) -> str:
+    def get_program_display_name(program: GhidraProgram) -> str:
         """Get a display name for a program suitable for error messages.
 
         Args:

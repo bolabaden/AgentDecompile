@@ -150,7 +150,7 @@ class TestBookmarkProviderValidation:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"action": "set"})
 
-        p._add = fake_add
+        p._handle_set = fake_add
         await p.call_tool("manage-bookmarks", {"action": "add", "programPath": "/test/binary", "addressOrSymbol": "0x1000"})
         assert len(called) == 1
 
@@ -165,7 +165,7 @@ class TestBookmarkProviderValidation:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"categories": []})
 
-        p._categories = fake_categories
+        p._handle_categories = fake_categories
         await p.call_tool("manage-bookmarks", {"action": "categories", "programPath": "/test/binary"})
         assert len(called) == 1
 
@@ -180,7 +180,7 @@ class TestBookmarkProviderValidation:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"removed": 0})
 
-        p._remove_all = fake_remove_all
+        p._handle_remove_all = fake_remove_all
         await p.call_tool("manage-bookmarks", {"action": "removeall", "programPath": "/test/binary"})
         assert len(called) == 1
 
@@ -200,7 +200,7 @@ class TestBookmarkProviderModeActionAlias:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"bookmarks": []})
 
-        p._list = fake_list
+        p._handle_get = fake_list
         await p.call_tool("manage-bookmarks", {"mode": "list", "programPath": "/test/binary"})
         assert len(called) == 1
 
@@ -216,7 +216,7 @@ class TestBookmarkProviderModeActionAlias:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"action": "set"})
 
-        p._add = fake_add
+        p._handle_set = fake_add
         await p.call_tool("manage-bookmarks", {"mode": "set", "programPath": "/test/binary", "addressOrSymbol": "0x1000"})
         assert len(called) == 1
 
@@ -232,7 +232,7 @@ class TestBookmarkProviderModeActionAlias:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"categories": []})
 
-        p._categories = fake_categories
+        p._handle_categories = fake_categories
         await p.call_tool("manage-bookmarks", {"mode": "categories", "programPath": "/test/binary"})
         assert len(called) == 1
 
@@ -254,8 +254,8 @@ class TestBookmarkProviderModeActionAlias:
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
             return create_success_response({"categories": []})
 
-        p._list = fake_list
-        p._categories = fake_categories
+        p._handle_get = fake_list
+        p._handle_categories = fake_categories
         # mode=categories should win over action=list since mode is listed first in _get_str
         await p.call_tool(
             "manage-bookmarks",
