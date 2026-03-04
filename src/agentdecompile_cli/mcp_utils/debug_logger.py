@@ -1,7 +1,4 @@
-"""Debug logger utility for AgentDecompile Python implementation.
-
-Provides configuration-aware debug logging, .
-"""
+"""Configuration-aware debug logging helpers."""
 
 from __future__ import annotations
 
@@ -29,6 +26,23 @@ class DebugLogger:
         return DebugLogger._debug_enabled
 
     @staticmethod
+    def _source_name(source: Any) -> str:
+        """Return a stable source label for log messages."""
+        if source is None:
+            return "unknown"
+        if isinstance(source, type):
+            return source.__name__
+        return source.__class__.__name__
+
+    @classmethod
+    def _log(cls, prefix: str, message: str, source: Any = None) -> None:
+        """Emit a prefixed debug line when debug logging is enabled."""
+        if not cls._debug_enabled:
+            return
+        source_name = cls._source_name(source)
+        logger.info(f"[{prefix}] [{source_name}] {message}")
+
+    @staticmethod
     def debug(source: Any, message: str) -> None:
         """Log a debug message if debug mode is enabled.
 
@@ -36,8 +50,7 @@ class DebugLogger:
             source: The source object for the log message
             message: The message to log
         """
-        if DebugLogger._debug_enabled:
-            logger.info(f"[DEBUG] {message}")
+        DebugLogger._log("DEBUG", message, source)
 
     @staticmethod
     def debug_with_exception(source: Any, message: str, exception: Exception) -> None:
@@ -48,8 +61,7 @@ class DebugLogger:
             message: The message to log
             exception: The exception to include
         """
-        if DebugLogger._debug_enabled:
-            logger.info(f"[DEBUG] {message}: {exception}")
+        DebugLogger._log("DEBUG", f"{message}: {exception}", source)
 
     @staticmethod
     def debug_connection(source: Any, message: str) -> None:
@@ -59,8 +71,7 @@ class DebugLogger:
             source: The source object for the log message
             message: The message to log
         """
-        if DebugLogger._debug_enabled:
-            logger.info(f"[DEBUG-CONNECTION] {message}")
+        DebugLogger._log("DEBUG-CONNECTION", message, source)
 
     @staticmethod
     def debug_performance(source: Any, operation: str, duration_ms: int) -> None:
@@ -71,8 +82,7 @@ class DebugLogger:
             operation: The operation being timed
             duration_ms: The duration in milliseconds
         """
-        if DebugLogger._debug_enabled:
-            logger.info(f"[DEBUG-PERF] {operation} took {duration_ms}ms")
+        DebugLogger._log("DEBUG-PERF", f"{operation} took {duration_ms}ms", source)
 
     @staticmethod
     def debug_tool_execution(source: Any, tool_name: str, status: str, details: str | None = None) -> None:
@@ -84,11 +94,10 @@ class DebugLogger:
             status: The status (START, END, ERROR, etc.)
             details: Additional details (optional)
         """
-        if DebugLogger._debug_enabled:
-            message = f"[DEBUG-TOOL] {tool_name} - {status}"
-            if details:
-                message += f": {details}"
-            logger.info(message)
+        message = f"{tool_name} - {status}"
+        if details:
+            message += f": {details}"
+        DebugLogger._log("DEBUG-TOOL", message, source)
 
     @classmethod
     def time_operation(cls, source: Any, operation_name: str):

@@ -152,7 +152,7 @@ class RawMcpHttpBackend:
     """
 
     def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT):
-        self._url = url if url.endswith("/") else f"{url}/"
+        self._url = url.rstrip("/")
         self._session_id: str | None = None
         self._request_counter = 0
         self._initialized = False
@@ -199,12 +199,24 @@ class RawMcpHttpBackend:
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST a JSON-RPC envelope and return the parsed response dict."""
-        resp = await self._client.post(self._url, json=body, headers=self._headers())
+        try:
+            resp = await self._client.post(self._url, json=body, headers=self._headers())
+        except Exception:
+            # Retry once with a trailing slash for backends that strictly require it.
+            retry_url = f"{self._url}/"
+            resp = await self._client.post(retry_url, json=body, headers=self._headers())
 
         # Capture session id.
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
         if sid:
             self._session_id = sid
+
+        if resp.status_code == 404 and self._url.endswith("/mcp/message/"):
+            retry_url = self._url.rstrip("/")
+            resp = await self._client.post(retry_url, json=body, headers=self._headers())
+            sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+            if sid:
+                self._session_id = sid
 
         resp.raise_for_status()
 
@@ -346,11 +358,7 @@ class AgentDecompileMcpClient:
             if self._backend:
                 await self._backend.close()
             self._backend = None
-            err = str(e)
-            is_conn = isinstance(e, (asyncio.TimeoutError, ConnectionError, OSError)) or any(
-                x in err for x in ["ConnectError", "connection", "ConnectionRefused", "ConnectTimeout"]
-            )
-            if is_conn:
+            if self._is_connection_error(e):
                 raise ServerNotRunningError(
                     f"Cannot connect to AgentDecompile server at {self._url}\n\n{get_server_start_message()}",
                 ) from e
@@ -364,6 +372,28 @@ class AgentDecompileMcpClient:
         if self._backend:
             await self._backend.close()
             self._backend = None
+
+    @staticmethod
+    def _is_connection_error(exc: BaseException) -> bool:
+        """Return True if *exc* is a transport/connection failure."""
+        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
+            return True
+        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
+            return True
+        err_str = str(exc)
+        return any(
+            kw in err_str
+            for kw in (
+                "ConnectError",
+                "ConnectTimeout",
+                "ConnectionRefused",
+                "BrokenResource",
+                "ClosedResource",
+                "connection reset",
+                "Timed out",
+                "TimeoutException",
+            )
+        )
 
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""

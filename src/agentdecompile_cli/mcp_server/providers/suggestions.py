@@ -75,16 +75,7 @@ class SuggestionToolProvider(ToolProvider):
         if suggestion_type not in valid_suggestion_types:
             raise ValueError("Invalid suggestion_type")
 
-        address = self._get_str(
-            args,
-            "addressorsymbol",
-            "address",
-            "functionidentifier",
-            "function",
-            "symbol",
-            "addr",
-            default="",
-        )
+        addr = self._get_address_or_symbol(args)
         variable_name = self._get_str(args, "variablename", "variable", default="")
         max_context = self._get_int(args, "maxcontext", default=5)
         include_callers = self._get_bool(args, "includecallers", default=False)

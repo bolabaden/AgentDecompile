@@ -1,8 +1,4 @@
-"""Program lookup utility for AgentDecompile Python implementation.
-
-Provides program validation and lookup with helpful error messages,
-.
-"""
+"""Program lookup and validation utilities with user-friendly errors."""
 
 from __future__ import annotations
 
@@ -65,7 +61,7 @@ class ProgramLookupUtil:
         )
 
     @staticmethod
-    def _find_program_in_list(program_path: str, programs: list[Program]) -> Program | None:
+    def _find_program_in_list(program_path: str, programs: list[GhidraProgram]) -> GhidraProgram | None:
         """Find a program in the list by path or name.
 
         Args:
@@ -78,30 +74,27 @@ class ProgramLookupUtil:
         if not programs:
             return None
 
-        # First try exact path match
+        # Single-pass matching with descending priority:
+        # exact path > exact name > partial name
+        program_name = Path(program_path).name
+        exact_name_match: GhidraProgram | None = None
+        partial_match: GhidraProgram | None = None
+
         for program in programs:
             domain_file = program.getDomainFile()
-            if domain_file:
-                file_path = domain_file.getPathname()
-                if file_path == program_path:
-                    return program
-
-        # Then try name match
-        program_name = Path(program_path).name
-        for program in programs:
-            if program.getName() == program_name:
+            if domain_file and domain_file.getPathname() == program_path:
                 return program
 
-        # Try partial name match
-        for program in programs:
-            name = program.getName()
-            if name and (program_name in name or name in program_name):
-                return program
+            name = program.getName() or ""
+            if exact_name_match is None and name == program_name:
+                exact_name_match = program
+            if partial_match is None and name and (program_name in name or name in program_name):
+                partial_match = program
 
-        return None
+        return exact_name_match or partial_match
 
     @staticmethod
-    def get_available_programs_info(available_programs: list[Program]) -> str:
+    def get_available_programs_info(available_programs: list[GhidraProgram]) -> str:
         """Get a formatted string listing available programs for error messages.
 
         Args:

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +124,23 @@ class ImportExportToolProvider(ToolProvider):
             ),
         ]
 
+    @staticmethod
+    def _iter_files_to_import(source: Path, recursive: bool, max_depth: int):
+        """Yield candidate files under ``source`` respecting recursion/depth options."""
+        if source.is_file():
+            yield source
+            return
+
+        root_depth = len(source.parts)
+        for entry in source.rglob("*"):
+            if not entry.is_file():
+                continue
+            if not recursive and entry.parent != source:
+                continue
+            if len(entry.parts) - root_depth > max_depth:
+                continue
+            yield entry
+
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path = self._require_str(args, "filepath", "path", "file", "binarypath", "binary", name="filePath")
         prog_name = self._get_str(args, "programname", "name")
@@ -137,43 +154,32 @@ class ImportExportToolProvider(ToolProvider):
         if not source.exists():
             raise ValueError(f"File not found: {source}")
 
-        files_to_import: list[Path] = []
-        if source.is_file():
-            files_to_import = [source]
-        else:
-            root_depth = len(source.parts)
-            for p in source.rglob("*"):
-                if not p.is_file():
-                    continue
-                if not recursive and p.parent != source:
-                    continue
-                if len(p.parts) - root_depth > max_depth:
-                    continue
-                files_to_import.append(p)
-
         imported_programs: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
+        discovered_count = 0
 
         try:
             from agentdecompile_cli.launcher import ProjectManager
 
             manager = ProjectManager()
-            for item in files_to_import:
-                try:
-                    program = manager.import_binary(item, program_name=prog_name or item.name)
-                    if program is None:
-                        raise RuntimeError("import_binary returned None")
-                    imported_programs.append({"sourcePath": str(item), "programName": program.getName() if hasattr(program, "getName") else item.name})
-                except Exception as exc:
-                    errors.append({"path": str(item), "error": str(exc)})
-
-            manager.cleanup()
+            try:
+                for item in self._iter_files_to_import(source, recursive, max_depth):
+                    discovered_count += 1
+                    try:
+                        program = manager.import_binary(item, program_name=prog_name or item.name)
+                        if program is None:
+                            raise RuntimeError("import_binary returned None")
+                        imported_programs.append({"sourcePath": str(item), "programName": program.getName() if hasattr(program, "getName") else item.name})
+                    except Exception as exc:
+                        errors.append({"path": str(item), "error": str(exc)})
+            finally:
+                manager.cleanup()
         except Exception as exc:
             return create_success_response(
                 {
                     "action": "import",
                     "importedFrom": str(source),
-                    "filesDiscovered": len(files_to_import),
+                    "filesDiscovered": discovered_count,
                     "filesImported": 0,
                     "importedPrograms": [],
                     "groupsCreated": 0,
@@ -191,7 +197,7 @@ class ImportExportToolProvider(ToolProvider):
             {
                 "action": "import",
                 "importedFrom": str(source),
-                "filesDiscovered": len(files_to_import),
+                "filesDiscovered": discovered_count,
                 "filesImported": len(imported_programs),
                 "importedPrograms": imported_programs,
                 "groupsCreated": 0,
@@ -322,7 +328,7 @@ class ImportExportToolProvider(ToolProvider):
                     # Collect undefined references
                     try:
                         ref_mgr: Any = program.getReferenceManager()
-                        for ref in list(ref_mgr.getExternalReferences())[:50]:
+                        for ref in islice(ref_mgr.getExternalReferences(), 50):
                             if ref and ref.getToAddress():
                                 results.append(
                                     {
@@ -350,7 +356,7 @@ class ImportExportToolProvider(ToolProvider):
                         bookmark_mgr: Any = program.getBookmarkManager()
                         bookmarks: list[Any] = bookmark_mgr.getBookmarks("Analysis")
                         if bookmarks:
-                            for bookmark in list(bookmarks)[:30]:
+                            for bookmark in islice(bookmarks, 30):
                                 if bookmark:
                                     results.append(
                                         {
@@ -375,7 +381,7 @@ class ImportExportToolProvider(ToolProvider):
                     
                     # Collect analysis warnings (thunk/external functions)
                     try:
-                        func_mgr: Any = program.getFunctionManager()
+                        func_mgr: Any = self._get_function_manager(program)
                         for i, func in enumerate(func_mgr.getFunctions(True)):
                             if i > 50:
                                 break
@@ -496,7 +502,7 @@ class ImportExportToolProvider(ToolProvider):
                 "address": str(program.getImageBase()),
                 "language": str(program.getLanguage().getLanguageID()),
                 "compiler": str(program.getCompilerSpec().getCompilerSpecID()),
-                "functionCount": program.getFunctionManager().getFunctionCount(),
+                "functionCount": self._get_function_manager(program).getFunctionCount(),
                 "format": fmt,
             }
             out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -519,20 +525,20 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
-            from ghidra.app.plugin.core.analysis import AutoAnalysisManager
-            from ghidra.util.task import TaskMonitor
+            from ghidra.app.plugin.core.analysis import AutoAnalysisManager  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             mgr = AutoAnalysisManager.getAnalysisManager(program)
-            tx = program.startTransaction("auto-analysis")
-            try:
+
+            def _run_auto_analysis() -> None:
                 monitor = TaskMonitor.DUMMY
                 reanalyze_done = False
                 try:
-                    from ghidra.program.model.address import AddressSet
+                    from ghidra.program.model.address import AddressSet  # pyright: ignore[reportMissingModuleSource]
 
                     addr_set = None
                     if hasattr(program, "getMemory"):
-                        memory = program.getMemory()
+                        memory = self._get_memory(program)
                         if memory is not None:
                             if hasattr(memory, "getLoadedAndInitializedAddressSet"):
                                 addr_set = memory.getLoadedAndInitializedAddressSet()
@@ -548,10 +554,8 @@ class ImportExportToolProvider(ToolProvider):
                 if not reanalyze_done:
                     mgr.reAnalyzeAll(monitor)
                 mgr.startAnalysis(monitor)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
 
             return create_success_response(
                 {
@@ -579,12 +583,11 @@ class ImportExportToolProvider(ToolProvider):
 
         program = self.program_info.program
         try:
-            from ghidra.program.model.lang import CompilerSpecID, LanguageID
-            from ghidra.program.util import DefaultLanguageService
-            from ghidra.util.task import TaskMonitor
+            from ghidra.program.model.lang import CompilerSpecID, LanguageID  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
-            tx = program.startTransaction("change-processor")
-            try:
+            def _change_processor() -> None:
                 language_id = LanguageID(language)
                 language_service = DefaultLanguageService.getLanguageService()
                 language_obj = language_service.getLanguage(language_id)
@@ -593,15 +596,20 @@ class ImportExportToolProvider(ToolProvider):
 
                 compiler_spec_id = CompilerSpecID(compiler) if compiler else language_obj.getDefaultCompilerSpec().getCompilerSpecID()
 
-                program.setLanguage(language_obj, compiler_spec_id, True, TaskMonitor.DUMMY)
-                ok = True
-                program.endTransaction(tx, ok)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+                try:
+                    program.setLanguage(language_obj, compiler_spec_id, True, TaskMonitor.DUMMY)
+                except Exception:
+                    compiler_spec = language_obj.getDefaultCompilerSpec()
+                    if compiler:
+                        try:
+                            compiler_spec = language_obj.getCompilerSpecByID(compiler_spec_id)
+                        except Exception:
+                            compiler_spec = language_obj.getDefaultCompilerSpec()
+                    program.setLanguage(language_obj, compiler_spec, True, TaskMonitor.DUMMY)
 
-            if ok:
-                return create_success_response({"action": "change_processor", "language": language, "compiler": compiler or "(default)", "success": True})
+            self._run_program_transaction(program, "change-processor", _change_processor)
+
+            return create_success_response({"action": "change_processor", "language": language, "compiler": compiler or "(default)", "success": True})
         except Exception as exc:
             return create_success_response(
                 {
@@ -623,7 +631,7 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
-            from ghidra.util.task import TaskMonitor
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
             
             domain_file = program.getDomainFile()
             if domain_file is None:
@@ -655,7 +663,7 @@ class ImportExportToolProvider(ToolProvider):
         filter_str = self._get_str(args, "filter", "query", "search")
 
         try:
-            from ghidra.framework.main import AppInfo
+            from ghidra.framework.main import AppInfo  # pyright: ignore[reportMissingModuleSource]
 
             AppInfo.getActiveProject().getProjectData()
             # This needs proper language service access

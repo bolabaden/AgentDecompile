@@ -1,7 +1,4 @@
-"""Memory utility functions for AgentDecompile Python implementation.
-
-Provides safe memory access patterns, .
-"""
+"""Memory utility helpers for safe reads and block inspection."""
 
 from __future__ import annotations
 
@@ -65,9 +62,9 @@ class MemoryUtil:
                 return b""
 
             # Convert Java signed bytes to Python bytes
-            return bytes([b & 0xFF for b in buf[:n]])
+            return bytes((b & 0xFF for b in buf[:n]))
         except Exception as e:
-            logger.debug(f"Failed to read memory at {address}: {e}")
+            logger.debug("Failed to read memory at %s: %s", address, e)
             return None
 
     @staticmethod
@@ -102,7 +99,7 @@ class MemoryUtil:
         Returns:
             List of integers (0-255)
         """
-        return [b for b in data]
+        return list(data)
 
     @staticmethod
     def find_block_by_name(program: GhidraProgram, block_name: str) -> GhidraMemoryBlock | None:
@@ -172,14 +169,18 @@ class MemoryUtil:
             # Read the chunk
             chunk = MemoryUtil.read_memory_bytes(program, current_address, to_read)
             if chunk is None:
-                logger.warning(f"Failed to read memory chunk at {current_address}")
+                logger.warning("Failed to read memory chunk at %s", current_address)
+                break
+
+            if not chunk:
+                logger.warning("Stopping chunked memory processing at %s due to empty read", current_address)
                 break
 
             # Process the chunk
             try:
                 processor(chunk)
             except Exception as e:
-                logger.error(f"Error processing memory chunk at {current_address}: {e}")
+                logger.error("Error processing memory chunk at %s: %s", current_address, e)
                 break
 
             # Move to next chunk
@@ -187,7 +188,7 @@ class MemoryUtil:
                 current_address = current_address.add(len(chunk))
                 remaining -= len(chunk)
             except Exception as e:
-                logger.error(f"Error calculating next address: {e}")
+                logger.error("Error calculating next address: %s", e)
                 break
 
     @staticmethod

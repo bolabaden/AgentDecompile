@@ -12,6 +12,7 @@ import logging
 import os
 import re
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,51 @@ from mcp import types
 from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
+
+_NON_ALPHA_PATTERN = re.compile(r"[^a-z]")
+
+# ---------------------------------------------------------------------------
+# Precompiled regex patterns (used in NL extraction and value coercion)
+# ---------------------------------------------------------------------------
+# These are compiled once at module load, not in hot loops/functions
+
+_CAMEL_TO_SNAKE_PATTERN = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_TO_KEBAB_PATTERN = re.compile(r"([a-z0-9])([A-Z])")
+
+# Natural language value patterns
+_QUOTED_STR_PATTERN = re.compile(r'"[^\\"]*"|\'[^\']*\'')
+_HEX_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
+_INT_PATTERN = re.compile(r"-?\d+$")
+_FLOAT_PATTERN = re.compile(r"-?\d+\.\d+$")
+_JSON_PATTERN = re.compile(r"^[\[\{].*[\]\}]$", re.DOTALL)
+
+# NL value extraction patterns (used in _extract_natural_language_pairs)
+_NL_VALUE_PATTERN = r'"[^\"]*"|\'[^\']*\'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|/[^,;\n ]+|[^,;\n ]+'
+_NL_KV_PATTERN = re.compile(
+    rf"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{{1,80}}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>{_NL_VALUE_PATTERN})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
+    flags=re.IGNORECASE,
+)
+
+# Program path cleanup patterns
+_PROGRAM_PATH_CLEANUP_PATTERN = re.compile(
+    r"^(?:program\s+path|program|path|_?path)\s*(?:is\b|[:=])?\s*",
+    flags=re.IGNORECASE,
+)
+_PROGRAM_PATH_SCOPE_PATTERN = re.compile(r"\s+to\s+", flags=re.IGNORECASE)
+_QUOTED_PATH_PATTERN = re.compile(r'"[^"]+"|\'[^\']+\'')
+
+# NL phrase preprocessing patterns (used in _preprocess_nl_phrases)
+_NL_PHRASE_PATTERNS = [
+    (r"\b(in|from|on)\s+program\s+", r"with program path ", re.IGNORECASE),
+    (r"\bat\s+address\s+", r"with address ", re.IGNORECASE),
+    (r"\bto\s+address\s+", r"with address ", re.IGNORECASE),
+    (r"\bfor\s+function\s+", r"with function ", re.IGNORECASE),
+    (r"\bof\s+function\s+", r"with function ", re.IGNORECASE),
+    (r"\bat\s+offset\s+", r"with offset ", re.IGNORECASE),
+    (r"\b(in|from)\s+binary\s+", r"with program path ", re.IGNORECASE),
+    (r"\bto\s+project\s+", r"with project name ", re.IGNORECASE),
+    (r"\bin\s+project\s+", r"with project name ", re.IGNORECASE),
+]
 
 # ---------------------------------------------------------------------------
 # MCP tool names (exact strings expected by Java server)
@@ -378,7 +424,7 @@ def normalize_identifier(s: str) -> str:
         normalize_identifier("program_path")        # -> "programpath"
         normalize_identifier("PROGRAM PATH")        # -> "programpath"
     """
-    return re.sub(r"[^a-z]", "", s.lower().strip())
+    return _NON_ALPHA_PATTERN.sub("", s.lower().strip())
 
 
 def _find_repo_root_for_tools_list() -> Path | None:
@@ -461,9 +507,12 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
 
             if extracted_params:
                 existing = params_by_tool.setdefault(canonical_tool, [])
+                existing_norm: set[str] = {normalize_identifier(x) for x in existing}
                 for param in extracted_params:
-                    if normalize_identifier(param) not in {normalize_identifier(x) for x in existing}:
+                    param_norm = normalize_identifier(param)
+                    if param_norm not in existing_norm:
                         existing.append(param)
+                        existing_norm.add(param_norm)
 
         overload_match: re.Match[str] | None = re.search(
             r"\*\*Overloads\*\*:\n(.*?)(?:\n\*\*Synonyms\*\*|\n\*\*Examples\*\*)",
@@ -627,6 +676,35 @@ _TOOL_PREFIXES = (
     "run",
     "tool",
 )
+
+_TOOLS_BY_NORMALIZED: dict[str, str] = {normalize_identifier(tool): tool for tool in TOOLS}
+
+
+def _build_tool_match_candidates() -> list[tuple[str, str, str]]:
+    """Build sorted tool-name variants used by natural language parsing.
+
+    Returns tuples of ``(canonical_tool_name, raw_variant, normalized_variant)``
+    ordered by descending variant length so more specific names win first.
+    """
+    candidates: list[tuple[str, str, str]] = []
+    for tool_name in TOOLS:
+        seen: set[str] = set()
+        variations = (
+            tool_name,
+            tool_name.replace("-", " "),
+            tool_name.replace("-", "_"),
+            tool_name.replace("-", ""),
+        )
+        for variation in variations:
+            if variation in seen:
+                continue
+            seen.add(variation)
+            candidates.append((tool_name, variation, normalize_identifier(variation)))
+    candidates.sort(key=lambda item: len(item[1]), reverse=True)
+    return candidates
+
+
+_TOOL_MATCH_CANDIDATES = _build_tool_match_candidates()
 _TOOL_SUFFIXES = (
     "action",
     "command",
@@ -642,8 +720,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
     if not norm:
         return None
 
-    by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in TOOLS}
-    direct: str | None = by_norm.get(norm)
+    direct: str | None = _TOOLS_BY_NORMALIZED.get(norm)
     if direct is not None:
         return direct
 
@@ -670,7 +747,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
                 break
 
     if stripped:
-        direct = by_norm.get(stripped)
+        direct = _TOOLS_BY_NORMALIZED.get(stripped)
         if direct is not None:
             return direct
         aliased: str | None = TOOL_ALIASES.get(stripped)
@@ -844,12 +921,19 @@ class ToolRegistry:
 
         expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
         param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
+        normalized_arguments: dict[str, Any] = {}
+        for key, value in augmented_arguments.items():
+            normalized_arguments.setdefault(normalize_identifier(key), value)
 
         parsed_args: dict[str, Any] = {}
 
         # For each expected parameter, try various naming variations
         for param in expected_params:
-            value = self._extract_argument_value(augmented_arguments, param)
+            value = self._extract_argument_value(
+                augmented_arguments,
+                param,
+                normalized_arguments=normalized_arguments,
+            )
             if value is not None:
                 parsed_args[param] = value
 
@@ -965,14 +1049,8 @@ class ToolRegistry:
         """
         extracted: dict[str, Any] = {}
 
-        value_pattern = r'"[^\"]*"|\'[^\']*\'|\[[^\]]*\]|\{[^\}]*\}|0x[0-9a-fA-F]+|true|false|-?\d+(?:\.\d+)?|/[^,;\n ]+|[^,;\n ]+'
-
-        kv_pattern = re.compile(
-            rf"(?P<key>[A-Za-z][A-Za-z0-9_\-\s]{{1,80}}?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)\s*(?P<value>{value_pattern})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
-            flags=re.IGNORECASE,
-        )
-
-        for match in kv_pattern.finditer(text):
+        # Use precompiled pattern for KV extraction to avoid repeated compilation
+        for match in _NL_KV_PATTERN.finditer(text):
             key_raw = match.group("key").strip()
             value_raw = match.group("value").strip()
             canonical_param = alias_map.get(normalize_identifier(key_raw))
@@ -998,7 +1076,7 @@ class ToolRegistry:
                     continue
                 phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
                 pattern = re.compile(
-                    rf"(?:\bwith\b|\band\b|^|[,;\n])\s*(?:{phrase_re})\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>{value_pattern})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
+                    rf"(?:\bwith\b|\band\b|^|[,;\n])\s*(?:{phrase_re})\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>{_NL_VALUE_PATTERN})(?=\s+\band\b\s+[A-Za-z]|\s+\bwith\b\s+[A-Za-z]|[,;\n]|$)",
                     flags=re.IGNORECASE,
                 )
                 for match in pattern.finditer(text):
@@ -1007,18 +1085,11 @@ class ToolRegistry:
 
         # Cleanup common NL artifacts for paths (e.g. "path '/tmp/a.bin'").
         if "programPath" in extracted and isinstance(extracted["programPath"], str):
-            cleaned = re.sub(
-                r"^(?:program\s+path|program|path|_?path)\s*(?:is\b|[:=])?\s*",
-                "",
+            extracted["programPath"] = self._normalize_extracted_program_path(
                 extracted["programPath"],
-                flags=re.IGNORECASE,
-            ).strip()
-            cleaned = re.split(r"\s+to\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            if (cleaned.startswith('"') and not cleaned.endswith('"')) or (cleaned.startswith("'") and not cleaned.endswith("'")):
-                quoted_path_match = re.search(r'"[^"]+"|\'[^\']+\'', text)
-                if quoted_path_match:
-                    cleaned = quoted_path_match.group(0)
-            extracted["programPath"] = self._coerce_natural_language_value(cleaned)
+                text,
+                recover_unbalanced_quotes=True,
+            )
 
         # Common phrase fallback extraction to improve NL robustness.
         def _capture(name: str, pattern: str, *, flags: int = re.IGNORECASE, transform=None) -> None:
@@ -1070,19 +1141,38 @@ class ToolRegistry:
 
         # Cleanup common artifacts again after fallback.
         if "programPath" in extracted and isinstance(extracted["programPath"], str):
-            cleaned = re.sub(
-                r"^(?:program\s+path|program|path|_?path)\s*(?:is\b|[:=])?\s*",
-                "",
+            extracted["programPath"] = self._normalize_extracted_program_path(
                 extracted["programPath"],
-                flags=re.IGNORECASE,
-            ).strip()
-            cleaned = re.split(r"\s+to\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            extracted["programPath"] = self._coerce_natural_language_value(cleaned)
+                text,
+            )
 
         if "addressOrSymbol" in extracted and "address" not in extracted and "startAddress" not in extracted:
             extracted["address"] = extracted["addressOrSymbol"]
 
         return extracted
+
+    def _normalize_extracted_program_path(
+        self,
+        raw_value: str,
+        full_text: str,
+        recover_unbalanced_quotes: bool = False,
+    ) -> Any:
+        """Normalize natural-language extracted ``programPath`` values."""
+        # Use precompiled pattern for cleanup step
+        cleaned = _PROGRAM_PATH_CLEANUP_PATTERN.sub("", raw_value).strip()
+        # Use precompiled pattern to split on "to" keyword
+        cleaned = _PROGRAM_PATH_SCOPE_PATTERN.split(cleaned, maxsplit=1)[0].strip()
+
+        if recover_unbalanced_quotes and (
+            (cleaned.startswith('"') and not cleaned.endswith('"'))
+            or (cleaned.startswith("'") and not cleaned.endswith("'"))
+        ):
+            # Use precompiled quoted path pattern
+            quoted_path_match = _QUOTED_PATH_PATTERN.search(full_text)
+            if quoted_path_match:
+                cleaned = quoted_path_match.group(0)
+
+        return self._coerce_natural_language_value(cleaned)
 
     def _coerce_natural_language_value(self, raw_value: str) -> Any:
         """Coerce natural-language scalar text to bool/int/float/json/string."""
@@ -1090,6 +1180,7 @@ class ToolRegistry:
         if not value:
             return value
 
+        # Check for quoted strings using precompiled pattern
         if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             return value[1:-1]
 
@@ -1099,19 +1190,21 @@ class ToolRegistry:
         if lowered == "false":
             return False
 
-        if re.fullmatch(r"-?\d+", value):
+        # Use precompiled patterns for numeric coercion (more efficient than fullmatch)
+        if _INT_PATTERN.match(value):
             try:
                 return int(value)
             except Exception:
                 return value
 
-        if re.fullmatch(r"-?\d+\.\d+", value):
+        if _FLOAT_PATTERN.match(value):
             try:
                 return float(value)
             except Exception:
                 return value
 
-        if (value.startswith("[") and value.endswith("]")) or (value.startswith("{") and value.endswith("}")):
+        # Check JSON structures using precompiled pattern
+        if _JSON_PATTERN.match(value):
             try:
                 return _json.loads(value)
             except Exception:
@@ -1123,6 +1216,7 @@ class ToolRegistry:
         self,
         arguments: dict[str, Any],
         param_name: str,
+        normalized_arguments: dict[str, Any] | None = None,
     ) -> Any:
         """Extract an argument value using fuzzy matching for parameter names.
 
@@ -1145,7 +1239,7 @@ class ToolRegistry:
             return arguments[param_name]
 
         # Try variations of the parameter name
-        variations: list[str] = self._generate_param_variations(param_name)
+        variations = self._generate_param_variations(param_name)
 
         for variation in variations:
             if variation in arguments:
@@ -1154,23 +1248,27 @@ class ToolRegistry:
         # Selector fallback: canonical "mode" accepts action/operation/etc.
         normalized_param = normalize_identifier(param_name)
         if _canonical_param_name(param_name) == "mode":
-            for key, value in arguments.items():
-                if normalize_identifier(key) in MODE_PARAM_ALIASES:
-                    return value
+            lookup = normalized_arguments or {normalize_identifier(k): v for k, v in arguments.items()}
+            for alias in MODE_PARAM_ALIASES:
+                if alias in lookup:
+                    return lookup[alias]
 
         # Normalized fallback: strip all non-alpha chars and compare.
         # This means any casing or separator style will match as long as the
         # alphabetic characters are the same.
-        for key in arguments:
+        if normalized_arguments is not None:
+            return normalized_arguments.get(normalized_param)
+        for key, value in arguments.items():
             if normalize_identifier(key) == normalized_param:
-                return arguments[key]
+                return value
 
         return None
 
+    @staticmethod
+    @lru_cache(maxsize=512)
     def _generate_param_variations(
-        self,
         param_name: str,
-    ) -> list[str]:
+    ) -> tuple[str, ...]:
         """Generate parameter name variations.
 
         Examples:
@@ -1188,17 +1286,17 @@ class ToolRegistry:
         """
         variations: list[str] = [param_name]
 
-        # Convert camelCase to snake_case
-        snake_case: str = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", param_name).lower()
+        # Convert camelCase to snake_case using precompiled pattern
+        snake_case: str = _CAMEL_TO_SNAKE_PATTERN.sub(r"\1_\2", param_name).lower()
         if snake_case != param_name.lower():
             variations.append(snake_case)
 
-        # Convert camelCase to kebab-case
-        kebab_case: str = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", param_name).lower()
+        # Convert camelCase to kebab-case using precompiled pattern
+        kebab_case: str = _CAMEL_TO_KEBAB_PATTERN.sub(r"\1-\2", param_name).lower()
         if kebab_case != param_name.lower():
             variations.append(kebab_case)
 
-        # Handle special cases
+        # Handle special cases with explicit aliases
         if param_name == "addressOrSymbol":
             variations.extend(["address_or_symbol", "addressOrSymbol", "address"])
         elif param_name == "programPath":
@@ -1206,7 +1304,7 @@ class ToolRegistry:
         elif param_name == "maxResults":
             variations.extend(["max_results", "max-results", "limit", "maxResults", "limits"])
 
-        return variations
+        return tuple(dict.fromkeys(variations))
 
     def validate_required_arguments(
         self,
@@ -1314,39 +1412,19 @@ class ToolRegistry:
         # Normalize the input text for comparison
         text = text.strip()
 
-        # Try to match known tool names from the beginning
-        # Sort by length descending to match longer names first (e.g., "search-symbols-by-name" before "search-symbols")
-        sorted_tools = sorted(TOOLS, key=len, reverse=True)
-
         matched_tool: str | None = None
         remaining_text: str = text
 
-        for tool_name in sorted_tools:
-            # Create variations of the tool name to match
-            variations = [
-                tool_name,  # Original (kebab-case)
-                tool_name.replace("-", " "),  # Space-separated
-                tool_name.replace("-", "_"),  # Snake case
-                tool_name.replace("-", ""),  # No separators
-            ]
+        for tool_name, variation, variation_norm in _TOOL_MATCH_CANDIDATES:
+            if text.lower().startswith(variation.lower()):
+                matched_tool = tool_name
+                remaining_text = text[len(variation) :].strip()
+                break
 
-            for variation in variations:
-                # Check if text starts with this variation (case-insensitive)
-                if text.lower().startswith(variation.lower()):
-                    matched_tool = tool_name
-                    remaining_text = text[len(variation) :].strip()
-                    break
-
-                # Also try with normalized (alpha-only) matching for extra flexibility
-                tool_norm = normalize_identifier(variation)
-                # Find how many characters at the start of text match the normalized tool name
-                text_prefix_norm = normalize_identifier(text[: len(variation)])
-                if text_prefix_norm == tool_norm:
-                    matched_tool = tool_name
-                    remaining_text = text[len(variation) :].strip()
-                    break
-
-            if matched_tool:
+            text_prefix_norm = normalize_identifier(text[: len(variation)])
+            if text_prefix_norm == variation_norm:
+                matched_tool = tool_name
+                remaining_text = text[len(variation) :].strip()
                 break
 
         if not matched_tool:
@@ -1379,33 +1457,9 @@ class ToolRegistry:
         if not text or not text.strip():
             return text
 
-        # Define common phrase patterns and their replacements
-        # These are applied in order, so more specific patterns should come first
-        replacements = [
-            # "in program X" → "with program path X"
-            (r"\b(in|from|on)\s+program\s+", r"with program path ", re.IGNORECASE),
-            # "at address X" → "with address X"
-            (r"\bat\s+address\s+", r"with address ", re.IGNORECASE),
-            # "to address X" → "with address X"
-            (r"\bto\s+address\s+", r"with address ", re.IGNORECASE),
-            # "for function X" → "with function X"
-            (r"\bfor\s+function\s+", r"with function ", re.IGNORECASE),
-            # "of function X" → "with function X"
-            (r"\bof\s+function\s+", r"with function ", re.IGNORECASE),
-            # "at offset X" → "with offset X"
-            (r"\bat\s+offset\s+", r"with offset ", re.IGNORECASE),
-            # "in binary X" → "with program path X"
-            (r"\b(in|from)\s+binary\s+", r"with program path ", re.IGNORECASE),
-            # "to project X" → "with project name X"
-            (r"\bto\s+project\s+", r"with project name ", re.IGNORECASE),
-            # "in project X" → "with project name X"
-            (r"\bin\s+project\s+", r"with project name ", re.IGNORECASE),
-            # "from X to Y" for import/export → keep the structure but add explicit markers
-            # (handled by existing patterns)
-        ]
-
+        # Apply precompiled patterns to avoid repeated compilation
         processed_text = text
-        for pattern, replacement, flags in replacements:
+        for pattern, replacement, flags in _NL_PHRASE_PATTERNS:
             processed_text = re.sub(pattern, replacement, processed_text, flags=flags)
 
         return processed_text

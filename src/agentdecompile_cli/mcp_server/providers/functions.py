@@ -64,34 +64,54 @@ class FunctionToolProvider(ToolProvider):
         ]
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """List functions in the current program, with optional filtering and pagination.
+        
+        Iterates through all functions in the active program, optionally filtering by regex
+        name pattern and including/excluding external functions. Results are paginated for
+        efficient handling of large binaries.
+        
+        **Performance Note**: Uses two-pass approach for efficiency:
+            1. Single iteration to collect matching functions (O(n))
+            2. Slice matching list for pagination (O(1) offset lookup)
+        This avoids offset tracking during iteration and simplifies logic.
+        
+        Parameters
+        ----------
+        namepattern/pattern/filter/regex : str, optional
+            Regex pattern to match function names (case-insensitive)
+        includeexternals : bool, default=True
+            Include external/imported functions
+        offset/startindex : int, default=0
+            Pagination offset
+        limit/maxresults : int, default=100
+            Maximum results to return
+            
+        Returns
+        -------
+        Paginated response with functions, count, total, hasMore
+        """
         self._require_program()
         pattern = self._get_str(args, "namepattern", "pattern", "filter", "regex")
         include_ext = self._get_bool(args, "includeexternals", "externals", default=True)
-        max_results = self._get_int(args, "limit", "maxresults", "max", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         program = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
 
+        # Compile regex once; None if no pattern.
         pat = re.compile(pattern, re.IGNORECASE) if pattern else None
-        functions = []
-        count = 0
 
+        # Collect all matching functions first to get accurate total
+        all_matching: list[dict[str, Any]] = []
         for func in fm.getFunctions(True):
+            # Apply filters.
             if not include_ext and func.isExternal():
                 continue
             if pat and not pat.search(func.getName()):
                 continue
-            if count < offset:
-                count += 1
-                continue
-            if len(functions) >= max_results:
-                count += 1
-                continue
-
-            functions.append(
+            all_matching.append(
                 {
                     "name": func.getName(),
                     "address": str(func.getEntryPoint()),
@@ -101,17 +121,9 @@ class FunctionToolProvider(ToolProvider):
                     "parameterCount": func.getParameterCount(),
                 },
             )
-            count += 1
 
-        return create_success_response(
-            {
-                "functions": functions,
-                "count": len(functions),
-                "totalMatched": count,
-                "offset": offset,
-                "hasMore": count > offset + len(functions),
-            },
-        )
+        paginated, has_more = self._paginate_results(all_matching, offset, max_results)
+        return self._create_paginated_response(paginated, offset, max_results, total=len(all_matching), mode="list")
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
@@ -122,27 +134,13 @@ class FunctionToolProvider(ToolProvider):
         program = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
-        fm = program.getFunctionManager()
+        fm = self._get_function_manager(program)
 
         # If no function specified, list all
         if not func_id:
             return await self._handle_list(args)
 
-        # Find function
-        target_func = None
-        for f in fm.getFunctions(True):
-            if f.getName() == func_id or str(f.getEntryPoint()) == func_id:
-                target_func = f
-                break
-
-        if target_func is None:
-            try:
-                from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-                addr = AddressUtil.resolve_address_or_symbol(program, func_id)
-                target_func = fm.getFunctionContaining(addr)
-            except Exception:
-                pass
+        target_func = self._resolve_function(func_id, program=program)
 
         if target_func is None:
             raise ValueError(f"Function not found: {func_id}")
@@ -173,8 +171,8 @@ class FunctionToolProvider(ToolProvider):
             result.update({"callers": callers, "callees": callees, "callerCount": len(callers), "calleeCount": len(callees)})
         elif view in ("decompile",):
             try:
-                from ghidra.app.decompiler import DecompInterface, DecompileOptions
-                from ghidra.util.task import ConsoleTaskMonitor
+                from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+                from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
                 timeout = self._get_int(args, "timeout", "decompiletimeout", default=60)
                 monitor = ConsoleTaskMonitor()
@@ -238,19 +236,15 @@ class FunctionToolProvider(ToolProvider):
                         except Exception:
                             err_msg = ""
 
-                    result["decompilation"] = self._build_decompile_fallback(
-                        program,
-                        target_func,
-                        err_msg,
-                    )
+                    result["decompilation"] = self._build_decompile_fallback(program, target_func, err_msg, max_instructions=400)
 
                 if owns_decomp:
                     decomp.dispose()
             except Exception as e:
-                result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e))
+                result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e), max_instructions=400)
         elif view in ("disassemble",):
             instructions: list[dict[str, Any]] = []
-            listing: Any = program.getListing()
+            listing: Any = self._get_listing(program)
             body: Any = target_func.getBody()
             if body:
                 instr_iter: Any = listing.getInstructions(body, True)
@@ -269,33 +263,3 @@ class FunctionToolProvider(ToolProvider):
 
         return create_success_response(result)
 
-    def _build_decompile_fallback(self, program: Any, target_func: Any, reason: str | None = None) -> str:
-        listing = program.getListing()
-        body = target_func.getBody()
-        lines: list[str] = []
-        max_instructions = 400
-
-        if body:
-            instr_iter = listing.getInstructions(body, True)
-            count = 0
-            while instr_iter.hasNext() and count < max_instructions:
-                instr = instr_iter.next()
-                lines.append(f"{instr.getAddress()}: {instr}")
-                count += 1
-
-        reason_text = reason.strip() if reason else "native decompiler unavailable"
-        signature = str(target_func.getSignature())
-        fallback = [
-            f"/* Fallback decompilation ({reason_text}) */",
-            f"/* Function: {target_func.getName()} @ {target_func.getEntryPoint()} */",
-            f"/* Signature: {signature} */",
-            "",
-            "/* Disassembly */",
-        ]
-
-        if lines:
-            fallback.extend(lines)
-        else:
-            fallback.append("<no instructions available>")
-
-        return "\n".join(fallback)

@@ -77,7 +77,7 @@ class BookmarkToolProvider(ToolProvider):
                 results.append(await self._add_single(bm))
             return create_success_response({"success": True, "action": "add_batch", "count": len(results), "results": results})
 
-        addr = self._require_str(args, "addressOrSymbol", "address", "addr", "symbol", "target", name="addressOrSymbol")
+        addr = self._require_address_or_symbol(args)
         result = await self._add_single(
             {
                 "addressorsymbol": addr,
@@ -89,13 +89,11 @@ class BookmarkToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _add_single(self, bm: dict[str, Any]) -> dict[str, Any]:
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
         norm = {n(k): v for k, v in bm.items()}
         addr_str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
         if not addr_str:
             raise ValueError("addressOrSymbol is required for bookmark")
-        address = AddressUtil.resolve_address_or_symbol(self.program_info.program, addr_str)
+        address = self._resolve_address(addr_str)
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
 
@@ -106,19 +104,17 @@ class BookmarkToolProvider(ToolProvider):
 
         try:
             bm_mgr = program.getBookmarkManager()
-            tx = program.startTransaction("set-bookmark")
-            try:
+
+            def _set_bookmark() -> None:
                 bm_mgr.setBookmark(address, bm_type, category, comment)
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
-            return {"success": True, "action": "set", "address": AddressUtil.format_address(address), "type": bm_type, "category": category}
+
+            self._run_program_transaction(program, "set-bookmark", _set_bookmark)
+            return {"success": True, "action": "set", "address": str(address), "type": bm_type, "category": category}
         except Exception:
             return {
                 "success": True,
                 "action": "set",
-                "address": AddressUtil.format_address(address),
+                "address": str(address),
                 "type": bm_type,
                 "category": category,
                 "note": "Bookmark API not available in current mode",
@@ -127,51 +123,45 @@ class BookmarkToolProvider(ToolProvider):
     async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
         if self._get_bool(args, "removeAll"):
             return await self._remove_all(args)
-        addr_str = self._require_str(args, "addressOrSymbol", "address", "symbol", name="addressOrSymbol")
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+        addr_str = self._require_address_or_symbol(args)
 
-        address = AddressUtil.resolve_address_or_symbol(self.program_info.program, addr_str)
+        address = self._resolve_address(addr_str)
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
         try:
             bm_mgr = self.program_info.program.getBookmarkManager()
-            tx = self.program_info.program.startTransaction("remove-bookmark")
-            try:
+
+            def _remove_bookmarks() -> None:
                 for bm in list(bm_mgr.getBookmarks(address)):
                     bm_mgr.removeBookmark(bm)
-                self.program_info.program.endTransaction(tx, True)
-            except Exception:
-                self.program_info.program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(self.program_info.program, "remove-bookmark", _remove_bookmarks)
         except Exception:
             pass
-        return create_success_response({"success": True, "action": "remove", "address": AddressUtil.format_address(address)})
+        return create_success_response({"success": True, "action": "remove", "address": str(address)})
 
     async def _remove_all(self, args: dict[str, Any]) -> list[types.TextContent]:
         try:
             bm_mgr = self.program_info.program.getBookmarkManager()
-            tx = self.program_info.program.startTransaction("remove-all-bookmarks")
-            try:
+
+            def _remove_all_bookmarks() -> None:
                 bm_mgr.removeAllBookmarks()
-                self.program_info.program.endTransaction(tx, True)
-            except Exception:
-                self.program_info.program.endTransaction(tx, False)
-                raise
+
+            self._run_program_transaction(self.program_info.program, "remove-all-bookmarks", _remove_all_bookmarks)
         except Exception:
             pass
         return create_success_response({"success": True, "action": "remove_all"})
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
         search = self._get_str(args, "searchText", "search", "query", "pattern")
-        limit = self._get_int(args, "maxResults", "limit", "maxCount", default=100)
-        offset = self._get_int(args, "offset", "startIndex", default=0)
+        offset, limit = self._get_pagination_params(args, default_limit=100)
         bm_type = self._get_str(args, "type")
         category = self._get_str(args, "category")
         results: list[dict[str, Any]] = []
         try:
             bm_mgr = self.program_info.program.getBookmarkManager()
-            all_bm = list(bm_mgr.getBookmarksIterator())
-            for bm in all_bm:
+            matched_count = 0
+            for bm in bm_mgr.getBookmarksIterator():
                 if bm_type and bm.getTypeString() != bm_type:
                     continue
                 if category and bm.getCategory() != category:
@@ -179,10 +169,12 @@ class BookmarkToolProvider(ToolProvider):
                 comment_text = bm.getComment() or ""
                 if search and search.lower() not in comment_text.lower():
                     continue
-                results.append({"address": str(bm.getAddress()), "type": bm.getTypeString(), "category": bm.getCategory(), "comment": comment_text})
-            total = len(results)
-            paged = results[offset : offset + limit]
-            return create_success_response({"bookmarks": paged, "count": len(paged), "total": total, "offset": offset, "limit": limit})
+
+                if matched_count >= offset and len(results) < limit:
+                    results.append({"address": str(bm.getAddress()), "type": bm.getTypeString(), "category": bm.getCategory(), "comment": comment_text})
+                matched_count += 1
+
+            return self._create_paginated_response(results, offset, limit, total=matched_count, mode="search")
         except Exception:
             return create_success_response({"bookmarks": [], "count": 0, "note": "Bookmark API not available in current mode"})
 

@@ -49,6 +49,8 @@ if TYPE_CHECKING:
         def getItem(self, folderPath: str, itemName: str): ...
         @abstractmethod
         def getVersion(self): ...
+        @abstractmethod
+        def openDatabase(self, folderPath: str, itemName: str, version: int, monitor: Any) -> Any: ...
 
 
 logger = logging.getLogger(__name__)
@@ -713,14 +715,14 @@ class ProjectToolProvider(ToolProvider):
             info["addressFactory"] = str(program.getAddressFactory().getDefaultAddressSpace().getName())
 
             # Stats
-            fm = program.getFunctionManager()
+            fm = self._get_function_manager(program)
             info["functionCount"] = fm.getFunctionCount()
             info["imageBase"] = str(program.getImageBase())
 
-            mem = program.getMemory()
+            mem = self._get_memory(program)
             info["memoryBlocks"] = len(list(mem.getBlocks()))
 
-            st = program.getSymbolTable()
+            st = self._get_symbol_table(program)
             info["symbolCount"] = st.getNumSymbols()
 
         except Exception as e:
@@ -908,6 +910,7 @@ class ProjectToolProvider(ToolProvider):
                 df_path = None
                 if has_program:
                     try:
+                        assert self.program_info is not None, "program_info should not be None if has_program is True"
                         df = self.program_info.program.getDomainFile()
                         has_df = df is not None
                         df_path = str(df.getPathname()) if df else None
@@ -1369,7 +1372,7 @@ class ProjectToolProvider(ToolProvider):
             "language": str(program.getLanguage().getLanguageID()),
             "compiler": str(program.getCompilerSpec().getCompilerSpecID()),
             "imageBase": str(program.getImageBase()),
-            "functionCount": program.getFunctionManager().getFunctionCount(),
+            "functionCount": self._get_function_manager(program).getFunctionCount(),
         }
         output.write_text(str(payload), encoding="utf-8")
 
@@ -1464,10 +1467,20 @@ class ProjectToolProvider(ToolProvider):
 
         last_error: Exception | None = None
         for consumer in consumers:
-            try:
-                return holder.getDomainObject(consumer, True, False, monitor)
-            except Exception as exc:
-                last_error = exc
+            attempts = [
+                (consumer, True, False, monitor),
+                (consumer, True, monitor),
+                (consumer, False, monitor),
+                (consumer, monitor),
+                (consumer, True, False),
+                (consumer, True),
+                (consumer,),
+            ]
+            for call_args in attempts:
+                try:
+                    return holder.getDomainObject(*call_args)
+                except Exception as exc:
+                    last_error = exc
 
         if last_error is not None:
             raise last_error
@@ -2128,8 +2141,8 @@ class ProjectToolProvider(ToolProvider):
             "compilerSpecId": str(program.getCompilerSpec().getCompilerSpecID()),
             "imageBase": str(program.getImageBase()),
             "executableFormat": program.getExecutableFormat(),
-            "functionCount": program.getFunctionManager().getFunctionCount(),
-            "symbolCount": program.getSymbolTable().getNumSymbols(),
+            "functionCount": self._get_function_manager(program).getFunctionCount(),
+            "symbolCount": self._get_symbol_table(program).getNumSymbols(),
             "isAnalyzed": bool(getattr(self.program_info, "ghidra_analysis_complete", False)),
         }
         return create_success_response({"success": True, "metadata": metadata})
@@ -2189,7 +2202,7 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"success": False, "error": "No program loaded"})
 
         program: Any = self.program_info.program
-        fm: Any = program.getFunctionManager()
+        fm: Any = self._get_function_manager(program)
         first: Any = None
         for func in fm.getFunctions(True):
             first = func

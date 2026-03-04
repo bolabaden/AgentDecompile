@@ -332,10 +332,18 @@ class GhidraTools:
     @handle_exceptions
     def get_all_strings(self) -> list[StringInfo]:
         """Gets all defined strings for a binary"""
+        data_iterator: Any = None
         try:
-            data_iterator: GhidraDefinedDataIterator | GhidraDefinedStringIterator = GhidraDefinedStringIterator.forProgram(self.program)
-        except ImportError:
-            data_iterator = GhidraDefinedDataIterator.definedStrings(self.program)
+            from ghidra.program.util import DefinedStringIterator
+
+            data_iterator = DefinedStringIterator.forProgram(self.program)
+        except Exception:
+            try:
+                from ghidra.program.util import DefinedDataIterator
+
+                data_iterator = DefinedDataIterator.definedStrings(self.program)
+            except Exception:
+                data_iterator = []
 
         strings: list[StringInfo] = []
         for data in data_iterator:
@@ -428,7 +436,8 @@ class GhidraTools:
                     function_name=from_func.getName() if from_func else None,
                     from_address=str(ref.getFromAddress()),
                     to_address=str(ref.getToAddress()),
-                    type=str(ref.getReferenceType()),
+                    reference_type=str(ref.getReferenceType()),
+                    is_primary=bool(ref.isPrimary()) if hasattr(ref, "isPrimary") else False,
                 ),
             )
         return cross_references

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+from itertools import islice
 
 from datetime import datetime
 from mcp import types
@@ -122,11 +122,10 @@ class StaticAnalysisResultsResource(ResourceProvider):
         results = []
         program = self.program_info.program
         ref_mgr = program.getReferenceManager()
-        sym_table = program.getSymbolTable()
 
         try:
             # Iterate through references to find undefined references
-            for ref in list(ref_mgr.getExternalReferences())[:50]:  # Limit results
+            for ref in islice(ref_mgr.getExternalReferences(), 50):  # Limit results
                 if ref and ref.getToAddress():
                     results.append(
                         {
@@ -161,7 +160,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
             # Get all bookmarks
             bookmarks = bookmark_mgr.getBookmarks("Analysis")
             if bookmarks:
-                for bookmark in list(bookmarks)[:30]:  # Limit results
+                for bookmark in islice(bookmarks, 30):  # Limit results
                     if bookmark:
                         address = bookmark.getAddress()
                         category = bookmark.getCategory()

@@ -46,7 +46,12 @@ class CallGraphTool:
 
     def __init__(self, program_info: ProgramInfo | None = None):
         self.program_info = program_info
-        self.program = program_info.current_program if program_info else None
+        self.program = (
+            getattr(program_info, "current_program", None)
+            or getattr(program_info, "program", None)
+            if program_info
+            else None
+        )
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -142,9 +147,9 @@ class CallGraphTool:
         if not self.program:
             raise ValueError("No program loaded")
 
-        # Map string parameters to enums
-        cg_direction = CallGraphDirection(direction.upper())
-        cg_display_type = CallGraphDisplayType(display_type.upper())
+        # Map string parameters to enums by value (enum values are lowercase)
+        cg_direction = CallGraphDirection((direction or "calling").strip().lower())
+        cg_display_type = CallGraphDisplayType((display_type or "flow").strip().lower())
 
         # Find the function
         func = self._resolve_function(function_name_or_address)

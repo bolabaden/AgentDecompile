@@ -72,38 +72,31 @@ class CommentToolProvider(ToolProvider):
             "search": self._search,
             "searchdecomp": self._search_decomp,
         }
-        handler = dispatch.get(n(action))
-        if handler is None:
-            raise ValueError(f"Unknown action: {action}. Valid: {list(dispatch.keys())}")
+        handler = self._dispatch_handler(dispatch, action, "action")
         return await handler(args)
 
     async def _set(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None, "Program info is required to set comments"
         program = self.program_info.program
-        listing = program.getListing()
+        listing = self._get_listing(program)
 
         # Batch support
         batch = self._get_list(args, "comments")
         if batch:
             results = []
-            tx = program.startTransaction("batch-set-comments")
-            try:
+            def _set_batch_comments() -> None:
                 for item in batch:
                     ni = {n(k): v for k, v in item.items()}
                     addr_str = self._get_str(ni, "addressorsymbol", "address", "addr")
                     text = self._get_str(ni, "comment", "text")
                     ctype = self._get_str(ni, "type", "commenttype", default="eol")
                     try:
-                        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-                        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+                        addr = self._resolve_address(addr_str, program=program)
                         listing.setComment(addr, self._resolve_comment_type(ctype), text)
                         results.append({"address": addr_str, "success": True})
                     except Exception as e:
                         results.append({"address": addr_str, "success": False, "error": str(e)})
-                program.endTransaction(tx, True)
-            except Exception:
-                program.endTransaction(tx, False)
-                raise
+            self._run_program_transaction(program, "batch-set-comments", _set_batch_comments)
             return create_success_response({"action": "set", "batch": True, "results": results, "count": len(results)})
 
         # Single
@@ -111,26 +104,18 @@ class CommentToolProvider(ToolProvider):
         text = self._require_str(args, "comment", "text", name="comment")
         ctype = self._get_str(args, "type", "commenttype", default="eol")
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-        tx = program.startTransaction("set-comment")
-        try:
+        addr = self._resolve_address(addr_str, program=program)
+        def _set_comment() -> None:
             listing.setComment(addr, self._resolve_comment_type(ctype), text)
-            program.endTransaction(tx, True)
-        except Exception:
-            program.endTransaction(tx, False)
-            raise
+        self._run_program_transaction(program, "set-comment", _set_comment)
         return create_success_response({"action": "set", "address": str(addr), "type": ctype, "comment": text, "success": True})
 
     async def _get_comments(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None, "Program info is required to get comments"
         program = self.program_info.program
-        listing = program.getListing()
+        listing = self._get_listing(program)
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", "function", name="addressOrSymbol")
-
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
+        addr = self._resolve_address(addr_str, program=program)
         comments = {}
         for name, code in _COMMENT_TYPES.items():
             c = listing.getComment(code, addr)
@@ -139,87 +124,92 @@ class CommentToolProvider(ToolProvider):
         return create_success_response({"action": "get", "address": str(addr), "comments": comments})
 
     async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
+        assert self.program_info is not None, "Program info is required to remove comments"
         program = self.program_info.program
-        listing = program.getListing()
+        listing = self._get_listing(program)
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "symbol", "function", name="addressOrSymbol")
         ctype = self._get_str(args, "type", "commenttype", default="eol")
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
-
-        addr = AddressUtil.resolve_address_or_symbol(program, addr_str)
-        tx = program.startTransaction("remove-comment")
-        try:
+        addr = self._resolve_address(addr_str, program=program)
+        def _remove_comment() -> None:
             listing.setComment(addr, self._resolve_comment_type(ctype), None)
-            program.endTransaction(tx, True)
-        except Exception:
-            program.endTransaction(tx, False)
-            raise
+        self._run_program_transaction(program, "remove-comment", _remove_comment)
         return create_success_response({"action": "remove", "address": str(addr), "type": ctype, "success": True})
 
     async def _search(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Search for comments in the program by text content.
+        
+        Iterates through all code units in the program, checking all comment types
+        (EOL, plate, pre, post, repeatable) and matching against search text.
+        Results are paginated to handle large binaries.
+        
+        **Design Notes**:
+        - Searches all comment types (EOL, plate, pre, post, repeatable) simultaneously
+        - Case-insensitive substring matching on comment text
+        - Uses code unit iteration which handles all address spaces correctly
+        - Gracefully handles programs that don't support address iteration
+        
+        Parameters
+        ----------
+        searchtext/query/search : str, optional
+            Text to search for (case-insensitive substring match)
+        offset/startindex : int, default=0
+            Pagination offset
+        limit/maxresults : int, default=100
+            Maximum results to return
+            
+        Returns
+        -------
+        Paginated response with matching comments
+        """
+        assert self.program_info is not None, "Program info is required to search comments"
         program = self.program_info.program
-        listing = program.getListing()
+        listing = self._get_listing(program)
         query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
-        max_results = self._get_int(args, "maxresults", "limit", "max", "maxcount", default=100)
-        offset = self._get_int(args, "offset", "startindex", default=0)
+        offset, max_results = self._get_pagination_params(args, default_limit=100)
         query_lower = query.lower() if query else ""
 
-        results = []
-        count = 0
-        mem = program.getMemory()
+        mem = self._get_memory(program)
         addr_iter = mem.getAddresses(True) if hasattr(mem, "getAddresses") else None
         if addr_iter is None:
             return create_success_response({"action": "search", "results": [], "note": "Memory address iteration unavailable"})
 
         # Iterate code units looking for comments
-        cu_iter = listing.getCodeUnits(program.getMemory(), True)
+        all_results: list[dict[str, str]] = []
+        cu_iter: Any = listing.getCodeUnits(mem, True)
         while cu_iter.hasNext():
             cu = cu_iter.next()
             for name, code in _COMMENT_TYPES.items():
                 c = cu.getComment(code)
                 if c and (not query_lower or query_lower in c.lower()):
-                    if count >= offset:
-                        results.append({"address": str(cu.getAddress()), "type": name, "comment": c})
-                    count += 1
-                    if len(results) >= max_results:
-                        return create_success_response(
-                            {
-                                "action": "search",
-                                "query": query,
-                                "results": results,
-                                "count": len(results),
-                                "hasMore": True,
-                            },
-                        )
-        return create_success_response(
-            {
-                "action": "search",
-                "query": query,
-                "results": results,
-                "count": len(results),
-                "hasMore": False,
-            },
-        )
+                    all_results.append({"address": str(cu.getAddress()), "type": name, "comment": c})
+
+        paginated, has_more = self._paginate_results(all_results, offset, max_results)
+        return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="search", query=query)
 
     async def _search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search comments in decompiled output."""
+        assert self.program_info is not None, "Program info is required for decomp search"
         program = self.program_info.program
         query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
         max_results = self._get_int(args, "maxresults", "limit", "maxcount", default=50)
 
         results = []
         try:
-            from ghidra.app.decompiler import DecompInterface
+            from ghidra.app.decompiler import DecompInterface # pyright: ignore[reportMissingModuleSource]
 
             decomp = DecompInterface()
             decomp.openProgram(program)
-            fm = program.getFunctionManager()
+            fm = self._get_function_manager(program)
+            from ghidra.util.task import ConsoleTaskMonitor # pyright: ignore[reportMissingModuleSource]
+
+            monitor = ConsoleTaskMonitor()
             for func in fm.getFunctions(True):
                 if len(results) >= max_results:
                     break
                 try:
-                    dr = decomp.decompileFunction(func, 30, None)
-                    if dr and dr.depiledFunction():
+                    dr = decomp.decompileFunction(func, 30, monitor)
+                    if dr and dr.decompileCompleted():
                         code = dr.getDecompiledFunction().getC()
                         if code and query.lower() in code.lower():
                             results.append(

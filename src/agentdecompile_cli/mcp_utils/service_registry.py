@@ -1,7 +1,4 @@
-"""Service registry utility for AgentDecompile Python implementation.
-
-Provides service dependency injection, .
-"""
+"""Internal service registry utilities for lightweight dependency injection."""
 
 from __future__ import annotations
 
@@ -20,6 +17,11 @@ class AgentDecompileInternalServiceRegistry:
     _services: dict[type[Any], Any] = {}
 
     @staticmethod
+    def _service_name(service_class: type[Any]) -> str:
+        """Return a stable display name for a service class."""
+        return getattr(service_class, "__name__", str(service_class))
+
+    @staticmethod
     def register_service(service_class: type[T], service_instance: T) -> None:
         """Register a service instance.
 
@@ -28,7 +30,7 @@ class AgentDecompileInternalServiceRegistry:
             service_instance: The service implementation instance
         """
         AgentDecompileInternalServiceRegistry._services[service_class] = service_instance
-        logger.debug(f"Registered service: {service_class.__name__}")
+        logger.debug("Registered service: %s", AgentDecompileInternalServiceRegistry._service_name(service_class))
 
     @staticmethod
     def unregister_service(service_class: type[T]) -> None:
@@ -37,11 +39,12 @@ class AgentDecompileInternalServiceRegistry:
         Args:
             service_class: The service interface/class type to unregister
         """
-        if service_class in AgentDecompileInternalServiceRegistry._services:
-            del AgentDecompileInternalServiceRegistry._services[service_class]
-            logger.debug(f"Unregistered service: {service_class.__name__}")
+        services = AgentDecompileInternalServiceRegistry._services
+        if service_class in services:
+            del services[service_class]
+            logger.debug("Unregistered service: %s", AgentDecompileInternalServiceRegistry._service_name(service_class))
         else:
-            logger.warning(f"Service not registered: {service_class.__name__}")
+            logger.warning("Service not registered: %s", AgentDecompileInternalServiceRegistry._service_name(service_class))
 
     @staticmethod
     def get_service(service_class: type[T]) -> T | None:
@@ -80,7 +83,10 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             Dictionary mapping service class names to service instance types
         """
-        return {service_class.__name__: type(service_instance).__name__ for service_class, service_instance in AgentDecompileInternalServiceRegistry._services.items()}
+        return {
+            AgentDecompileInternalServiceRegistry._service_name(service_class): type(service_instance).__name__
+            for service_class, service_instance in AgentDecompileInternalServiceRegistry._services.items()
+        }
 
     @staticmethod
     def get_service_count() -> int:
