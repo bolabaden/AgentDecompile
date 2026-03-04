@@ -35,9 +35,9 @@ class StaticAnalysisResultsResource(ResourceProvider):
             raise NotImplementedError(f"Unknown resource: {uri}")
 
         if self.program_info is None or self.program_info.program is None:
-            raise ValueError(
-                "No program loaded. Use tool 'open' to load a program first.",
-            )
+            # Return empty SARIF report when no program is loaded
+            logger.debug("No program loaded for static analysis results")
+            return json.dumps(self._empty_sarif_report(), indent=2)
 
         try:
             sarif_report = await self._generate_sarif_report()
@@ -45,6 +45,36 @@ class StaticAnalysisResultsResource(ResourceProvider):
         except Exception as e:
             logger.error(f"Error generating SARIF report: {e!s}")
             raise
+
+    def _empty_sarif_report(self) -> dict:
+        """Generate an empty SARIF 2.1.0 report when no program is loaded."""
+        now = datetime.utcnow().isoformat() + "Z"
+
+        return {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "AgentDecompile",
+                            "version": "1.0.0",
+                            "informationUri": "https://github.com/bolabaden/agentdecompile",
+                            "rules": [],
+                        },
+                    },
+                    "artifacts": [],
+                    "results": [],
+                    "properties": {
+                        "analysisComplete": False,
+                        "generatedAt": now,
+                        "programPath": None,
+                        "status": "no_program_loaded",
+                        "message": "No program loaded. Results will be available after loading a program.",
+                    },
+                },
+            ],
+        }
 
     async def _generate_sarif_report(self) -> dict:
         """Generate a SARIF 2.1.0 compliant static analysis report."""

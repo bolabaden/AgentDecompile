@@ -1003,12 +1003,22 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_sync_shared(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation = self._get_str(args, "mode", "action", "operation", default="syncshared")
         op = n(operation)
+        logger.info(
+            "shared-sync dispatch start operation=%s normalized=%s arg_keys=%s",
+            operation,
+            op,
+            sorted(list(args.keys())),
+        )
         if op in {"downloadshared", "downloadsharedproject", "downloadsharedrepository", "pullshared", "pullsharedproject", "pullsharedrepository"}:
+            logger.info("shared-sync dispatch routed to pull mode via operation=%s", operation)
             return await self._sync_shared_repository(args, default_mode="pull")
         if op in {"importtoshared", "pushshared", "pushsharedproject", "pushsharedrepository", "uploadshared", "uploadsharedrepository"}:
+            logger.info("shared-sync dispatch routed to push mode via operation=%s", operation)
             return await self._sync_shared_repository(args, default_mode="push")
         if op in {"mirrorshared", "syncshared", "syncsharedproject", "syncsharedrepository", "syncwithshared"}:
+            logger.info("shared-sync dispatch routed to bidirectional mode via operation=%s", operation)
             return await self._sync_shared_repository(args, default_mode="bidirectional")
+        logger.warning("shared-sync dispatch failed unsupported operation=%s normalized=%s", operation, op)
         raise ActionableError(f"Unsupported sync operation: {operation}")
 
     async def _handle_checkout(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -1674,12 +1684,22 @@ class ProjectToolProvider(ToolProvider):
         if not requested:
             requested = self._get_str(args, "mode", default=default_mode)
         normalized = n(requested)
+        logger.info(
+            "shared-sync mode resolution requested=%s normalized=%s default=%s",
+            requested,
+            normalized,
+            default_mode,
+        )
         if normalized in {"pull", "download", "downloadshared", "pullshared"}:
+            logger.info("shared-sync mode resolved to pull")
             return "pull"
         if normalized in {"push", "upload", "uploadshared", "pushshared", "importtoshared"}:
+            logger.info("shared-sync mode resolved to push")
             return "push"
         if normalized in {"bidirectional", "both", "sync", "syncshared", "mirror"}:
+            logger.info("shared-sync mode resolved to bidirectional")
             return "bidirectional"
+        logger.info("shared-sync mode fell back to default=%s", default_mode)
         return default_mode
 
     def _get_shared_session_context(self) -> tuple[str, dict[str, Any] | None, Any, str | None]:
@@ -1688,6 +1708,14 @@ class ProjectToolProvider(ToolProvider):
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         repository_adapter: Any = handle.get("repository_adapter") if handle else None
         repository_name: str | None = handle.get("repository_name") if handle else None
+        logger.info(
+            "shared-sync session context session_id=%s has_handle=%s handle_mode=%s has_repository_adapter=%s repository=%s",
+            session_id,
+            bool(handle),
+            (handle or {}).get("mode") if isinstance(handle, dict) else None,
+            repository_adapter is not None,
+            repository_name,
+        )
         return session_id, handle, repository_adapter, repository_name
 
     def _pull_shared_repository_to_local(
@@ -1697,6 +1725,7 @@ class ProjectToolProvider(ToolProvider):
         repository_name: str | None,
         project_data: Any,
     ) -> dict[str, Any]:
+        start_time = time.time()
         source_folder = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
@@ -1707,40 +1736,70 @@ class ProjectToolProvider(ToolProvider):
         max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
         force: bool = self._get_bool(args, "force", default=False)
         dry_run: bool = self._get_bool(args, "dryrun", default=False)
+        logger.info(
+            "shared-sync pull start repository=%s source_folder=%s destination_folder=%s recursive=%s max_results=%s force=%s dry_run=%s",
+            repository_name,
+            source_folder,
+            destination_folder,
+            recursive,
+            max_results,
+            force,
+            dry_run,
+        )
 
         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         session_id: str = get_current_mcp_session_id()
         items: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        logger.info("shared-sync pull fetched cached session items count=%s", len(items))
         if not items:
+            logger.info("shared-sync pull cache empty, listing repository items from adapter")
             items = self._list_repository_items(repository_adapter)
+        logger.info("shared-sync pull source items total=%s", len(items))
 
         candidates: list[dict[str, Any]] = []
         for item in items:
             item_path = str(item.get("path") or "")
             if item_path and self._path_in_scope(item_path, source_folder, recursive):
                 candidates.append(item)
+        logger.info("shared-sync pull candidates after scope filter=%s", len(candidates))
 
         if max_results > 0:
             candidates = candidates[:max_results]
+            logger.info("shared-sync pull candidates after max_results clamp=%s", len(candidates))
 
         monitor: Any = TaskMonitor.DUMMY
         transferred: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
+        heartbeat_interval = 25
 
-        for item in candidates:
+        for index, item in enumerate(candidates, start=1):
             repo_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if not repo_path or repo_path == "/":
+                logger.debug("shared-sync pull skipping empty/root repo_path at index=%s", index)
                 continue
+
+            if index == 1 or index % heartbeat_interval == 0:
+                logger.info(
+                    "shared-sync pull progress index=%s total=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+                    index,
+                    len(candidates),
+                    len(transferred),
+                    len(skipped),
+                    len(errors),
+                    time.time() - start_time,
+                )
 
             target_path: str = self._map_repo_path_to_local(repo_path, source_folder, destination_folder)
             existing: Any = project_data.getFile(target_path)
             if existing is not None and not force:
+                logger.debug("shared-sync pull skip already exists source=%s target=%s", repo_path, target_path)
                 skipped.append({"sourcePath": repo_path, "targetPath": target_path, "reason": "already-exists"})
                 continue
 
             if dry_run:
+                logger.debug("shared-sync pull dry-run planned source=%s target=%s", repo_path, target_path)
                 transferred.append({"sourcePath": repo_path, "targetPath": target_path, "planned": True})
                 continue
 
@@ -1751,6 +1810,7 @@ class ProjectToolProvider(ToolProvider):
 
             try:
                 if existing is not None and force and hasattr(existing, "delete"):
+                    logger.debug("shared-sync pull deleting existing target due to force target=%s", target_path)
                     existing.delete()
 
                 parent_folder: Any = self._ensure_project_folder(project_data, target_parent_path)
@@ -1762,12 +1822,15 @@ class ProjectToolProvider(ToolProvider):
                 try:
                     source_df = project_data.getFile(repo_path)
                     if source_df is not None:
+                        logger.debug("shared-sync pull strategy=project_data_domain_file source=%s", repo_path)
                         remote_domain_obj = self._get_domain_object_compat(source_df, monitor)
                 except Exception:
+                    logger.debug("shared-sync pull strategy=project_data_domain_file failed source=%s", repo_path, exc_info=True)
                     pass
 
                 # Strategy 2: Use RepositoryItem if we have a working adapter.
                 if remote_domain_obj is None:
+                    logger.debug("shared-sync pull strategy=repository_item source=%s folder=%s item=%s", repo_path, repo_folder, item_name)
                     repo_item = repository_adapter.getItem(repo_folder, item_name)
                     if repo_item is None:
                         raise ValueError(f"Repository item not found: {repo_path}")
@@ -1779,6 +1842,7 @@ class ProjectToolProvider(ToolProvider):
 
                 # Strategy 3: ProgramDB fallback via adapter's openDatabase.
                 if remote_domain_obj is None and hasattr(repository_adapter, "openDatabase"):
+                    logger.debug("shared-sync pull strategy=programdb_fallback source=%s", repo_path)
                     try:
                         from db import DBHandle  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
                         from ghidra.framework.data import OpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
@@ -1795,22 +1859,37 @@ class ProjectToolProvider(ToolProvider):
                             except Exception:
                                 remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
                     except Exception:
+                        logger.debug("shared-sync pull strategy=programdb_fallback failed source=%s", repo_path, exc_info=True)
                         pass
 
                 if remote_domain_obj is None:
                     raise ValueError(f"Unable to open shared item: {repo_path}")
 
                 try:
+                    logger.debug("shared-sync pull creating target file source=%s target=%s", repo_path, target_path)
                     parent_folder.createFile(item_name, remote_domain_obj, monitor)
                 finally:
                     try:
                         remote_domain_obj.release(self)
                     except Exception:
+                        logger.debug("shared-sync pull release remote_domain_obj failed source=%s", repo_path, exc_info=True)
                         pass
 
                 transferred.append({"sourcePath": repo_path, "targetPath": target_path})
+                logger.debug("shared-sync pull transferred source=%s target=%s", repo_path, target_path)
             except Exception as exc:
+                logger.exception("shared-sync pull failed source=%s target=%s error=%s", repo_path, target_path, exc)
                 errors.append({"sourcePath": repo_path, "targetPath": target_path, "error": str(exc)})
+
+        logger.info(
+            "shared-sync pull complete repository=%s requested=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+            repository_name,
+            len(candidates),
+            len(transferred),
+            len(skipped),
+            len(errors),
+            time.time() - start_time,
+        )
 
         return {
             "direction": "pull",
@@ -1828,35 +1907,61 @@ class ProjectToolProvider(ToolProvider):
         }
 
     def _push_local_project_to_shared(self, args: dict[str, Any], repository_name: str | None, project_data: Any) -> dict[str, Any]:
+        start_time = time.time()
         source_folder: str = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
         recursive: bool = self._get_bool(args, "recursive", default=True)
         max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
         dry_run: bool = self._get_bool(args, "dryrun", default=False)
+        logger.info(
+            "shared-sync push start repository=%s source_folder=%s recursive=%s max_results=%s dry_run=%s",
+            repository_name,
+            source_folder,
+            recursive,
+            max_results,
+            dry_run,
+        )
 
         root: Any = project_data.getRootFolder()
         local_items: list[dict[str, Any]] = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
+        logger.info("shared-sync push discovered local items=%s", len(local_items))
 
         candidates: list[dict[str, Any]] = []
         for item in local_items:
             local_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if local_path and self._path_in_scope(local_path, source_folder, recursive):
                 candidates.append(item)
+        logger.info("shared-sync push candidates after scope filter=%s", len(candidates))
 
         if max_results > 0:
             candidates = candidates[:max_results]
+            logger.info("shared-sync push candidates after max_results clamp=%s", len(candidates))
 
         transferred: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
+        heartbeat_interval = 25
 
-        for item in candidates:
+        for index, item in enumerate(candidates, start=1):
             source_path: str = self._normalize_repo_path(str(item.get("path") or ""))
             if not source_path or source_path == "/":
+                logger.debug("shared-sync push skipping empty/root source path at index=%s", index)
                 continue
 
+            if index == 1 or index % heartbeat_interval == 0:
+                logger.info(
+                    "shared-sync push progress index=%s total=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+                    index,
+                    len(candidates),
+                    len(transferred),
+                    len(skipped),
+                    len(errors),
+                    time.time() - start_time,
+                )
+
             if dry_run:
+                logger.debug("shared-sync push dry-run planned source=%s", source_path)
                 transferred.append({"sourcePath": source_path, "planned": True})
                 continue
 
@@ -1866,16 +1971,30 @@ class ProjectToolProvider(ToolProvider):
                     raise ValueError(f"Local project item not found: {source_path}")
 
                 if hasattr(source_file, "save"):
+                    logger.debug("shared-sync push saving source file=%s", source_path)
                     from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                     source_file.save(TaskMonitor.DUMMY)
                 else:
+                    logger.debug("shared-sync push skip save-not-supported source=%s", source_path)
                     skipped.append({"sourcePath": source_path, "reason": "save-not-supported"})
                     continue
 
                 transferred.append({"sourcePath": source_path})
+                logger.debug("shared-sync push transferred source=%s", source_path)
             except Exception as exc:
+                logger.exception("shared-sync push failed source=%s error=%s", source_path, exc)
                 errors.append({"sourcePath": source_path, "error": str(exc)})
+
+        logger.info(
+            "shared-sync push complete repository=%s requested=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+            repository_name,
+            len(candidates),
+            len(transferred),
+            len(skipped),
+            len(errors),
+            time.time() - start_time,
+        )
 
         return {
             "direction": "push",
@@ -1893,9 +2012,20 @@ class ProjectToolProvider(ToolProvider):
         }
 
     async def _sync_shared_repository(self, args: dict[str, Any], default_mode: str = "pull") -> list[types.TextContent]:
+        sync_start = time.time()
+        logger.info("shared-sync execution start default_mode=%s arg_keys=%s", default_mode, sorted(list(args.keys())))
         mode = self._resolve_shared_sync_mode(args, default_mode=default_mode)
-        _, handle, repository_adapter, repository_name = self._get_shared_session_context()
+        session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
+        logger.info(
+            "shared-sync context resolved session_id=%s mode=%s has_handle=%s has_adapter=%s repository=%s",
+            session_id,
+            mode,
+            bool(handle),
+            repository_adapter is not None,
+            repository_name,
+        )
         if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
+            logger.warning("shared-sync aborted: no shared-server session handle present")
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1914,6 +2044,7 @@ class ProjectToolProvider(ToolProvider):
             )
 
         if repository_adapter is None:
+            logger.warning("shared-sync aborted: shared adapter missing repository=%s", repository_name)
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1934,6 +2065,7 @@ class ProjectToolProvider(ToolProvider):
 
         project_data: Any = self._get_active_project_data()
         if project_data is None:
+            logger.warning("shared-sync aborted: local project_data unavailable repository=%s", repository_name)
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1953,7 +2085,17 @@ class ProjectToolProvider(ToolProvider):
             )
 
         if mode == "pull":
+            logger.info("shared-sync executing pull phase repository=%s", repository_name)
             pull_result = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
+            logger.info(
+                "shared-sync pull phase complete success=%s requested=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+                len(pull_result["errors"]) == 0,
+                pull_result.get("requested", 0),
+                pull_result.get("transferred", 0),
+                pull_result.get("skipped", 0),
+                len(pull_result.get("errors", [])),
+                time.time() - sync_start,
+            )
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1965,7 +2107,17 @@ class ProjectToolProvider(ToolProvider):
             )
 
         if mode == "push":
+            logger.info("shared-sync executing push phase repository=%s", repository_name)
             push_result: dict[str, Any] = self._push_local_project_to_shared(args, repository_name, project_data)
+            logger.info(
+                "shared-sync push phase complete success=%s requested=%s transferred=%s skipped=%s errors=%s elapsed_sec=%.2f",
+                len(push_result["errors"]) == 0,
+                push_result.get("requested", 0),
+                push_result.get("transferred", 0),
+                push_result.get("skipped", 0),
+                len(push_result.get("errors", [])),
+                time.time() - sync_start,
+            )
             return create_success_response(
                 {
                     "operation": "sync-shared",
@@ -1976,8 +2128,21 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
+        logger.info("shared-sync executing bidirectional pull phase repository=%s", repository_name)
         pull_result: dict[str, Any] = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
+        logger.info("shared-sync executing bidirectional push phase repository=%s", repository_name)
         push_result: dict[str, Any] = self._push_local_project_to_shared(args, repository_name, project_data)
+
+        logger.info(
+            "shared-sync bidirectional complete pull_errors=%s push_errors=%s total_requested=%s total_transferred=%s total_skipped=%s total_errors=%s elapsed_sec=%.2f",
+            len(pull_result.get("errors", [])),
+            len(push_result.get("errors", [])),
+            int(pull_result.get("requested", 0)) + int(push_result.get("requested", 0)),
+            int(pull_result.get("transferred", 0)) + int(push_result.get("transferred", 0)),
+            int(pull_result.get("skipped", 0)) + int(push_result.get("skipped", 0)),
+            len(pull_result.get("errors", [])) + len(push_result.get("errors", [])),
+            time.time() - sync_start,
+        )
 
         return create_success_response(
             {
@@ -2232,15 +2397,19 @@ class ProjectToolProvider(ToolProvider):
 
     def _list_repository_items(self, repository_adapter: Any) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
+        start_time = time.time()
+        logger.info("shared-sync repository listing start")
 
         def _walk(folder_path: str) -> None:
             subfolders: list[Any] = repository_adapter.getSubfolderList(folder_path) or []
+            logger.debug("shared-sync repository listing folder=%s subfolders=%s", folder_path, len(subfolders))
             for subfolder in subfolders:
                 subfolder_name = str(subfolder)
                 next_path = f"{folder_path.rstrip('/')}/{subfolder_name}" if folder_path != "/" else f"/{subfolder_name}"
                 _walk(next_path)
 
             repo_items: list[Any] = repository_adapter.getItemList(folder_path) or []
+            logger.debug("shared-sync repository listing folder=%s items=%s", folder_path, len(repo_items))
             for repo_item in repo_items:
                 name = str(repo_item.getName()) if hasattr(repo_item, "getName") else str(repo_item)
                 path = f"{folder_path.rstrip('/')}/{name}" if folder_path != "/" else f"/{name}"
@@ -2252,8 +2421,11 @@ class ProjectToolProvider(ToolProvider):
                         "type": item_type,
                     },
                 )
+                if len(items) == 1 or len(items) % 100 == 0:
+                    logger.info("shared-sync repository listing progress discovered_items=%s elapsed_sec=%.2f", len(items), time.time() - start_time)
 
         _walk("/")
+        logger.info("shared-sync repository listing complete total_items=%s elapsed_sec=%.2f", len(items), time.time() - start_time)
         return items
 
     async def _handle_list_project_binary_metadata(self, args: dict[str, Any]) -> list[types.TextContent]:
