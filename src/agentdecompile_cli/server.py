@@ -173,6 +173,29 @@ def _env_host() -> str:
     return (os.environ.get("AGENT_DECOMPILE_HOST") or "").strip() or "127.0.0.1"
 
 
+def _resolve_default_project_path(project_path_arg: Path) -> Path:
+    """Resolve effective default project path for server mode.
+
+    If caller did not override ``--project-path`` (still using
+    ``agentdecompile_projects``) and a mounted ``/projects`` directory exists,
+    prefer that persistent location so domain storage survives container restarts.
+    """
+    raw = str(project_path_arg).strip()
+    is_builtin_default = raw in {"agentdecompile_projects", "./agentdecompile_projects"}
+    if not is_builtin_default:
+        return project_path_arg
+
+    explicit_default = (os.environ.get("AGENT_DECOMPILE_DEFAULT_PROJECT_DIR") or "").strip()
+    if explicit_default:
+        return Path(explicit_default)
+
+    persistent_root = Path("/projects")
+    if persistent_root.exists() and persistent_root.is_dir():
+        return persistent_root / "agentdecompile_projects"
+
+    return project_path_arg
+
+
 def _resolve_proxy_backend_url(
     explicit_backend_url: str | None,
     explicit_mcp_server_url: str | None = None,
@@ -424,7 +447,7 @@ def main() -> None:
         return
 
     # Resolve project path (.gpr vs directory)
-    project_path = args.project_path.resolve()
+    project_path = _resolve_default_project_path(args.project_path).resolve()
     if project_path.suffix.lower() == ".gpr":
         if args.project_name != "my_project":
             parser.error("Cannot use --project-name with a .gpr file")
