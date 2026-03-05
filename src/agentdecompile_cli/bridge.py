@@ -757,41 +757,14 @@ class AgentDecompileStdioBridge:
         backend so that tools like ``list-project-files`` work immediately
         without requiring a manual ``open`` call.
         """
-        server_host = (
-
-            os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        )
+        server_host = os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         if not server_host:
             return  # No shared server configured – nothing to auto-open.
 
-        server_port = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
-            or "13100"
-        )
-        server_username = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-        )
-        server_password = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-        )
-        repository = (
-            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
-            or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
-        )
+        server_port = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip() or "13100"
+        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        repository = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip() or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip() or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
@@ -833,10 +806,7 @@ class AgentDecompileStdioBridge:
                         server_connected = data.get("serverConnected", False)
                         checked_out = data.get("checkedOutProgram")
                         sys.stderr.write(
-                            f"Auto-open OK: connected={server_connected}"
-                            f", repo={repo!r}"
-                            f", availableRepositories={avail_repos}"
-                            f", programs={prog_count}\n"
+                            f"Auto-open OK: connected={server_connected}, repo={repo!r}, availableRepositories={avail_repos}, programs={prog_count}\n",
                         )
                         if programs:
                             prog_paths = [p.get("path", p.get("name", str(p))) for p in programs[:20]]
@@ -935,7 +905,7 @@ class AgentDecompileStdioBridge:
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult: # pyright: ignore[reportInvalidTypeForm]
+    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # pyright: ignore[reportInvalidTypeForm]
         """Handle MCP call_tool request by forwarding to backend."""
         backend_name = resolve_tool_name(name) if isinstance(name, str) else None
         if backend_name is None:

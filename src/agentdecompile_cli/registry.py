@@ -68,6 +68,7 @@ def _compile_nl_phrase_pattern(phrase: str) -> re.Pattern[str]:
         flags=re.IGNORECASE,
     )
 
+
 # NL phrase preprocessing patterns (used in _preprocess_nl_phrases)
 _NL_PHRASE_PATTERNS = [
     (r"\b(in|from|on)\s+program\s+", r"with program path ", re.IGNORECASE),
@@ -207,7 +208,7 @@ def _canonical_param_name(param: str) -> str:
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
 TOOL_PARAMS: dict[str, list[str]] = {
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
-    "analyze-program": _params( "programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis" ),
+    "analyze-program": _params("programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis"),
     "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
     "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
@@ -219,44 +220,107 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "delete-project-binary": _params("programPath", "confirm"),
     "execute-script": _params("code", "programPath", "timeout"),
     "export": _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
-    "gen-callgraph": _params( "programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers" ),
-    "get-call-graph": _params( "programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses" ),
+    "gen-callgraph": _params("programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers"),
+    "get-call-graph": _params("programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses"),
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
     "get-current-program": _params("programPath"),
     "get-data": _params("programPath", "addressOrSymbol"),
-    "get-functions": _params( "programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose" ),
-    "get-references": _params( "programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow" ),
+    "get-functions": _params("programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose"),
+    "get-references": _params("programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow"),
     "import-binary": _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
     "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
     "list-cross-references": _params("programPath", "address", "direction", "maxResults"),
     "list-exports": _params("programPath", "filter", "maxResults", "offset", "startIndex"),
-    "list-functions": _params( "programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers" ),
+    "list-functions": _params("programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers"),
     "list-imports": _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
     "list-processors": _params("filter"),
     "list-project-files": [],
     "list-strings": _params("programPath", "filter", "maxResults", "offset"),
-    "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
-    "manage-comments": _params( "programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange" ),
-    "manage-data-types": _params( "programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol" ),
-    "manage-files": _params( "mode", "path", "sourcePath", "filePath", "programPath", "newPath", "destinationPath", "newName", "content", "encoding", "createParents", "keep", "force", "exclusive", "dryRun", "maxResults", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl", "exportType", "format", "includeParameters", "includeVariables", "includeComments", "processor", "languageId", "compilerSpecId", "endian" ),
+    "manage-bookmarks": _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
+    "manage-comments": _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),
+    "manage-data-types": _params("programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol"),
+    "manage-files": _params(
+        "mode",
+        "path",
+        "sourcePath",
+        "filePath",
+        "programPath",
+        "newPath",
+        "destinationPath",
+        "newName",
+        "content",
+        "encoding",
+        "createParents",
+        "keep",
+        "force",
+        "exclusive",
+        "dryRun",
+        "maxResults",
+        "destinationFolder",
+        "recursive",
+        "maxDepth",
+        "analyzeAfterImport",
+        "stripLeadingPath",
+        "stripAllContainerPath",
+        "mirrorFs",
+        "enableVersionControl",
+        "exportType",
+        "format",
+        "includeParameters",
+        "includeVariables",
+        "includeComments",
+        "processor",
+        "languageId",
+        "compilerSpecId",
+        "endian",
+    ),
     "manage-function-tags": _params("programPath", "function", "mode", "tags"),
-    "manage-function": _params( "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions" ),
-    "manage-strings": _params( "programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions" ),
-    "manage-structures": _params( "programPath", "mode", "cDefinition", "headerContent", "structureName", "name", "size", "type", "category", "packed", "description", "fields", "addressOrSymbol", "clearExisting", "force", "nameFilter", "includeBuiltIn", "fieldName", "dataType", "offset", "comment", "bitfield", "newDataType", "newFieldName", "newComment", "newLength" ),
-    "manage-symbols": _params( "programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll" ),
-    "match-function": _params( "programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize" ),
+    "manage-function": _params(
+        "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions"
+    ),
+    "manage-strings": _params("programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions"),
+    "manage-structures": _params(
+        "programPath",
+        "mode",
+        "cDefinition",
+        "headerContent",
+        "structureName",
+        "name",
+        "size",
+        "type",
+        "category",
+        "packed",
+        "description",
+        "fields",
+        "addressOrSymbol",
+        "clearExisting",
+        "force",
+        "nameFilter",
+        "includeBuiltIn",
+        "fieldName",
+        "dataType",
+        "offset",
+        "comment",
+        "bitfield",
+        "newDataType",
+        "newFieldName",
+        "newComment",
+        "newLength",
+    ),
+    "manage-symbols": _params("programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll"),
+    "match-function": _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
     "open-program-in-code-browser": _params("programPath"),
-    "open-project": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName" ),
+    "open-project": _params("path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
     "read-bytes": _params("programPath", "address", "length"),
-    "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
+    "search-code": _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     "search-everything": _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
-    "sync-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
+    "sync-project": _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
 }
 
 # Populated from TOOLS_LIST.md when available.
@@ -693,7 +757,7 @@ _LEGACY_TOOL_NAMES: frozenset[str] = frozenset(
         "manage-structures",
         "manage-symbols",
         "suggest",
-    }
+    },
 )
 
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
@@ -732,11 +796,7 @@ def _get_explicit_enabled_tools() -> set[str] | None:
     taking priority over default/legacy filtering and DISABLE_TOOLS.
     Returns None when the var is unset or empty.
     """
-    raw = (
-        os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS")
-        or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS")
-        or ""
-    )
+    raw = os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS") or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS") or ""
     enable_env = raw.strip()
     if not enable_env:
         return None
@@ -757,10 +817,7 @@ def _build_advertised_tools() -> list[str]:
 
     if explicit_set is not None:
         # AGENTDECOMPILE_ENABLE_TOOLS takes absolute priority – expose exactly these tools.
-        return [
-            tool for tool in canonical_visible
-            if normalize_identifier(tool) in explicit_set
-        ]
+        return [tool for tool in canonical_visible if normalize_identifier(tool) in explicit_set]
 
     include_legacy = _legacy_tools_advertised()
 
@@ -769,9 +826,7 @@ def _build_advertised_tools() -> list[str]:
         norm = normalize_identifier(tool)
         if norm in disabled_set:
             continue
-        if norm in default_set:
-            result.append(tool)
-        elif norm in legacy_set and include_legacy:
+        if norm in default_set or (norm in legacy_set and include_legacy):
             result.append(tool)
     return result
 
@@ -1080,10 +1135,7 @@ class ToolRegistry:
 
         expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
         param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
-        normalized_argument_keys: dict[str, str] = {
-            key: normalize_identifier(key)
-            for key in augmented_arguments
-        }
+        normalized_argument_keys: dict[str, str] = {key: normalize_identifier(key) for key in augmented_arguments}
         normalized_arguments: dict[str, Any] = {}
         for key, value in augmented_arguments.items():
             normalized_arguments.setdefault(normalized_argument_keys[key], value)
@@ -1155,12 +1207,7 @@ class ToolRegistry:
             # generic keys like "text" (e.g., alias-value tests).  Treat as
             # natural language only when the payload looks sentence/kv-like.
             compact_value = value.strip()
-            looks_nl = (
-                (" " in compact_value)
-                or any(token in compact_value for token in ("=", ":", ",", ";"))
-                or (" with " in compact_value.lower())
-                or (" and " in compact_value.lower())
-            )
+            looks_nl = (" " in compact_value) or any(token in compact_value for token in ("=", ":", ",", ";")) or (" with " in compact_value.lower()) or (" and " in compact_value.lower())
             if not looks_nl:
                 continue
 
@@ -1318,10 +1365,7 @@ class ToolRegistry:
         # Use precompiled pattern to split on "to" keyword
         cleaned = _PROGRAM_PATH_SCOPE_PATTERN.split(cleaned, maxsplit=1)[0].strip()
 
-        if recover_unbalanced_quotes and (
-            (cleaned.startswith('"') and not cleaned.endswith('"'))
-            or (cleaned.startswith("'") and not cleaned.endswith("'"))
-        ):
+        if recover_unbalanced_quotes and ((cleaned.startswith('"') and not cleaned.endswith('"')) or (cleaned.startswith("'") and not cleaned.endswith("'"))):
             # Use precompiled quoted path pattern
             quoted_path_match = _QUOTED_PATH_PATTERN.search(full_text)
             if quoted_path_match:

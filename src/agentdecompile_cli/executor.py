@@ -249,12 +249,7 @@ def run_async(coro: Any) -> Any:
 def handle_command_error(error: BaseException) -> None:
     """Handle CLI errors and display user-friendly messages to stderr."""
     error_msg = str(error)
-    if (
-        isinstance(error, (ConnectionRefusedError, ConnectionError, OSError))
-        or "ConnectError" in error_msg
-        or "connection refused" in error_msg.lower()
-        or "all connection attempts failed" in error_msg.lower()
-    ):
+    if isinstance(error, (ConnectionRefusedError, ConnectionError, OSError)) or "ConnectError" in error_msg or "connection refused" in error_msg.lower() or "all connection attempts failed" in error_msg.lower():
         show_connection_error()
         return
     if isinstance(error, asyncio.exceptions.CancelledError):

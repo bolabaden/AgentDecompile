@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import heapq
 import logging
-from itertools import islice
 
+from itertools import islice
 from typing import Any, cast
 
 from mcp import types
@@ -79,7 +79,12 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "Path to the program."},
                         "function": {"type": "string", "description": "The target function you want to match against."},
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the target function."},
-                        "mode": {"type": "string", "enum": ["similar", "callers", "callees", "signature"], "default": "similar", "description": "How to evaluate similarity: 'similar' (overall heuristics), 'callers' (functions grouped by who calls them), 'callees' (functions grouped by who they call), 'signature' (functions with identical argument types)."},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["similar", "callers", "callees", "signature"],
+                            "default": "similar",
+                            "description": "How to evaluate similarity: 'similar' (overall heuristics), 'callers' (functions grouped by who calls them), 'callees' (functions grouped by who they call), 'signature' (functions with identical argument types).",
+                        },
                         "maxResults": {"type": "integer", "default": 50, "description": "Maximum number of matched functions to return."},
                     },
                     "required": [],
@@ -190,7 +195,7 @@ class GetFunctionToolProvider(ToolProvider):
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
         dtm = program.getDataTypeManager()
-        parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
         rt = parser.parse(rt_str)
 
         def _set_return_type() -> None:

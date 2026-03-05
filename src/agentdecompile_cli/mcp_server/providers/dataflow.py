@@ -15,7 +15,6 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
-    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,36 +56,36 @@ class DataFlowToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {
                             "type": "string",
-                            "description": "Path to the program in the Ghidra project."
+                            "description": "Path to the program in the Ghidra project.",
                         },
                         "addressOrSymbol": {
                             "type": "string",
-                            "description": "The target address or symbol name to start tracking data flow from."
+                            "description": "The target address or symbol name to start tracking data flow from.",
                         },
                         "functionIdentifier": {
                             "type": "string",
-                            "description": "Name or address of the function containing the data to track."
+                            "description": "Name or address of the function containing the data to track.",
                         },
                         "direction": {
                             "type": "string",
                             "enum": ["backward", "forward", "variable_accesses"],
                             "default": "backward",
-                            "description": "Whether to track where the data came from (backward), where it goes (forward), or how a variable is accessed."
+                            "description": "Whether to track where the data came from (backward), where it goes (forward), or how a variable is accessed.",
                         },
                         "maxOps": {
                             "type": "integer",
                             "default": 500,
-                            "description": "Maximum number of operations (P-code ops) to analyze. Prevents infinite loops."
+                            "description": "Maximum number of operations (P-code ops) to analyze. Prevents infinite loops.",
                         },
                         "maxDepth": {
                             "type": "integer",
                             "default": 10,
-                            "description": "Maximum path depth when tracing through data flow graphs."
+                            "description": "Maximum path depth when tracing through data flow graphs.",
                         },
                         "timeout": {
                             "type": "integer",
                             "default": 30,
-                            "description": "Maximum time in seconds to allow the analysis to run."
+                            "description": "Maximum time in seconds to allow the analysis to run.",
                         },
                     },
                     "required": [],
@@ -112,12 +111,21 @@ class DataFlowToolProvider(ToolProvider):
         if func is None:
             raise ValueError(f"No function found containing {addr_str}")
 
-        return await self._dispatch_handler(args, direction, {
-            "backward": "_handle_backward",
-            "forward": "_handle_forward", 
-            "variable_accesses": "_handle_variable_accesses",
-            "variableaccesses": "_handle_variable_accesses",  # alias
-        }, program=program, addr=addr, func=func, max_ops=max_ops, timeout_s=timeout_s)
+        return await self._dispatch_handler(
+            args,
+            direction,
+            {
+                "backward": "_handle_backward",
+                "forward": "_handle_forward",
+                "variable_accesses": "_handle_variable_accesses",
+                "variableaccesses": "_handle_variable_accesses",  # alias
+            },
+            program=program,
+            addr=addr,
+            func=func,
+            max_ops=max_ops,
+            timeout_s=timeout_s,
+        )
 
     async def _handle_backward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         return await self._analyze_data_flow("backward", program, addr, func, max_ops, timeout_s)

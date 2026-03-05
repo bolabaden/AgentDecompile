@@ -88,7 +88,7 @@ class ResourceProviderManager:
         program_info: ProgramInfo | None = None,
     ) -> str:
         """Read a resource by URI.
-        
+
         Attempts to read the resource from each registered provider.
         Logs which providers are tried and why they failed.
         """
@@ -104,7 +104,7 @@ class ResourceProviderManager:
         for provider in self.providers:
             provider_name = provider.__class__.__name__
             attempted_providers.append(provider_name)
-            
+
             try:
                 logger.info(f"  Trying provider: {provider_name}")
                 result: str = await provider.read_resource(uri)

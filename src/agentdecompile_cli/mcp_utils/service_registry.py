@@ -83,10 +83,7 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             Dictionary mapping service class names to service instance types
         """
-        return {
-            AgentDecompileInternalServiceRegistry._service_name(service_class): type(service_instance).__name__
-            for service_class, service_instance in AgentDecompileInternalServiceRegistry._services.items()
-        }
+        return {AgentDecompileInternalServiceRegistry._service_name(service_class): type(service_instance).__name__ for service_class, service_instance in AgentDecompileInternalServiceRegistry._services.items()}
 
     @staticmethod
     def get_service_count() -> int:

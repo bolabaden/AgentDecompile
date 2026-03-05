@@ -12,14 +12,14 @@ from typing import Any, cast
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import (
+    collect_structure_fields,
+    collect_structures,
+)
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
-)
-from agentdecompile_cli.mcp_server.providers._collectors import (
-    collect_structure_fields,
-    collect_structures,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class StructureToolProvider(ToolProvider):
 
     def _find_structure(self, dtm: Any, name: str) -> Any:
         """Return a structure by exact name, or ``None`` when not found.
-        
+
         **Performance**: O(n) where n = number of structures in the data type manager.
         For programs with many structures, this may be slow. Consider caching if needed.
         """
@@ -44,9 +44,9 @@ class StructureToolProvider(ToolProvider):
     @staticmethod
     def _new_data_type_parser(dtm: Any) -> Any:
         """Create a ``DataTypeParser`` configured for broad type support."""
-        from ghidra.util.data import DataTypeParser # pyright: ignore[reportMissingModuleSource]
+        from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-        return DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        return DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
 
     def list_tools(self) -> list[types.Tool]:
         return [
@@ -179,11 +179,11 @@ class StructureToolProvider(ToolProvider):
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
-        from ghidra.program.model.data import CategoryPath # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.model.data import CategoryPath  # pyright: ignore[reportMissingModuleSource]
 
         def _create_structure() -> None:
             if is_union:
-                from ghidra.program.model.data import UnionDataType # pyright: ignore[reportMissingModuleSource]
+                from ghidra.program.model.data import UnionDataType  # pyright: ignore[reportMissingModuleSource]
 
                 dt = UnionDataType(CategoryPath(cat_path), name, dtm)
             else:

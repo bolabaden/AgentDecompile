@@ -34,7 +34,7 @@ class ProgramListResource(ResourceProvider):
         """Return list of program resources."""
         return [
             types.Resource(
-                uri="ghidra://programs", # pyright: ignore[reportArgumentType]
+                uri="ghidra://programs",  # pyright: ignore[reportArgumentType]
                 name="Program List",
                 description="List of all programs in the current project",
                 mimeType="application/json",

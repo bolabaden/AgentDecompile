@@ -6,6 +6,7 @@ Modes: analyze, callers, containing.
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from mcp import types

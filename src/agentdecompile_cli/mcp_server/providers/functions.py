@@ -8,16 +8,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+
 from typing import Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
-    n,
 )
-from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,15 @@ class FunctionToolProvider(ToolProvider):
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
-                            "description": "BATCH multiple function names or addresses in ONE call. E.g. [\"0x004ae6e0\", \"0x004ae700\", \"SaveGame\"] analyzes all at once and returns combined results.",
+                            "description": 'BATCH multiple function names or addresses in ONE call. E.g. ["0x004ae6e0", "0x004ae700", "SaveGame"] analyzes all at once and returns combined results.',
                         },
                         "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the target function's address."},
                         "functionIdentifier": {"type": "string", "description": "Another alternative to identify the target function."},
-                        "mode": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "description": "Operation mode. What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships. If omitted, returns all four views."},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["decompile", "disassemble", "info", "calls"],
+                            "description": "Operation mode. What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships. If omitted, returns all four views.",
+                        },
                         "timeout": {"type": "integer", "default": 60, "description": "Maximum seconds to wait on the decompiler if view='decompile'."},
                         "limit": {"type": "integer", "default": 100, "description": "Used only if dropping down to a list view."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
@@ -74,16 +78,16 @@ class FunctionToolProvider(ToolProvider):
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
         """List functions in the current program, with optional filtering and pagination.
-        
+
         Iterates through all functions in the active program, optionally filtering by regex
         name pattern and including/excluding external functions. Results are paginated for
         efficient handling of large binaries.
-        
+
         **Performance Note**: Uses two-pass approach for efficiency:
             1. Single iteration to collect matching functions (O(n))
             2. Slice matching list for pagination (O(1) offset lookup)
         This avoids offset tracking during iteration and simplifies logic.
-        
+
         Parameters
         ----------
         namepattern/pattern/filter/regex : str, optional
@@ -94,8 +98,8 @@ class FunctionToolProvider(ToolProvider):
             Pagination offset
         limit/maxresults : int, default=100
             Maximum results to return
-            
-        Returns
+
+        Returns:
         -------
         Paginated response with functions, count, total, hasMore
         """
@@ -200,12 +204,20 @@ class FunctionToolProvider(ToolProvider):
                     },
                 )
 
-            return await self._dispatch_handler(args, view, {
-                "info": "_handle_info",
-                "calls": "_handle_calls",
-                "decompile": "_handle_decompile",
-                "disassemble": "_handle_disassemble",
-            }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+            return await self._dispatch_handler(
+                args,
+                view,
+                {
+                    "info": "_handle_info",
+                    "calls": "_handle_calls",
+                    "decompile": "_handle_decompile",
+                    "disassemble": "_handle_disassemble",
+                },
+                target_func=target_func,
+                program=program,
+                max_results=max_results,
+                timeout=timeout,
+            )
 
         # Batch path: multiple functions requested
         batch_results: list[dict[str, Any]] = []
@@ -221,39 +233,51 @@ class FunctionToolProvider(ToolProvider):
                     calls_resp = await self._handle_calls(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
                     decompile_resp = await self._handle_decompile(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
                     disassemble_resp = await self._handle_disassemble(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
-                    batch_results.append({
-                        "identifier": func_id,
-                        "name": target_func.getName(),
-                        "address": str(target_func.getEntryPoint()),
-                        "signature": str(target_func.getSignature()),
-                        "view": "all",
-                        "views": {
-                            "info": self._response_to_payload(info_resp),
-                            "calls": self._response_to_payload(calls_resp),
-                            "decompile": self._response_to_payload(decompile_resp),
-                            "disassemble": self._response_to_payload(disassemble_resp),
-                        },
-                    })
+                    batch_results.append(
+                        {
+                            "identifier": func_id,
+                            "name": target_func.getName(),
+                            "address": str(target_func.getEntryPoint()),
+                            "signature": str(target_func.getSignature()),
+                            "view": "all",
+                            "views": {
+                                "info": self._response_to_payload(info_resp),
+                                "calls": self._response_to_payload(calls_resp),
+                                "decompile": self._response_to_payload(decompile_resp),
+                                "disassemble": self._response_to_payload(disassemble_resp),
+                            },
+                        }
+                    )
                 else:
-                    single_resp = await self._dispatch_handler(args, view, {
-                        "info": "_handle_info",
-                        "calls": "_handle_calls",
-                        "decompile": "_handle_decompile",
-                        "disassemble": "_handle_disassemble",
-                    }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    single_resp = await self._dispatch_handler(
+                        args,
+                        view,
+                        {
+                            "info": "_handle_info",
+                            "calls": "_handle_calls",
+                            "decompile": "_handle_decompile",
+                            "disassemble": "_handle_disassemble",
+                        },
+                        target_func=target_func,
+                        program=program,
+                        max_results=max_results,
+                        timeout=timeout,
+                    )
                     payload = self._response_to_payload(single_resp)
                     payload["identifier"] = func_id
                     batch_results.append(payload)
             except Exception as e:
                 errors.append({"identifier": func_id, "error": str(e)})
 
-        return create_success_response({
-            "mode": "batch",
-            "view": view or "all",
-            "count": len(batch_results),
-            "results": batch_results,
-            "errors": errors,
-        })
+        return create_success_response(
+            {
+                "mode": "batch",
+                "view": view or "all",
+                "count": len(batch_results),
+                "results": batch_results,
+                "errors": errors,
+            }
+        )
 
     async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
         result: dict[str, Any] = {
@@ -365,7 +389,7 @@ class FunctionToolProvider(ToolProvider):
                 decomp.dispose()
         except Exception as e:
             result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e), max_instructions=400)
-        
+
         return create_success_response(result)
 
     async def _handle_disassemble(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
@@ -393,4 +417,3 @@ class FunctionToolProvider(ToolProvider):
             "instructionCount": len(instructions),
         }
         return create_success_response(result)
-

@@ -35,22 +35,22 @@ class DataToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {
                             "type": "string",
-                            "description": "Path to the binary project file in Ghidra."
+                            "description": "Path to the binary project file in Ghidra.",
                         },
                         "addressOrSymbol": {
                             "type": "string",
-                            "description": "The exact address or known symbol name where the data is located."
+                            "description": "The exact address or known symbol name where the data is located.",
                         },
                         "length": {
                             "type": "integer",
                             "default": 16,
-                            "description": "How many bytes of data to read from this address."
+                            "description": "How many bytes of data to read from this address.",
                         },
                         "format": {
                             "type": "string",
                             "enum": ["hex", "ascii", "both"],
                             "default": "both",
-                            "description": "How to format the output. 'hex' shows hexadecimal bytes, 'ascii' shows printable characters, 'both' shows both."
+                            "description": "How to format the output. 'hex' shows hexadecimal bytes, 'ascii' shows printable characters, 'both' shows both.",
                         },
                     },
                     "required": [],
@@ -64,15 +64,15 @@ class DataToolProvider(ToolProvider):
                     "properties": {
                         "programPath": {
                             "type": "string",
-                            "description": "Path to the binary project file in Ghidra."
+                            "description": "Path to the binary project file in Ghidra.",
                         },
                         "addressOrSymbol": {
                             "type": "string",
-                            "description": "The exact address or known symbol name to label."
+                            "description": "The exact address or known symbol name to label.",
                         },
                         "dataType": {
                             "type": "string",
-                            "description": "The name of the data type to apply (e.g., 'int', 'char*', 'my_struct_t'). The type must already exist in the program's type manager."
+                            "description": "The name of the data type to apply (e.g., 'int', 'char*', 'my_struct_t'). The type must already exist in the program's type manager.",
                         },
                     },
                     "required": [],
@@ -129,5 +129,6 @@ class DataToolProvider(ToolProvider):
             listing = self._get_listing(program)
             listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
             listing.createData(addr, dt)
+
         self._run_program_transaction(program, "apply-data-type", _apply_data_type)
         return create_success_response({"address": str(addr), "dataType": dt_name, "success": True})

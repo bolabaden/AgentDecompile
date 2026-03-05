@@ -326,11 +326,7 @@ async def _recover_and_retry_with_program(
 def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dict[str, Any]]:
     """Build a list of open attempts for the requested program."""
     opts = _get_opts(ctx)
-    shared_host = (
-        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
-        or _backend_host_for_recovery(ctx)
-    )
+    shared_host = str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip() or _backend_host_for_recovery(ctx)
     shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
 
     try:
@@ -455,7 +451,6 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
         tool: Tool name to call
         **kwargs: Tool arguments (None values are filtered out)
     """
-
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
@@ -494,7 +489,6 @@ async def _call_raw(
     Returns:
         Raw tool result dictionary from MCP server
     """
-
     # CLI always requests JSON from the MCP server so it can apply local
     # formatting via format_output() / the -f flag.  The server's default
     # is markdown (rich output for direct MCP consumers like VS Code / Claude),
@@ -3240,7 +3234,7 @@ def files_grp() -> None:
             "delete",
             "copy",
             "move",
-        ]
+        ],
     ),
     required=True,
 )
@@ -3552,11 +3546,7 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
 
 @main.command(
     "eval",
-    help=(
-        "Execute Ghidra/PyGhidra API code on the server. "
-        "The full Ghidra API is available (currentProgram, flatApi, toAddr, …). "
-        "Example: eval -b /myapp 'currentProgram.getName()'"
-    ),
+    help=("Execute Ghidra/PyGhidra API code on the server. The full Ghidra API is available (currentProgram, flatApi, toAddr, …). Example: eval -b /myapp 'currentProgram.getName()'"),
 )
 @click.argument("code")
 @click.option(

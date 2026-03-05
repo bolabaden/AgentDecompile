@@ -68,20 +68,20 @@ class ScriptToolProvider(ToolProvider):
 
         Populates a Python namespace with Ghidra API equivalents so that script
         code can access the same globals a normal Ghidra script sees:
-        
+
         **Core Program Objects:**
         - `currentProgram`: Active program (None if not loaded)
         - `flat_api` / `flatApi`: FlatProgramAPI convenience wrapper
         - `decompiler`: Decompiler instance (if available)
         - `state`: GhidraState (usually None in headless mode)
         - `monitor`: ConsoleTaskMonitor for progress reporting
-        
+
         **Program Accessors (if program is loaded):**
         - `getMemory()`, `getListing()`, `getFunctionManager()`
         - `getSymbolTable()`, `getAddressFactory()`, etc. (30+ methods)
         - `toAddr(str)`: Convert string to Address
         - `getAddress(str)`: Convert string to Address
-        
+
         **FlatProgramAPI methods (if flat_api available):**
         - Navigation: `getFirstFunction()`, `getFunctionAt()`, `getFunctionBefore()`
         - Access: `getBytes()`, `getByte()`, `getDataAt()`, etc.
@@ -89,18 +89,18 @@ class ScriptToolProvider(ToolProvider):
         - Mutation: `setBytes()`, `clearListing()`, `removeDataAt()`
         - Search: `find()`, `findBytes()`, `getReferencesTo()`, etc.
         - Analysis: `analyzeAll()`, `analyzeChanges()`
-        
+
         **Common Ghidra Classes (auto-imported):**
         - Symbol types: `SourceType`, `SymbolType`, `RefType`
         - Data types: `DataType`, `PointerDataType`, `StructureDataType`
         - Address: `Address`, `AddressSet`, `AddressSpace`
         - Listing: `Function`, `CodeUnit`, `Instruction`
         - Decompiler: `DecompInterface`, `ClangTokenGroup`
-        
+
         **Best-Effort Approach:**
         If any import fails, it's silently skipped. This allows scripts to work
         even if a particular Ghidra module is unavailable in the current environment.
-        
+
         Returns:
             dict[str, Any]: Namespace ready for eval/exec of script code.
         """
@@ -252,25 +252,25 @@ class ScriptToolProvider(ToolProvider):
 
     async def _handle_execute(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Execute Python code in the Ghidra script context.
-        
+
         **Execution Flow:**
         1. Extract code and timeout from arguments
         2. Build namespace with Ghidra globals (currentProgram, flatApi, etc.)
         3. Try eval() first – if successful, store result in namespace['__result__']
         4. If eval() fails with SyntaxError, try exec() for code blocks
         5. Capture stdout/stderr during execution
-        
+
         **Result Handling:**
         - Single expressions are eval'd; result is stored in __result__
         - Code blocks are exec'd; __result__ must be set explicitly in the code
         - __result__ is serialized using _serialize_result() for readability
-        
+
         **Response Structure:**
         - success: True if no exceptions, False if stderr captured
         - stdout: Code output (if any)
         - stderr: Exceptions and tracebacks (if any)
         - result: Stringified result of __result__ or last eval()'d expression
-        
+
         **Security Note:**
         Uses eval() and exec() which are dangrous if code is untrusted.
         This is intentional for the script sandbox – validation should happen
@@ -333,7 +333,7 @@ class ScriptToolProvider(ToolProvider):
 
 def _serialize_result(obj: Any, max_depth: int = 3, max_items: int = 200) -> str:
     """Best-effort serialization of Ghidra/Java objects to readable text.
-    
+
     Handles multiple object types with graceful degradation:
     - Primitives: str, int, float, bool → direct str()
     - Bytes: hex-encoded representation
@@ -341,15 +341,15 @@ def _serialize_result(obj: Any, max_depth: int = 3, max_items: int = 200) -> str
     - Java iterables: Objects with hasNext() method
     - Python iterables: Objects with __iter__ (generators, etc.)
     - Complex objects: Falls back to str() or repr()
-    
+
     Args:
         obj: Object to serialize.
         max_depth: Maximum recursion depth before using repr(). Default 3.
         max_items: Maximum items per collection before truncating. Default 200.
-    
+
     Returns:
         Human-readable string representation suitable for log display.
-    
+
     Examples::
         _serialize_result([1, 2, 3]) → "[1, 2, 3]"
         _serialize_result({"a": 1}) → "{a: 1}"

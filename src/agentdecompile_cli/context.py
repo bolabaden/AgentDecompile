@@ -122,9 +122,7 @@ class PyGhidraContext:
         self.programs: dict[str, ProgramInfo] = {}
         self._init_project_programs()
 
-        self.agentdecompile_dir = (
-            self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
-        )
+        self.agentdecompile_dir = self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
 
         self.chroma_client: Any | None = None
         if chromadb is not None and Settings is not None:

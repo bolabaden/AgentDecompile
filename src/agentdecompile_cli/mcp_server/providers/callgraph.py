@@ -6,8 +6,8 @@ Modes: graph, tree, callers, callees, callers_decomp, common_callers.
 from __future__ import annotations
 
 import logging
-from itertools import islice
 
+from itertools import islice
 from typing import Any
 
 from mcp import types
@@ -49,7 +49,11 @@ class CallGraphToolProvider(ToolProvider):
                 "function": {"type": "string", "description": "The exact name or starting address of the function to trace."},
                 "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function to trace."},
                 "functionIdentifier": {"type": "string", "description": "Another alternative parameter for the function to trace."},
-                "mode": {"type": "string", "enum": ["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"], "description": "What type of data to generate. Omit and use 'direction' instead for simple lookups — mode is automatically inferred from direction ('calling' → 'callers', 'called' → 'callees'). Set explicitly only when you need 'graph'/'tree' layouts, 'callers_decomp', or 'common_callers'."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"],
+                    "description": "What type of data to generate. Omit and use 'direction' instead for simple lookups — mode is automatically inferred from direction ('calling' → 'callers', 'called' → 'callees'). Set explicitly only when you need 'graph'/'tree' layouts, 'callers_decomp', or 'common_callers'.",
+                },
                 "direction": {"type": "string", "enum": ["calling", "called"], "default": "calling", "description": "PRIMARY traversal direction: 'calling' = upwards (who calls this function), 'called' = downwards (what this function calls). Mode is inferred from this automatically."},
                 "displayType": {"type": "string", "enum": ["flow", "flow_ends", "mind"], "default": "flow", "description": "Visual format style for graphical outputs."},
                 "includeRefs": {"type": "boolean", "default": True, "description": "If true, incorporates data cross-references (using memory addresses) in addition to direct function calls."},
@@ -145,16 +149,25 @@ class CallGraphToolProvider(ToolProvider):
                 raise ValueError(f"Function not found: {func}")
 
             # Use dispatch table to map modes to handlers for clarity
-            return await self._dispatch_handler(args, mode, {
-                "callers": "_handle_callers",
-                "callers_decomp": "_handle_callers",
-                "callersdecomp": "_handle_callers",
-                "common_callers": "_handle_callers",
-                "commoncallers": "_handle_callers",
-                "callees": "_handle_callees",
-                "graph": "_handle_graph",
-                "tree": "_handle_graph",
-            }, program=program, target_func=target_func, func=func, second=second, max_nodes=max_nodes)
+            return await self._dispatch_handler(
+                args,
+                mode,
+                {
+                    "callers": "_handle_callers",
+                    "callers_decomp": "_handle_callers",
+                    "callersdecomp": "_handle_callers",
+                    "common_callers": "_handle_callers",
+                    "commoncallers": "_handle_callers",
+                    "callees": "_handle_callees",
+                    "graph": "_handle_graph",
+                    "tree": "_handle_graph",
+                },
+                program=program,
+                target_func=target_func,
+                func=func,
+                second=second,
+                max_nodes=max_nodes,
+            )
         except ValueError:
             raise
         except Exception as e:

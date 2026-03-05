@@ -12,9 +12,9 @@ from typing import Any
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
+    DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
     create_success_response,
-    DEFAULT_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,11 @@ class DecompilerToolProvider(ToolProvider):
         "decompilefunction": "_handle",
     }
 
-    def __init__(self, program_info=None):
+    def __init__(self, program_info: ProgramInfo | None = None):  # noqa: F821
         super().__init__(program_info)
-        self._decomp_tool = None
+        self._decomp_tool: DecompileTool | None = None  # noqa: F821
 
-    def _get_decomp_tool(self):
+    def _get_decomp_tool(self) -> DecompileTool | None:  # noqa: F821
         if self._decomp_tool is None:
             try:
                 from agentdecompile_cli.tools.decompile_tool import DecompileTool
@@ -68,7 +68,7 @@ class DecompilerToolProvider(ToolProvider):
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
 
-        timeout = self._get_int(args, "timeout", default=DEFAULT_TIMEOUT_SECONDS)
+        timeout: int = self._get_int(args, "timeout", default=DEFAULT_TIMEOUT_SECONDS)
 
         # Try DecompileTool first
         dt = self._get_decomp_tool()
@@ -91,23 +91,28 @@ class DecompilerToolProvider(ToolProvider):
 
         return await self._decompile_with_ghidra_api(target_func, program, timeout)
 
-    async def _decompile_with_ghidra_api(self, target_func, program, timeout: int) -> list[types.TextContent]:
+    async def _decompile_with_ghidra_api(
+        self,
+        target_func: Any,
+        program: Any,
+        timeout: int,
+    ) -> list[types.TextContent]:
         """Decompile a function using Ghidra's DecompInterface."""
         try:
             from ghidra.util.task import ConsoleTaskMonitor
 
             monitor = ConsoleTaskMonitor()
             session_decomp = getattr(self.program_info, "decompiler", None)
-            
+
             decomp, owns_decomp = self._setup_decompiler(session_decomp, program)
-            
+
             try:
                 result = self._perform_decompilation(decomp, target_func, timeout, monitor, session_decomp, program)
                 return create_success_response(result)
             finally:
                 if owns_decomp:
                     decomp.dispose()
-                    
+
         except ImportError:
             return create_success_response(
                 {
@@ -117,7 +122,11 @@ class DecompilerToolProvider(ToolProvider):
                 },
             )
 
-    def _setup_decompiler(self, session_decomp, program):
+    def _setup_decompiler(
+        self,
+        session_decomp: DecompInterface | None,  # noqa: F821
+        program: Any,
+    ) -> tuple[DecompInterface, bool]:  # noqa: F821
         """Set up the decompiler interface, returning (decomp, owns_decomp)."""
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
 
@@ -137,31 +146,43 @@ class DecompilerToolProvider(ToolProvider):
                 decomp.setOptions(options)
             except Exception:
                 pass
-        
+
         return decomp, owns_decomp
 
-    def _perform_decompilation(self, decomp, target_func, timeout: int, monitor, session_decomp, program=None):
+    def _perform_decompilation(
+        self,
+        decomp: Any,
+        target_func: Any,
+        timeout: int,
+        monitor: Any,
+        session_decomp: Any,
+        program: Any = None,
+    ) -> dict[str, Any]:
         """Perform the actual decompilation with retry logic."""
         dr = decomp.decompileFunction(target_func, timeout, monitor)
-        
+
         if dr and dr.decompileCompleted():
             return self._extract_successful_decompilation(dr, target_func)
-        
+
         # Try retry with fresh interface if session decomp failed
         if session_decomp is not None:
             retry_result = self._try_retry_decompilation(target_func, timeout, monitor, decomp, program)
             if retry_result:
                 return retry_result
-        
+
         # Fallback to error handling
         return self._handle_decompilation_failure(dr, decomp, target_func, program)
 
-    def _extract_successful_decompilation(self, dr, target_func):
+    def _extract_successful_decompilation(
+        self,
+        dr: Any,
+        target_func: Any,
+    ) -> dict[str, Any]:
         """Extract results from a successful decompilation."""
         df = dr.getDecompiledFunction()
         c_code = df.getC() if df else "// Decompilation produced no output"
         sig = df.getSignature() if df else str(target_func.getSignature())
-        
+
         return {
             "function": target_func.getName(),
             "address": str(target_func.getEntryPoint()),
@@ -169,42 +190,49 @@ class DecompilerToolProvider(ToolProvider):
             "decompilation": c_code,
         }
 
-    def _try_retry_decompilation(self, target_func, timeout: int, monitor, original_decomp, program=None):
+    def _try_retry_decompilation(
+        self,
+        target_func: Any,
+        timeout: int,
+        monitor: Any,
+        original_decomp: Any,
+        program: Any = None,
+    ) -> dict[str, Any] | None:
         """Try decompilation again with a fresh DecompInterface."""
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
-        
+
         try:
             retry = DecompInterface()
             if program is None:
                 program = original_decomp.getProgram()
-            
+
             # If we still don't have a program, we can't retry
             if program is None:
                 return None
-            
+
             retry_options = DecompileOptions()
             retry_options.grabFromProgram(program)
             retry.setOptions(retry_options)
             retry.openProgram(program)
-            
+
             retry_dr = retry.decompileFunction(target_func, timeout, monitor)
             if retry_dr and retry_dr.decompileCompleted():
                 result = self._extract_successful_decompilation(retry_dr, target_func)
                 retry.dispose()
                 return result
-            
+
             retry.dispose()
         except Exception:
             pass
-        
+
         return None
 
-    def _handle_decompilation_failure(self, dr, decomp, target_func, program=None):
+    def _handle_decompilation_failure(self, dr: Any, decomp: Any, target_func: Any, program: Any = None) -> dict[str, Any]:
         """Handle failed decompilation by extracting error and providing fallback."""
         err_msg = self._extract_error_message(dr, decomp)
         if program is None:
             program = decomp.getProgram()
-        
+
         # If we still don't have a program, build minimal error response
         if program is None:
             return {
@@ -213,10 +241,10 @@ class DecompilerToolProvider(ToolProvider):
                 "signature": str(target_func.getSignature()),
                 "decompilation": f"// Decompilation failed: {err_msg or 'Program unavailable'}",
             }
-        
+
         c_code = self._build_decompile_fallback(program, target_func, err_msg)
         sig = str(target_func.getSignature())
-        
+
         return {
             "function": target_func.getName(),
             "address": str(target_func.getEntryPoint()),
@@ -224,7 +252,7 @@ class DecompilerToolProvider(ToolProvider):
             "decompilation": c_code,
         }
 
-    def _extract_error_message(self, dr, decomp):
+    def _extract_error_message(self, dr: Any, decomp: Any) -> str:
         """Extract error message from decompilation result."""
         err_msg = ""
         if dr is not None:
@@ -232,11 +260,11 @@ class DecompilerToolProvider(ToolProvider):
                 err_msg = dr.getErrorMessage() or ""
             except Exception:
                 err_msg = ""
-        
+
         if not err_msg:
             try:
                 err_msg = decomp.getLastMessage() or ""
             except Exception:
                 err_msg = ""
-        
+
         return err_msg

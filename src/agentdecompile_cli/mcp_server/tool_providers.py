@@ -24,18 +24,21 @@ import json as _json
 import logging
 import os
 import re
+
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.response_formatter import render_tool_response
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
 )
 from agentdecompile_cli.registry import (
-    ADVERTISED_TOOL_PARAMS,
     ADVERTISED_TOOLS,
+    ADVERTISED_TOOL_PARAMS,
     DISABLED_GUI_ONLY_TOOLS,
     TOOL_PARAM_ALIASES,
     is_tool_advertised,
@@ -390,19 +393,23 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
     if "no program loaded" in lowered or "ghidra tools unavailable" in lowered:
         return (
             {"state": "no-active-program"},
-            filter_recommendations([
-                "Call `open-project` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
-                "Then call `get-current-program` to verify an active program is loaded.",
-            ]),
+            filter_recommendations(
+                [
+                    "Call `open-project` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
+                    "Then call `get-current-program` to verify an active program is loaded.",
+                ],
+            ),
         )
 
     if "authentication failed" in lowered:
         return (
             {"state": "authentication-failed"},
-            filter_recommendations([
-                "Verify `serverUsername`/`serverPassword` and retry `open-project`.",
-                "If credentials are correct, verify the Ghidra server is running and reachable on `serverHost:serverPort`.",
-            ]),
+            filter_recommendations(
+                [
+                    "Verify `serverUsername`/`serverPassword` and retry `open-project`.",
+                    "If credentials are correct, verify the Ghidra server is running and reachable on `serverHost:serverPort`.",
+                ],
+            ),
         )
 
     if "not connected to repository server" in lowered or "shared-server" in lowered:
@@ -456,10 +463,12 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
     if "provided but could not be resolved/opened" in lowered:
         return (
             {"state": "program-resolution-failed"},
-            filter_recommendations([
-                "Call `list-project-files` to locate the exact program path in the active project/session.",
-                "Call `open-project` with that exact path (or with shared server args and repository) before retrying analysis tools.",
-            ]),
+            filter_recommendations(
+                [
+                    "Call `list-project-files` to locate the exact program path in the active project/session.",
+                    "Call `open-project` with that exact path (or with shared server args and repository) before retrying analysis tools.",
+                ],
+            ),
         )
 
     return None, None
@@ -669,8 +678,8 @@ class ToolProvider:
                 e,
                 context=_merge_context(
                     {
-                    "tool": to_snake_case(resolve_tool_name(name) or name),
-                    "provider": self.__class__.__name__,
+                        "tool": to_snake_case(resolve_tool_name(name) or name),
+                        "provider": self.__class__.__name__,
                     },
                     extra_context,
                 ),
@@ -745,7 +754,7 @@ class ToolProvider:
                         "tool": tool_name,
                         "arguments": tool_args,
                         "trigger": normalized_step,
-                    }
+                    },
                 )
 
         return plan
@@ -995,7 +1004,7 @@ class ToolProvider:
                     ],
                 )
             return handler
-        elif len(args) == 3 and isinstance(args[2], dict):
+        if len(args) == 3 and isinstance(args[2], dict):
             # Pattern 2: _dispatch_handler(args, mode, dispatch_dict, **kwargs) -> result
             args_dict, mode_key, dispatch_dict = args
             mode_norm = n(mode_key)
@@ -1013,8 +1022,7 @@ class ToolProvider:
                 )
             handler = getattr(self, handler_name)
             return handler(args_dict, **kwargs)
-        else:
-            raise ValueError("Invalid _dispatch_handler call signature")
+        raise ValueError("Invalid _dispatch_handler call signature")
 
     # ------------------------------------------------------------------
     # Program guards
@@ -1427,7 +1435,11 @@ class ToolProviderManager:
                 return provider
         return None
 
-    async def _bootstrap_shared_session_from_env(self, session_id: str, requested_program_key: str) -> None:
+    async def _bootstrap_shared_session_from_env(
+        self,
+        session_id: str,
+        requested_program_key: str,
+    ) -> None:
         project_provider = self._get_project_provider()
         if project_provider is None:
             return
@@ -1439,8 +1451,14 @@ class ToolProviderManager:
         open_args: dict[str, Any] = {
             "serverhost": host,
             "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
-            "serverusername": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
-            "serverpassword": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
+            "serverusername": os.getenv(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")),
+            ).strip(),
+            "serverpassword": os.getenv(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", "")),
+            ).strip(),
             "path": requested_program_key,
         }
 
@@ -1461,7 +1479,12 @@ class ToolProviderManager:
             except Exception:
                 return None
 
-    def _find_domain_file_by_name(self, folder: Any, file_name: str, max_results: int = 5000) -> Any | None:
+    def _find_domain_file_by_name(
+        self,
+        folder: Any,
+        file_name: str,
+        max_results: int = 5000,
+    ) -> Any | None:
         stack: list[Any] = [folder]
         visited = 0
         while stack and visited < max_results:
@@ -1477,20 +1500,24 @@ class ToolProviderManager:
                 continue
         return None
 
-    def _activate_local_program_by_path(self, session_id: str, requested_program_key: str) -> ProgramInfo | None:
-        project_data = self._resolve_project_data()
+    def _activate_local_program_by_path(
+        self,
+        session_id: str,
+        requested_program_key: str,
+    ) -> ProgramInfo | None:
+        project_data: Any = self._resolve_project_data()
         if project_data is None:
             return None
 
-        normalized = str(requested_program_key).strip()
+        normalized: str = str(requested_program_key).strip()
         if not normalized:
             return None
 
-        candidate_paths = [normalized]
+        candidate_paths: list[str] = [normalized]
         if not normalized.startswith("/"):
             candidate_paths.append(f"/{normalized}")
 
-        domain_file = None
+        domain_file: Any = None
         for candidate in candidate_paths:
             try:
                 domain_file = project_data.getFile(candidate)
@@ -1511,7 +1538,7 @@ class ToolProviderManager:
         if domain_file is None:
             return None
 
-        program = None
+        program: Any = None
         project_provider = self._get_project_provider()
         if project_provider is not None:
             try:
@@ -1564,7 +1591,11 @@ class ToolProviderManager:
         self.set_program_info(program_info)
         return program_info
 
-    async def _activate_requested_program(self, session_id: str, requested_program_key: str) -> ProgramInfo | None:
+    async def _activate_requested_program(
+        self,
+        session_id: str,
+        requested_program_key: str,
+    ) -> ProgramInfo | None:
         existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if existing is not None:
             return existing
@@ -1702,7 +1733,7 @@ class ToolProviderManager:
                                 "success": True,
                                 "output": {"count": len(tools), "tools": [t.name for t in tools]},
                                 "trigger": "Call `list_tools` to discover canonical tool names.",
-                            }
+                            },
                         ],
                     },
                     next_steps=[
@@ -1757,7 +1788,7 @@ class ToolProviderManager:
                         "success": success,
                         "output": output,
                         "trigger": "Call `list-project-files` to discover the exact program path available in this session.",
-                    }
+                    },
                 )
             except Exception as prereq_exc:
                 logger.debug("Failed auto prerequisite list-project-files call: %s", prereq_exc)
@@ -1783,7 +1814,19 @@ class ToolProviderManager:
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
 
-        return await provider.call_tool(name, arguments)
+        result = await provider.call_tool(name, arguments)
+
+        # Apply markdown formatting unless the caller explicitly requests JSON or
+        # this is an internal auto-prerequisite invocation.
+        if not norm_args.get("autoprereqinvocation", False) and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
+            try:
+                data = _json.loads(result[0].text)
+                markdown = render_tool_response(norm_name, data)
+                return [types.TextContent(type="text", text=markdown)]
+            except Exception:
+                pass  # Fall back to raw JSON on any formatting error
+
+        return result
 
     def program_opened(self, program_info_or_path: ProgramInfo | os.PathLike | str) -> None:
         if isinstance(program_info_or_path, str):

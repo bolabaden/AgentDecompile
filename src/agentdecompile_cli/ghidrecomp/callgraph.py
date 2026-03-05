@@ -172,7 +172,6 @@ class CallGraph:
         """Returns count of edges"""
         count: int = 0
         for _, dst in self._snapshot_items(self.graph):
-
             for d in dst:
                 count += 1
 

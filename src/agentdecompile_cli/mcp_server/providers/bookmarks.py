@@ -12,12 +12,12 @@ from typing import Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_bookmarks
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
-from agentdecompile_cli.mcp_server.providers._collectors import collect_bookmarks
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,11 @@ class BookmarkToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The path to the Ghidra project file analyzing the binary."},
-                        "mode": {"type": "string", "description": "What to do with bookmarks: 'set' (create a bookmark), 'get' (read bookmarks at an address), 'search' (find bookmarks globally), 'remove' (delete a bookmark), or 'categories' (list available bookmark groups). Destructive operations like 'remove_all' require explicit safety parameters.", "enum": ["set", "get", "search", "remove", "remove_all", "remove_all_bookmarks", "categories"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "What to do with bookmarks: 'set' (create a bookmark), 'get' (read bookmarks at an address), 'search' (find bookmarks globally), 'remove' (delete a bookmark), or 'categories' (list available bookmark groups). Destructive operations like 'remove_all' require explicit safety parameters.",
+                            "enum": ["set", "get", "search", "remove", "remove_all", "remove_all_bookmarks", "categories"],
+                        },
                         "addressOrSymbol": {"type": "string", "description": "The memory address or function symbol to attach the bookmark to, or read it from."},
                         "type": {"type": "string", "description": "The severity or label group for the bookmark.", "enum": ["Note", "Warning", "TODO", "Bug", "Analysis"]},
                         "category": {"type": "string", "description": "Optional sub-grouping label for the bookmark."},
@@ -142,7 +146,7 @@ class BookmarkToolProvider(ToolProvider):
                     "type": bm_type,
                     "category": category,
                 },
-            ) # pyright: ignore[reportReturnType]
+            )  # pyright: ignore[reportReturnType]
         except Exception:
             return {
                 "success": True,
@@ -197,7 +201,7 @@ class BookmarkToolProvider(ToolProvider):
             {
                 "success": True,
                 "action": "remove_all",
-            }
+            },
         )
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -208,13 +212,7 @@ class BookmarkToolProvider(ToolProvider):
         try:
             assert self.program_info is not None  # for type checker
             all_bookmarks = collect_bookmarks(self.program_info.program)
-            filtered = [
-                row
-                for row in all_bookmarks
-                if (not bm_type or row.get("type") == bm_type)
-                and (not category or row.get("category") == category)
-                and (not search or search.lower() in str(row.get("comment", "")).lower())
-            ]
+            filtered = [row for row in all_bookmarks if (not bm_type or row.get("type") == bm_type) and (not category or row.get("category") == category) and (not search or search.lower() in str(row.get("comment", "")).lower())]
             results = filtered[offset : offset + limit]
             matched_count = len(filtered)
 

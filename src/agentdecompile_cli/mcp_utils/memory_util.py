@@ -62,7 +62,7 @@ class MemoryUtil:
                 return b""
 
             # Convert Java signed bytes to Python bytes
-            return bytes((b & 0xFF for b in buf[:n]))
+            return bytes(b & 0xFF for b in buf[:n])
         except Exception as e:
             logger.debug("Failed to read memory at %s: %s", address, e)
             return None
