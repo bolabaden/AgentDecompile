@@ -254,6 +254,30 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Connect to shared Ghidra repository server and list available binaries."""
         session_id: str = get_current_mcp_session_id()
+
+        # Populate defaults from HTTP auth context (set by AuthMiddleware when the
+        # client authenticates via Authorization + optional X-Ghidra-* headers).
+        # Tool arguments always take precedence over auth-context defaults.
+        try:
+            from agentdecompile_cli.mcp_server.auth import get_current_auth_context  # noqa: PLC0415
+
+            _auth_ctx = get_current_auth_context()
+            if _auth_ctx is not None:
+                args = dict(args)  # shallow copy so we don't mutate the original
+                if "serverhost" not in args and _auth_ctx.server_host:
+                    args["serverhost"] = _auth_ctx.server_host
+                if "serverport" not in args and _auth_ctx.server_port:
+                    args["serverport"] = _auth_ctx.server_port
+                if "serverusername" not in args and _auth_ctx.username:
+                    args["serverusername"] = _auth_ctx.username
+                if "serverpassword" not in args and _auth_ctx.password is not None:
+                    args["serverpassword"] = _auth_ctx.password
+                # repository → used as the `path` arg to auto-select the right repo
+                if "path" not in args and _auth_ctx.repository:
+                    args["path"] = _auth_ctx.repository
+        except Exception:
+            pass  # auth injection is best-effort; never block the tool call
+
         server_host: str = self._require_str(args, "serverhost", name="serverHost")
         server_port: int = self._get_int(args, "serverport", "port", default=13100)
         server_username: str = self._get_str(args, "serverusername", "username")
@@ -745,12 +769,12 @@ class ProjectToolProvider(ToolProvider):
             "path": requested_program,
         }
 
-        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")).strip()
+        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
         if server_host:
             open_args["serverhost"] = server_host
-            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")) or "13100"))
-            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")).strip()
-            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", "")).strip()
+            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))) or "13100"))
+            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
+            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
             repository_name: str | None = (
                 self._get_str(args, "repositoryname", "ghidraserverrepository")
                 or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()

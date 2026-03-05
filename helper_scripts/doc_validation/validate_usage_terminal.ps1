@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Continue'
-$baseUrl = 'http://170.9.241.140:8080/mcp/message/'
+$baseUrl = 'http://***:8080/mcp/message/'
 $program = '/K1/k1_win_gog_swkotor.exe'
-$uvxPrefix = 'uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://170.9.241.140:8080/'
+$uvxPrefix = 'uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/'
 
 function New-PayloadFile {
     param([string]$Path, [object]$Object)
@@ -31,7 +31,7 @@ New-PayloadFile -Path 'tmp\mcp_validate_initialized.json' -Object $notifPayload
 curl.exe -s -X POST $baseUrl -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "Mcp-Session-Id: $SID" --data @tmp\mcp_validate_initialized.json | Out-Null
 
 $cases = @(
-    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host 170.9.241.140 --server_port 13100 --server_username OpenKotOR --server_password MuchaShakaPaka $program"; Tool = 'open'; Args = @{server_host = '170.9.241.140'; server_port = 13100; server_username = 'OpenKotOR'; server_password = 'MuchaShakaPaka'; repository_name = 'Odyssey'; program_path = $program } },
+    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password MuchaShakaPaka $program"; Tool = 'open'; Args = @{server_host = '***'; server_port = 13100; server_username = 'OpenKotOR'; server_password = 'MuchaShakaPaka'; repository_name = 'Odyssey'; program_path = $program } },
     @{ Name = 'list project-files'; Uvx = "$uvxPrefix list project-files"; Tool = 'list_project_files'; Args = @{} },
     @{ Name = 'get-current-program'; Uvx = "$uvxPrefix get-current-program --program_path $program"; Tool = 'get_current_program'; Args = @{program_path = $program } },
     @{ Name = 'get-functions limit'; Uvx = "$uvxPrefix get-functions --program_path $program --limit 5"; Tool = 'get_functions'; Args = @{program_path = $program; limit = 5 } },

@@ -2690,97 +2690,205 @@ Calculate jump address to shellcode
 ## Canonical Tools
 
 ### `analyze-data-flow`
+**Overloads**:
+- `analyze-data-flow()` canonical signature.
 
 ### `analyze-program`
+**Overloads**:
+- `analyze-program()` canonical signature.
 
 ### `analyze-vtables`
+**Overloads**:
+- `analyze-vtables()` canonical signature.
 
 ### `apply-data-type`
+**Overloads**:
+- `apply-data-type()` canonical signature.
 
 ### `change-processor`
+**Overloads**:
+- `change-processor()` canonical signature.
 
 ### `checkin-program`
+**Overloads**:
+- `checkin-program()` canonical signature.
+
+### `checkout-program`
+**Overloads**:
+- `checkout-program()` canonical signature.
+
+### `checkout-status`
+**Overloads**:
+- `checkout-status()` canonical signature.
 
 ### `create-label`
+**Overloads**:
+- `create-label()` canonical signature.
 
 ### `decompile-function`
+**Overloads**:
+- `decompile-function()` canonical signature.
 
 ### `sync-shared-project`
+**Overloads**:
+- `sync-shared-project()` canonical signature.
 
 ### `export`
+**Overloads**:
+- `export()` canonical signature.
 
 ### `delete-project-binary`
+**Overloads**:
+- `delete-project-binary()` canonical signature.
 
 ### `gen-callgraph`
+**Overloads**:
+- `gen-callgraph()` canonical signature.
 
 ### `get-call-graph`
+**Overloads**:
+- `get-call-graph()` canonical signature.
 
 ### `get-current-address`
+**Overloads**:
+- `get-current-address()` canonical signature.
 
 ### `get-current-function`
+**Overloads**:
+- `get-current-function()` canonical signature.
 
 ### `get-data`
+**Overloads**:
+- `get-data()` canonical signature.
 
 ### `get-functions`
+**Overloads**:
+- `get-functions()` canonical signature.
 
 ### `get-references`
+**Overloads**:
+- `get-references()` canonical signature.
 
 ### `import-binary`
+**Overloads**:
+- `import-binary()` canonical signature.
 
 ### `inspect-memory`
+**Overloads**:
+- `inspect-memory()` canonical signature.
 
 ### `list-cross-references`
+**Overloads**:
+- `list-cross-references()` canonical signature.
 
 ### `list-exports`
+**Overloads**:
+- `list-exports()` canonical signature.
 
 ### `list-functions`
+**Overloads**:
+- `list-functions()` canonical signature.
 
 ### `list-imports`
+**Overloads**:
+- `list-imports()` canonical signature.
 
 ### `list-project-files`
+**Overloads**:
+- `list-project-files()` canonical signature.
 
 ### `list-processors`
+**Overloads**:
+- `list-processors()` canonical signature.
 
 ### `list-strings`
+**Overloads**:
+- `list-strings()` canonical signature.
 
 ### `manage-bookmarks`
+**Overloads**:
+- `manage-bookmarks()` canonical signature.
 
 ### `manage-comments`
+**Overloads**:
+- `manage-comments()` canonical signature.
 
 ### `manage-data-types`
+**Overloads**:
+- `manage-data-types()` canonical signature.
 
 ### `manage-files`
+**Overloads**:
+- `manage-files()` canonical signature.
 
 ### `manage-function-tags`
+**Overloads**:
+- `manage-function-tags()` canonical signature.
 
 ### `manage-function`
+**Overloads**:
+- `manage-function()` canonical signature.
 
 ### `manage-strings`
+**Overloads**:
+- `manage-strings()` canonical signature.
 
 ### `manage-structures`
+**Overloads**:
+- `manage-structures()` canonical signature.
 
 ### `manage-symbols`
+**Overloads**:
+- `manage-symbols()` canonical signature.
 
 ### `match-function`
+**Overloads**:
+- `match-function()` canonical signature.
 
 ### `execute-script`
+**Overloads**:
+- `execute-script()` canonical signature.
 
 ### `open-all-programs-in-code-browser`
+**Overloads**:
+- `open-all-programs-in-code-browser()` canonical signature.
 
 ### `open-program-in-code-browser`
+**Overloads**:
+- `open-program-in-code-browser()` canonical signature.
 
 ### `open-project`
+**Overloads**:
+- `open-project()` canonical signature.
 
 ### `read-bytes`
+**Overloads**:
+- `read-bytes()` canonical signature.
 
 ### `search-code`
+**Overloads**:
+- `search-code()` canonical signature.
 
 ### `search-constants`
+**Overloads**:
+- `search-constants()` canonical signature.
 
 ### `search-everything`
+**Overloads**:
+- `search-everything()` canonical signature.
 
 ### `search-strings`
+**Overloads**:
+- `search-strings()` canonical signature.
 
 ### `search-symbols`
+**Overloads**:
+- `search-symbols()` canonical signature.
 
 ### `suggest`
+**Overloads**:
+- `suggest()` canonical signature.
+
+
+**Examples**:
+- `checkout-status`

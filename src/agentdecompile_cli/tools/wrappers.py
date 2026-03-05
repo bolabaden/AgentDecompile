@@ -333,17 +333,31 @@ class GhidraTools:
     def get_all_strings(self) -> list[StringInfo]:
         """Gets all defined strings for a binary"""
         data_iterator: Any = None
+        last_error: Exception | None = None
         try:
-            from ghidra.program.util import DefinedStringIterator
+            from ghidra.program.util import DefinedStringIterator  # pyright: ignore[reportMissingModuleSource]
 
             data_iterator = DefinedStringIterator.forProgram(self.program)
-        except Exception:
+        except Exception as e:
+            last_error = e
             try:
-                from ghidra.program.util import DefinedDataIterator
+                from ghidra.program.util import DefinedDataIterator  # pyright: ignore[reportMissingModuleSource]
 
                 data_iterator = DefinedDataIterator.definedStrings(self.program)
-            except Exception:
-                data_iterator = []
+            except Exception as e2:
+                # Both iterator initialization paths failed - this likely indicates
+                # a shared-server/proxy context where iterators are unavailable
+                logger.warning(
+                    "String iterator initialization failed. "
+                    "DefinedStringIterator error: %s, DefinedDataIterator error: %s",
+                    last_error,
+                    e2,
+                )
+                raise RuntimeError(
+                    "String iterators unavailable for this program context. "
+                    "This can occur in shared-server checkouts or proxy modes where "
+                    "iterator classes are not exposed."
+                ) from e2
 
         strings: list[StringInfo] = []
         for data in data_iterator:

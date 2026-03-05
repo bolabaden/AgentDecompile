@@ -243,6 +243,9 @@ class AuthMiddleware:
         target_host = ""
         target_port_str = ""
         target_repo = ""
+        agent_username = ""
+        agent_password = ""
+        agent_repo = ""
         for key_b, value_b in scope.get("headers", []):
             key = key_b.decode("latin1").lower()
             val = value_b.decode("latin1").strip()
@@ -254,21 +257,36 @@ class AuthMiddleware:
                 target_port_str = val
             elif key == "x-ghidra-repository":
                 target_repo = val
+            elif key == "x-agent-server-username":
+                agent_username = val
+            elif key == "x-agent-server-password":
+                agent_password = val
+            elif key == "x-agent-server-repository":
+                agent_repo = val
+
+        # Use X-Agent-Server-Repository as fallback for X-Ghidra-Repository
+        if not target_repo and agent_repo:
+            target_repo = agent_repo
 
         if not self._auth_required(target_host):
             await self._inner_app(scope, receive, send)
             return
 
-        # Auth required — check Authorization header
-        if not auth_header.lower().startswith("basic "):
-            logger.debug("AuthMiddleware: missing/non-Basic Authorization header → 401")
-            await _send_401(send)
-            return
+        # Auth required — try Authorization: Basic first, fall back to
+        # X-Agent-Server-Username / X-Agent-Server-Password headers.
+        username: str = ""
+        password: str = ""
+        if auth_header.lower().startswith("basic "):
+            try:
+                username, password = parse_basic_auth(auth_header)
+            except ValueError:
+                logger.debug("AuthMiddleware: malformed Basic auth header")
+        if not username and agent_username:
+            username = agent_username
+            password = agent_password
 
-        try:
-            username, password = parse_basic_auth(auth_header)
-        except ValueError:
-            logger.debug("AuthMiddleware: malformed Basic auth → 401")
+        if not username:
+            logger.debug("AuthMiddleware: no credentials provided → 401")
             await _send_401(send)
             return
 

@@ -346,7 +346,6 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--host",
-        "--server-host",
         type=str,
         default=None,
         metavar="HOST",
@@ -354,7 +353,6 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port",
-        "--server-port",
         type=int,
         default=None,
         metavar="PORT",

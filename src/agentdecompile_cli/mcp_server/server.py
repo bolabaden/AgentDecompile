@@ -23,6 +23,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
+from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
@@ -40,6 +41,10 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
     keep_alive_interval: int = 30
+    tls_certfile: str | None = None
+    """Path to TLS certificate file (PEM). Enables HTTPS when combined with tls_keyfile."""
+    tls_keyfile: str | None = None
+    """Path to TLS private key file (PEM). Enables HTTPS when combined with tls_certfile."""
 
 
 class PythonMcpServer:
@@ -52,8 +57,10 @@ class PythonMcpServer:
     def __init__(
         self,
         config: ServerConfig | None = None,
+        auth_config: AuthConfig | None = None,
     ) -> None:
         self.config: ServerConfig = ServerConfig() if config is None else config
+        self.auth_config: AuthConfig | None = auth_config
         self.app: FastAPI = FastAPI(title=self.config.name, version=self.config.version)
 
         # Core components
@@ -106,7 +113,7 @@ class PythonMcpServer:
             """List all available MCP resources."""
             return self.resource_providers.list_resources()
 
-        @server.read_resource()
+        @server.read_resource()  # pyright: ignore[reportArgumentType]
         async def read_resource(uri: str) -> str:
             """Read a resource by URI."""
             try:
@@ -166,10 +173,12 @@ class PythonMcpServer:
         @self.app.on_event("shutdown")
         async def _shutdown_session_manager() -> None:
             if self._session_manager_cm is not None:
-                await self._session_manager_cm.__aexit__(None, None, None)
+                await self._session_manager_cm.__aexit__(None, None, None)  # pyright: ignore[reportGeneralTypeIssues]
                 self._session_manager_cm = None
 
-        mcp_asgi = _SessionContextASGI(self._session_manager.handle_request)
+        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
+        if self.auth_config is not None:
+            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
         self.app.mount("/mcp/message", mcp_asgi)
         self.app.mount("/mcp/message/", mcp_asgi)
 
@@ -237,13 +246,9 @@ class PythonMcpServer:
             return self.config.port
 
         if not self._is_port_available(self.config.host, self.config.port):
-            requested_port = self.config.port
-            self.config.port = self._find_free_port(self.config.host)
-            logger.warning(
-                "Port %s is in use on %s; falling back to free port %s",
-                requested_port,
-                self.config.host,
-                self.config.port,
+            raise RuntimeError(
+                f"Port {self.config.port} on {self.config.host} is already in use. "
+                f"Use --port to specify a different port, or stop the other process."
             )
 
         self._running = True
@@ -281,17 +286,20 @@ class PythonMcpServer:
         except OSError:
             return False
 
-    def _find_free_port(self, host: str) -> int:
-        """Find an ephemeral free port bound to host."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((host, 0))
-            return int(sock.getsockname()[1])
-
     def _run_server(self) -> None:
         """Run the FastAPI server in a background thread."""
         import uvicorn
 
-        config = uvicorn.Config(app=self.app, host=self.config.host, port=self.config.port, log_level="info")
+        uvicorn_kwargs: dict[str, Any] = {
+            "app": self.app,
+            "host": self.config.host,
+            "port": self.config.port,
+            "log_level": "info",
+        }
+        if self.config.tls_certfile and self.config.tls_keyfile:
+            uvicorn_kwargs["ssl_certfile"] = self.config.tls_certfile
+            uvicorn_kwargs["ssl_keyfile"] = self.config.tls_keyfile
+        config = uvicorn.Config(**uvicorn_kwargs)
         server = uvicorn.Server(config)
 
         try:
@@ -310,8 +318,12 @@ class PythonMcpServer:
         try:
             import httpx
 
-            with httpx.Client() as client:
-                response = client.get(f"http://{self.config.host}:{self.config.port}/health", timeout=1.0)
+            scheme = "https" if (self.config.tls_certfile and self.config.tls_keyfile) else "http"
+            with httpx.Client(verify=False) as client:  # noqa: S501 (local readiness probe)
+                response = client.get(
+                    f"{scheme}://{self.config.host}:{self.config.port}/health",
+                    timeout=1.0,
+                )
                 return response.status_code == 200
         except Exception:
             return False

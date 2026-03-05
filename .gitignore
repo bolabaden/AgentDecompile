@@ -398,3 +398,4 @@ tmp/vendor_exhaustive_appendix.md
 TOOLS_LIST_GENERATED.md
 uv.lock
 vendor/
+.github/prompts/plan-*.prompt.md
