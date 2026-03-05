@@ -91,6 +91,8 @@ TOOLS = [
     "apply-data-type",
     "change-processor",
     "checkin-program",
+    "checkout-program",
+    "checkout-status",
     "create-label",
     "decompile-function",
     "sync-shared-project",
@@ -209,6 +211,8 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
     "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
     "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
+    "checkout-program": _params("programPath", "exclusive"),
+    "checkout-status": _params("programPath"),
     "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
     "decompile-function": _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
     "delete-project-binary": _params("programPath", "confirm"),
@@ -218,6 +222,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "get-call-graph": _params( "programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses" ),
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
+    "get-data": _params("programPath", "addressOrSymbol"),
     "get-functions": _params( "programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose" ),
     "get-references": _params( "programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow" ),
     "import-binary": _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
@@ -625,34 +630,64 @@ def _add_builtin_param_aliases() -> None:
 
 _add_builtin_param_aliases()
 
-# Minimal advertised surface (MCP + CLI) by default.
+# Default advertised surface (MCP + CLI).
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
+# Tools in _LEGACY_TOOL_NAMES are hidden by default; set AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1
+# to include them. AGENTDECOMPILE_ENABLE_TOOLS (comma-separated) takes priority over everything.
 DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "analyze-data-flow",
     "analyze-program",
     "analyze-vtables",
+    "apply-data-type",
+    "change-processor",
     "checkin-program",
+    "checkout-program",
+    "checkout-status",
+    "create-label",
     "decompile-function",
+    "delete-project-binary",
     "execute-script",
+    "export",
+    "gen-callgraph",
     "get-call-graph",
-    "get-functions",
+    "get-data",
     "get-references",
+    "import-binary",
     "inspect-memory",
+    "list-cross-references",
+    "list-exports",
     "list-functions",
+    "list-imports",
     "list-project-files",
-    "manage-bookmarks",
-    "manage-comments",
-    "manage-data-types",
-    "manage-files",
+    "list-processors",
+    "list-strings",
     "manage-function-tags",
-    "manage-function",
-    "manage-strings",
-    "manage-structures",
-    "manage-symbols",
     "match-function",
     "open-project",
+    "read-bytes",
+    "search-code",
     "search-constants",
     "search-everything",
+    "search-strings",
+    "search-symbols",
+    "sync-shared-project",
+)
+
+# Tools that are hidden by default; exposed only when AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1
+# (or when explicitly listed in AGENTDECOMPILE_ENABLE_TOOLS).
+_LEGACY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "get-functions",
+        "manage-bookmarks",
+        "manage-comments",
+        "manage-data-types",
+        "manage-files",
+        "manage-function",
+        "manage-strings",
+        "manage-structures",
+        "manage-symbols",
+        "suggest",
+    }
 )
 
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
@@ -673,11 +708,9 @@ def _legacy_tools_advertised() -> bool:
 
 def _get_disabled_tools() -> set[str]:
     """Parse AGENTDECOMPILE_DISABLE_TOOLS env var and return normalized tool names to disable."""
-    disable_env = os.getenv("AGENTDECOMPILE_DISABLE_TOOLS", "").strip()
+    disable_env = os.getenv("AGENT_DECOMPILE_DISABLE_TOOLS", os.getenv("AGENTDECOMPILE_DISABLE_TOOLS", "")).strip()
     if not disable_env:
         return set()
-    
-    # Parse comma-separated list of tools to disable
     disabled = set()
     for tool in disable_env.split(","):
         tool = tool.strip()
@@ -686,22 +719,55 @@ def _get_disabled_tools() -> set[str]:
     return disabled
 
 
+def _get_explicit_enabled_tools() -> set[str] | None:
+    """Parse AGENTDECOMPILE_ENABLE_TOOLS env var.
+
+    Returns a set of normalized tool names that should be forcibly enabled,
+    taking priority over default/legacy filtering and DISABLE_TOOLS.
+    Returns None when the var is unset or empty.
+    """
+    raw = (
+        os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS")
+        or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS")
+        or ""
+    )
+    enable_env = raw.strip()
+    if not enable_env:
+        return None
+    enabled: set[str] = set()
+    for tool in enable_env.split(","):
+        tool = tool.strip()
+        if tool:
+            enabled.add(normalize_identifier(tool))
+    return enabled if enabled else None
+
+
 def _build_advertised_tools() -> list[str]:
     canonical_visible = [tool for tool in TOOLS if tool not in DISABLED_GUI_ONLY_TOOLS]
     default_set = {normalize_identifier(tool) for tool in DEFAULT_ADVERTISED_TOOLS}
+    legacy_set = {normalize_identifier(tool) for tool in _LEGACY_TOOL_NAMES}
     disabled_set = _get_disabled_tools()
+    explicit_set = _get_explicit_enabled_tools()
 
-    if _legacy_tools_advertised():
-        # When legacy tools are enabled, show all tools except explicitly disabled ones
-        if disabled_set:
-            return [tool for tool in canonical_visible if normalize_identifier(tool) not in disabled_set]
-        return canonical_visible
+    if explicit_set is not None:
+        # AGENTDECOMPILE_ENABLE_TOOLS takes absolute priority – expose exactly these tools.
+        return [
+            tool for tool in canonical_visible
+            if normalize_identifier(tool) in explicit_set
+        ]
 
-    # Show only default advertised tools, minus any explicitly disabled
-    return [
-        tool for tool in canonical_visible 
-        if normalize_identifier(tool) in default_set and normalize_identifier(tool) not in disabled_set
-    ]
+    include_legacy = _legacy_tools_advertised()
+
+    result: list[str] = []
+    for tool in canonical_visible:
+        norm = normalize_identifier(tool)
+        if norm in disabled_set:
+            continue
+        if norm in default_set:
+            result.append(tool)
+        elif norm in legacy_set and include_legacy:
+            result.append(tool)
+    return result
 
 
 ADVERTISED_TOOLS: list[str] = _build_advertised_tools()

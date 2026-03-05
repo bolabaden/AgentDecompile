@@ -119,11 +119,11 @@ def resolve_backend_url(
         val = os.getenv(key)
         if val and val.strip():
             return val.strip()
-    h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST")
+    h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST") or os.getenv("AGENTDECOMPILE_SERVER_HOST")
     p = port
     if p is None:
         try:
-            p = int(os.getenv(env_port_key, "") or os.getenv("AGENT_DECOMPILE_SERVER_PORT", "") or default_port)
+            p = int(os.getenv(env_port_key, "") or os.getenv("AGENT_DECOMPILE_SERVER_PORT", "") or os.getenv("AGENTDECOMPILE_SERVER_PORT", "") or default_port)
         except ValueError:
             p = default_port
     if h is not None and h.strip():

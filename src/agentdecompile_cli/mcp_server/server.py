@@ -250,7 +250,7 @@ class PythonMcpServer:
         self._shutdown_event.clear()
 
         # Enable debug logging if configured
-        if self._is_truthy_env(os.getenv("AGENT_DECOMPILE_DEBUG")):
+        if self._is_truthy_env(os.getenv("AGENT_DECOMPILE_DEBUG") or os.getenv("AGENTDECOMPILE_DEBUG")):
             DebugLogger.set_debug_enabled(True)
             DebugLogger.debug(self, "Debug logging enabled")
 

@@ -221,6 +221,28 @@ docker run -i --rm -v "$(pwd)/binaries:/binaries" -p 8080:8080 <your-agentdecomp
 
 Adjust the image name and port to match your build and client.
 
+### VS Code / Cursor
+
+The `.vscode/mcp.json` file (included in the repo) provides three ready-to-use server entries:
+
+| Entry | When to use |
+|-------|-------------|
+| `agentdecompile-local` | Local binary analysis — no shared Ghidra server, no credentials needed. |
+| `agentdecompile-shared` | Shared Ghidra project — VS Code / Cursor prompts for your Ghidra username and password on first use. |
+| `agentdecompile-http` | Connect to an **already-running** HTTP server at `http://127.0.0.1:8080/mcp/message`. Start it first with `agentdecompile-server -t streamable-http`. |
+
+**How credential prompting works for `agentdecompile-shared`:** the `inputs` block in `mcp.json` declares two prompt fields (`ghidra-username` and `ghidra-password`). VS Code / Cursor intercepts `${input:ghidra-username}` and `${input:ghidra-password}` placeholders and shows a secure input dialog before launching the server — no credentials are ever stored in source control.
+
+To start the HTTP server for `agentdecompile-http`:
+
+```bash
+# Local project
+agentdecompile-server -t streamable-http
+
+# Proxy to a remote shared server
+agentdecompile-server -t streamable-http --backend-url http://170.9.241.140:8080
+```
+
 ### Claude Desktop
 
 Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server:

@@ -721,13 +721,17 @@ class ProjectToolProvider(ToolProvider):
             "path": requested_program,
         }
 
-        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")).strip()
         if server_host:
             open_args["serverhost"] = server_host
-            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_SERVER_PORT", "13100") or "13100"))
-            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            repository_name: str | None = self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")) or "13100"))
+            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")).strip()
+            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", "")).strip()
+            repository_name: str | None = (
+                self._get_str(args, "repositoryname", "ghidraserverrepository")
+                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
+                or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
+            )
             if repository_name:
                 open_args["repositoryname"] = repository_name
 

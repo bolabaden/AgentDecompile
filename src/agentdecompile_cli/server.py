@@ -15,7 +15,7 @@ Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
 - AGENT_DECOMPILE_PORT: Server port (applied when no config file)
 - AGENT_DECOMPILE_SERVER_USERNAME, AGENT_DECOMPILE_SERVER_PASSWORD: Shared project auth
 - AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_SERVER_PORT: Ghidra server for shared projects
-- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH
+- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENT_DECOMPILE_REPOSITORY / AGENTDECOMPILE_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH
 - AGENT_DECOMPILE_BACKEND_URL (or AGENT_DECOMPILE_MCP_SERVER_URL): Remote MCP backend URL for proxy mode
 """
 
@@ -92,7 +92,7 @@ def init_agentdecompile_context(
     use_random_port = port is None
     launcher = AgentDecompileLauncher(config_file=config_file, use_random_port=use_random_port)
     project_manager: ProjectManager | None = None
-    if not os.getenv("AGENT_DECOMPILE_PROJECT_PATH"):
+    if not (os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")):
         project_manager = ProjectManager()
 
     # Start the server (caller must have called pyghidra.start() before)
