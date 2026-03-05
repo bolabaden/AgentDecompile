@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from urllib.parse import urlsplit
 
 from mcp import types
+
+logger = logging.getLogger(__name__)
 
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -44,44 +47,58 @@ class ProgramListResource(ResourceProvider):
         if not self._is_programs_uri(uri_text):
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        session_id = get_current_mcp_session_id()
-        session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
-        if session_binaries:
-            programs = [
-                {
-                    "programPath": item.get("path") or item.get("programPath") or item.get("name"),
-                    "name": item.get("name"),
-                    "type": item.get("type"),
-                }
-                for item in session_binaries
-            ]
+        logger.info(f"ProgramListResource: reading resource for URI {uri}")
+        
+        try:
+            session_id = get_current_mcp_session_id()
+            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            if session_binaries:
+                programs = [
+                    {
+                        "programPath": item.get("path") or item.get("programPath") or item.get("name"),
+                        "name": item.get("name"),
+                        "type": item.get("type"),
+                    }
+                    for item in session_binaries
+                ]
+                result = json.dumps({"programs": programs})
+                logger.info(f"ProgramListResource: found {len(programs)} programs from session context")
+                return result
+
+            if self.program_info is None:
+                logger.info("ProgramListResource: no program_info, returning empty list")
+                return json.dumps({"programs": []})
+
+            programs = []
+            # ProgramInfo is a single-program dataclass, not a multi-program dict.
+            # List the single currently-loaded program.
+            program = self.program_info.program
+            if program is not None:
+                try:
+                    domain_file = program.getDomainFile()
+                    program_path_str = str(domain_file.getPathname()) if domain_file else self.program_info.name
+                    programs.append(
+                        {
+                            "programPath": program_path_str,
+                            "name": program.getName(),
+                            "language": str(program.getLanguage()),
+                            "address": str(program.getMinAddress()),
+                        },
+                    )
+                    logger.info(f"ProgramListResource: found 1 program from program_info")
+                except Exception as e:
+                    logger.warning(f"ProgramListResource: Error getting program details: {e}")
+                    programs.append(
+                        {
+                            "programPath": self.program_info.name,
+                            "name": self.program_info.name,
+                        },
+                    )
+            else:
+                logger.info("ProgramListResource: program_info.program is None, returning empty list")
+
             return json.dumps({"programs": programs})
-
-        if self.program_info is None:
-            return json.dumps({"programs": []})
-
-        programs = []
-        # ProgramInfo is a single-program dataclass, not a multi-program dict.
-        # List the single currently-loaded program.
-        program = self.program_info.program
-        if program is not None:
-            try:
-                domain_file = program.getDomainFile()
-                program_path_str = str(domain_file.getPathname()) if domain_file else self.program_info.name
-                programs.append(
-                    {
-                        "programPath": program_path_str,
-                        "name": program.getName(),
-                        "language": str(program.getLanguage()),
-                        "address": str(program.getMinAddress()),
-                    },
-                )
-            except Exception:
-                programs.append(
-                    {
-                        "programPath": self.program_info.name,
-                        "name": self.program_info.name,
-                    },
-                )
-
-        return json.dumps({"programs": programs})
+        except Exception as e:
+            logger.error(f"ProgramListResource: Error reading resource: {e}", exc_info=True)
+            # Return empty list on error instead of raising
+            return json.dumps({"programs": [], "error": str(e)})
