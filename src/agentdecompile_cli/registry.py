@@ -272,6 +272,7 @@ TOOL_ALIASES: dict[str, str] = {}
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
     "open": "open-project",
+    "switch-project": "open-project",  # folded into open-project
     "create-label": "manage-symbols",
     "download-shared-repository": "sync-project",
     "sync-shared-repository": "sync-project",

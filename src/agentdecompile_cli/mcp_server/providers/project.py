@@ -68,7 +68,7 @@ class ProjectToolProvider(ToolProvider):
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
-        "switchproject": "_handle_switch_project",
+        "switchproject": "_handle_open_project",  # switch-project folded into open-project
         "deleteprojectbinary": "_handle_delete_project_binary",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
@@ -257,37 +257,10 @@ class ProjectToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
-            types.Tool(
-                name="switch-project",
-                description=(
-                    "Switch between project modes at any time without restarting the server. "
-                    "Use mode='download' to connect to the configured shared Ghidra server, pull all files to the "
-                    "local project, and then operate locally. Use mode='local' to open a local binary or .gpr "
-                    "project. Use mode='shared' to (re)connect to the shared Ghidra server. "
-                    "Credentials are read from arguments first, then the request auth context, then "
-                    "AGENT_DECOMPILE_GHIDRA_SERVER_* environment variables automatically."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "mode": {
-                            "type": "string",
-                            "description": "Operation: 'download' (connect shared + pull to local), 'local' (open local path), 'shared' (connect shared server).",
-                            "enum": ["download", "local", "shared"],
-                            "default": "download",
-                        },
-                        "serverHost": {"type": "string", "description": "Ghidra server host. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST env var."},
-                        "serverPort": {"type": "integer", "description": "Ghidra server port. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PORT or 13100."},
-                        "serverUsername": {"type": "string", "description": "Auth username. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME env var."},
-                        "serverPassword": {"type": "string", "description": "Auth password. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD env var."},
-                        "path": {"type": "string", "description": "Repository name (shared mode) or local file/project path (local mode)."},
-                        "localPath": {"type": "string", "description": "Explicit local path override for mode='local'."},
-                        "dryRun": {"type": "boolean", "default": False, "description": "Simulate download without writing (mode='download' only)."},
-                        "force": {"type": "boolean", "default": False, "description": "Overwrite existing local files on pull."},
-                    },
-                    "required": [],
-                },
-            ),
+            # NOTE: switch-project was removed as an advertised tool.
+            # Its functionality is folded into open-project (which handles local,
+            # .gpr, and shared modes with env var auto-detection).
+            # Calling "switch-project" still works — it routes to open-project.
         ]
 
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
