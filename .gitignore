@@ -311,3 +311,4 @@ proj_test.txt
 provider_test_full.txt
 struct_fail.txt
 test_results.txt
+.vscode/mcp.json
