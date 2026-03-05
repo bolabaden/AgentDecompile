@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
-        "openproject": "_handle_manage",
+        "openproject": "_handle_open_project",
         "listprojectfiles": "_handle_list",
         "syncsharedproject": "_handle_sync_shared_project",
         "downloadsharedrepository": "_handle_download_shared_repository",
@@ -77,6 +77,23 @@ class ProjectToolProvider(ToolProvider):
 
     def list_tools(self) -> list[types.Tool]:
         return [
+            types.Tool(
+                name="open-project",
+                description="Open a local binary/project or connect to a shared Ghidra repository server.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Local file path, .gpr path, or repository name."},
+                        "serverHost": {"type": "string", "description": "Ghidra server host (shared project mode)."},
+                        "serverPort": {"type": "integer", "description": "Ghidra server port (default: 13100)."},
+                        "serverUsername": {"type": "string", "description": "Repository authentication username."},
+                        "serverPassword": {"type": "string", "description": "Repository authentication password."},
+                        "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
+                        "openAllPrograms": {"type": "boolean", "default": False, "description": "Open all programs in project."},
+                    },
+                    "required": [],
+                },
+            ),
             types.Tool(
                 name="connect-shared-project",
                 description="Connect to a shared Ghidra repository server and list available binaries.",
@@ -226,6 +243,13 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
             ),
         ]
+
+    async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Legacy open-project dispatcher: routes to connect-shared-project or manage-files"""
+        server_host = self._get_str(args, "serverhost")
+        if server_host:
+            return await self._handle_connect_shared_project(args)
+        return await self._handle_open(args)
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Connect to shared Ghidra repository server and list available binaries."""

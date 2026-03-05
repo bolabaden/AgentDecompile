@@ -64,6 +64,46 @@ from agentdecompile_cli.registry import (
 logger = logging.getLogger(__name__)
 
 THREAD_COUNT = multiprocessing.cpu_count()
+
+
+def _strip_unknowns_for_help() -> None:
+    """If --help/-h appears anywhere in sys.argv, rewrite argv to just the
+    subcommand chain plus --help, discarding unknown --options and their values.
+
+    This ensures 'agentdecompile-cli <subcmd> --unknown-opt --help' always
+    shows help instead of raising 'No such option'.
+    """
+    argv = sys.argv[1:]
+    if "--help" not in argv and "-h" not in argv:
+        return
+
+    new_argv: list[str] = [sys.argv[0]]
+    skip_next = False
+    for token in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in ("-h", "--help"):
+            new_argv.append("--help")
+            break
+        if token.startswith("-"):
+            # --flag=value: single-token form, nothing to skip after it
+            if "=" in token:
+                continue
+            # --flag value: two-token form, skip next token (the value)
+            skip_next = True
+        else:
+            # Non-option token — treat as a sub-command name to keep
+            new_argv.append(token)
+
+    sys.argv[:] = new_argv
+
+
+def cli_entry_point() -> None:
+    """Wrapper entry point that strips unknown options before --help so that
+    'agentdecompile-cli <subcmd> --any-flag --help' always shows help."""
+    _strip_unknowns_for_help()
+    main()
 _dynamic_commands_registered = False
 _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
@@ -737,8 +777,8 @@ def _run_async(coro: Coroutine[Any, Any, None]) -> None:
 
 
 def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | FunctionType:
-    cmd = click.option("--host", default="127.0.0.1", help="Server host")(cmd)
-    cmd = click.option("--port", type=int, default=8080, help="Server port")(cmd)
+    cmd = click.option("--host", "--server-host", default="127.0.0.1", help="Server host")(cmd)
+    cmd = click.option("--port", "--server-port", type=int, default=8080, help="Server port")(cmd)
     cmd = click.option(
         "--server-url",
         help="Full server URL (overrides --host/--port)",

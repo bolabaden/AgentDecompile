@@ -58,7 +58,7 @@ def _redirect_java_outputs():
         if not isJVMStarted():
             return
     except Exception as e:
-        sys.stderr.write(f"Warning: JVM output redirection setup skipped: {e}\n")
+        sys.stderr.write(f"Warning: JVM output redirection setup skipped: {e.__class__.__name__}: {e}\n")
 
 
 class StderrFilter:
@@ -338,6 +338,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--server-url",
         "--mcp-server-url",
+        "--backend-url",
         dest="server_url",
         type=str,
         help="Connect to an existing AgentDecompile MCP server (http(s)://host:port[/mcp/message])",
@@ -345,6 +346,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--host",
+        "--server-host",
         type=str,
         default=None,
         metavar="HOST",
@@ -352,6 +354,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port",
+        "--server-port",
         type=int,
         default=None,
         metavar="PORT",
@@ -364,7 +367,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help="Output format for human-readable messages (default: text)",
+        help="Output format for human-readable messages; don't change unless you need structured output!",
     )
     parser.add_argument(
         "--verbose",

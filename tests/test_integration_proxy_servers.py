@@ -132,8 +132,8 @@ def proxy_server(env: dict[str, str], require_remote_backend: None) -> Generator
 
 _COMMANDS: list[tuple[str, list[str], list[str]]] = [
     (
-        "open",
-        ["open", "--server_host", "170.9.241.140", "--server_port", "13100",
+        "open-project",
+        ["open-project", "--server_host", "170.9.241.140", "--server_port", "13100",
          "--server_username", "OpenKotOR", "--server_password", "MuchaShakaPaka", PROGRAM_PATH],
         ["serverConnected"],
     ),
