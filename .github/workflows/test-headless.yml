@@ -90,7 +90,7 @@ jobs:
         GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
 
     - name: Upload test artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: headless-test-results-${{ matrix.os }}-ghidra-${{ matrix.ghidra-version }}
