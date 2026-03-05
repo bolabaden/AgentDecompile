@@ -748,10 +748,7 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
         "--format",
         type=str,
         default=_DEFAULT_OUTPUT_FORMAT,
-        help=(
-            "Output format (default: text). Use -f/--format json only when you "
-            "strictly need machine-readable output; text/markdown is recommended."
-        ),
+        help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
     )(cmd)
     return cmd
 
@@ -800,11 +797,7 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
                     default=None,
                     expose_value=False,
                     callback=_set_output_format_option,
-                    help=(
-                        "Output format (default: text). Use -f/--format json only "
-                        "when you strictly need machine-readable output; "
-                        "text/markdown is recommended."
-                    ),
+                    help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
                 ),
             )
 
@@ -952,10 +945,7 @@ def _ensure_dynamic_commands_registered() -> None:
     "--format",
     type=str,
     default=_DEFAULT_OUTPUT_FORMAT,
-    help=(
-        "Output format (default: text). Use -f/--format json only when you "
-        "strictly need machine-readable output; text/markdown is recommended."
-    ),
+    help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
 )
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
@@ -1192,11 +1182,7 @@ def list_grp() -> None:
     "local_format",
     type=str,
     default=None,
-    help=(
-        "Output format override (default: inherited text output). Use "
-        "-f/--format json only when you strictly need machine-readable output; "
-        "text/markdown is recommended."
-    ),
+    help=("Output format override (default: inherited text output). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
 )
 @click.pass_context
 def list_binaries(ctx: click.Context, local_format: str | None) -> None:
@@ -2248,7 +2234,7 @@ def references_grp() -> None:
 @references_grp.command("run", help="Run get-references with --target and --mode")
 @click.option("-b", "--binary", "program_path")
 @click.option("--target", required=True, help="Address, symbol, function, or import name")
-@click.option("--mode", type=click.Choice( ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"]), default="both")
+@click.option("--mode", type=click.Choice(["to", "from", "both", "function", "referencers_decomp", "import", "thunk"]), default="both")
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
 @click.option("--limit", "--max-results", "limit", type=int)
@@ -2612,7 +2598,7 @@ def comments_grp() -> None:
 @click.option("--function")
 @click.option("--line-number", "lineNumber", type=int)
 @click.option("--comment")
-@click.option( "--comment-type", "commentType", type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]))
+@click.option("--comment-type", "commentType", type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]))
 @click.option("--comments", help="JSON array of comment objects")
 @click.option("--start")
 @click.option("--end")
@@ -2972,7 +2958,7 @@ def constants_grp() -> None:
 
 @constants_grp.command("run", help="Run search-constants")
 @click.option("-b", "--binary", "program_path")
-@click.option("--mode",  type=click.Choice(["specific", "range", "common"]), required=True)
+@click.option("--mode", type=click.Choice(["specific", "range", "common"]), required=True)
 @click.option("--value")
 @click.option("--min-value", "minValue")
 @click.option("--max-value", "maxValue")
@@ -3223,13 +3209,40 @@ def change_processor(
     _run_async(_call(ctx, "change-processor", **payload))
 
 
-@main.group( "files", help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout")
+@main.group("files", help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout")
 def files_grp() -> None:
     pass
 
 
 @files_grp.command("run", help="Run manage-files with --operation")
-@click.option("--operation", type=click.Choice(["import", "export", "download-shared", "pull-shared", "push-shared", "sync-shared", "checkout", "uncheckout", "unhijack", "list", "info", "mkdir", "touch", "read", "write", "append", "rename", "delete", "copy", "move"]), required=True)
+@click.option(
+    "--operation",
+    type=click.Choice(
+        [
+            "import",
+            "export",
+            "download-shared",
+            "pull-shared",
+            "push-shared",
+            "sync-shared",
+            "checkout",
+            "uncheckout",
+            "unhijack",
+            "list",
+            "info",
+            "mkdir",
+            "touch",
+            "read",
+            "write",
+            "append",
+            "rename",
+            "delete",
+            "copy",
+            "move",
+        ]
+    ),
+    required=True,
+)
 @click.option("--path")
 @click.option("--source-path", "source_path")
 @click.option("-b", "--binary", "program_path")
@@ -3247,8 +3260,8 @@ def files_grp() -> None:
 @click.option("--strip-leading-path/--no-strip-leading-path", "strip_leading_path", default=True)
 @click.option("--strip-all-container-path", "strip_all_container_path", is_flag=True)
 @click.option("--mirror-fs", "mirror_fs", is_flag=True)
-@click.option( "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
-@click.option( "--export-type", "export_type", type=click.Choice(["program", "function_info", "strings"]))
+@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--export-type", "export_type", type=click.Choice(["program", "function_info", "strings"]))
 @click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
 @click.option("--include-parameters", "include_parameters", is_flag=True)
 @click.option("--include-variables", "include_variables", is_flag=True)
@@ -3460,8 +3473,8 @@ def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
 
 # TODO: GUI Only tools/commands
 @main.command("open-all-in-code-browser", help="Open all programs matching extensions in Code Browser (open-all-programs-in-code-browser, GUI)")
-@click.option( "--extensions", default="exe,dll", help="Comma-separated file extensions to open (default: exe,dll)")
-@click.option( "--folder-path", "folderPath", default="/", help="Project folder to search (default: /)")
+@click.option("--extensions", default="exe,dll", help="Comma-separated file extensions to open (default: exe,dll)")
+@click.option("--folder-path", "folderPath", default="/", help="Project folder to search (default: /)")
 @click.pass_context
 def open_all_in_code_browser(
     ctx: click.Context,
@@ -3587,7 +3600,7 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
 # ---------------------------------------------------------------------------
 
 
-@main.command( "alias", help="Show alias/overload mappings and signatures for a tool name.")
+@main.command("alias", help="Show alias/overload mappings and signatures for a tool name.")
 @click.argument("name", required=True)
 def alias_cmd(name: str) -> None:
     """Show alias details for a canonical or alias tool name."""
@@ -3630,7 +3643,7 @@ def alias_cmd(name: str) -> None:
 @main.command("tool", help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'')
 @click.argument("name", required=True)
 @click.argument("arguments", required=False, default="{}")
-@click.option( "--list-tools", is_flag=True, help="List valid tool names and exit" )
+@click.option("--list-tools", is_flag=True, help="List valid tool names and exit")
 @click.pass_context
 def tool_cmd(
     ctx: click.Context,
@@ -3744,3 +3757,10 @@ if __name__ == "__main__":
 # (important for subcommand resolution before main() callback runs).
 _ensure_dynamic_commands_registered()
 _register_output_format_option_on_all_commands(main)
+
+
+# Entry point wrapper for pyproject.toml compatibility
+def cli_entry_point():
+    """Wrapper for CLI entry point configured in pyproject.toml."""
+    _ensure_dynamic_commands_registered()
+    main()
