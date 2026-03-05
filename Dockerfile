@@ -6,7 +6,7 @@
 #
 # MCP-only image: one container runs only AgentDecompile MCP (8080).
 # For the all-in-one (Ghidra server + BSim + MCP) image, use Dockerfile.aio.
-ARG ALPINE_BASE_IMAGE="public.ecr.aws/docker/library/alpine:latest"
+ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
 FROM ${ALPINE_BASE_IMAGE} AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
