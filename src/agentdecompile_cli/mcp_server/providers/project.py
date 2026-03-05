@@ -70,6 +70,7 @@ class ProjectToolProvider(ToolProvider):
         "deleteprojectbinary": "_handle_delete_project_binary",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
+        "getcurrentprogram": "_handle_get_current_program",
         "openprogramincodebrowser": "_handle_gui_unsupported",
         "openallprogramsincodebrowser": "_handle_gui_unsupported",
         "importfile": "_handle_import_file_alias",
@@ -242,6 +243,17 @@ class ProjectToolProvider(ToolProvider):
                 description="Open program in Code Browser (GUI-only)",
                 inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
             ),
+            types.Tool(
+                name="get-current-program",
+                description="Retrieve metadata for the currently active program, including name, path, language, compiler, and analysis status.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Program path to verify (uses current if omitted)."},
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -282,7 +294,7 @@ class ProjectToolProvider(ToolProvider):
         server_port: int = self._get_int(args, "serverport", "port", default=13100)
         server_username: str = self._get_str(args, "serverusername", "username")
         server_password: str = self._get_str(args, "serverpassword", "password")
-        path: str = self._get_str(args, "path", default="")
+        path: str = self._get_str(args, "path", "programpath", "repositoryname", "binaryname", "binary", default="")
 
         auth_provided = bool(server_username and server_password)
         server_reachable = False
@@ -2447,6 +2459,50 @@ class ProjectToolProvider(ToolProvider):
                 "headless": True,
                 "note": "Headless mode fallback returns first available function",
                 "function": {"name": first.getName(), "address": str(first.getEntryPoint())},
+            },
+        )
+
+    async def _handle_get_current_program(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Return metadata for the currently active program."""
+        await self._ensure_program_loaded_for_stateless_request(args)
+
+        if self.program_info is None:
+            return create_success_response({"loaded": False, "note": "No program currently loaded"})
+
+        program: Any = self.program_info.program
+        name: str = str(program.getName()) if hasattr(program, "getName") else "unknown"
+        path: str = ""
+        try:
+            df = program.getDomainFile()
+            if df is not None:
+                path = str(df.getPathname())
+        except Exception:
+            pass
+        language: str = ""
+        compiler: str = ""
+        try:
+            language = str(program.getLanguageID())
+        except Exception:
+            pass
+        try:
+            compiler = str(program.getCompilerSpec().getCompilerSpecID())
+        except Exception:
+            pass
+        function_count: int = 0
+        try:
+            fm = self._get_function_manager(program)
+            function_count = fm.getFunctionCount()
+        except Exception:
+            pass
+
+        return create_success_response(
+            {
+                "loaded": True,
+                "name": name,
+                "programPath": path or name,
+                "language": language,
+                "compiler": compiler,
+                "functionCount": function_count,
             },
         )
 

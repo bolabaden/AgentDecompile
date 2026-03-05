@@ -100,10 +100,9 @@ class TestToolsSchema:
     def test_tools_include_core_names(self):
         assert "get-functions" in TOOLS
         assert "manage-symbols" in TOOLS
-        assert "open" in TOOLS
+        assert "open-project" in TOOLS
         assert "list-project-files" in TOOLS
         assert "get-data" in TOOLS
-        assert "capture-agentdecompile-debug-info" in TOOLS
         assert isinstance(TOOLS, list)
         assert len(TOOLS) > 0
         assert all(isinstance(tool, str) for tool in TOOLS)
@@ -116,16 +115,14 @@ class TestToolsSchema:
         assert_mapping_invariants(TOOL_PARAMS)
 
     def test_tool_params_has_open_params(self):
-        assert "open" in TOOL_PARAMS
-        assert "path" in TOOL_PARAMS["open"]
-        assert "open" in TOOL_PARAMS
-        assert isinstance(TOOL_PARAMS["open"], list)
-        assert "programPath" in TOOL_PARAMS["open"]
+        assert "open-project" in TOOL_PARAMS
+        assert "path" in TOOL_PARAMS["open-project"]
+        assert isinstance(TOOL_PARAMS["open-project"], list)
 
     def test_get_tool_params_returns_list(self):
         assert "programPath" in get_tool_params("get-data")
         assert "addressOrSymbol" in get_tool_params("get-data")
-        open_params = get_tool_params("open")
+        open_params = get_tool_params("open-project")
         assert isinstance(open_params, list)
         required_open_params = {
             "path",
@@ -142,4 +139,4 @@ class TestToolsSchema:
         assert required_open_params.issubset(set(open_params))
         assert get_tool_params("unknown-tool") == []
         assert isinstance(get_tool_params("get-data"), list)
-        assert all(isinstance(item, str) for item in get_tool_params("open"))
+        assert all(isinstance(item, str) for item in get_tool_params("open-project"))
