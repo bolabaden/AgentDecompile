@@ -1,5 +1,4 @@
-#ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
-ARG ALPINE_BASE_IMAGE="public.ecr.aws/docker/library/alpine:latest"
+ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
 FROM ${ALPINE_BASE_IMAGE} AS build
 
 ARG GHIDRA_HOME="/ghidra"
