@@ -72,6 +72,9 @@ class PythonMcpServer:
         self.tool_providers.register_all_providers()
         self.resource_providers: ResourceProviderManager = ResourceProviderManager()
 
+        # Keep server.program_info in sync when providers update it (e.g. checkout).
+        self.tool_providers._on_program_info_changed = self._on_provider_program_info_changed
+
         # Server state
         self._running: bool = False
         self._shutdown_event: threading.Event = threading.Event()
@@ -105,7 +108,11 @@ class PythonMcpServer:
             """
             call_args: dict[str, Any] = dict(arguments or {})
             call_args.setdefault("format", "markdown")
-            return await self.tool_providers.call_tool(name, call_args, self.program_info)
+            # Don't pass the server's program_info here.  server.set_program_info()
+            # already cascades to the manager at startup.  Passing a stale copy on
+            # every call would revert updates made by tools (e.g. checkout from a
+            # shared repository).  The manager tracks the latest program_info itself.
+            return await self.tool_providers.call_tool(name, call_args)
 
         @server.list_resources()
         async def list_resources() -> list[types.Resource]:
@@ -229,6 +236,15 @@ class PythonMcpServer:
         """Set the program info for tool access."""
         self.program_info = program_info
         self.tool_providers.set_program_info(program_info)
+        self.resource_providers.set_program_info(program_info)
+
+    def _on_provider_program_info_changed(self, program_info: ProgramInfo) -> None:
+        """Callback fired by the tool-provider manager when program_info changes.
+
+        Keeps the server-level copy in sync so that resource providers and any
+        other server-level consumers see the latest program.
+        """
+        self.program_info = program_info
         self.resource_providers.set_program_info(program_info)
 
     def set_ghidra_project(self, project: Any) -> None:

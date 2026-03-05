@@ -1338,6 +1338,7 @@ class ToolProviderManager:
         self._tool_map: dict[str, ToolProvider] = {}
         self.program_info: ProgramInfo | None = None
         self.ghidra_project: Any | None = None  # GhidraProject from PyGhidraContext
+        self._on_program_info_changed: Callable[[ProgramInfo], None] | None = None
 
     def set_ghidra_project(self, project: Any) -> None:
         """Store the GhidraProject reference so providers can use it for checkout."""
@@ -1414,6 +1415,11 @@ class ToolProviderManager:
                 p.set_program_info(program_info)
             except Exception as e:
                 logger.warning(f"Failed to set program info for {p.__class__.__name__}! {e.__class__.__name__}: {e}")
+        if self._on_program_info_changed is not None:
+            try:
+                self._on_program_info_changed(program_info)
+            except Exception as e:
+                logger.warning("_on_program_info_changed callback failed: %s", e)
 
     def _get_project_provider(self) -> Any | None:
         for provider in self.providers:
