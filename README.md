@@ -95,7 +95,7 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 | **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
-The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message`. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
+The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message` (canonical). For compatibility with MCP clients that only accept a base URL, `http://<host>:<port>/` and `http://<host>:<port>/mcp` are also accepted and routed to the same Streamable HTTP MCP handler. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
 Local proxy mode (no local Ghidra/JVM startup — forwards to a remote MCP backend):
 
@@ -140,7 +140,7 @@ The examples below use the published Git source install form and redact sensitiv
 
 ```powershell
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 
 # concise output
 mode: shared-server
@@ -210,11 +210,11 @@ Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool na
 For shared Ghidra server workflows (`open --ghidra-server-host ... --ghidra-server-port ...`), you can set defaults once with environment variables:
 
 ```bash
-export AGENT_DECOMPILE_GHIDRA_SERVER_HOST=***
-export AGENT_DECOMPILE_GHIDRA_SERVER_PORT=13100
-export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME=OpenKotOR
-export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='***'
-export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY=Odyssey
+export AGENT_DECOMPILE_GHIDRA_SERVER_HOST='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PORT='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
 Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
@@ -346,6 +346,8 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --ghidra-server-host`; `agentdecompile-cli --ghidra-server-host` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-server --ghidra-server-port`; `agentdecompile-cli --ghidra-server-port` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository` |
+
+Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PASSWORD/REPOSITORY` are accepted and normalized automatically for launchers that emit no-underscore variants.
 
 ### Shared project authentication
 

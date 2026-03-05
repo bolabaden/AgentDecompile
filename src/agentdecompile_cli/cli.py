@@ -919,32 +919,32 @@ def _ensure_dynamic_commands_registered() -> None:
     "--ghidra-server-host",
     "--server-host",
     "ghidra_server_host",
-    help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+    help="Default shared Ghidra server host (prefer AGENT_DECOMPILE_GHIDRA_SERVER_HOST in environment)",
 )
 @click.option(
     "--ghidra-server-port",
     "--server-port",
     "ghidra_server_port",
     type=int,
-    help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+    help="Default shared Ghidra server port (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PORT in environment)",
 )
 @click.option(
     "--ghidra-server-username",
     "--server-username",
     "ghidra_server_username",
-    help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+    help="Default shared Ghidra server username (prefer AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME in environment)",
 )
 @click.option(
     "--ghidra-server-password",
     "--server-password",
     "ghidra_server_password",
-    help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+    help="Default shared Ghidra server password (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD in environment)",
 )
 @click.option(
     "--ghidra-server-repository",
     "--server-repository",
     "ghidra_server_repository",
-    help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_REPOSITORY)",
+    help="Default shared Ghidra repository (prefer AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY in environment)",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logs (including HTTP request diagnostics)")
 @click.option(

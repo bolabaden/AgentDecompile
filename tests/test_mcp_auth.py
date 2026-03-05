@@ -8,6 +8,7 @@ and inspecting which ASGI events are sent back to the caller.
 from __future__ import annotations
 
 import base64
+import os
 
 from typing import Any
 
@@ -22,6 +23,19 @@ from agentdecompile_cli.mcp_server.auth import (
     parse_basic_auth,
     validate_credentials,
 )
+
+AUTH_TEST_SERVER_HOST = os.getenv("AGENTDECOMPILE_TEST_AUTH_SERVER_HOST", "ghidra.test.local")
+AUTH_TEST_OTHER_HOST = os.getenv("AGENTDECOMPILE_TEST_AUTH_OTHER_HOST", "other.server.local")
+AUTH_TEST_USERNAME = os.getenv("AGENTDECOMPILE_TEST_AUTH_USERNAME", "test_user")
+AUTH_TEST_PASSWORD = os.getenv("AGENTDECOMPILE_TEST_AUTH_PASSWORD", "test_password")
+AUTH_TEST_REPOSITORY = os.getenv("AGENTDECOMPILE_TEST_AUTH_REPOSITORY", "TestRepository")
+AUTH_TEST_WRONG_PASSWORD = os.getenv("AGENTDECOMPILE_TEST_AUTH_WRONG_PASSWORD", "wrong_password")
+AUTH_TEST_ALT_USERNAME = os.getenv("AGENTDECOMPILE_TEST_AUTH_ALT_USERNAME", "alt_user")
+AUTH_TEST_BASIC_EMPTY_USER = os.getenv("AGENTDECOMPILE_TEST_AUTH_EMPTY_PASSWORD_USER", "empty_password_user")
+AUTH_TEST_CONTEXT_DEFAULT_HOST = os.getenv("AGENTDECOMPILE_TEST_AUTH_CONTEXT_DEFAULT_HOST", "default.test.local")
+AUTH_TEST_CONTEXT_OVERRIDE_HOST = os.getenv("AGENTDECOMPILE_TEST_AUTH_CONTEXT_OVERRIDE_HOST", "override.test.local")
+AUTH_TEST_CONTEXT_DEFAULT_REPO = os.getenv("AGENTDECOMPILE_TEST_AUTH_CONTEXT_DEFAULT_REPO", "DefaultTestRepo")
+AUTH_TEST_CONTEXT_OVERRIDE_REPO = os.getenv("AGENTDECOMPILE_TEST_AUTH_CONTEXT_OVERRIDE_REPO", "OverrideTestRepo")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,8 +107,8 @@ class TestParseBasicAuth:
         assert pwd == "pass:word:extra"
 
     def test_empty_password(self) -> None:
-        user, pwd = parse_basic_auth(_basic_header("admin", ""))
-        assert user == "admin"
+        user, pwd = parse_basic_auth(_basic_header(AUTH_TEST_BASIC_EMPTY_USER, ""))
+        assert user == AUTH_TEST_BASIC_EMPTY_USER
         assert pwd == ""
 
     def test_not_basic(self) -> None:
@@ -119,44 +133,44 @@ class TestParseBasicAuth:
 class TestValidateCredentials:
     def _config(self, **kwargs: Any) -> AuthConfig:
         defaults = {
-            "default_server_host": "ghidra.example.com",
-            "default_username": "OldRepublicDevs",
-            "default_password": "revanlives",
+            "default_server_host": AUTH_TEST_SERVER_HOST,
+            "default_username": AUTH_TEST_USERNAME,
+            "default_password": AUTH_TEST_PASSWORD,
         }
         defaults.update(kwargs)
         return AuthConfig(**defaults)  # pyright: ignore[reportArgumentType]
 
     def test_correct_creds_default_server(self) -> None:
         cfg = self._config()
-        assert validate_credentials("OldRepublicDevs", "revanlives", cfg, None) is True
+        assert validate_credentials(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD, cfg, None) is True
 
     def test_wrong_password(self) -> None:
         cfg = self._config()
-        assert validate_credentials("OldRepublicDevs", "wrongpass", cfg, None) is False
+        assert validate_credentials(AUTH_TEST_USERNAME, AUTH_TEST_WRONG_PASSWORD, cfg, None) is False
 
     def test_wrong_username(self) -> None:
         cfg = self._config()
-        assert validate_credentials("eve", "revanlives", cfg, None) is False
+        assert validate_credentials(AUTH_TEST_ALT_USERNAME, AUTH_TEST_PASSWORD, cfg, None) is False
 
     def test_empty_username(self) -> None:
         cfg = self._config()
-        assert validate_credentials("", "revanlives", cfg, None) is False
+        assert validate_credentials("", AUTH_TEST_PASSWORD, cfg, None) is False
 
     def test_correct_creds_explicit_matching_host(self) -> None:
         cfg = self._config()
-        assert validate_credentials("OldRepublicDevs", "revanlives", cfg, "ghidra.example.com") is True
+        assert validate_credentials(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD, cfg, AUTH_TEST_SERVER_HOST) is True
 
     def test_case_insensitive_host_match(self) -> None:
         cfg = self._config()
-        assert validate_credentials("OldRepublicDevs", "revanlives", cfg, "GHIDRA.EXAMPLE.COM") is True
+        assert validate_credentials(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD, cfg, AUTH_TEST_SERVER_HOST.upper()) is True
 
     def test_different_server_accepts_any_non_empty_creds(self) -> None:
         cfg = self._config()
-        assert validate_credentials("any_user", "any_pass", cfg, "other.server.local") is True
+        assert validate_credentials(AUTH_TEST_ALT_USERNAME, AUTH_TEST_WRONG_PASSWORD, cfg, AUTH_TEST_OTHER_HOST) is True
 
     def test_different_server_rejects_empty_username(self) -> None:
         cfg = self._config()
-        assert validate_credentials("", "any_pass", cfg, "other.server.local") is False
+        assert validate_credentials("", AUTH_TEST_WRONG_PASSWORD, cfg, AUTH_TEST_OTHER_HOST) is False
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +204,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_401_when_username_configured_no_header(self) -> None:
-        mw = self._middleware(default_username="user", default_password="pass")
+        mw = self._middleware(default_username=AUTH_TEST_USERNAME, default_password=AUTH_TEST_PASSWORD)
         rec = _Recorder()
         await mw(_make_scope(), None, rec.send)
         assert rec.status() == 401
@@ -221,17 +235,17 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_401_wrong_credentials(self) -> None:
         mw = self._middleware(
-            default_username="admin",
-            default_password="secret",
+            default_username=AUTH_TEST_USERNAME,
+            default_password=AUTH_TEST_PASSWORD,
         )
-        scope = _make_scope({"Authorization": _basic_header("admin", "wrongpass")})
+        scope = _make_scope({"Authorization": _basic_header(AUTH_TEST_USERNAME, AUTH_TEST_WRONG_PASSWORD)})
         rec = _Recorder()
         await mw(scope, None, rec.send)
         assert rec.status() == 401
 
     @pytest.mark.asyncio
     async def test_401_malformed_basic_header(self) -> None:
-        mw = self._middleware(default_username="user", default_password="pass")
+        mw = self._middleware(default_username=AUTH_TEST_USERNAME, default_password=AUTH_TEST_PASSWORD)
         scope = _make_scope({"Authorization": "Basic !!!"})
         rec = _Recorder()
         await mw(scope, None, rec.send)
@@ -239,7 +253,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_401_non_basic_scheme(self) -> None:
-        mw = self._middleware(default_username="user", default_password="pass")
+        mw = self._middleware(default_username=AUTH_TEST_USERNAME, default_password=AUTH_TEST_PASSWORD)
         scope = _make_scope({"Authorization": "Bearer sometoken"})
         rec = _Recorder()
         await mw(scope, None, rec.send)
@@ -250,11 +264,11 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_200_correct_credentials(self) -> None:
         mw = self._middleware(
-            default_server_host="ghidra.example.com",
-            default_username="OldRepublicDevs",
-            default_password="revanlives",
+            default_server_host=AUTH_TEST_SERVER_HOST,
+            default_username=AUTH_TEST_USERNAME,
+            default_password=AUTH_TEST_PASSWORD,
         )
-        scope = _make_scope({"Authorization": _basic_header("OldRepublicDevs", "revanlives")})
+        scope = _make_scope({"Authorization": _basic_header(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD)})
         rec = _Recorder()
         await mw(scope, None, rec.send)
         assert rec.status() == 200
@@ -265,22 +279,22 @@ class TestAuthMiddleware:
         _inner_with_auth_check.last_ctx = None
 
         cfg = AuthConfig(
-            default_server_host="ghidra.example.com",
-            default_username="OldRepublicDevs",
-            default_password="revanlives",
-            default_repository="Odyssey",
+            default_server_host=AUTH_TEST_SERVER_HOST,
+            default_username=AUTH_TEST_USERNAME,
+            default_password=AUTH_TEST_PASSWORD,
+            default_repository=AUTH_TEST_REPOSITORY,
         )
         mw = AuthMiddleware(_inner_with_auth_check, cfg)
-        scope = _make_scope({"Authorization": _basic_header("OldRepublicDevs", "revanlives")})
+        scope = _make_scope({"Authorization": _basic_header(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD)})
         rec = _Recorder()
         await mw(scope, None, rec.send)
 
         ctx: AuthContext | None = _inner_with_auth_check.last_ctx
         assert ctx is not None
-        assert ctx.username == "OldRepublicDevs"
-        assert ctx.password == "revanlives"
-        assert ctx.server_host == "ghidra.example.com"
-        assert ctx.repository == "Odyssey"
+        assert ctx.username == AUTH_TEST_USERNAME
+        assert ctx.password == AUTH_TEST_PASSWORD
+        assert ctx.server_host == AUTH_TEST_SERVER_HOST
+        assert ctx.repository == AUTH_TEST_REPOSITORY
 
     @pytest.mark.asyncio
     async def test_x_ghidra_headers_stored_in_context(self) -> None:
@@ -288,18 +302,18 @@ class TestAuthMiddleware:
         _inner_with_auth_check.last_ctx = None
 
         cfg = AuthConfig(
-            default_server_host="default.host",
-            default_username="user",
-            default_password="pass",
-            default_repository="DefaultRepo",
+            default_server_host=AUTH_TEST_CONTEXT_DEFAULT_HOST,
+            default_username=AUTH_TEST_USERNAME,
+            default_password=AUTH_TEST_PASSWORD,
+            default_repository=AUTH_TEST_CONTEXT_DEFAULT_REPO,
         )
         mw = AuthMiddleware(_inner_with_auth_check, cfg)
         scope = _make_scope(
             {
-                "Authorization": _basic_header("user", "other_pass"),
-                "X-Ghidra-Server-Host": "other.host",
+                "Authorization": _basic_header(AUTH_TEST_USERNAME, AUTH_TEST_WRONG_PASSWORD),
+                "X-Ghidra-Server-Host": AUTH_TEST_CONTEXT_OVERRIDE_HOST,
                 "X-Ghidra-Server-Port": "13200",
-                "X-Ghidra-Repository": "OtherRepo",
+                "X-Ghidra-Repository": AUTH_TEST_CONTEXT_OVERRIDE_REPO,
             }
         )
         rec = _Recorder()
@@ -309,16 +323,16 @@ class TestAuthMiddleware:
         assert rec.status() == 200
         ctx: AuthContext | None = _inner_with_auth_check.last_ctx
         assert ctx is not None
-        assert ctx.server_host == "other.host"
+        assert ctx.server_host == AUTH_TEST_CONTEXT_OVERRIDE_HOST
         assert ctx.server_port == 13200
-        assert ctx.repository == "OtherRepo"
+        assert ctx.repository == AUTH_TEST_CONTEXT_OVERRIDE_REPO
 
     @pytest.mark.asyncio
     async def test_context_cleared_after_request(self) -> None:
         """CURRENT_AUTH_CONTEXT must be reset after each request."""
-        cfg = AuthConfig(default_username="u", default_password="p")
+        cfg = AuthConfig(default_username=AUTH_TEST_USERNAME, default_password=AUTH_TEST_PASSWORD)
         mw = AuthMiddleware(_passthrough, cfg)
-        scope = _make_scope({"Authorization": _basic_header("u", "p")})
+        scope = _make_scope({"Authorization": _basic_header(AUTH_TEST_USERNAME, AUTH_TEST_PASSWORD)})
         rec = _Recorder()
         await mw(scope, None, rec.send)
         # After the request, context should reset to default (None)
@@ -342,7 +356,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_401_includes_www_authenticate_header(self) -> None:
-        mw = self._middleware(default_username="u", default_password="p")
+        mw = self._middleware(default_username=AUTH_TEST_USERNAME, default_password=AUTH_TEST_PASSWORD)
         rec = _Recorder()
         await mw(_make_scope(), None, rec.send)
         start_events = [e for e in rec.events if e.get("type") == "http.response.start"]

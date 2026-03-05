@@ -125,6 +125,10 @@ jobs:
             fi
           fi
 
+          # Docker tags cannot contain '/'. Sanitize: e.g. PR ref "27/merge" → "27-merge",
+          # branch "feature/foo" → "feature-foo".
+          IMAGE_TAG="$(echo "${IMAGE_TAG}" | sed 's|/|-|g')"
+
           echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "GHIDRA_VERSION=${GHIDRA_VERSION}" >> $GITHUB_OUTPUT
           echo "SHOULD_BUILD=${SHOULD_BUILD}" >> $GITHUB_OUTPUT

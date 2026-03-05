@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -48,12 +49,20 @@ def run_argv(argv: list[str], timeout: int = 300) -> tuple[int, str, str]:
 
 def run_curl(
     payload: dict[str, Any],
-    base_url: str = "http://170.9.241.140:8080/mcp/message/",
+    base_url: str | None = None,
     sid: str | None = None,
     include_headers: bool = False,
     timeout: int = 300,
 ) -> tuple[int, str, str]:
     """Run curl MCP request."""
+    base_url = (base_url or os.getenv("AGENT_DECOMPILE_MCP_MESSAGE_URL") or os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL") or "").strip()
+    if not base_url:
+        raise ValueError("Missing MCP URL. Set AGENT_DECOMPILE_MCP_MESSAGE_URL (preferred) or AGENT_DECOMPILE_MCP_SERVER_URL.")
+    if base_url.endswith("/") and not base_url.endswith("/mcp/message/"):
+        base_url = f"{base_url}mcp/message/"
+    elif not base_url.endswith("/mcp/message/"):
+        base_url = f"{base_url.rstrip('/')}/mcp/message/"
+
     data = json.dumps(payload)
     cmd = [
         "curl.exe",
@@ -217,7 +226,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
 # ============================================================================
 
 
-def build_validate_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "idekanymore") -> list[dict[str, Any]]:
+def build_validate_cases(program_path: str, host: str, port: int, username: str, password: str) -> list[dict[str, Any]]:
     """Build validation test cases."""
     uvx_prefix = (
         "uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli"
@@ -353,7 +362,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 # ============================================================================
 
 
-def build_verify_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "idekanymore") -> list[dict[str, Any]]:
+def build_verify_cases(program_path: str, host: str, port: int, username: str, password: str) -> list[dict[str, Any]]:
     """Build verification test cases with response key checks."""
     uvx_prefix = (
         "uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli"
@@ -525,12 +534,28 @@ def main(argv: list[str] | None = None) -> int:
 
     # Matrix subcommand
     matrix_parser = subparsers.add_parser("matrix", help="CLI command matrix test")
-    matrix_parser.add_argument("--server-url", default="http://170.9.241.140:8080/", help="Target MCP server URL")
+    matrix_parser.add_argument(
+        "--server-url",
+        default=os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL", ""),
+        help="Target MCP server URL (defaults to AGENT_DECOMPILE_MCP_SERVER_URL)",
+    )
     matrix_parser.add_argument("--program-path", default="/K1/k1_win_gog_swkotor.exe", help="Program path for tool calls")
-    matrix_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
+    matrix_parser.add_argument(
+        "--ghidra-host",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", ""),
+        help="Ghidra shared-server host (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST)",
+    )
     matrix_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
-    matrix_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    matrix_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
+    matrix_parser.add_argument(
+        "--username",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", ""),
+        help="Ghidra shared-server username (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME)",
+    )
+    matrix_parser.add_argument(
+        "--password",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", ""),
+        help="Ghidra shared-server password (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
+    )
     matrix_parser.add_argument("--uvx-from", default="git+https://github.com/bolabaden/agentdecompile")
     matrix_parser.add_argument("--editable-local", action="store_true", help="Use local uvx package")
     matrix_parser.add_argument("--run", action="store_true", help="Execute cases")
@@ -541,28 +566,94 @@ def main(argv: list[str] | None = None) -> int:
 
     # Validate subcommand
     validate_parser = subparsers.add_parser("validate", help="Validate UVX vs curl equivalence")
-    validate_parser.add_argument("--base-url", default="http://170.9.241.140:8080/mcp/message/", help="MCP server base URL")
+    validate_parser.add_argument(
+        "--base-url",
+        default=os.getenv("AGENT_DECOMPILE_MCP_MESSAGE_URL", ""),
+        help="MCP message URL (defaults to AGENT_DECOMPILE_MCP_MESSAGE_URL, else AGENT_DECOMPILE_MCP_SERVER_URL)",
+    )
     validate_parser.add_argument("--program-path", default="/K1/k1_win_gog_swkotor.exe", help="Program path")
-    validate_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
+    validate_parser.add_argument(
+        "--ghidra-host",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", ""),
+        help="Ghidra shared-server host (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST)",
+    )
     validate_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
-    validate_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    validate_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
+    validate_parser.add_argument(
+        "--username",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", ""),
+        help="Ghidra shared-server username (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME)",
+    )
+    validate_parser.add_argument(
+        "--password",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", ""),
+        help="Ghidra shared-server password (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
+    )
     validate_parser.set_defaults(func=cmd_validate)
 
     # Verify subcommand
     verify_parser = subparsers.add_parser("verify", help="Verify UVX vs curl with key checks")
-    verify_parser.add_argument("--base-url", default="http://170.9.241.140:8080/mcp/message/", help="MCP server base URL")
+    verify_parser.add_argument(
+        "--base-url",
+        default=os.getenv("AGENT_DECOMPILE_MCP_MESSAGE_URL", ""),
+        help="MCP message URL (defaults to AGENT_DECOMPILE_MCP_MESSAGE_URL, else AGENT_DECOMPILE_MCP_SERVER_URL)",
+    )
     verify_parser.add_argument("--program-path", default="/K1/k1_win_gog_swkotor.exe", help="Program path")
-    verify_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
+    verify_parser.add_argument(
+        "--ghidra-host",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", ""),
+        help="Ghidra shared-server host (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST)",
+    )
     verify_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
-    verify_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    verify_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
+    verify_parser.add_argument(
+        "--username",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", ""),
+        help="Ghidra shared-server username (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME)",
+    )
+    verify_parser.add_argument(
+        "--password",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", ""),
+        help="Ghidra shared-server password (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
+    )
     verify_parser.set_defaults(func=cmd_verify)
 
     args = parser.parse_args(argv or sys.argv[1:])
     if not hasattr(args, "func"):
         parser.print_help()
         return 1
+
+    if args.mode in {"validate", "verify"}:
+        if not (args.base_url or "").strip():
+            args.base_url = (os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL") or "").strip()
+        missing: list[str] = []
+        if not (args.base_url or "").strip():
+            missing.append("AGENT_DECOMPILE_MCP_MESSAGE_URL or AGENT_DECOMPILE_MCP_SERVER_URL")
+        if not (args.ghidra_host or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+        if not (args.username or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+        if not (args.password or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+        if missing:
+            print("Missing required connection values. Set these env vars or pass CLI overrides:")
+            for item in missing:
+                print(f"- {item}")
+            return 2
+
+    if args.mode == "matrix" and args.run:
+        missing = []
+        if not (args.server_url or "").strip():
+            missing.append("AGENT_DECOMPILE_MCP_SERVER_URL")
+        if not (args.ghidra_host or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+        if not (args.username or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+        if not (args.password or "").strip():
+            missing.append("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+        if missing:
+            print("Missing required connection values for matrix --run. Set these env vars or pass CLI overrides:")
+            for item in missing:
+                print(f"- {item}")
+            return 2
 
     return args.func(args)
 
