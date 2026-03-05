@@ -189,6 +189,8 @@ RUN set -eux; \
         musl-dev \
         python3-dev \
         libffi-dev \
+        protobuf-dev \
+        protoc \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade setuptools wheel; \
