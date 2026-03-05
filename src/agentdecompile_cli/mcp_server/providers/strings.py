@@ -252,7 +252,6 @@ class StringToolProvider(ToolProvider):
         **Filtering Modes**:
         - count: Return total count only (no results)
         - search: Unified search mode (regex/literal/fuzzy heuristic)
-        - regex: Legacy alias for regex matching (case-insensitive)
         - literal (default): Substring match, case-insensitive
 
         **Performance Notes**:

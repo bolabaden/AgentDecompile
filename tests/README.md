@@ -21,6 +21,8 @@ Tests are organized by functionality (37 test files total):
 - `test_mcp_tools.py` - MCP tool connectivity
 - `test_config.py` - Configuration loading
 - `test_session_context.py` - Session context management
+- `test_legacy_tools_advertisement.py` - Environment variable control of tool advertisement
+- `test_unified_provider_advertisement.py` - Tool advertisement contracts and parity
 
 ### CLI Tests
 - `test_cli_connect_mode.py` - CLI in connect mode (server attachment)
@@ -96,7 +98,21 @@ uv run pytest tests/test_provider_*.py -v
 
 # Normalization/compatibility tests
 uv run pytest tests/test_*normalization*.py tests/test_*compatibility*.py -v
+
+# Legacy tools advertisement tests (isolated)
+uv run pytest tests/test_legacy_tools_advertisement.py -v
 ```
+
+### Legacy Tools Advertisement Tests
+
+The `test_legacy_tools_advertisement.py` module tests environment variable control of tool advertisement:
+
+- **Environment Variables**: `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS`, `AGENTDECOMPILE_SHOW_LEGACY_TOOLS`
+- **Truthy Values**: `1`, `true`, `yes`, `on` (case-insensitive)
+- **Test Isolation**: Uses module reloading with cleanup fixtures
+- **Coverage**: 45 tests validating default/legacy advertisement modes
+
+**Note**: These tests modify global registry state and use comprehensive cleanup. They integrate safely with other tests but can be run in isolation for faster iteration.
 
 ### Run Tests Matching Pattern
 

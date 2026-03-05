@@ -764,7 +764,7 @@ class AgentDecompileStdioBridge:
         )
 
         try:
-            result = await backend.call_tool("open", open_args)
+            result = await backend.call_tool("open-project", open_args)
             # Log a short summary of the result.
             if isinstance(result, dict):
                 content = result.get("content", [])

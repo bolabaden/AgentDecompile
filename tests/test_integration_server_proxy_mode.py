@@ -154,14 +154,14 @@ class TestServerProxyMode:
     ) -> None:
         ok, out, err = _run(
             _cli(SERVER_PROXY_URL) + [
-                "get-functions", "--program_path", PROGRAM_PATH, "--limit", "5"
+                "get-functions", "--mode", "list", "--program_path", PROGRAM_PATH, "--limit", "5"
             ],
             env,
         )
         assert ok, f"Server-proxy get-functions failed\nstdout: {out}\nstderr: {err}"
         data = _parse_output(out)
         assert data is not None
-        assert "functions" in data
+        assert "results" in data
 
     def test_search_symbols_via_server_proxy(
         self, env: dict[str, str], proxy_server: None

@@ -49,11 +49,11 @@ class CallGraphToolProvider(ToolProvider):
                 "function": {"type": "string", "description": "The exact name or starting address of the function to trace."},
                 "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function to trace."},
                 "functionIdentifier": {"type": "string", "description": "Another alternative parameter for the function to trace."},
-                "mode": {"type": "string", "enum": ["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"], "description": "What type of data to generate: 'graph' or 'tree' creates visual relations, 'callers' gets a list of functions that call this one, 'callees' gets a list of functions this one calls, 'common_callers' finds callers shared between two functions."},
-                "direction": {"type": "string", "enum": ["calling", "called"], "default": "calling", "description": "Whether to build the graph going upwards (who calls this) or downwards (who it calls)."},
+                "mode": {"type": "string", "enum": ["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"], "description": "What type of data to generate. Omit and use 'direction' instead for simple lookups — mode is automatically inferred from direction ('calling' → 'callers', 'called' → 'callees'). Set explicitly only when you need 'graph'/'tree' layouts, 'callers_decomp', or 'common_callers'."},
+                "direction": {"type": "string", "enum": ["calling", "called"], "default": "calling", "description": "PRIMARY traversal direction: 'calling' = upwards (who calls this function), 'called' = downwards (what this function calls). Mode is inferred from this automatically."},
                 "displayType": {"type": "string", "enum": ["flow", "flow_ends", "mind"], "default": "flow", "description": "Visual format style for graphical outputs."},
                 "includeRefs": {"type": "boolean", "default": True, "description": "If true, incorporates data cross-references (using memory addresses) in addition to direct function calls."},
-                "maxDepth": {"type": "integer", "description": "How many layers deep to trace. For example, 1 means direct callers only. 2 means callers of callers."},
+                "maxDepth": {"type": "integer", "description": "Omit unless you need to cap traversal depth. By default depth is unlimited. Set to 1 for direct callers/callees only, 2 for one level deeper, etc."},
                 "maxRunTime": {"type": "integer", "default": 60, "description": "Timeout in seconds to prevent the graph tracer from analyzing forever on massive functions."},
                 "condenseThreshold": {"type": "integer", "default": 50, "description": "If more than this many nodes exist at one level, combine them to keep the graph readable."},
                 "topLayers": {"type": "integer", "default": 5, "description": "Max upwards layers (callers) to show in the visual graph."},
@@ -72,7 +72,7 @@ class CallGraphToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="gen-callgraph",
-                description="Alias for get-call-graph. See get-call-graph for full details.",
+                description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code.",
                 inputSchema=schema,
             ),
         ]
@@ -83,8 +83,17 @@ class CallGraphToolProvider(ToolProvider):
         if not func:
             raise ValueError("function or addressOrSymbol is required")
 
-        mode = self._get_str(args, "mode", default="graph")
-        direction = self._get_str(args, "direction", default="calling")
+        mode_explicit = self._get_str(args, "mode", "action", "operation")
+        direction_raw = self._get_str(args, "direction", default="calling")
+        # Normalize direction aliases: callers→calling, callees→called
+        _dir_aliases = {"callers": "calling", "callees": "called", "up": "calling", "down": "called"}
+        direction = _dir_aliases.get(n(direction_raw), direction_raw)
+
+        # Infer mode from direction when not explicitly set
+        if mode_explicit:
+            mode = mode_explicit
+        else:
+            mode = "callees" if direction == "called" else "callers"
         display_type = self._get_str(args, "displaytype", "displayType", default="flow")
         include_refs = self._get_bool(args, "includerefs", default=True)
         max_depth = self._get(args, "maxdepth")

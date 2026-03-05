@@ -80,7 +80,7 @@ class ScriptToolProvider(ToolProvider):
         - `getMemory()`, `getListing()`, `getFunctionManager()`
         - `getSymbolTable()`, `getAddressFactory()`, etc. (30+ methods)
         - `toAddr(str)`: Convert string to Address
-        - `getAddress(str)`: Alias for toAddr()
+        - `getAddress(str)`: Convert string to Address
         
         **FlatProgramAPI methods (if flat_api available):**
         - Navigation: `getFirstFunction()`, `getFunctionAt()`, `getFunctionBefore()`

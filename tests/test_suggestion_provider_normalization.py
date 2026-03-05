@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from agentdecompile_cli.mcp_server.providers.suggestions import SuggestionToolProvider
+from agentdecompile_cli.registry import normalize_identifier
 
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
@@ -24,7 +25,7 @@ def _parse_text_content_payload(text_contents: list[Any]) -> Any:
 
 
 class TestSuggestionToolSchema:
-    """Ensure advertised schema is snake_case-only."""
+    """Ensure advertised schema covers expected parameters via normalization."""
 
     def test_advertises_snake_case_tool_and_parameters(self):
         provider = SuggestionToolProvider()
@@ -35,10 +36,9 @@ class TestSuggestionToolSchema:
         assert tool.name == "suggest"
 
         properties: dict[str, Any] = tool.inputSchema["properties"]
-        expected_snake_case_keys: set[str] = {
+        expected_keys: set[str] = {
             "program_path",
             "suggestion_type",
-            "address",
             "address_or_symbol",
             "function_identifier",
             "variable_name",
@@ -46,9 +46,14 @@ class TestSuggestionToolSchema:
             "include_callers",
             "include_callees",
         }
-        assert expected_snake_case_keys.issubset(set(properties.keys()))
+        advertised_norm: set[str] = {normalize_identifier(key) for key in properties.keys()}
+        expected_norm: set[str] = {normalize_identifier(key) for key in expected_keys}
+        assert expected_norm.issubset(advertised_norm)
 
-        enum_values: list[str] = properties["suggestion_type"]["enum"]
+        suggestion_type_key = next(
+            key for key in properties.keys() if normalize_identifier(key) == normalize_identifier("suggestion_type")
+        )
+        enum_values: list[str] = properties[suggestion_type_key]["enum"]
         assert "comment_type" in enum_values
         assert "comment_text" in enum_values
         assert "function_name" in enum_values

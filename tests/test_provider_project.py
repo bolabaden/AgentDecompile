@@ -401,7 +401,7 @@ class TestProjectProviderValidation:
         p._open_program_from_domain_file = MagicMock(return_value=program)
         p._set_active_program_info = MagicMock()
 
-        resp = await p.call_tool("open", {"path": "/K1_local_pull_test/k1_win_gog_swkotor.exe"})
+        resp = await p.call_tool("open-project", {"path": "/K1_local_pull_test/k1_win_gog_swkotor.exe"})
         result = _parse(resp)
 
         assert result.get("mode") == "project-domain"
@@ -441,7 +441,7 @@ class TestProjectProviderArgNormalization:
             return create_error_response("mocked")
 
         p._handle_open = capture
-        await p.call_tool("open", {"filePath": "/tmp/test.elf"})
+        await p.call_tool("open-project", {"filePath": "/tmp/test.elf"})
         assert "filepath" in received
 
     @pytest.mark.asyncio
@@ -455,7 +455,7 @@ class TestProjectProviderArgNormalization:
             return create_error_response("mocked")
 
         p._handle_open = capture
-        await p.call_tool("open", {"openAllPrograms": True})
+        await p.call_tool("open-project", {"openAllPrograms": True})
         assert "openallprograms" in received
 
 

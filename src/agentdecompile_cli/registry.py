@@ -89,7 +89,6 @@ TOOLS = [
     "analyze-program",
     "analyze-vtables",
     "apply-data-type",
-    "capture-agentdecompile-debug-info",
     "change-processor",
     "checkin-program",
     "create-label",
@@ -101,7 +100,6 @@ TOOLS = [
     "get-call-graph",
     "get-current-address",
     "get-current-function",
-    "get-current-program",
     "get-data",
     "get-functions",
     "get-references",
@@ -111,9 +109,6 @@ TOOLS = [
     "list-exports",
     "list-functions",
     "list-imports",
-    "list-open-programs",
-    "list-project-binaries",
-    "list-project-binary-metadata",
     "list-project-files",
     "list-processors",
     "list-strings",
@@ -130,14 +125,13 @@ TOOLS = [
     "execute-script",
     "open-all-programs-in-code-browser",
     "open-program-in-code-browser",
-    "open",
+    "open-project",
     "read-bytes",
     "search-code",
     "search-constants",
     "search-everything",
     "search-strings",
     "search-symbols",
-    "search-symbols-by-name",
     "suggest",
 ]
 
@@ -213,7 +207,6 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "analyze-program": _params( "programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis" ),
     "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
-    "capture-agentdecompile-debug-info": _params("message"),
     "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
     "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
     "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
@@ -225,8 +218,6 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "get-call-graph": _params( "programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses" ),
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
-    "get-current-program": _params("programPath"),
-    "get-data": _params("programPath", "addressOrSymbol", "view"),
     "get-functions": _params( "programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose" ),
     "get-references": _params( "programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow" ),
     "import-binary": _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
@@ -235,10 +226,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "list-exports": _params("programPath", "filter", "maxResults", "offset", "startIndex"),
     "list-functions": _params( "programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers" ),
     "list-imports": _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
-    "list-open-programs": [],
     "list-processors": _params("filter"),
-    "list-project-binaries": [],
-    "list-project-binary-metadata": _params("programPath"),
     "list-project-files": [],
     "list-strings": _params("programPath", "filter", "maxResults", "offset"),
     "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
@@ -253,13 +241,12 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "match-function": _params( "programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize" ),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
     "open-program-in-code-browser": _params("programPath"),
-    "open": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort" ),
+    "open-project": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort" ),
     "read-bytes": _params("programPath", "address", "length"),
     "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     "search-everything": _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
-    "search-symbols-by-name": _params("programPath", "query", "maxResults", "offset"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     "sync-shared-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
@@ -277,6 +264,7 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
+    "open": "open-project",
     "create-label": "manage-symbols",
     "download-shared-repository": "sync-shared-project",
     "sync-shared-repository": "sync-shared-project",
@@ -290,7 +278,6 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "list-strings": "manage-strings",
     "search-strings": "manage-strings",
     "search-symbols": "manage-symbols",
-    "search-symbols-by-name": "manage-symbols",
     # analyze-data-flow overloads
     "find-variable-accesses": "analyze-data-flow",
     "trace-data-flow-backward": "analyze-data-flow",
@@ -299,7 +286,6 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "analyze-vtable": "analyze-vtables",
     "find-vtable-callers": "analyze-vtables",
     "find-vtables-containing-function": "analyze-vtables",
-    # capture-agentdecompile-debug-info overloads: none
     # decompile-function overloads/synonyms
     "get-decompilation": "decompile-function",
     # get-call-graph overloads
@@ -341,7 +327,6 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # manage-data-types overloads
     "get-data-type-archives": "manage-data-types",
     "get-data-type-by-string": "manage-data-types",
-    "get-data-types": "manage-data-types",
     # manage-function overloads/legacy
     "rename-function": "manage-function",
     "rename-function-by-address": "manage-function",
@@ -386,8 +371,6 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "global-search": "search-everything",
     "search-anything": "search-everything",
     "unified-search": "search-everything",
-    # search-symbols legacy
-    "search-functions-by-name": "search-symbols",
 }
 
 # GUI-only tools disabled for headless MCP/CLI usage.
@@ -623,7 +606,7 @@ def _add_builtin_param_aliases() -> None:
         per_tool.setdefault(alias_norm, set()).add(canonical_norm)
 
     # Open/shared-server argument harmonization.
-    for tool_name in ("open",):
+    for tool_name in ("open-project",):
         _add(tool_name, "ghidraServerHost", "serverHost")
         _add(tool_name, "ghidra_server_host", "serverHost")
         _add(tool_name, "ghidraServerPort", "serverPort")
@@ -649,6 +632,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "analyze-program",
     "analyze-vtables",
     "checkin-program",
+    "decompile-function",
     "execute-script",
     "get-call-graph",
     "get-functions",
@@ -666,7 +650,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "manage-structures",
     "manage-symbols",
     "match-function",
-    "open",
+    "open-project",
     "search-constants",
     "search-everything",
 )
@@ -687,19 +671,53 @@ def _legacy_tools_advertised() -> bool:
     return any(_is_truthy_env(os.getenv(var_name)) for var_name in _LEGACY_TOOLS_ENV_VARS)
 
 
+def _get_disabled_tools() -> set[str]:
+    """Parse AGENTDECOMPILE_DISABLE_TOOLS env var and return normalized tool names to disable."""
+    disable_env = os.getenv("AGENTDECOMPILE_DISABLE_TOOLS", "").strip()
+    if not disable_env:
+        return set()
+    
+    # Parse comma-separated list of tools to disable
+    disabled = set()
+    for tool in disable_env.split(","):
+        tool = tool.strip()
+        if tool:
+            disabled.add(normalize_identifier(tool))
+    return disabled
+
+
 def _build_advertised_tools() -> list[str]:
     canonical_visible = [tool for tool in TOOLS if tool not in DISABLED_GUI_ONLY_TOOLS]
     default_set = {normalize_identifier(tool) for tool in DEFAULT_ADVERTISED_TOOLS}
+    disabled_set = _get_disabled_tools()
 
     if _legacy_tools_advertised():
+        # When legacy tools are enabled, show all tools except explicitly disabled ones
+        if disabled_set:
+            return [tool for tool in canonical_visible if normalize_identifier(tool) not in disabled_set]
         return canonical_visible
 
-    return [tool for tool in canonical_visible if normalize_identifier(tool) in default_set]
+    # Show only default advertised tools, minus any explicitly disabled
+    return [
+        tool for tool in canonical_visible 
+        if normalize_identifier(tool) in default_set and normalize_identifier(tool) not in disabled_set
+    ]
 
 
 ADVERTISED_TOOLS: list[str] = _build_advertised_tools()
 
 _ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ()
+
+
+def is_tool_advertised(tool_name: str) -> bool:
+    """Check if a tool is currently advertised based on env var configuration."""
+    normalized = normalize_identifier(tool_name)
+    return any(normalize_identifier(t) == normalized for t in ADVERTISED_TOOLS)
+
+
+def get_advertised_tools() -> list[str]:
+    """Get the list of currently advertised tools."""
+    return list(ADVERTISED_TOOLS)
 
 
 def _build_advertised_tool_params() -> dict[str, list[str]]:

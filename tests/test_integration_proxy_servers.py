@@ -138,7 +138,7 @@ _COMMANDS: list[tuple[str, list[str], list[str]]] = [
         ["serverConnected"],
     ),
     ("list project-files", ["list", "project-files"], ["count"]),
-    ("get-functions", ["get-functions", "--program_path", PROGRAM_PATH, "--limit", "5"], ["functions"]),
+    ("get-functions", ["get-functions", "--mode", "list", "--program_path", PROGRAM_PATH, "--limit", "5"], ["results"]),
     (
         "search-symbols-by-name",
         ["tool", "search-symbols-by-name",

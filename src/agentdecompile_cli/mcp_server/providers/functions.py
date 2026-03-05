@@ -5,6 +5,7 @@ Lists and retrieves function information with pagination, filtering.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, ClassVar
@@ -46,15 +47,22 @@ class FunctionToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="get-functions",
-                description="Get detailed analysis regarding a specific function, such as decompiling it to C code, disassembling it to assembly language, reading its signature, or viewing who it calls and who calls it.",
+                description="Get detailed analysis regarding one or more functions, such as decompiling to C code, disassembling to assembly, reading signatures, or viewing call relationships. Pass multiple addresses/names via 'functions' array to batch-process them in one call instead of calling this tool repeatedly.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The path to the program containing the function."},
-                        "function": {"type": "string", "description": "The name or address of the function to analyze."},
+                        "function": {"type": "string", "description": "Name or address of a single function to analyze. Use 'functions' array instead when analyzing multiple functions."},
+                        "functions": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "BATCH multiple function names or addresses in ONE call. E.g. [\"0x004ae6e0\", \"0x004ae700\", \"SaveGame\"] analyzes all at once and returns combined results.",
+                        },
                         "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the target function's address."},
                         "functionIdentifier": {"type": "string", "description": "Another alternative to identify the target function."},
-                        "view": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "default": "info", "description": "What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships."},
+                        "mode": {"type": "string", "enum": ["decompile", "disassemble", "info", "calls"], "description": "Operation mode. What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships. If omitted, returns all four views."},
                         "timeout": {"type": "integer", "default": 60, "description": "Maximum seconds to wait on the decompiler if view='decompile'."},
                         "limit": {"type": "integer", "default": 100, "description": "Used only if dropping down to a list view."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
@@ -120,33 +128,132 @@ class FunctionToolProvider(ToolProvider):
         paginated, has_more = self._paginate_results(all_matching, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_matching), mode="list")
 
+    @staticmethod
+    def _response_to_payload(response: list[types.TextContent]) -> dict[str, Any]:
+        if not response:
+            return {}
+        text = getattr(response[0], "text", "")
+        if not text:
+            return {}
+        try:
+            data = json.loads(text)
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        func_id: str = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
-        view: str = self._get_str(args, "view", "mode", default="info")
+
+        # Collect all function identifiers (single or batch)
+        func_ids: list[str] = []
+        raw_functions = self._get_list(args, "functions")
+        if raw_functions:
+            for v in raw_functions:
+                if isinstance(v, str) and v.strip():
+                    func_ids.append(v.strip())
+        if not func_ids:
+            raw_functions_str = self._get_str(args, "functions")
+            if raw_functions_str and raw_functions_str.strip():
+                func_ids = [raw_functions_str.strip()]
+        if not func_ids:
+            single = self._get_str(args, "function", "addressorsymbol", "functionidentifier", "identifier", "name", "addr", "symbol")
+            if single:
+                func_ids = [single.strip()]
+
+        view: str = self._get_str(args, "mode", "view", "action", "operation", default="")
         max_results: int = self._get_int(args, "limit", "maxresults", default=100)
         timeout: int = self._get_int(args, "timeout", "decompiletimeout", default=60)
 
         program = getattr(self.program_info, "program", None)
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
-        fm = self._get_function_manager(program)
 
         # If no function specified, list all
-        if not func_id:
+        if not func_ids:
             return await self._handle_list(args)
 
-        target_func = self._resolve_function(func_id, program=program)
+        # Single function path (existing behavior)
+        if len(func_ids) == 1:
+            func_id = func_ids[0]
+            target_func = self._resolve_function(func_id, program=program)
+            if target_func is None:
+                raise ValueError(f"Function not found: {func_id}")
 
-        if target_func is None:
-            raise ValueError(f"Function not found: {func_id}")
+            if not view:
+                info_resp = await self._handle_info(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                calls_resp = await self._handle_calls(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                decompile_resp = await self._handle_decompile(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                disassemble_resp = await self._handle_disassemble(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
 
-        return await self._dispatch_handler(args, view, {
-            "info": "_handle_info",
-            "calls": "_handle_calls", 
-            "decompile": "_handle_decompile",
-            "disassemble": "_handle_disassemble",
-        }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                return create_success_response(
+                    {
+                        "name": target_func.getName(),
+                        "address": str(target_func.getEntryPoint()),
+                        "signature": str(target_func.getSignature()),
+                        "view": "all",
+                        "views": {
+                            "info": self._response_to_payload(info_resp),
+                            "calls": self._response_to_payload(calls_resp),
+                            "decompile": self._response_to_payload(decompile_resp),
+                            "disassemble": self._response_to_payload(disassemble_resp),
+                        },
+                    },
+                )
+
+            return await self._dispatch_handler(args, view, {
+                "info": "_handle_info",
+                "calls": "_handle_calls",
+                "decompile": "_handle_decompile",
+                "disassemble": "_handle_disassemble",
+            }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+
+        # Batch path: multiple functions requested
+        batch_results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        for func_id in func_ids:
+            try:
+                target_func = self._resolve_function(func_id, program=program)
+                if target_func is None:
+                    errors.append({"identifier": func_id, "error": "Function not found"})
+                    continue
+                if not view:
+                    info_resp = await self._handle_info(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    calls_resp = await self._handle_calls(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    decompile_resp = await self._handle_decompile(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    disassemble_resp = await self._handle_disassemble(args, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    batch_results.append({
+                        "identifier": func_id,
+                        "name": target_func.getName(),
+                        "address": str(target_func.getEntryPoint()),
+                        "signature": str(target_func.getSignature()),
+                        "view": "all",
+                        "views": {
+                            "info": self._response_to_payload(info_resp),
+                            "calls": self._response_to_payload(calls_resp),
+                            "decompile": self._response_to_payload(decompile_resp),
+                            "disassemble": self._response_to_payload(disassemble_resp),
+                        },
+                    })
+                else:
+                    single_resp = await self._dispatch_handler(args, view, {
+                        "info": "_handle_info",
+                        "calls": "_handle_calls",
+                        "decompile": "_handle_decompile",
+                        "disassemble": "_handle_disassemble",
+                    }, target_func=target_func, program=program, max_results=max_results, timeout=timeout)
+                    payload = self._response_to_payload(single_resp)
+                    payload["identifier"] = func_id
+                    batch_results.append(payload)
+            except Exception as e:
+                errors.append({"identifier": func_id, "error": str(e)})
+
+        return create_success_response({
+            "mode": "batch",
+            "view": view or "all",
+            "count": len(batch_results),
+            "results": batch_results,
+            "errors": errors,
+        })
 
     async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
         result: dict[str, Any] = {

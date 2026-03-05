@@ -145,6 +145,26 @@ def _assert_node_invariants(node: pytest.Item) -> None:
 
 
 @pytest.fixture(autouse=True)
+def force_json_tool_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force direct provider/unit test calls to request JSON payloads.
+
+    Runtime default for MCP tools is markdown. Unit tests primarily validate
+    structured payload semantics, so this fixture injects format=json when
+    tests call ToolProvider.call_tool() without an explicit format.
+    """
+    from agentdecompile_cli.mcp_server.tool_providers import ToolProvider
+
+    original_call_tool = ToolProvider.call_tool
+
+    async def _call_tool_with_json_default(self, name: str, arguments: dict[str, Any] | None):
+        args = dict(arguments or {})
+        args.setdefault("format", "json")
+        return await original_call_tool(self, name, args)
+
+    monkeypatch.setattr(ToolProvider, "call_tool", _call_tool_with_json_default)
+
+
+@pytest.fixture(autouse=True)
 def strict_assertions(request: pytest.FixtureRequest) -> None:
     """Apply strict generic invariants for every test to ensure high assertion count."""
     _assert_node_invariants(request.node)

@@ -1,4 +1,4 @@
-"""Project Tool Provider - open, get-current-program, list-project-files.
+"""Project Tool Provider - open, list-project-files.
 
 Handles project and program management operations.
 """
@@ -22,6 +22,8 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ActionableError,
     ToolProvider,
     create_success_response,
+    filter_recommendations,
+    recommend_tool,
     n,
 )
 
@@ -59,16 +61,13 @@ logger = logging.getLogger(__name__)
 
 class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
-        "open": "_handle_open",
-        "getcurrentprogram": "_handle_current",
+        "openproject": "_handle_manage",
         "listprojectfiles": "_handle_list",
         "syncsharedproject": "_handle_sync_shared_project",
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
-        "listprojectbinaries": "_handle_list_project_binaries",
-        "listprojectbinarymetadata": "_handle_list_project_binary_metadata",
+        "connectsharedproject": "_handle_connect_shared_project",
         "deleteprojectbinary": "_handle_delete_project_binary",
-        "listopenprograms": "_handle_list_open_programs",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
         "openprogramincodebrowser": "_handle_gui_unsupported",
@@ -79,35 +78,16 @@ class ProjectToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="open",
-                description="Open a program or project.",
+                name="connect-shared-project",
+                description="Connect to a shared Ghidra repository server and list available binaries.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Program path or repo name."},
-                        "filePath": {"type": "string", "description": "Alias for programPath."},
-                        "path": {"type": "string", "description": "Alias for programPath."},
-                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "File extensions filter."},
-                        "openAllPrograms": {"type": "boolean", "default": True, "description": "Open all matches in folder mode."},
-                        "destinationFolder": {"type": "string", "default": "/", "description": "Destination project folder."},
-                        "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import."},
-                        "enableVersionControl": {"type": "boolean", "default": True, "description": "Enable version control."},
-                        "serverUsername": {"type": "string", "description": "Server username."},
-                        "serverPassword": {"type": "string", "description": "Server password."},
-                        "serverHost": {"type": "string", "description": "Server host."},
-                        "serverPort": {"type": "integer", "description": "Server port."},
-                    },
-                    "required": [],
-                },
-            ),
-            types.Tool(
-                name="get-current-program",
-                description="Get current program info.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "programPath": {"type": "string", "description": "Program path."},
-                        "binary": {"type": "string", "description": "Alias for programPath."},
+                        "serverHost": {"type": "string", "description": "Ghidra server host address."},
+                        "serverPort": {"type": "integer", "description": "Ghidra server port (default: 13100)."},
+                        "serverUsername": {"type": "string", "description": "Repository authentication username."},
+                        "serverPassword": {"type": "string", "description": "Repository authentication password."},
+                        "path": {"type": "string", "description": "Repository name or program path within repository."},
                     },
                     "required": [],
                 },
@@ -119,7 +99,7 @@ class ProjectToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Program path."},
-                        "binary": {"type": "string", "description": "Alias for programPath."},
+                        "binary": {"type": "string", "description": "Program path."},
                         "folder": {"type": "string", "default": "/", "description": "Project folder."},
                         "path": {"type": "string", "description": "Filesystem path (non-project mode)."},
                         "maxResults": {"type": "integer", "default": 100, "description": "Max results."},
@@ -154,14 +134,15 @@ class ProjectToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="manage-files",
-                description="Manage project files.",
+                description="Manage project files and open programs.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "description": "Operation mode.",
+                            "description": "Operation mode (aliases: action, operation).",
                             "enum": [
+                                "open",
                                 "change-processor",
                                 "rename",
                                 "delete",
@@ -179,9 +160,10 @@ class ProjectToolProvider(ToolProvider):
                             ],
                         },
                         "filePath": {"type": "string", "description": "Target file."},
-                        "path": {"type": "string", "description": "Alias for filePath."},
+                        "path": {"type": "string", "description": "Target file or program path."},
                         "sourcePath": {"type": "string", "description": "Source path."},
                         "programPath": {"type": "string", "description": "Program path."},
+                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "File extensions filter (for mode=open)."},
                         "processor": {"type": "string", "description": "Processor."},
                         "languageId": {"type": "string", "description": "Language ID."},
                         "compilerSpecId": {"type": "string", "description": "Compiler spec ID."},
@@ -206,24 +188,6 @@ class ProjectToolProvider(ToolProvider):
                         "maxResults": {"type": "integer", "default": 200, "description": "Max results."},
                         "maxDepth": {"type": "integer", "default": 16, "description": "Max depth."},
                         "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
-                    },
-                    "required": [],
-                },
-            ),
-            types.Tool(
-                name="list-project-binaries",
-                description="List project binaries.",
-                inputSchema={"type": "object", "properties": {}, "required": []},
-            ),
-            types.Tool(
-                name="list-project-binary-metadata",
-                description="Get binary metadata.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "binaryName": {"type": "string", "description": "Binary name."},
-                        "binary_name": {"type": "string", "description": "Alias for binaryName."},
-                        "programPath": {"type": "string", "description": "Alias for binaryName."},
                     },
                     "required": [],
                 },
@@ -261,171 +225,100 @@ class ProjectToolProvider(ToolProvider):
                 description="Open program in Code Browser (GUI-only)",
                 inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
             ),
-            types.Tool(
-                name="open-all-programs-in-code-browser",
-                description="Open all project programs in Code Browser (GUI-only)",
-                inputSchema={"type": "object", "properties": {}, "required": []},
-            ),
         ]
 
-    async def _handle_open(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Connect to shared Ghidra repository server and list available binaries."""
         session_id: str = get_current_mcp_session_id()
-        server_host: str = self._get_str(args, "serverhost", "host")
-        server_port: int = self._get_int(args, "serverport", "port", default=0)
+        server_host: str = self._require_str(args, "serverhost", name="serverHost")
+        server_port: int = self._get_int(args, "serverport", "port", default=13100)
         server_username: str = self._get_str(args, "serverusername", "username")
         server_password: str = self._get_str(args, "serverpassword", "password")
-        path: str = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
+        path: str = self._get_str(args, "path", default="")
 
-        if server_host:
-            if server_port <= 0:
-                server_port = 13100
+        auth_provided = bool(server_username and server_password)
+        server_reachable = False
 
-            auth_provided = bool(server_username and server_password)
-            server_reachable = False
+        try:
+            with socket.create_connection((server_host, server_port), timeout=5):
+                server_reachable = True
+        except OSError as exc:
+            raise ActionableError(
+                f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
+                context={
+                    "action": "connect-shared-project",
+                    "mode": "shared-server",
+                    "serverHost": server_host,
+                    "serverPort": server_port,
+                    "serverReachable": False,
+                    "authProvided": auth_provided,
+                },
+                next_steps=[
+                    "Verify the Ghidra server is running and reachable from this backend runtime.",
+                    "Retry with valid `serverHost`, `serverPort`, and optional authentication.",
+                ],
+            )
 
+        try:
+            from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        except Exception:
+            raise ActionableError(
+                "Connected to shared server endpoint, but local Ghidra runtime is unavailable for repository browsing.",
+                context={
+                    "action": "connect-shared-project",
+                    "mode": "shared-server",
+                    "serverHost": server_host,
+                    "serverPort": server_port,
+                    "serverReachable": server_reachable,
+                    "authProvided": auth_provided,
+                },
+                next_steps=[
+                    "Start the backend with a Ghidra runtime and retry.",
+                    "If running in a container, verify PyGhidra/Ghidra classes are available in that image.",
+                ],
+            )
+
+        original_user_name: str | None = None
+        if server_username:
             try:
-                with socket.create_connection((server_host, server_port), timeout=5):
-                    server_reachable = True
-            except OSError as exc:
-                raise ActionableError(
-                    f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
-                    context={
-                        "action": "open",
-                        "mode": "shared-server",
-                        "serverHost": server_host,
-                        "serverPort": server_port,
-                        "serverReachable": False,
-                        "authProvided": auth_provided,
-                        "repository": path if path and "/" not in path else None,
-                    },
-                    next_steps=[
-                        "Verify the Ghidra server is running and reachable from this backend runtime.",
-                        "Retry `open` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword`, and repository `path`.",
-                    ],
-                )
+                from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
 
-            try:
-                from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                original_user_name = JavaSystem.getProperty("user.name")
+                JavaSystem.setProperty("user.name", server_username)
             except Exception:
-                raise ActionableError(
-                    "Connected to shared server endpoint, but local Ghidra runtime is unavailable for repository browsing.",
-                    context={
-                        "action": "open",
-                        "mode": "shared-server",
-                        "serverHost": server_host,
-                        "serverPort": server_port,
-                        "serverReachable": server_reachable,
-                        "authProvided": auth_provided,
-                        "repository": path if path and "/" not in path else None,
-                    },
-                    next_steps=[
-                        "Start the backend with a Ghidra runtime and retry `open`.",
-                        "If running in a container, verify PyGhidra/Ghidra classes are available in that image.",
-                    ],
-                )
+                original_user_name = None
 
-            # Set Java system user.name AND the cached SystemUtilities.userName
-            # field BEFORE any Ghidra client calls so that ClientUtil.getUserName()
-            # and the JAAS Subject's GhidraPrincipal return the correct identity.
-            # SystemUtilities.getUserName() lazily caches System.getProperty("user.name")
-            # at first call and never re-reads the property, so we must also patch
-            # the private static 'userName' field via reflection.
-            original_user_name: str | None = None
-            if server_username:
-                try:
-                    from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
-
-                    original_user_name = JavaSystem.getProperty("user.name")
-                    JavaSystem.setProperty("user.name", server_username)
-                except Exception:
-                    original_user_name = None
-
-                # Patch the cached field via Java reflection (critical for JAAS Subject).
-                try:
-                    from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                    field = SystemUtilities.class_.getDeclaredField("userName")
-                    field.setAccessible(True)
-                    field.set(None, server_username)
-                except Exception:
-                    pass  # best-effort; older builds may differ
-
-            if server_username and server_password:
-                # PasswordClientAuthenticator provides both username and password
-                # for the JAAS callback without prompting.
-                ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
-
-            # Clear any cached (possibly stale/disconnected) adapter for this
-            # host+port so that the next getRepositoryServer call creates a
-            # fresh connection with the authenticator we just configured.
             try:
-                ClientUtil.clearRepositoryAdapter(server_host, server_port)
+                from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                field: Any = SystemUtilities.class_.getDeclaredField("userName")
+                field.setAccessible(True)
+                field.set(None, server_username)
             except Exception:
-                pass  # best-effort; method may not exist on older Ghidra builds
+                pass
 
-            # Use forceConnect=True to avoid returning a cached disconnected
-            # adapter left over from a previous failed connection (e.g. the
-            # container's default "ghidra" user login).
-            server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, True)
-            if server_adapter is None:
-                raise ActionableError(
-                    f"Failed to connect to repository server: {server_host}:{server_port}",
-                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
-                    next_steps=[
-                        "Verify repository server endpoint and network reachability.",
-                        "Retry `open` with valid server credentials and repository path.",
-                    ],
-                )
+        if server_username and server_password:
+            ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
 
-            if not server_adapter.isConnected():
-                try:
-                    # Java connect() returns void (None via PyGhidra); check isConnected() after.
-                    # Auth is handled by the PasswordClientAuthenticator set above;
-                    # connect() itself takes no credential arguments.
-                    server_adapter.connect()
-                except Exception as exc:
-                    exc_text = str(exc)
-                    if auth_provided:
-                        raise ActionableError(
-                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
-                            context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
-                            next_steps=[
-                                "Verify `serverUsername` and `serverPassword` for the Ghidra repository server.",
-                                "Retry `open` a    fter confirming the user has access to the target repository.",
-                            ],
-                        ) from exc
-                    raise ActionableError(
-                        f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
-                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
-                        next_steps=[
-                            "Verify server availability and repository service status.",
-                            "Retry `open` with explicit `serverHost`, `serverPort`, and repository `path`.",
-                        ],
-                    ) from exc
+        try:
+            ClientUtil.clearRepositoryAdapter(server_host, server_port)
+        except Exception:
+            pass
 
-                if not server_adapter.isConnected():
-                    last_error = getattr(server_adapter, "getLastConnectError", lambda: None)()
-                    message = str(last_error) if last_error else "unknown authentication/connection failure"
-                    if auth_provided:
-                        raise ActionableError(
-                            f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
-                            context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
-                            next_steps=[
-                                "Verify server credentials and account permissions.",
-                                "Retry `open` once credentials are corrected.",
-                            ],
-                        )
-                    raise ActionableError(
-                        f"Repository connection failed for {server_host}:{server_port}: {message}",
-                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
-                        next_steps=[
-                            "Check repository server health/logs and network routing.",
-                            "Retry `open` after server-side issues are resolved.",
-                        ],
-                    )
+        server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, True)
+        if server_adapter is None:
+            raise ActionableError(
+                f"Failed to connect to repository server: {server_host}:{server_port}",
+                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                next_steps=[
+                    "Verify repository server endpoint and network reachability.",
+                    "Retry with valid server credentials.",
+                ],
+            )
 
+        if not server_adapter.isConnected():
             try:
-                repository_names_raw = server_adapter.getRepositoryNames() or []
+                server_adapter.connect()
             except Exception as exc:
                 exc_text = str(exc)
                 if auth_provided:
@@ -433,196 +326,230 @@ class ProjectToolProvider(ToolProvider):
                         f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
                         context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
                         next_steps=[
-                            "Verify credentials and repository visibility permissions.",
-                            "Retry `open` with a known-good repository name/path.",
+                            "Verify `serverUsername` and `serverPassword` for the Ghidra repository server.",
+                            "Retry after confirming the user has access.",
                         ],
                     ) from exc
                 raise ActionableError(
-                    f"Repository server connection failed for {server_host}:{server_port}: {exc}",
+                    f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
                     context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
                     next_steps=[
-                        "Verify shared repository service status on the server.",
-                        "Retry `open` once repository listing is available.",
+                        "Verify server availability and repository service status.",
+                        "Retry after server-side issues are resolved.",
                     ],
                 ) from exc
-            finally:
-                if server_username and original_user_name is not None:
-                    try:
-                        from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
 
-                        JavaSystem.setProperty("user.name", original_user_name)
-                    except Exception:
-                        pass
-                    # Restore the cached SystemUtilities.userName field too.
-                    try:
-                        from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                        field = SystemUtilities.class_.getDeclaredField("userName")
-                        field.setAccessible(True)
-                        field.set(None, original_user_name)
-                    except Exception:
-                        pass
-            repository_names: list[str] = [str(name) for name in repository_names_raw]
-            if not repository_names:
+            if not server_adapter.isConnected():
+                last_error: Any = getattr(server_adapter, "getLastConnectError", lambda: None)()
+                message = str(last_error) if last_error else "unknown authentication/connection failure"
+                if auth_provided:
+                    raise ActionableError(
+                        f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
+                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
+                        next_steps=[
+                            "Verify server credentials and account permissions.",
+                            "Retry once credentials are corrected.",
+                        ],
+                    )
                 raise ActionableError(
-                    f"No repositories found on {server_host}:{server_port}",
+                    f"Repository connection failed for {server_host}:{server_port}: {message}",
                     context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
                     next_steps=[
-                        "Confirm the account has at least one visible repository on the server.",
-                        "Retry `open` with a repository name in `path` once access is granted.",
+                        "Check repository server health/logs and network routing.",
+                        "Retry after connectivity is restored.",
                     ],
                 )
 
-            # Determine repository name and optional program path within it.
-            # If ``path`` is a bare repo name (e.g. "Odyssey") use it directly.
-            # If ``path`` looks like a program path inside a repo (e.g.
-            # "/K1/k1_win_gog_swkotor.exe") we need to figure out which repo
-            # contains it and optionally checkout that program.
-            repository_name: str | None = None
-            checkout_program_path: str | None = None
-
-            if path and path.strip():
-                # Check if ``path`` is an exact repo name first
-                if path in repository_names:
-                    repository_name = path
-                else:
-                    # Not a repo name - treat as a program-path inside a repo.
-                    # Try each known repo to see which contains a matching item.
-                    checkout_program_path = path
-                    # Default to the first (or only) repository
-                    repository_name = repository_names[0]
-            else:
-                repository_name = repository_names[0]
-
-            repository_adapter: Any = server_adapter.getRepository(repository_name)
-            if repository_adapter is None:
+        try:
+            repository_names_raw = server_adapter.getRepositoryNames() or []
+        except Exception as exc:
+            exc_text = str(exc)
+            if auth_provided:
                 raise ActionableError(
-                    f"Failed to get repository handle for '{repository_name}'",
-                    context={"mode": "shared-server", "repository": repository_name},
+                    f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
+                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
                     next_steps=[
-                        "Call `open` with a valid repository name in `path`.",
-                        "Call `open` without `path` to list `availableRepositories`, then retry with one of them.",
+                        "Verify credentials and repository visibility permissions.",
+                        "Retry with a repository name in `path.`",
                     ],
-                )
-
-            if not repository_adapter.isConnected():
+                ) from exc
+            raise ActionableError(
+                f"Repository server connection failed for {server_host}:{server_port}: {exc_text}",
+                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                next_steps=[
+                    "Verify shared repository service status on the server.",
+                    "Retry once repository listing is available.",
+                ],
+            ) from exc
+        finally:
+            if server_username and original_user_name is not None:
                 try:
-                    # Java connect() returns void (None via PyGhidra); check isConnected() after.
-                    repository_adapter.connect()
-                except Exception as exc:
-                    exc_text = str(exc)
-                    if auth_provided:
-                        raise ActionableError(
-                            f"Authentication failed while opening repository '{repository_name}': {exc_text}",
-                            context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
-                            next_steps=[
-                                "Verify credentials and repository-level permissions.",
-                                "Retry `open` after confirming access to this repository.",
-                            ],
-                        ) from exc
+                    from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
+
+                    JavaSystem.setProperty("user.name", original_user_name)
+                except Exception:
+                    pass
+                try:
+                    from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                    field: Any = SystemUtilities.class_.getDeclaredField("userName")
+                    field.setAccessible(True)
+                    field.set(None, original_user_name)
+                except Exception:
+                    pass
+
+        repository_names: list[str] = [str(name) for name in repository_names_raw]
+        if not repository_names:
+            raise ActionableError(
+                f"No repositories found on {server_host}:{server_port}",
+                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                next_steps=[
+                    "Confirm the account has at least one visible repository on the server.",
+                    "Retry with a repository name in `path` once access is granted.",
+                ],
+            )
+
+        repository_name: str | None = None
+        checkout_program_path: str | None = None
+
+        if path and path.strip():
+            if path in repository_names:
+                repository_name = path
+            else:
+                checkout_program_path = path
+                repository_name = repository_names[0]
+        else:
+            repository_name = repository_names[0]
+
+        repository_adapter: Any = server_adapter.getRepository(repository_name)
+        if repository_adapter is None:
+            raise ActionableError(
+                f"Failed to get repository handle for '{repository_name}'",
+                context={"mode": "shared-server", "repository": repository_name},
+                next_steps=[
+                    "Call with a valid repository name in `path`.",
+                    "Call without `path` to list `availableRepositories`, then retry with one of them.",
+                ],
+            )
+
+        if not repository_adapter.isConnected():
+            try:
+                repository_adapter.connect()
+            except Exception as exc:
+                exc_text = str(exc)
+                if auth_provided:
                     raise ActionableError(
-                        f"Failed to connect repository '{repository_name}': {exc_text}",
+                        f"Authentication failed while opening repository '{repository_name}': {exc_text}",
                         context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
                         next_steps=[
-                            "Verify repository service health and access controls.",
-                            "Retry `open` with a known-good repository.",
+                            "Verify credentials and repository-level permissions.",
+                            "Retry after confirming access to this repository.",
                         ],
                     ) from exc
+                raise ActionableError(
+                    f"Failed to connect repository '{repository_name}': {exc_text}",
+                    context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                    next_steps=[
+                        "Verify repository service health and access controls.",
+                        "Retry with a known-good repository.",
+                    ],
+                ) from exc
 
-                if not repository_adapter.isConnected():
-                    if auth_provided:
-                        raise ActionableError(
-                            f"Authentication failed while opening repository '{repository_name}'",
-                            context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
-                            next_steps=[
-                                "Verify credentials and repository membership.",
-                                "Retry `open` after credentials are corrected.",
-                            ],
-                        )
+            if not repository_adapter.isConnected():
+                if auth_provided:
                     raise ActionableError(
-                        f"Failed to connect repository '{repository_name}'",
+                        f"Authentication failed while opening repository '{repository_name}'",
                         context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
                         next_steps=[
-                            "Check repository server status and endpoint routing.",
-                            "Retry `open` after connectivity is restored.",
+                            "Verify credentials and repository membership.",
+                            "Retry after credentials are corrected.",
                         ],
                     )
+                raise ActionableError(
+                    f"Failed to connect repository '{repository_name}'",
+                    context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                    next_steps=[
+                        "Check repository server status and endpoint routing.",
+                        "Retry after connectivity is restored.",
+                    ],
+                )
 
-            binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
+        binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
 
-            SESSION_CONTEXTS.set_project_handle(
-                session_id,
-                {
-                    "mode": "shared-server",
-                    "server_host": server_host,
-                    "server_port": server_port,
-                    "server_adapter": server_adapter,
-                    "repository_name": repository_name,
-                    "repository_adapter": repository_adapter,
-                },
-            )
-            SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
+        SESSION_CONTEXTS.set_project_handle(
+            session_id,
+            {
+                "mode": "shared-server",
+                "server_host": server_host,
+                "server_port": server_port,
+                "server_adapter": server_adapter,
+                "repository_name": repository_name,
+                "repository_adapter": repository_adapter,
+            },
+        )
+        SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
 
-            # If a specific program path was requested, attempt to check it out.
-            checked_out_program: str | None = None
-            checkout_error: str | None = None
-            if checkout_program_path:
-                # Try to find the matching binary in the discovered items.
-                norm_target: str = checkout_program_path.strip().rstrip("/")
-                matched: str | None = None
-                for b in binaries:
-                    bp = (b.get("path") or "").strip()
-                    if bp == norm_target or bp.lstrip("/") == norm_target.lstrip("/"):
-                        matched = bp
-                        break
-                    # Also match by name only (e.g. "k1_win_gog_swkotor.exe")
-                    if (b.get("name") or "") == norm_target.split("/")[-1]:
-                        matched = bp
-                        break
-                if matched:
-                    try:
-                        checked_out_program = await self._checkout_shared_program(repository_adapter, matched, session_id)
-                    except Exception as exc:
-                        checkout_error = str(exc)
-                        logger.warning("Checkout of '%s' failed: %s", matched, exc)
-                else:
-                    logger.warning(
-                        "Program '%s' not found in repository '%s'. Available: %s",
-                        checkout_program_path,
-                        repository_name,
-                        [b.get("path") for b in binaries[:10]],
-                    )
+        checked_out_program: str | None = None
+        checkout_error: str | None = None
+        if checkout_program_path:
+            norm_target: str = checkout_program_path.strip().rstrip("/")
+            matched: str | None = None
+            for b in binaries:
+                bp = (b.get("path") or "").strip()
+                if bp == norm_target or bp.lstrip("/") == norm_target.lstrip("/"):
+                    matched = bp
+                    break
+                if (b.get("name") or "") == norm_target.split("/")[-1]:
+                    matched = bp
+                    break
+            if matched:
+                try:
+                    checked_out_program = await self._checkout_shared_program(repository_adapter, matched, session_id)
+                except Exception as exc:
+                    checkout_error = str(exc)
+                    logger.warning("Checkout of '%s' failed: %s", matched, exc)
+            else:
+                logger.warning(
+                    "Program '%s' not found in repository '%s'. Available: %s",
+                    checkout_program_path,
+                    repository_name,
+                    [b.get("path") for b in binaries[:10]],
+                )
 
-            return create_success_response(
-                {
-                    "action": "open",
-                    "mode": "shared-server",
-                    "serverHost": server_host,
-                    "serverPort": server_port,
-                    "serverReachable": server_reachable,
-                    "serverConnected": bool(server_adapter.isConnected()),
-                    "authProvided": auth_provided,
-                    "serverUsername": server_username if server_username else None,
-                    "repository": repository_name,
-                    "availableRepositories": repository_names,
-                    "programCount": len(binaries),
-                    "programs": binaries,
-                    "checkedOutProgram": checked_out_program,
-                    "checkoutError": checkout_error,
-                    "message": (
-                        f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
-                        + (f" Checked out: {checked_out_program}" if checked_out_program else "")
-                    ),
-                },
-            )
+        return create_success_response(
+            {
+                "action": "connect-shared-project",
+                "mode": "shared-server",
+                "serverHost": server_host,
+                "serverPort": server_port,
+                "serverReachable": server_reachable,
+                "serverConnected": bool(server_adapter.isConnected()),
+                "authProvided": auth_provided,
+                "serverUsername": server_username if server_username else None,
+                "repository": repository_name,
+                "availableRepositories": repository_names,
+                "programCount": len(binaries),
+                "programs": binaries,
+                "checkedOutProgram": checked_out_program,
+                "checkoutError": checkout_error,
+                "message": (
+                    f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
+                    + (f" Checked out: {checked_out_program}" if checked_out_program else "")
+                ),
+            },
+        )
+
+    async def _handle_open(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Open a program or project from local filesystem or current project."""
+        path: str = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
 
         if not path or not path.strip():
             raise ActionableError(
-                "programPath or filePath required (or provide --server-host for shared-server mode)",
+                "programPath or filePath required",
                 context={"action": "open", "mode": "local-or-project"},
                 next_steps=[
-                    "Call `open` with `path` pointing to a local binary, project file (`.gpr`), or directory.",
-                    "For shared server usage, call `open` with `serverHost`, `serverPort`, and optional repository `path`.",
+                    "Call with `path` pointing to a local binary, project file (`.gpr`), or directory.",
+                    "For shared server usage, use `connect-shared-project` tool instead.",
                 ],
             )
 
@@ -656,17 +583,17 @@ class ProjectToolProvider(ToolProvider):
                             context={"action": "open", "path": normalized_project_path, "state": "project-open-failed"},
                             next_steps=[
                                 "Call `list-project-files` to confirm the exact program path.",
-                                "Retry `open` using that project path.",
+                                "Retry with that project path.",
                             ],
                         ) from exc
 
             raise ActionableError(
                 f"Path does not exist: {resolved}",
                 context={"action": "open", "path": str(resolved), "state": "path-not-found"},
-                next_steps=[
-                    "Call `manage-files` with `mode=list` on the parent directory to verify available files.",
-                    "Retry `open` with an absolute path that exists in the backend filesystem.",
-                ],
+                next_steps=filter_recommendations([
+                    "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
+                    "Retry with an absolute path that exists in the backend filesystem.",
+                ]),
             )
 
         if resolved.is_file() and resolved.suffix.lower() not in (".gpr",):
@@ -691,43 +618,9 @@ class ProjectToolProvider(ToolProvider):
                 "isDirectory": resolved.is_dir(),
                 "isProject": resolved.suffix.lower() == ".gpr" or resolved.is_dir(),
                 "filesDiscovered": files_discovered,
-                "note": "Path resolved. Use manage-files operation=import for explicit binary imports.",
+                "note": "Path resolved. Use manage-files mode=import for explicit binary imports.",
             },
         )
-
-    async def _handle_current(self, args: dict[str, Any]) -> list[types.TextContent]:
-        await self._ensure_program_loaded_for_stateless_request(args)
-
-        if self.program_info is None:
-            return create_success_response({"loaded": False, "note": "No program currently loaded"})
-
-        program: Any = getattr(self.program_info, "program", None)
-        if program is None or not hasattr(program, "getName"):
-            return create_success_response({"loaded": False, "note": "No program currently loaded"})
-        info: dict[str, Any] = {"loaded": True}
-
-        try:
-            info["name"] = program.getName()
-            info["path"] = str(program.getDomainFile().getPathname()) if program.getDomainFile() else None
-            info["language"] = str(program.getLanguage().getLanguageID())
-            info["compiler"] = str(program.getCompilerSpec().getCompilerSpecID())
-            info["addressFactory"] = str(program.getAddressFactory().getDefaultAddressSpace().getName())
-
-            # Stats
-            fm = self._get_function_manager(program)
-            info["functionCount"] = fm.getFunctionCount()
-            info["imageBase"] = str(program.getImageBase())
-
-            mem = self._get_memory(program)
-            info["memoryBlocks"] = len(list(mem.getBlocks()))
-
-            st = self._get_symbol_table(program)
-            info["symbolCount"] = st.getNumSymbols()
-
-        except Exception as e:
-            info["error"] = str(e)
-
-        return create_success_response(info)
 
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
         await self._ensure_program_loaded_for_stateless_request(args)
@@ -774,12 +667,12 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
 
         try:
-            project_data = self._get_active_project_data()
+            project_data: Any = self._get_active_project_data()
             if project_data is None:
                 raise ValueError("No project data available")
 
             target_folder: Any = None
-            normalized_folder = self._normalize_repo_path(folder)
+            normalized_folder: str = self._normalize_repo_path(folder)
             if normalized_folder == "/":
                 target_folder = project_data.getRootFolder()
             else:
@@ -820,7 +713,7 @@ class ProjectToolProvider(ToolProvider):
         if program is not None:
             return
 
-        requested_program = self._get_str(args, "programpath", "binary", "binaryname")
+        requested_program: str | None = self._get_str(args, "programpath", "binary", "binaryname")
         if not requested_program:
             return
 
@@ -834,7 +727,7 @@ class ProjectToolProvider(ToolProvider):
             open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_SERVER_PORT", "13100") or "13100"))
             open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
             open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            repository_name = self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            repository_name: str | None = self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             if repository_name:
                 open_args["repositoryname"] = repository_name
 
@@ -853,6 +746,8 @@ class ProjectToolProvider(ToolProvider):
             args,
             operation,
             {
+                "open": "_handle_open",
+                "openproject": "_handle_open",
                 "changeprocessor": "_handle_change_processor",
                 "import": "_handle_import",
                 "export": "_handle_export",
@@ -883,15 +778,26 @@ class ProjectToolProvider(ToolProvider):
                 "read": "_handle_filesystem_operation_blocked",
                 "write": "_handle_filesystem_operation_blocked",
                 "append": "_handle_filesystem_operation_blocked",
+                "copy": "_handle_filesystem_operation_blocked",
                 "rename": "_handle_rename",
                 "delete": "_handle_delete",
-                "copy": "_handle_filesystem_operation_blocked",
                 "move": "_handle_move",
             },
         )
 
     async def _handle_filesystem_operation_blocked(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation = self._get_str(args, "mode", "action", "operation", default="unknown")
+        manage_files_tool = recommend_tool("manage-files")
+        if manage_files_tool:
+            steps = [
+                f"Use `{manage_files_tool}` `mode=list`, `mode=import`, or `mode=export` for filesystem operations.",
+                "Use project paths (for example `/K1/k1_win_gog_swkotor.exe`) with `mode=rename`, `mode=move`, or `mode=delete` for project-domain changes.",
+            ]
+        else:
+            steps = [
+                "Use `list-project-files` for project listing operations.",
+                "Use project paths for project-domain changes.",
+            ]
         raise ActionableError(
             f"Filesystem operation '{operation}' is disabled",
             context={
@@ -899,22 +805,27 @@ class ProjectToolProvider(ToolProvider):
                 "scope": "filesystem",
                 "allowedFilesystemOperations": ["list", "import", "export"],
             },
-            next_steps=[
-                "Use `manage-files` `mode=list`, `mode=import`, or `mode=export` for filesystem operations.",
-                "Use project paths (for example `/K1/k1_win_gog_swkotor.exe`) with `mode=rename`, `mode=move`, or `mode=delete` for project-domain changes.",
-            ],
+            next_steps=filter_recommendations(steps),
         )
 
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
         if not file_path:
+            manage_files_tool = recommend_tool("manage-files")
+            if manage_files_tool:
+                steps = [
+                    f"Call `{manage_files_tool}` with `mode=import` and `path` pointing to an existing file or directory.",
+                    f"Use `{manage_files_tool}` `mode=list` first if you need to discover valid paths.",
+                ]
+            else:
+                steps = [
+                    "Provide `path` pointing to an existing file or directory for import.",
+                    "Use `list-project-files` to discover valid paths if needed.",
+                ]
             raise ActionableError(
                 "path/filePath is required for import",
                 context={"operation": "import", "state": "missing-path"},
-                next_steps=[
-                    "Call `manage-files` with `mode=import` and `path` pointing to an existing file or directory.",
-                    "Use `manage-files` `mode=list` first if you need to discover valid paths.",
-                ],
+                next_steps=filter_recommendations(steps),
             )
         return await self._import_file(file_path, args)
 
@@ -944,7 +855,7 @@ class ProjectToolProvider(ToolProvider):
                         "endian": endian,
                     },
                     next_steps=[
-                        "Call `manage-files` with `mode=change-processor` and `languageId` set to a valid Ghidra language ID.",
+                        "Call `change-processor` with `languageId` set to a valid Ghidra language ID.",
                         "Optionally set `compilerSpecId` to override compiler selection.",
                     ],
                 )
@@ -1119,13 +1030,15 @@ class ProjectToolProvider(ToolProvider):
         max_results: int = self._get_int(args, "maxresults", default=200)
         base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
         if not base_path.exists():
+            manage_files_tool = recommend_tool("manage-files", "list-project-files")
+            steps = [
+                "Run `{}` `mode=list` on the parent directory to discover valid paths.".format(manage_files_tool or "list-project-files"),
+                "Retry with an existing directory path.",
+            ]
             raise ActionableError(
                 f"Path not found: {base_path}",
                 context={"operation": "list", "path": str(base_path), "state": "path-not-found"},
-                next_steps=[
-                    "Run `manage-files` `mode=list` on the parent directory to discover valid paths.",
-                    "Retry with an existing directory path.",
-                ],
+                next_steps=filter_recommendations(steps),
             )
         if not base_path.is_dir():
             raise ActionableError(
@@ -1182,10 +1095,12 @@ class ProjectToolProvider(ToolProvider):
             )
         new_name: str | None = self._get_str(args, "newname")
         if not new_name:
+            manage_files_tool = recommend_tool("manage-files")
+            steps = ["Provide `newName` and retry `{}` with `mode=rename`.".format(manage_files_tool or "rename operation")]
             raise ActionableError(
                 "newName is required for rename",
                 context={"operation": "rename", "state": "missing-parameter", "missingParameter": "newName"},
-                next_steps=["Provide `newName` and retry `manage-files` with `mode=rename`."],
+                next_steps=filter_recommendations(steps),
             )
         if "/" in new_name or "\\" in new_name:
             raise ActionableError(
@@ -2181,24 +2096,6 @@ class ProjectToolProvider(ToolProvider):
     async def _download_shared_repository_to_local(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")
 
-    async def _handle_list_project_binaries(self, args: dict[str, Any]) -> list[types.TextContent]:
-        session_id: str = get_current_mcp_session_id()
-        session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
-        if session_binaries:
-            return create_success_response({"binaries": session_binaries, "count": len(session_binaries)})
-
-        if self.program_info is None:
-            return create_success_response({"binaries": [], "count": 0, "note": "No project loaded"})
-        try:
-            program = getattr(self.program_info, "program", None)
-            if program is None or not hasattr(program, "getDomainFile"):
-                raise ValueError("No project loaded")
-            root = program.getDomainFile().getProjectData().getRootFolder()
-            binaries = [f for f in self._list_domain_files(root, 100000) if f.get("type") == "Program"]
-            return create_success_response({"binaries": binaries, "count": len(binaries)})
-        except Exception as exc:
-            return create_success_response({"binaries": [], "count": 0, "error": str(exc)})
-
     async def _checkout_shared_program(
         self,
         repository_adapter: RepoAdapter,
@@ -2444,29 +2341,6 @@ class ProjectToolProvider(ToolProvider):
         logger.info("shared-sync repository listing complete total_items=%s elapsed_sec=%.2f", len(items), time.time() - start_time)
         return items
 
-    async def _handle_list_project_binary_metadata(self, args: dict[str, Any]) -> list[types.TextContent]:
-        if self.program_info is None:
-            return create_success_response({"success": False, "error": "No program loaded"})
-
-        binary_name: str = self._get_str(args, "binaryname", "binaryname", "programpath", "binary")
-        program: Any = self.program_info.program
-
-        if binary_name and binary_name not in (program.getName(), str(program.getDomainFile().getPathname())):
-            return create_success_response({"success": False, "error": f"Binary metadata currently available for active program only: {binary_name}"})
-
-        metadata = {
-            "binaryName": program.getName(),
-            "projectPath": str(program.getDomainFile().getPathname()) if program.getDomainFile() else None,
-            "languageId": str(program.getLanguage().getLanguageID()),
-            "compilerSpecId": str(program.getCompilerSpec().getCompilerSpecID()),
-            "imageBase": str(program.getImageBase()),
-            "executableFormat": program.getExecutableFormat(),
-            "functionCount": self._get_function_manager(program).getFunctionCount(),
-            "symbolCount": self._get_symbol_table(program).getNumSymbols(),
-            "isAnalyzed": bool(getattr(self.program_info, "ghidra_analysis_complete", False)),
-        }
-        return create_success_response({"success": True, "metadata": metadata})
-
     async def _handle_delete_project_binary(self, args: dict[str, Any]) -> list[types.TextContent]:
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
@@ -2491,22 +2365,6 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"success": False, "error": str(exc)})
 
         return create_success_response({"success": deleted, "binaryName": binary_name, "deleted": deleted})
-
-    async def _handle_list_open_programs(self, args: dict[str, Any]) -> list[types.TextContent]:
-        if self.program_info is None:
-            return create_success_response({"programs": [], "count": 0})
-        program: Any = self.program_info.program
-        return create_success_response(
-            {
-                "programs": [
-                    {
-                        "name": program.getName(),
-                        "path": str(program.getDomainFile().getPathname()) if program.getDomainFile() else None,
-                    },
-                ],
-                "count": 1,
-            },
-        )
 
     async def _handle_get_current_address(self, args: dict[str, Any]) -> list[types.TextContent]:
         return create_success_response(

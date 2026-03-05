@@ -99,7 +99,7 @@ def _commands(server_url: str) -> list[tuple[str, list[str]]]:
             ],
         ),
         ("2) list project-files", base + ["list", "project-files"]),
-        ("3) get-functions", base + ["get-functions", "--program_path", PROGRAM_PATH, "--limit", "5"]),
+        ("3) get-functions", base + ["get-functions", "--mode", "list", "--program_path", PROGRAM_PATH, "--limit", "5"]),
         (
             "4) search-symbols-by-name",
             base

@@ -127,15 +127,15 @@ class TestAnalysisWorkflow:
 
     def test_step2_list_functions(self, opened_program: None, env: dict[str, str]) -> None:
         ok, out, err = _run(
-            _base_cmd() + ["get-functions", "--program_path", PROGRAM_PATH, "--limit", "10"],
+            _base_cmd() + ["get-functions", "--mode", "list", "--program_path", PROGRAM_PATH, "--limit", "10"],
             env,
         )
         assert ok, f"get-functions failed\nstdout: {out}\nstderr: {err}"
         data = _parse_json(out)
         assert data is not None
-        assert "functions" in data, f"Expected 'functions' key: {out[:300]}"
-        assert isinstance(data["functions"], list)
-        assert len(data["functions"]) > 0
+        assert "results" in data, f"Expected 'results' key: {out[:300]}"
+        assert isinstance(data["results"], list)
+        assert len(data["results"]) > 0
 
     def test_step3_list_structures(self, opened_program: None, env: dict[str, str]) -> None:
         args = json.dumps({"action": "list", "programPath": PROGRAM_PATH, "limit": 10})
@@ -168,13 +168,13 @@ class TestAnalysisWorkflow:
 
     def test_step6_get_single_function(self, opened_program: None, env: dict[str, str]) -> None:
         ok, out, err = _run(
-            _base_cmd() + ["get-functions", "--program_path", PROGRAM_PATH, "--limit", "1"],
+            _base_cmd() + ["get-functions", "--mode", "list", "--program_path", PROGRAM_PATH, "--limit", "1"],
             env,
         )
         assert ok, f"get-functions (limit=1) failed\nstdout: {out}\nstderr: {err}"
         data = _parse_json(out)
         assert data is not None
-        funcs = data.get("functions", [])
+        funcs = data.get("results", [])
         assert len(funcs) >= 1
         func = funcs[0]
         assert "name" in func or "address" in func, (

@@ -38,6 +38,7 @@ from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     DISABLED_GUI_ONLY_TOOLS,
     TOOL_PARAM_ALIASES,
+    is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
     to_snake_case,
@@ -64,6 +65,30 @@ DEFAULT_TIMEOUT_SECONDS = 60
 # Imported from registry.py.  Everything else imports from HERE.
 # ---------------------------------------------------------------------------
 n = normalize_identifier  # short alias used throughout providers
+
+
+# ---------------------------------------------------------------------------
+# Tool recommendation helpers
+# ---------------------------------------------------------------------------
+
+
+def recommend_tool(tool_name: str, fallback: str | None = None) -> str:
+    """Return an advertised tool name, optionally falling back to another tool."""
+    if is_tool_advertised(tool_name):
+        return tool_name
+    if fallback and is_tool_advertised(fallback):
+        return fallback
+    return ""
+
+
+def filter_recommendations(steps: list[str]) -> list[str]:
+    """Remove recommendation lines that reference disabled tools in backticks."""
+    filtered: list[str] = []
+    for step in steps:
+        tools = re.findall(r"`([a-zA-Z0-9_-]+)`", step)
+        if all(is_tool_advertised(tool) for tool in tools):
+            filtered.append(step)
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -365,55 +390,76 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
     if "no program loaded" in lowered or "ghidra tools unavailable" in lowered:
         return (
             {"state": "no-active-program"},
-            [
-                "Call `open` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
+            filter_recommendations([
+                "Call `open-project` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
                 "Then call `get-current-program` to verify an active program is loaded.",
-            ],
+            ]),
         )
 
     if "authentication failed" in lowered:
         return (
             {"state": "authentication-failed"},
-            [
-                "Verify `serverUsername`/`serverPassword` and retry `open`.",
+            filter_recommendations([
+                "Verify `serverUsername`/`serverPassword` and retry `open-project`.",
                 "If credentials are correct, verify the Ghidra server is running and reachable on `serverHost:serverPort`.",
-            ],
+            ]),
         )
 
     if "not connected to repository server" in lowered or "shared-server" in lowered:
+        manage_files_tool = recommend_tool("manage-files", "list-project-files")
+        steps = [
+            "Call `open-project` first with shared-server parameters to establish a repository session.",
+        ]
+        if manage_files_tool:
+            steps.append(f"Then call `list-project-files` or `{manage_files_tool}` `mode=list` to verify repository visibility.")
+        else:
+            steps.append("Then call `list-project-files` to verify repository visibility.")
         return (
             {"state": "shared-session-unavailable"},
-            [
-                "Call `open` first with shared-server parameters to establish a repository session.",
-                "Then call `list-project-files` or `manage-files` `mode=list` to verify repository visibility.",
-            ],
+            filter_recommendations(steps),
         )
 
     if "path does not exist" in lowered or "path not found" in lowered or "invalid folder path" in lowered:
+        manage_files_tool = recommend_tool("manage-files")
+        if manage_files_tool:
+            steps = [
+                f"Call `{manage_files_tool}` with `mode=list` on the parent folder to discover the correct path.",
+                "Retry with an absolute path visible to the backend runtime.",
+            ]
+        else:
+            steps = [
+                "Verify the path exists in the backend filesystem.",
+                "Retry with an absolute path visible to the backend runtime.",
+            ]
         return (
             {"state": "path-not-found"},
-            [
-                "Call `manage-files` with `mode=list` on the parent folder to discover the correct path.",
-                "Retry with an absolute path visible to the backend runtime.",
-            ],
+            filter_recommendations(steps),
         )
 
     if "not a readable file" in lowered or "is not a directory" in lowered:
+        manage_files_tool = recommend_tool("manage-files")
+        if manage_files_tool:
+            steps = [
+                f"Call `{manage_files_tool}` `mode=info` on the same path to verify file vs directory.",
+                "Use `mode=read` for files and `mode=list` for directories.",
+            ]
+        else:
+            steps = [
+                "Verify whether the path is a file or directory.",
+                "Retry with the correct path type.",
+            ]
         return (
             {"state": "path-type-mismatch"},
-            [
-                "Call `manage-files` `mode=info` on the same path to verify file vs directory.",
-                "Use `mode=read` for files and `mode=list` for directories.",
-            ],
+            filter_recommendations(steps),
         )
 
     if "provided but could not be resolved/opened" in lowered:
         return (
             {"state": "program-resolution-failed"},
-            [
+            filter_recommendations([
                 "Call `list-project-files` to locate the exact program path in the active project/session.",
-                "Call `open` with that exact path (or with shared server args and repository) before retrying analysis tools.",
-            ],
+                "Call `open-project` with that exact path (or with shared server args and repository) before retrying analysis tools.",
+            ]),
         )
 
     return None, None
@@ -1577,6 +1623,13 @@ class ToolProviderManager:
                             break
 
                 advertised_properties[snake_param] = provider_param_schema or _infer_param_schema(param)
+
+            advertised_properties["format"] = {
+                "type": "string",
+                "enum": ["markdown", "json"],
+                "default": "markdown",
+                "description": "Output format: markdown (default) or json",
+            }
 
             required_norm: set[str] = {n(str(item)) for item in required}
             advertised_required: list[str] = []

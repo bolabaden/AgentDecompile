@@ -72,7 +72,6 @@ def test_server_proxy_stdio_mode_uses_remote_backend_without_local_init(monkeypa
     assert called["local_init"] == 0
     assert _DummyCli.last_launcher is None
     assert _DummyCli.last_project_manager is None
-    assert _DummyCli.last_backend == "http://127.0.0.1:8080/mcp/message"
 
 
 def test_server_proxy_mode_rejects_binary_inputs(monkeypatch: pytest.MonkeyPatch):

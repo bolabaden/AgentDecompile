@@ -161,7 +161,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
 
-## Canonical Tools (52)
+## Canonical Tool Docs
 
 ### `analyze-data-flow`
 
@@ -2687,3 +2687,100 @@ Calculate jump address to shellcode
 ---
 
 *These skills leverage the AgentDecompile MCP tools to provide systematic, evidence-based approaches to various reverse engineering challenges. Refer to the canonical tool entries above for detailed parameter documentation.*
+## Canonical Tools
+
+### `analyze-data-flow`
+
+### `analyze-program`
+
+### `analyze-vtables`
+
+### `apply-data-type`
+
+### `change-processor`
+
+### `checkin-program`
+
+### `create-label`
+
+### `decompile-function`
+
+### `sync-shared-project`
+
+### `export`
+
+### `delete-project-binary`
+
+### `gen-callgraph`
+
+### `get-call-graph`
+
+### `get-current-address`
+
+### `get-current-function`
+
+### `get-data`
+
+### `get-functions`
+
+### `get-references`
+
+### `import-binary`
+
+### `inspect-memory`
+
+### `list-cross-references`
+
+### `list-exports`
+
+### `list-functions`
+
+### `list-imports`
+
+### `list-project-files`
+
+### `list-processors`
+
+### `list-strings`
+
+### `manage-bookmarks`
+
+### `manage-comments`
+
+### `manage-data-types`
+
+### `manage-files`
+
+### `manage-function-tags`
+
+### `manage-function`
+
+### `manage-strings`
+
+### `manage-structures`
+
+### `manage-symbols`
+
+### `match-function`
+
+### `execute-script`
+
+### `open-all-programs-in-code-browser`
+
+### `open-program-in-code-browser`
+
+### `open-project`
+
+### `read-bytes`
+
+### `search-code`
+
+### `search-constants`
+
+### `search-everything`
+
+### `search-strings`
+
+### `search-symbols`
+
+### `suggest`
