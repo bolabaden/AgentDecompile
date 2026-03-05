@@ -22,12 +22,14 @@ import socket
 import sys
 import tempfile
 import time
+
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 try:
     import chromadb
+
     from chromadb.config import Settings
 except Exception:
     chromadb = None  # type: ignore[assignment]
@@ -71,46 +73,42 @@ logger = logging.getLogger(__name__)
 
 def _assert_type(obj: Any, expected_type: type, name: str) -> None:
     """Assert that an object is of the expected type, raising AssertionError with clear message.
-    
+
     Consolidates repeated type-checking pattern used in import_binary, delete_program, and
     analyzer methods. Ensures consistent error messages and reduces code duplication across
     ~10+ call sites that manually check isinstance().
-    
+
     Args:
         obj: The object to validate
         expected_type: The expected type (or tuple of types, e.g., (DomainFile, Folder))
         name: Friendly name for error message (e.g., "Program", "Domain file")
-    
+
     Raises:
         AssertionError: If type check fails, with clear message showing actual type
-        
+
     Examples:
         >>> _assert_type(my_program, Program, "Program")
         >>> _assert_type(domain_file, (DomainFile, DomainFolder), "Domain item")
     """
     if not isinstance(obj, expected_type):
-        type_names = (
-            " or ".join(t.__name__ for t in expected_type)
-            if isinstance(expected_type, tuple)
-            else expected_type.__name__
-        )
+        type_names = " or ".join(t.__name__ for t in expected_type) if isinstance(expected_type, tuple) else expected_type.__name__
         actual_type = type(obj).__name__
         raise AssertionError(f"{name} is not a {type_names} object (got {actual_type})")
 
 
 def _ensure_directory(path: Path | str) -> Path:
     """Create directory if it doesn't exist, returning the Path object.
-    
+
     Consolidates the repeated pattern of mkdir(parents=True, exist_ok=True) that appears
     ~5+ times throughout the launcher initialization code. Returns Path for easy chaining
     with other Path operations, improving readability and reducing boilerplate.
-    
+
     Args:
         path: Directory path to create (can be str or Path)
-    
+
     Returns:
         Path object for the created directory (useful for chaining)
-        
+
     Examples:
         >>> gzfs_path = _ensure_directory(agentdecompile_dir / "gzfs")
         >>> chromadb_path = _ensure_directory("/tmp/chromadb")
@@ -126,19 +124,19 @@ def _iter_domain_items(
     recursive: bool = True,
 ) -> Any:
     """Recursively iterate over domain folder items, optionally filtered by content type.
-    
+
     Consolidates two nearly-identical methods (_iter_domain_file_paths and _iter_domain_files)
     into a single parameterized helper, reducing code duplication and improving maintainability.
     Supports filtering by content type (e.g., "Program" for binaries only).
-    
+
     Args:
         folder: The domain folder to iterate over
         content_type: Optional content type filter (e.g., "Program" for binaries)
         recursive: Whether to recurse into subfolders (default: True)
-    
+
     Yields:
         DomainFile objects matching the criteria (recursively if recursive=True)
-        
+
     Examples:
         >>> for file in _iter_domain_items(root_folder, content_type="Program"):
         >>>     print(file.getPathname())
@@ -148,7 +146,7 @@ def _iter_domain_items(
     if recursive:
         for subfolder in folder.getFolders():
             yield from _iter_domain_items(subfolder, content_type, recursive=True)
-    
+
     for file_obj in folder.getFiles():
         if content_type is None or file_obj.getContentType() == content_type:
             yield file_obj
@@ -248,9 +246,7 @@ class PyGhidraContext:
 
     def _init_agentdecompile_directory(self, agentdecompile_dir: Path | None) -> None:
         """Initialize the agentdecompile working directory."""
-        self.agentdecompile_dir = (
-            self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
-        )
+        self.agentdecompile_dir = self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
 
     def _init_chromadb_client(self) -> None:
         """Initialize the ChromaDB client for semantic search."""
@@ -288,9 +284,7 @@ class PyGhidraContext:
         """Initialize symbol and GZF storage configuration."""
         self.symbols_path: Path = Path(symbols_path) if symbols_path else self.agentdecompile_dir / "symbols"
         self.sym_file_path: Path | None = None if sym_file_path is None else Path(sym_file_path)
-        self.gzfs_path: Path = _ensure_directory(
-            self.agentdecompile_dir / "gzfs" if gzfs_path is None else Path(gzfs_path)
-        )
+        self.gzfs_path: Path = _ensure_directory(self.agentdecompile_dir / "gzfs" if gzfs_path is None else Path(gzfs_path))
 
     def _init_threading_and_executors(
         self,
@@ -307,12 +301,8 @@ class PyGhidraContext:
             logger.warning("--no-threaded flag forcing max_workers to 1")
             self.max_workers = 1
 
-        self.executor: concurrent.futures.ThreadPoolExecutor | None = (
-            concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.threaded else None
-        )
-        self.import_executor: concurrent.futures.ThreadPoolExecutor | None = (
-            concurrent.futures.ThreadPoolExecutor(max_workers=1) if self.threaded else None
-        )
+        self.executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.threaded else None
+        self.import_executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(max_workers=1) if self.threaded else None
         self.wait_for_analysis: bool = bool(wait_for_analysis)
 
     def close(self, save: bool = True):
@@ -336,8 +326,8 @@ class PyGhidraContext:
         Returns:
             The Ghidra project object.
         """
-        from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        from ghidra.framework.model import ProjectLocator  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
         # For standard Ghidra projects, use directory containing .gpr file
         project_dir = _ensure_directory(self.project_path)
@@ -362,11 +352,11 @@ class PyGhidraContext:
         except Exception as e:
             logger.warning(f"Failed to list binaries in project: {type(e).__name__}: {e}. Starting with empty program list.")
             return
-        
+
         if not binaries:
             logger.info("No programs found in project. Server will start with empty program list.")
             return
-        
+
         logger.info(f"Found {len(binaries)} program(s) in project. Opening...")
         success_count = 0
         for binary_path_str in binaries:
@@ -391,11 +381,10 @@ class PyGhidraContext:
             except Exception as e:
                 # Log warning but continue - individual program failures shouldn't crash server
                 logger.warning(
-                    f"Failed to open program '{binary_path_str}' during initialization: {e.__class__.__name__}: {e}. "
-                    f"This program will be skipped but the server will continue."
+                    f"Failed to open program '{binary_path_str}' during initialization: {e.__class__.__name__}: {e}. This program will be skipped but the server will continue.",
                 )
                 continue
-        
+
         logger.info(f"Successfully opened {success_count}/{len(binaries)} program(s). Server is ready.")
 
     def list_binaries(self) -> list[str]:
@@ -425,16 +414,16 @@ class PyGhidraContext:
         if program_info is None:
             available_progs: list[str] = list(self.programs.keys())
             raise ValueError(f"Binary {program_name} not found. Available binaries: {available_progs}")
-        
+
         logger.info(f"Deleting program: {program_name}")
         try:
             _assert_type(program_info, ProgramInfo, "Program info")
             program_to_delete: GhidraProgram = program_info.program
             _assert_type(program_to_delete, GhidraProgram, "Program")
-            
+
             program_to_delete_df: DomainFile = program_to_delete.getDomainFile()
             _assert_type(program_to_delete_df, DomainFile, "Domain file")
-            
+
             self.project.close(program_to_delete)
             program_to_delete_df.delete()
             del self.programs[program_name]
@@ -500,8 +489,8 @@ class PyGhidraContext:
             raise ImportError(f"Failed to import binary: {binary_path}")
 
         # Get the final program_info from programs dictionary since we just added it
-        final_domain_file = program.getDomainFile()
-        final_program_info = self.programs.get(final_domain_file.pathname)
+        final_domain_file: DomainFile = program.getDomainFile()
+        final_program_info: ProgramInfo | None = self.programs.get(final_domain_file.pathname)
 
         if analyze and final_program_info is not None:
             self.analyze_program(program)
@@ -736,20 +725,20 @@ class PyGhidraContext:
         extractor: Any = None,
     ) -> None:
         """Initialize Chroma collection for a program with configurable extraction.
-        
+
         Args:
             program_info: The program info to process
             collection_suffix: Suffix for collection name (empty string for code, "_strings" for strings)
             extractor: Callable that extracts documents/ids/metadatas from program
-        
+
         Extractor should return tuple of (documents, ids, metadatas)
         """
         if self.chroma_client is None:
             return
-        
+
         collection_name: str = f"{program_info.name}{collection_suffix}"
         logger.info(f"Initializing Chroma collection for {program_info.name} ({collection_suffix or 'code'})")
-        
+
         try:
             collection = self.chroma_client.get_collection(name=collection_name)
             logger.info(f"Collection '{collection_name}' exists; skipping ingest.")
@@ -760,18 +749,18 @@ class PyGhidraContext:
             return
         except Exception:
             pass  # Collection doesn't exist, will create below
-        
+
         logger.info(f"Creating new collection '{collection_name}'")
         if extractor is None:
             logger.warning(f"No extractor provided for {collection_name}; skipping")
             return
-        
+
         documents, ids, metadatas = extractor(program_info)
-        
+
         if not documents:
             logger.warning(f"No documents extracted for {collection_name}; skipping")
             return
-        
+
         collection = self.chroma_client.create_collection(name=collection_name)
         try:
             _assert_type(collection, type(collection), "Collection")
@@ -783,7 +772,7 @@ class PyGhidraContext:
         except Exception as e:
             logger.error(f"Failed to add items to collection {collection_name}: {e.__class__.__name__}: {e}")
             return
-        
+
         logger.info(f"Collection '{collection_name}' initialized successfully")
         if collection_suffix == "":
             program_info.code_collection = collection
@@ -792,12 +781,12 @@ class PyGhidraContext:
 
     def _extract_decompiled_code(self, program_info: ProgramInfo) -> tuple[list[str], list[str], list[dict]]:
         """Extract decompiled code from program.
-        
+
         Returns:
             Tuple of (documents, ids, metadatas)
         """
         from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        
+
         tools = GhidraTools(program_info)
         functions = tools.get_all_functions()
         decompiles: list[str] = []
@@ -820,22 +809,22 @@ class PyGhidraContext:
                 )
             except Exception as e:
                 logger.error(f"Failed to decompile {func.getSymbol().getName(True)}: {e}")
-        
+
         return decompiles, ids, metadatas
 
     def _extract_strings(self, program_info: ProgramInfo) -> tuple[list[str], list[str], list[dict]]:
         """Extract strings from program.
-        
+
         Returns:
             Tuple of (documents, ids, metadatas)
         """
         tools = GhidraTools(program_info)
         strings = tools.get_all_strings()  # TYPE_CHECKING: list of String objects
-        
+
         documents: list[str] = [s.value for s in strings]
         ids: list[str] = [str(s.address) for s in strings]
         metadatas: list[dict[str, Any]] = [{"address": str(s.address)} for s in strings]
-        
+
         return documents, ids, metadatas
 
     def _init_chroma_code_collection_for_program(self, program_info: ProgramInfo):
@@ -1266,7 +1255,7 @@ class PyGhidraContext:
         return dict(meta)
 
     def setup_decompiler(self, program: GhidraProgram) -> DecompInterface:
-        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options = DecompileOptions()
 
@@ -1897,11 +1886,7 @@ def _resolve_proxy_backend_url(
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())
@@ -1957,20 +1942,14 @@ def main() -> None:
         dest="backend_url",
         type=str,
         default=None,
-        help=(
-            "Run in proxy mode and forward all MCP requests to an existing MCP server "
-            "(http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"
-        ),
+        help=("Run in proxy mode and forward all MCP requests to an existing MCP server (http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"),
     )
     g_server.add_argument(
         "--mcp-server-url",
         dest="mcp_server_url",
         type=str,
         default=None,
-        help=(
-            "Fallback backend URL if --backend-url is not provided "
-            "(equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"
-        ),
+        help=("Fallback backend URL if --backend-url is not provided (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"),
     )
     g_server.add_argument(
         "--ghidra-server-host",
@@ -2065,7 +2044,7 @@ def main() -> None:
     # Apply env defaults for host/port (1:1 Java headless)
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
-    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
+    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, "mcp_server_url", None))
 
     if backend_url:
         from agentdecompile_cli.bridge import _apply_mcp_session_fix

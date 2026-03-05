@@ -6,16 +6,17 @@ Actions: set, get, remove, search, search_decomp.
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_comments
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
-from agentdecompile_cli.mcp_server.providers._collectors import collect_comments
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,19 @@ class CommentToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The path to the program containing the comments."},
-                        "mode": {"type": "string", "description": "What to do: 'get' (read comments at an address), 'set' (write a new comment), 'remove' (delete a comment), 'search' (find text inside all comments globally), or 'search_decomp' (same as search, but limits to functions, triggering decompilation if needed).", "enum": ["set", "get", "remove", "search", "search_decomp"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "What to do: 'get' (read comments at an address), 'set' (write a new comment), 'remove' (delete a comment), 'search' (find text inside all comments globally), or 'search_decomp' (same as search, but limits to functions, triggering decompilation if needed).",
+                            "enum": ["set", "get", "remove", "search", "search_decomp"],
+                        },
                         "addressOrSymbol": {"type": "string", "description": "The exact memory address or symbol where the comment belongs."},
                         "comment": {"type": "string", "description": "The plain text content of the annotation to save."},
-                        "type": {"type": "string", "enum": ["eol", "pre", "post", "plate", "repeatable"], "default": "eol", "description": "Where the comment physically appears: 'eol' (at the end of a line, normal right-side), 'pre' (block above the line), 'post' (block below the line), 'plate' (large boxed header comment), or 'repeatable' (appears everywhere the data is referenced)."},
+                        "type": {
+                            "type": "string",
+                            "enum": ["eol", "pre", "post", "plate", "repeatable"],
+                            "default": "eol",
+                            "description": "Where the comment physically appears: 'eol' (at the end of a line, normal right-side), 'pre' (block above the line), 'post' (block below the line), 'plate' (large boxed header comment), or 'repeatable' (appears everywhere the data is referenced).",
+                        },
                         "comments": {"type": "array", "description": "Batch creation parameter for multiple comments at once.", "items": {"type": "object"}},
                         "query": {"type": "string", "description": "If searching, the word, phrase, or regular expression you are looking for."},
                         "limit": {"type": "integer", "default": 100, "description": "Maximum number of search results to return."},
@@ -167,7 +177,7 @@ class CommentToolProvider(ToolProvider):
         limit/maxresults : int, default=100
             Maximum results to return
 
-        Returns
+        Returns:
         -------
         Paginated response with matching comments
         """

@@ -11,11 +11,11 @@ from typing import Any, cast
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import collect_data_type_archives
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.mcp_server.providers._collectors import collect_data_type_archives
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,12 @@ class DataTypeToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The path to the program containing the data types."},
-                        "mode": {"type": "string", "description": "Action to perform: 'archives' (list available standard libraries), 'list' (find all loaded types), 'by_string' (try converting a string into a Ghidra type), or 'apply' (cast an address to this type).", "enum": ["archives", "list", "by_string", "apply"], "default": "list"},
+                        "mode": {
+                            "type": "string",
+                            "description": "Action to perform: 'archives' (list available standard libraries), 'list' (find all loaded types), 'by_string' (try converting a string into a Ghidra type), or 'apply' (cast an address to this type).",
+                            "enum": ["archives", "list", "by_string", "apply"],
+                            "default": "list",
+                        },
                         "categoryPath": {"type": "string", "description": "Used when mode is 'list' to restrict search to a Ghidra folder category (e.g. '/MyTypes')."},
                         "dataTypeString": {"type": "string", "description": "The C-style text definition of the type you want to apply or parse (e.g., 'unsigned int', 'char *')."},
                         "addressOrSymbol": {"type": "string", "description": "If mode is 'apply', the address or symbol name where you want to stick this data type label."},
@@ -138,7 +143,7 @@ class DataTypeToolProvider(ToolProvider):
         try:
             from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-            parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+            parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
             dt = parser.parse(dt_str)
             return create_success_response(
                 {
@@ -167,9 +172,9 @@ class DataTypeToolProvider(ToolProvider):
         addr_list = self._get_list(args, "addressorsymbol", "addresses")
         if addr_list and len(addr_list) > 1:
             # Batch mode
-            from ghidra.util.data import DataTypeParser # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-            parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+            parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
             dt = parser.parse(dt_str)
             results = []
 
@@ -190,7 +195,7 @@ class DataTypeToolProvider(ToolProvider):
         # Single
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-        parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
         dt = parser.parse(dt_str)
         addr = self._resolve_address(addr_str, program=program)
 

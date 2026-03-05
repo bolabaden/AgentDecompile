@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+
 from itertools import islice
 from pathlib import Path
 from typing import Any
@@ -353,7 +354,7 @@ class ImportExportToolProvider(ToolProvider):
 
                     # Generate comprehensive SARIF report with actual analysis data
                     results: list[dict[str, Any]] = []
-                    
+
                     # Collect undefined references
                     try:
                         ref_mgr: Any = program.getReferenceManager()
@@ -379,7 +380,7 @@ class ImportExportToolProvider(ToolProvider):
                                 )
                     except Exception as e:
                         logger.debug(f"Error collecting external references: {e}")
-                    
+
                     # Collect bookmarks
                     try:
                         bookmark_mgr: Any = program.getBookmarkManager()
@@ -407,7 +408,7 @@ class ImportExportToolProvider(ToolProvider):
                                     )
                     except Exception as e:
                         logger.debug(f"Error collecting bookmarks: {e}")
-                    
+
                     # Collect analysis warnings (thunk/external functions)
                     try:
                         func_mgr: Any = self._get_function_manager(program)
@@ -450,7 +451,7 @@ class ImportExportToolProvider(ToolProvider):
                                 )
                     except Exception as e:
                         logger.debug(f"Error collecting function analysis: {e}")
-                    
+
                     now = datetime.utcnow().isoformat() + "Z"
                     sarif_doc = {
                         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -683,7 +684,7 @@ class ImportExportToolProvider(ToolProvider):
 
             if not domain_file.isCheckedOut():
                 raise RuntimeError(
-                    "File is not checked out. Call checkout-program first before making changes."
+                    "File is not checked out. Call checkout-program first before making changes.",
                 )
 
             _keep = keep_checked_out
@@ -759,7 +760,7 @@ class ImportExportToolProvider(ToolProvider):
 
             if not domain_file.canCheckout():
                 raise RuntimeError(
-                    "Cannot check out this file (read-only repository access or versioning restriction)."
+                    "Cannot check out this file (read-only repository access or versioning restriction).",
                 )
 
             success = domain_file.checkout(exclusive, TaskMonitor.DUMMY)

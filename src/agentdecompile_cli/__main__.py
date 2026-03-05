@@ -364,10 +364,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help=(
-            "Output format for CLI messages (default: text). Use -f/--format json "
-            "only when you strictly need machine-readable output; text is recommended."
-        ),
+        help=("Output format for CLI messages (default: text). Use -f/--format json only when you strictly need machine-readable output; text is recommended."),
     )
     parser.add_argument(
         "--verbose",
@@ -423,9 +420,7 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
             sys.stdout = original_stdout
             sys.stderr = original_stderr
             sys.stderr.write(
-                "PyGhidra is not installed for local spawn mode.\n"
-                'Install with the local extra (e.g. `pip install "agentdecompile[local]"`) '
-                "or connect to an existing server using --server-url.\n",
+                'PyGhidra is not installed for local spawn mode.\nInstall with the local extra (e.g. `pip install "agentdecompile[local]"`) or connect to an existing server using --server-url.\n',
             )
             sys.exit(1)
 
@@ -438,6 +433,7 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
 
         # Force garbage collection to clean up any lingering references
         import gc
+
         gc.collect()
 
         project_manager = ProjectManager()
@@ -453,6 +449,7 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
         sys.stderr = original_stderr
         sys.stderr.write(f"Initialization error: {e.__class__.__name__}: {e}\n")
         import traceback
+
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 

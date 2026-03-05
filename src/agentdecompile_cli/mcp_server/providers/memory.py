@@ -14,7 +14,6 @@ from mcp import types
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
-    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,12 @@ class MemoryToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The path to the program containing the memory."},
-                        "mode": {"type": "string", "enum": ["blocks", "read", "data_at", "data_items", "segments"], "default": "blocks", "description": "What to inspect: 'blocks' retrieves the high-level maps of sections (like headers vs text), 'read' dumps a block of raw binary data from an address, 'data_at' interprets what data is precisely at an address, and 'data_items' lists memory locations that have known types applied to them."},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["blocks", "read", "data_at", "data_items", "segments"],
+                            "default": "blocks",
+                            "description": "What to inspect: 'blocks' retrieves the high-level maps of sections (like headers vs text), 'read' dumps a block of raw binary data from an address, 'data_at' interprets what data is precisely at an address, and 'data_items' lists memory locations that have known types applied to them.",
+                        },
                         "addressOrSymbol": {"type": "string", "description": "If mode is 'read' or 'data_at', you must supply the start address."},
                         "length": {"type": "integer", "default": 256, "description": "If mode is 'read', how many bytes to pull back."},
                         "maxResults": {"type": "integer", "default": 100, "description": "Max results to return when listing items."},
@@ -88,14 +92,20 @@ class MemoryToolProvider(ToolProvider):
         program = self.program_info.program
         memory = self._get_memory(program)
 
-        return await self._dispatch_handler(args, mode, {
-            "blocks": "_handle_blocks",
-            "segments": "_handle_blocks",  # alias
-            "read": "_handle_read",
-            "data_at": "_handle_data_at",
-            "data": "_handle_data_at",  # alias
-            "data_items": "_handle_data_items",
-        }, program=program, memory=memory)
+        return await self._dispatch_handler(
+            args,
+            mode,
+            {
+                "blocks": "_handle_blocks",
+                "segments": "_handle_blocks",  # alias
+                "read": "_handle_read",
+                "data_at": "_handle_data_at",
+                "data": "_handle_data_at",  # alias
+                "data_items": "_handle_data_items",
+            },
+            program=program,
+            memory=memory,
+        )
 
     async def _handle_blocks(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
         blocks = []

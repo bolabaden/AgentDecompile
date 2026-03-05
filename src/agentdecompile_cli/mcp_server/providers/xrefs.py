@@ -82,17 +82,28 @@ class CrossReferencesToolProvider(ToolProvider):
         ref_mgr = program.getReferenceManager()
         fm = self._get_function_manager(program)
 
-        return await self._dispatch_handler(args, mode, {
-            "to": "_handle_to",
-            "from": "_handle_from",
-            "both": "_handle_both",
-            "function": "_handle_function",
-            "referencers_decomp": "_handle_referencers_decomp",
-            "referencersdecomp": "_handle_referencers_decomp",  # alias
-            "referencerdecomp": "_handle_referencers_decomp",  # alias
-            "import": "_handle_import",
-            "thunk": "_handle_thunk",
-        }, program=program, addr=addr, addr_str=addr_str, ref_mgr=ref_mgr, fm=fm, offset=offset, max_results=max_results)
+        return await self._dispatch_handler(
+            args,
+            mode,
+            {
+                "to": "_handle_to",
+                "from": "_handle_from",
+                "both": "_handle_both",
+                "function": "_handle_function",
+                "referencers_decomp": "_handle_referencers_decomp",
+                "referencersdecomp": "_handle_referencers_decomp",  # alias
+                "referencerdecomp": "_handle_referencers_decomp",  # alias
+                "import": "_handle_import",
+                "thunk": "_handle_thunk",
+            },
+            program=program,
+            addr=addr,
+            addr_str=addr_str,
+            ref_mgr=ref_mgr,
+            fm=fm,
+            offset=offset,
+            max_results=max_results,
+        )
 
     async def _handle_to(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
         # Try GhidraTools first

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from itertools import islice
 
 from datetime import datetime, timezone
+from itertools import islice
+
 from mcp import types
 from pydantic import AnyUrl
 
@@ -37,11 +38,11 @@ class StaticAnalysisResultsResource(ResourceProvider):
         logger.info(f"StaticAnalysisResultsResource: reading resource for URI {uri}")
         logger.info(f"  program_info: {self.program_info}")
         logger.info(f"  program_info.program: {self.program_info.program if self.program_info else 'N/A'}")
-        
+
         # Check if program is loaded using correct attribute name
-        has_program = self.program_info is not None and getattr(self.program_info, 'program', None) is not None
+        has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
         logger.info(f"  has_program: {has_program}")
-        
+
         if not has_program:
             # Return empty SARIF report when no program is loaded
             logger.info("No program loaded for static analysis results, returning empty SARIF")
@@ -153,9 +154,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
                     "properties": {
                         "analysisComplete": program.getAnalysisState().isDone(),
                         "generatedAt": now,
-                        "programPath": str(self.program_info.file_path)
-                        if self.program_info.file_path
-                        else "unknown",
+                        "programPath": str(self.program_info.file_path) if self.program_info.file_path else "unknown",
                     },
                 },
             ],

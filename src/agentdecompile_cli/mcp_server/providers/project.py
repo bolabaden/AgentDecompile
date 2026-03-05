@@ -9,6 +9,7 @@ import logging
 import os
 import socket
 import time
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -23,8 +24,8 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     filter_recommendations,
-    recommend_tool,
     n,
+    recommend_tool,
 )
 
 if TYPE_CHECKING:
@@ -660,10 +661,7 @@ class ProjectToolProvider(ToolProvider):
                 "programs": binaries,
                 "checkedOutProgram": checked_out_program,
                 "checkoutError": checkout_error,
-                "message": (
-                    f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
-                    + (f" Checked out: {checked_out_program}" if checked_out_program else "")
-                ),
+                "message": (f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items." + (f" Checked out: {checked_out_program}" if checked_out_program else "")),
             },
         )
 
@@ -718,10 +716,12 @@ class ProjectToolProvider(ToolProvider):
             raise ActionableError(
                 f"Path does not exist: {resolved}",
                 context={"action": "open", "path": str(resolved), "state": "path-not-found"},
-                next_steps=filter_recommendations([
-                    "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
-                    "Retry with an absolute path that exists in the backend filesystem.",
-                ]),
+                next_steps=filter_recommendations(
+                    [
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
+                        "Retry with an absolute path that exists in the backend filesystem.",
+                    ]
+                ),
             )
 
         if resolved.is_file() and resolved.suffix.lower() == ".gpr":
@@ -830,7 +830,6 @@ class ProjectToolProvider(ToolProvider):
                                 from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                                 flat_api = FlatProgramAPI(program)
-                                from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
                                 from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                                 GhidraProgramUtilities.setAnalyzedFlag(program, True)
@@ -851,10 +850,7 @@ class ProjectToolProvider(ToolProvider):
                 "programCount": len(programs_list),
                 "programs": programs_list,
                 "openedProgram": opened_program,
-                "message": (
-                    f"Opened .gpr project '{project_name}' with {len(programs_list)} programs."
-                    + (f" Active program: {opened_program}" if opened_program else "")
-                ),
+                "message": (f"Opened .gpr project '{project_name}' with {len(programs_list)} programs." + (f" Active program: {opened_program}" if opened_program else "")),
             },
         )
 
@@ -964,9 +960,7 @@ class ProjectToolProvider(ToolProvider):
             open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
             open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
             repository_name: str | None = (
-                self._get_str(args, "repositoryname", "ghidraserverrepository")
-                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
-                or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
+                self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip() or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
             )
             if repository_name:
                 open_args["repositoryname"] = repository_name
@@ -1523,6 +1517,7 @@ class ProjectToolProvider(ToolProvider):
         # Layer 2: auth context
         try:
             from agentdecompile_cli.mcp_server.auth import get_current_auth_context  # noqa: PLC0415
+
             _auth_ctx = get_current_auth_context()
             if _auth_ctx is not None:
                 if not resolved.get("serverhost") and _auth_ctx.server_host:
@@ -1540,29 +1535,17 @@ class ProjectToolProvider(ToolProvider):
 
         # Layer 3: environment variables
         if not resolved.get("serverhost"):
-            resolved["serverhost"] = (
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "")
-            )
+            resolved["serverhost"] = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "") or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "")
         if not resolved.get("serverport"):
             _port_str = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "") or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "")
             if _port_str:
                 resolved["serverport"] = _port_str
         if not resolved.get("serverusername"):
-            resolved["serverusername"] = (
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "")
-            )
+            resolved["serverusername"] = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "") or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "")
         if not resolved.get("serverpassword"):
-            resolved["serverpassword"] = (
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "")
-            )
+            resolved["serverpassword"] = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "") or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "")
         if not resolved.get("path"):
-            _repo = (
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "")
-                or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "")
-            )
+            _repo = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "") or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "")
             if _repo:
                 resolved["path"] = _repo
 
@@ -1579,9 +1562,7 @@ class ProjectToolProvider(ToolProvider):
         session_id: str = get_current_mcp_session_id()
         SESSION_CONTEXTS.set_project_handle(session_id, None)
 
-        local_path: str = (
-            self._get_str(args, "localpath", "filepath", "path")
-        )
+        local_path: str = self._get_str(args, "localpath", "filepath", "path")
         if not local_path:
             return create_success_response(
                 {
@@ -1592,7 +1573,7 @@ class ProjectToolProvider(ToolProvider):
                     "nextSteps": [
                         "Retry with 'path=/path/to/binary' or 'path=/path/to/project.gpr'.",
                     ],
-                }
+                },
             )
         open_args = dict(args)
         open_args["path"] = local_path
@@ -1609,15 +1590,12 @@ class ProjectToolProvider(ToolProvider):
                     "action": "switch-project",
                     "mode": "download",
                     "success": False,
-                    "error": (
-                        "Cannot determine shared Ghidra server host. "
-                        "Pass 'serverHost' explicitly or set AGENT_DECOMPILE_GHIDRA_SERVER_HOST."
-                    ),
+                    "error": ("Cannot determine shared Ghidra server host. Pass 'serverHost' explicitly or set AGENT_DECOMPILE_GHIDRA_SERVER_HOST."),
                     "nextSteps": [
                         "Call switch-project with serverHost='<ghidra-server-host>' and serverUsername/serverPassword.",
                         "Or set AGENT_DECOMPILE_GHIDRA_SERVER_HOST / _USERNAME / _PASSWORD environment variables.",
                     ],
-                }
+                },
             )
 
         # Step 1: connect to shared server (populates session handle + repo adapter)
@@ -1637,7 +1615,7 @@ class ProjectToolProvider(ToolProvider):
                         "Verify serverHost, serverPort, serverUsername, serverPassword.",
                         "Ensure the Ghidra server is reachable.",
                     ],
-                }
+                },
             )
 
         # Step 2: pull all files from shared to local
@@ -1652,6 +1630,7 @@ class ProjectToolProvider(ToolProvider):
             if hasattr(item, "text"):
                 try:
                     import json  # noqa: PLC0415
+
                     sync_data = json.loads(item.text)
                 except Exception:
                     pass
@@ -1665,17 +1644,14 @@ class ProjectToolProvider(ToolProvider):
                 "repository": repository_name,
                 "serverHost": resolved.get("serverhost", ""),
                 "localMode": True,
-                "note": (
-                    "Shared project pulled to local. Session is now operating in local mode. "
-                    "Call switch-project(mode='shared') at any time to reconnect to the shared server."
-                ),
+                "note": ("Shared project pulled to local. Session is now operating in local mode. Call switch-project(mode='shared') at any time to reconnect to the shared server."),
                 "syncSummary": {
                     "requested": sync_data.get("requested", 0),
                     "transferred": sync_data.get("transferred", 0),
                     "skipped": sync_data.get("skipped", 0),
                     "errors": sync_data.get("errors", []),
                 },
-            }
+            },
         )
 
     def _resolve_domain_file(self, program_path: str | None) -> Any:
@@ -1916,7 +1892,6 @@ class ProjectToolProvider(ToolProvider):
                     return project_data
                 except Exception:
                     logger.info("shared-sync failed to get project data from ghidra_project")
-                    pass
 
         if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
             try:
@@ -1927,7 +1902,6 @@ class ProjectToolProvider(ToolProvider):
                     return project_data
             except Exception:
                 logger.info("shared-sync failed to get project data from program_info")
-                pass
 
         logger.info("shared-sync no active project data found")
         return None
@@ -1978,7 +1952,7 @@ class ProjectToolProvider(ToolProvider):
         raise RuntimeError("Unable to open domain object")
 
     def _set_active_program_info(self, program: Any, program_path: str) -> None:
-        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 
@@ -2177,7 +2151,6 @@ class ProjectToolProvider(ToolProvider):
                         remote_domain_obj = self._get_domain_object_compat(source_df, monitor)
                 except Exception:
                     logger.info("shared-sync pull strategy=project_data_domain_file failed source=%s", repo_path, exc_info=True)
-                    pass
 
                 # Strategy 2: Use RepositoryItem if we have a working adapter.
                 if remote_domain_obj is None:
@@ -2211,7 +2184,6 @@ class ProjectToolProvider(ToolProvider):
                                 remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
                     except Exception:
                         logger.info("shared-sync pull strategy=programdb_fallback failed source=%s", repo_path, exc_info=True)
-                        pass
 
                 if remote_domain_obj is None:
                     raise ValueError(f"Unable to open shared item: {repo_path}")
@@ -2224,7 +2196,6 @@ class ProjectToolProvider(ToolProvider):
                         remote_domain_obj.release(self)
                     except Exception:
                         logger.info("shared-sync pull release remote_domain_obj failed source=%s", repo_path, exc_info=True)
-                        pass
 
                 transferred.append({"sourcePath": repo_path, "targetPath": target_path})
                 logger.info("shared-sync pull transferred source=%s target=%s", repo_path, target_path)
@@ -2737,7 +2708,7 @@ class ProjectToolProvider(ToolProvider):
             raise ValueError(f"Failed to open '{program_path}' from repository")
 
         # Build ProgramInfo
-        from ghidra.app.decompiler import DecompileOptions, DecompInterface  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 

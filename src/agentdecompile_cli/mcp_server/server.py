@@ -21,6 +21,7 @@ from mcp import types
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
+
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
 from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
@@ -231,10 +232,7 @@ class PythonMcpServer:
                     if key_b.lower() == b"mcp-session-id":
                         sid = value_b.decode("latin1", errors="replace").strip()
                         if sid and sid not in session_manager._server_instances:
-                            cleaned = [
-                                (k, v) for k, v in raw_headers
-                                if k.lower() != b"mcp-session-id"
-                            ]
+                            cleaned = [(k, v) for k, v in raw_headers if k.lower() != b"mcp-session-id"]
                             logger.info(
                                 "Stripped stale mcp-session-id %s — a new session will be created.",
                                 sid[:12],
@@ -320,8 +318,7 @@ class PythonMcpServer:
 
         if not self._is_port_available(self.config.host, self.config.port):
             raise RuntimeError(
-                f"Port {self.config.port} on {self.config.host} is already in use. "
-                f"Use --port to specify a different port, or stop the other process."
+                f"Port {self.config.port} on {self.config.host} is already in use. Use --port to specify a different port, or stop the other process.",
             )
 
         self._running = True

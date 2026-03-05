@@ -20,7 +20,9 @@ All rendering is purely a presentation layer — zero changes to handler logic.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, cast
+
+from collections.abc import Callable
+from typing import Any, cast
 
 from agentdecompile_cli.registry import is_tool_advertised, normalize_identifier
 
@@ -225,7 +227,7 @@ def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
         rt: str = first.get("resultType", "")
         next_tools: list[dict[str, Any]] = first.get("nextTools", [])
         if next_tools:
-            nt: dict[str, dict[str, Any]]
+            nt: dict[str, Any]
             for nt in next_tools[:2]:
                 tool: str = nt.get("tool", "")
                 args_str: str = " ".join(f"{k}={v}" for k, v in nt.get("args", {}).items())
@@ -535,45 +537,31 @@ def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
 
 TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     "decompile": (
-        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. "
-        "The decompiled output shows control flow, variable usage, function calls, and data access patterns. "
-        "Read the signature line first to understand parameters and return type.",
+        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. The decompiled output shows control flow, variable usage, function calls, and data access patterns. Read the signature line first to understand parameters and return type.",
         _next_steps_decompile,
     ),
     "decompilefunction": (
-        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. "
-        "The decompiled output shows control flow, variable usage, function calls, and data access patterns. "
-        "Read the signature line first to understand parameters and return type.",
+        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. The decompiled output shows control flow, variable usage, function calls, and data access patterns. Read the signature line first to understand parameters and return type.",
         _next_steps_decompile,
     ),
     "executescript": (
-        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. "
-        "Use for custom analysis, batch operations, or anything not covered by dedicated tools. "
-        "The namespace includes `currentProgram`, `flatApi`, decompiler access, and 30+ Ghidra helper methods.",
+        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. Use for custom analysis, batch operations, or anything not covered by dedicated tools. The namespace includes `currentProgram`, `flatApi`, decompiler access, and 30+ Ghidra helper methods.",
         _next_steps_execute_script,
     ),
     "listfunctions": (
-        "Lists all functions defined in the binary with their addresses, sizes, and basic metadata. "
-        "Functions with default names like `FUN_00401000` or `sub_*` haven't been analyzed yet — "
-        "decompile them to understand their purpose and rename accordingly.",
+        "Lists all functions defined in the binary with their addresses, sizes, and basic metadata. Functions with default names like `FUN_00401000` or `sub_*` haven't been analyzed yet — decompile them to understand their purpose and rename accordingly.",
         _next_steps_list_functions,
     ),
     "getfunctions": (
-        "Retrieves detailed information about a specific function. The `view` parameter controls what you see: "
-        "`info` for metadata (params, return type, calling convention), `decompile` for C pseudocode, "
-        "`disassemble` for raw assembly, `calls` for caller/callee relationships.",
+        "Retrieves detailed information about a specific function. The `view` parameter controls what you see: `info` for metadata (params, return type, calling convention), `decompile` for C pseudocode, `disassemble` for raw assembly, `calls` for caller/callee relationships.",
         _next_steps_get_functions,
     ),
     "managesymbols": (
-        "Manages the binary's symbol table — names, labels, imports, exports, classes, and namespaces. "
-        "Symbols are the naming backbone of reverse engineering: every function, variable, and data label is a symbol. "
-        "Import symbols reveal library dependencies; export symbols are the binary's public interface.",
+        "Manages the binary's symbol table — names, labels, imports, exports, classes, and namespaces. Symbols are the naming backbone of reverse engineering: every function, variable, and data label is a symbol. Import symbols reveal library dependencies; export symbols are the binary's public interface.",
         _next_steps_symbols,
     ),
     "searcheverything": (
-        "Searches across 18+ scopes simultaneously: functions, symbols, strings, comments, decompiled code, "
-        "imports, exports, namespaces, data types, structures, bookmarks, and more. "
-        "This is the best starting point when you're looking for something but don't know where it is.",
+        "Searches across 18+ scopes simultaneously: functions, symbols, strings, comments, decompiled code, imports, exports, namespaces, data types, structures, bookmarks, and more. This is the best starting point when you're looking for something but don't know where it is.",
         _next_steps_search_everything,
     ),
     "globalsearch": (
@@ -585,9 +573,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_search_everything,
     ),
     "inspectmemory": (
-        "Examines the binary's memory layout and contents. `blocks` shows memory sections (.text, .data, .bss), "
-        "`read` dumps raw bytes from an address, `data_at` interprets typed data at an address, "
-        "`data_items` lists all memory locations with applied data types.",
+        "Examines the binary's memory layout and contents. `blocks` shows memory sections (.text, .data, .bss), `read` dumps raw bytes from an address, `data_at` interprets typed data at an address, `data_items` lists all memory locations with applied data types.",
         _next_steps_memory,
     ),
     "readbytes": (
@@ -595,9 +581,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_memory,
     ),
     "getcallgraph": (
-        "Maps function call relationships — who calls whom. Essential for understanding program architecture. "
-        "`graph` shows immediate callers+callees, `tree` traverses the full call tree to a given depth, "
-        "`callers` traces only incoming calls, `callees` traces only outgoing calls.",
+        "Maps function call relationships — who calls whom. Essential for understanding program architecture. `graph` shows immediate callers+callees, `tree` traverses the full call tree to a given depth, `callers` traces only incoming calls, `callees` traces only outgoing calls.",
         _next_steps_callgraph,
     ),
     "gencallgraph": (
@@ -605,33 +589,23 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_callgraph,
     ),
     "managecomments": (
-        "Read, write, and search code comments in the Ghidra database. Comments persist across sessions "
-        "and are visible in the listing and decompiler views. Types: `eol` (end-of-line), `pre`, `post`, "
-        "`plate` (function header), `repeatable` (shown at all references).",
+        "Read, write, and search code comments in the Ghidra database. Comments persist across sessions and are visible in the listing and decompiler views. Types: `eol` (end-of-line), `pre`, `post`, `plate` (function header), `repeatable` (shown at all references).",
         _next_steps_comments,
     ),
     "managebookmarks": (
-        "Set, list, and search analysis bookmarks. Bookmarks flag interesting locations for later review "
-        "and persist across sessions. Use categories to organize by analysis phase "
-        "(e.g., 'suspicious', 'crypto', 'network', 'todo').",
+        "Set, list, and search analysis bookmarks. Bookmarks flag interesting locations for later review and persist across sessions. Use categories to organize by analysis phase (e.g., 'suspicious', 'crypto', 'network', 'todo').",
         _next_steps_bookmarks,
     ),
     "managestructures": (
-        "Create, modify, and apply C-style struct/union definitions. Structures let you type raw memory "
-        "regions so the decompiler shows field names instead of byte offsets. Parse C header syntax "
-        "or build field-by-field.",
+        "Create, modify, and apply C-style struct/union definitions. Structures let you type raw memory regions so the decompiler shows field names instead of byte offsets. Parse C header syntax or build field-by-field.",
         _next_steps_structures,
     ),
     "searchconstants": (
-        "Scans instructions for numeric constants/immediates. Finds magic numbers, buffer sizes, "
-        "API flags, and crypto constants. Use `specific` for exact values, `range` for value ranges, "
-        "`common` for frequently-occurring constants.",
+        "Scans instructions for numeric constants/immediates. Finds magic numbers, buffer sizes, API flags, and crypto constants. Use `specific` for exact values, `range` for value ranges, `common` for frequently-occurring constants.",
         _next_steps_constants,
     ),
     "analyzedataflow": (
-        "Traces how data flows through a function using Ghidra's P-code intermediate representation. "
-        "`backward` traces where a value at an address comes from, `forward` traces where it goes, "
-        "`variable_accesses` lists all variable reads/writes in a function.",
+        "Traces how data flows through a function using Ghidra's P-code intermediate representation. `backward` traces where a value at an address comes from, `forward` traces where it goes, `variable_accesses` lists all variable reads/writes in a function.",
         _next_steps_dataflow,
     ),
     "managedatatypes": (
@@ -639,14 +613,11 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_datatypes,
     ),
     "analyzevtables": (
-        "Analyzes C++ virtual function tables (vtables). Vtables are arrays of function pointers "
-        "used for polymorphic dispatch. Understanding vtable layout reveals class hierarchies "
-        "and virtual method signatures.",
+        "Analyzes C++ virtual function tables (vtables). Vtables are arrays of function pointers used for polymorphic dispatch. Understanding vtable layout reveals class hierarchies and virtual method signatures.",
         _next_steps_vtable,
     ),
     "managestrings": (
-        "Find, list, and search strings embedded in the binary. Strings are one of the most valuable "
-        "artifacts in RE — error messages, debug logs, API names, and format strings all reveal program logic.",
+        "Find, list, and search strings embedded in the binary. Strings are one of the most valuable artifacts in RE — error messages, debug logs, API names, and format strings all reveal program logic.",
         _next_steps_strings,
     ),
     "liststrings": (
@@ -1158,7 +1129,7 @@ def _render_callgraph(data: dict[str, Any]) -> str:
         callers: list[dict[str, Any]] = data.get("callers", [])
         callees: list[dict[str, Any]] = data.get("callees", [])
 
-        if callers or callees and not graph_data:
+        if callers or (callees and not graph_data):
             return _render_function_calls(data)
 
         # Rendered graph from CallGraphTool
@@ -2033,7 +2004,7 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     """
     # Check for error responses first
     if data.get("success") is False:
-        body = _render_error(data)
+        body: str = _render_error(data)
     else:
         renderer = TOOL_RENDERERS.get(normalized_tool_name)
         if renderer is not None:
@@ -2045,8 +2016,8 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
             body = _render_generic(data, normalized_tool_name)
 
     # Append About This Tool / Next Steps section
-    guidance = TOOL_GUIDANCE.get(normalized_tool_name)
-    lines = [body]
+    guidance: tuple[str, Callable[[dict[str, Any]], list[str]]] | None = TOOL_GUIDANCE.get(normalized_tool_name)
+    lines: list[str] = [body]
 
     if guidance:
         description, next_steps_fn = guidance
@@ -2060,7 +2031,7 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         except Exception:
             next_steps = []
 
-        next_steps = _filter_disabled_tool_recommendations(next_steps)
+        next_steps: list[str] = _filter_disabled_tool_recommendations(next_steps)
 
         if next_steps:
             lines.append("")

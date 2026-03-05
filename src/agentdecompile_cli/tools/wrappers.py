@@ -50,10 +50,6 @@ if TYPE_CHECKING:
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
     )
-    from ghidra.program.util import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
-        DefinedDataIterator as GhidraDefinedDataIterator,  # Support Ghidra 11.3.2
-        DefinedStringIterator as GhidraDefinedStringIterator,
-    )
     from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
         ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
@@ -348,15 +344,12 @@ class GhidraTools:
                 # Both iterator initialization paths failed - this likely indicates
                 # a shared-server/proxy context where iterators are unavailable
                 logger.warning(
-                    "String iterator initialization failed. "
-                    "DefinedStringIterator error: %s, DefinedDataIterator error: %s",
+                    "String iterator initialization failed. DefinedStringIterator error: %s, DefinedDataIterator error: %s",
                     last_error,
                     e2,
                 )
                 raise RuntimeError(
-                    "String iterators unavailable for this program context. "
-                    "This can occur in shared-server checkouts or proxy modes where "
-                    "iterator classes are not exposed."
+                    "String iterators unavailable for this program context. This can occur in shared-server checkouts or proxy modes where iterator classes are not exposed.",
                 ) from e2
 
         strings: list[StringInfo] = []

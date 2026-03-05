@@ -29,9 +29,9 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.launcher import AgentDecompileLauncher
 from agentdecompile_cli.mcp_server.auth import AuthConfig
-from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.utils import get_client, run_async
 
@@ -198,11 +198,7 @@ def _resolve_proxy_backend_url(
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())
@@ -308,7 +304,6 @@ def _normalize_shared_server_env_aliases() -> None:
     Supports both canonical AGENT_DECOMPILE_* variables and compact
     AGENTDECOMPILE_* variants so external MCP launchers can supply either form.
     """
-
     # Canonical Ghidra-prefixed env vars used by server/launcher/auth logic.
     _set_env_if_missing(
         "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
@@ -412,7 +407,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
             {
                 f"--{base}",
                 f"--{name}",
-            }
+            },
         )
         # Also scrub the legacy --server-* form in case it appears in sys.argv
         short = name.replace("ghidra_server_", "")
@@ -420,7 +415,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
             {
                 f"--server-{short}",
                 f"--server_{short}",
-            }
+            },
         )
 
     scrubbed: list[str] = []
@@ -582,21 +577,14 @@ def main() -> None:
         dest="backend_url",
         type=str,
         default=None,
-        help=(
-            "Run in proxy mode: forward all MCP requests to an existing "
-            "MCP server (http(s)://host:port[/mcp/message]); "
-            "skips local PyGhidra/JVM startup"
-        ),
+        help=("Run in proxy mode: forward all MCP requests to an existing MCP server (http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"),
     )
     g_server.add_argument(
         "--mcp-server-url",
         dest="mcp_server_url",
         type=str,
         default=None,
-        help=(
-            "Fallback backend URL if --backend-url is not provided "
-            "(equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"
-        ),
+        help=("Fallback backend URL if --backend-url is not provided (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"),
     )
     g_server.add_argument(
         "--ghidra-server-host",
@@ -731,40 +719,21 @@ def main() -> None:
     # clients ever reach it, so requiring auth would block the bridge itself.
     _require_auth_flag = getattr(args, "require_auth", None)
     _auth_env_enabled = os.environ.get(
-        "AGENT_DECOMPILE_AUTH_ENABLED", ""
+        "AGENT_DECOMPILE_AUTH_ENABLED",
+        "",
     ).lower() in ("true", "1", "yes", "on")
     _is_http_transport = args.transport in _HTTP_TRANSPORTS
     auth_config: AuthConfig | None = None
     if _is_http_transport and (_require_auth_flag or _auth_env_enabled):
         auth_config = AuthConfig(
             require_auth=bool(_require_auth_flag),
-            default_server_host=(
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_HOST")
-                or getattr(args, "ghidra_server_host", None)
-            ),
+            default_server_host=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or os.environ.get("AGENT_DECOMPILE_SERVER_HOST") or getattr(args, "ghidra_server_host", None)),
             default_server_port=int(
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_PORT")
-                or getattr(args, "ghidra_server_port", None)
-                or 13100
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT") or os.environ.get("AGENT_DECOMPILE_SERVER_PORT") or getattr(args, "ghidra_server_port", None) or 13100,
             ),
-            default_username=(
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME")
-                or getattr(args, "ghidra_server_username", None)
-            ),
-            default_password=(
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
-                or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD")
-                or getattr(args, "ghidra_server_password", None)
-            ),
-            default_repository=(
-                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
-                or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
-                or os.environ.get("AGENT_DECOMPILE_REPOSITORY")
-                or getattr(args, "ghidra_server_repository", None)
-            ),
+            default_username=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME") or getattr(args, "ghidra_server_username", None)),
+            default_password=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD") or getattr(args, "ghidra_server_password", None)),
+            default_repository=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENT_DECOMPILE_REPOSITORY") or getattr(args, "ghidra_server_repository", None)),
         )
 
     # Resolve transport configuration
@@ -819,7 +788,7 @@ def main() -> None:
         try:
             started_port = proxy_server.start()
             sys.stderr.write(
-                f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n"
+                f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
             )
             sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
             sys.stderr.write("Press Ctrl+C to stop.\n")

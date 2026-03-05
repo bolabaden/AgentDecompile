@@ -343,11 +343,7 @@ def decompile(
             # Decompile all files
             start = time()
             with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
-                futures = (
-                    executor.submit(decompile_func, func, decompilers, thread_id % thread_count, monitor=monitor)
-                    for thread_id, func in enumerate(all_funcs)
-                    if args.skip_cache or not (decomp_path / (get_filename(func) + ".c")).exists()
-                )
+                futures = (executor.submit(decompile_func, func, decompilers, thread_id % thread_count, monitor=monitor) for thread_id, func in enumerate(all_funcs) if args.skip_cache or not (decomp_path / (get_filename(func) + ".c")).exists())
 
                 for future in concurrent.futures.as_completed(futures):
                     decompilations.append(future.result())

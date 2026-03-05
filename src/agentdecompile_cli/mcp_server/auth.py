@@ -36,7 +36,6 @@ import logging
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,8 @@ class AuthContext:
 # ---------------------------------------------------------------------------
 
 CURRENT_AUTH_CONTEXT: ContextVar[AuthContext | None] = ContextVar(
-    "current_auth_context", default=None
+    "current_auth_context",
+    default=None,
 )
 
 
@@ -154,17 +154,14 @@ def validate_credentials(
     if not username:
         return False
 
-    using_default_server = (
-        not target_host
-        or not config.default_server_host
-        or target_host.lower() == config.default_server_host.lower()
-    )
+    using_default_server = not target_host or not config.default_server_host or target_host.lower() == config.default_server_host.lower()
 
     if using_default_server:
         expected_user = config.default_username or ""
         expected_pass = config.default_password or ""
         return _constant_time_eq(username, expected_user) and _constant_time_eq(
-            password, expected_pass
+            password,
+            expected_pass,
         )
 
     # Dynamic routing to a different Ghidra server: accept any non-empty credentials.
@@ -190,14 +187,14 @@ async def _send_401(send: Any) -> None:
             "type": "http.response.start",
             "status": 401,
             "headers": _401_HEADERS,
-        }
+        },
     )
     await send(
         {
             "type": "http.response.body",
             "body": _401_BODY,
             "more_body": False,
-        }
+        },
     )
 
 
@@ -230,9 +227,7 @@ class AuthMiddleware:
 
     def _auth_required(self, target_host: str) -> bool:
         return bool(
-            self._config.require_auth
-            or target_host
-            or self._config.default_username
+            self._config.require_auth or target_host or self._config.default_username,
         )
 
     async def __call__(
@@ -302,7 +297,8 @@ class AuthMiddleware:
 
         if not validate_credentials(username, password, self._config, target_host):
             logger.debug(
-                "AuthMiddleware: credential validation failed for user=%r → 401", username
+                "AuthMiddleware: credential validation failed for user=%r → 401",
+                username,
             )
             await _send_401(send)
             return

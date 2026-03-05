@@ -7,18 +7,20 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable, Coroutine
+
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.mcp_server.tool_providers import (
-    ToolProvider,
-    create_success_response,
-)
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_exports,
     collect_imports,
     collect_symbols,
+)
+from agentdecompile_cli.mcp_server.tool_providers import (
+    ToolProvider,
+    create_success_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,12 +222,12 @@ class SymbolToolProvider(ToolProvider):
         maxresults/limit : int, default=100
             Maximum number of results to return
 
-        Returns
+        Returns:
         -------
         list[TextContent]
             Paginated response with matching symbols, count, total, and hasMore flag
 
-        Examples
+        Examples:
         --------
         >>> await provider._handle_search({"query": "malloc", "limit": 10})
         [TextContent(text='{"mode":"symbols","results":[...],"count":10,"total":42,"hasMore":true}')]
@@ -367,10 +369,7 @@ class SymbolToolProvider(ToolProvider):
 
         assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
-        exports = [
-            {"name": row.get("name", ""), "address": row.get("address", "")}
-            for row in collect_exports(program)
-        ]
+        exports = [{"name": row.get("name", ""), "address": row.get("address", "")} for row in collect_exports(program)]
         paginated, has_more = self._paginate_results(exports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(exports), mode="exports")
 

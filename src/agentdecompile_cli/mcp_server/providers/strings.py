@@ -218,9 +218,7 @@ class StringToolProvider(ToolProvider):
 
             logger = logging.getLogger(__name__)
             logger.debug(
-                "String collection returned empty results. This may indicate: "
-                "(1) binary contains no strings, or (2) string iterators unavailable "
-                "in current program context (shared-server/proxy mode)."
+                "String collection returned empty results. This may indicate: (1) binary contains no strings, or (2) string iterators unavailable in current program context (shared-server/proxy mode).",
             )
 
         return strings
@@ -317,7 +315,7 @@ class StringToolProvider(ToolProvider):
         include_refs : bool
             Whether to add referencing functions to each string result
 
-        Returns
+        Returns:
         -------
         list[TextContent]
             Paginated response with filtered results

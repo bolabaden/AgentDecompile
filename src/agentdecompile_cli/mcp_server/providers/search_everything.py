@@ -121,7 +121,7 @@ class SearchEverythingToolProvider(ToolProvider):
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
-                            "description": "BATCH multiple search terms in ONE call instead of calling this tool repeatedly. E.g. [\"SaveGame\", \"LoadGame\", \".sav\", \"SAVEGAME\"] searches all at once. Deduplication and ranking are automatic.",
+                            "description": 'BATCH multiple search terms in ONE call instead of calling this tool repeatedly. E.g. ["SaveGame", "LoadGame", ".sav", "SAVEGAME"] searches all at once. Deduplication and ranking are automatic.',
                         },
                         "mode": {
                             "type": "string",
@@ -933,7 +933,19 @@ class SearchEverythingToolProvider(ToolProvider):
                     best = match
             if not best:
                 continue
-            results.append({"scope": "structures", "resultType": "structure", "name": str(struct.get("name", "")), "categoryPath": str(struct.get("categoryPath", "")), "description": str(struct.get("description", "")), "length": int(struct.get("length", 0)), "numComponents": int(struct.get("numComponents", 0)), "isUnion": bool(struct.get("isUnion", False)), **best})
+            results.append(
+                {
+                    "scope": "structures",
+                    "resultType": "structure",
+                    "name": str(struct.get("name", "")),
+                    "categoryPath": str(struct.get("categoryPath", "")),
+                    "description": str(struct.get("description", "")),
+                    "length": int(struct.get("length", 0)),
+                    "numComponents": int(struct.get("numComponents", 0)),
+                    "isUnion": bool(struct.get("isUnion", False)),
+                    **best,
+                }
+            )
         return results
 
     def _search_structure_fields(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
@@ -953,7 +965,19 @@ class SearchEverythingToolProvider(ToolProvider):
                         best = match
                 if not best:
                     continue
-                results.append({"scope": "structure_fields", "resultType": "structure_field", "structure": str(struct.get("name", "")), "field": str(component.get("name", "")), "fieldType": str(component.get("type", "")), "comment": str(component.get("comment", "")), "offset": int(component.get("offset", 0)), "length": int(component.get("length", 0)), **best})
+                results.append(
+                    {
+                        "scope": "structure_fields",
+                        "resultType": "structure_field",
+                        "structure": str(struct.get("name", "")),
+                        "field": str(component.get("name", "")),
+                        "fieldType": str(component.get("type", "")),
+                        "comment": str(component.get("comment", "")),
+                        "offset": int(component.get("offset", 0)),
+                        "length": int(component.get("length", 0)),
+                        **best,
+                    }
+                )
         return results
 
     def _function_base_result(self, function: dict[str, Any]) -> dict[str, Any]:
