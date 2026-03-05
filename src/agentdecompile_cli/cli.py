@@ -68,7 +68,7 @@ _dynamic_commands_registered = False
 _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
-_DEFAULT_OUTPUT_FORMAT = "shell"
+_DEFAULT_OUTPUT_FORMAT = "text"
 
 
 def _configure_runtime_logging(verbose: bool) -> None:
@@ -748,7 +748,10 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
         "--format",
         type=str,
         default=_DEFAULT_OUTPUT_FORMAT,
-        help="Output format (shell/json/markdown/xml/etc.)",
+        help=(
+            "Output format (default: text). Use -f/--format json only when you "
+            "strictly need machine-readable output; text/markdown is recommended."
+        ),
     )(cmd)
     return cmd
 
@@ -797,7 +800,11 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
                     default=None,
                     expose_value=False,
                     callback=_set_output_format_option,
-                    help="Output format (shell/json/markdown/xml/etc.)",
+                    help=(
+                        "Output format (default: text). Use -f/--format json only "
+                        "when you strictly need machine-readable output; "
+                        "text/markdown is recommended."
+                    ),
                 ),
             )
 
@@ -945,7 +952,10 @@ def _ensure_dynamic_commands_registered() -> None:
     "--format",
     type=str,
     default=_DEFAULT_OUTPUT_FORMAT,
-    help="Output format (shell/json/markdown/xml/etc.)",
+    help=(
+        "Output format (default: text). Use -f/--format json only when you "
+        "strictly need machine-readable output; text/markdown is recommended."
+    ),
 )
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
@@ -1182,7 +1192,11 @@ def list_grp() -> None:
     "local_format",
     type=str,
     default=None,
-    help="Output format override for this command",
+    help=(
+        "Output format override (default: inherited text output). Use "
+        "-f/--format json only when you strictly need machine-readable output; "
+        "text/markdown is recommended."
+    ),
 )
 @click.pass_context
 def list_binaries(ctx: click.Context, local_format: str | None) -> None:

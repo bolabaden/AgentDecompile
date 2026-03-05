@@ -97,7 +97,7 @@ class ImportExportToolProvider(ToolProvider):
                         "program_path": {"type": "string", "description": "Your local version of the file you intend to push upstream."},
                         "comment": {"type": "string", "description": "The commit message for history tracking."},
                         "keep_checked_out": {"type": "boolean", "default": False, "description": "Whether to retain an exclusive file lock after pushing the changes."},
-                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format: markdown (default) or json"},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
                     },
                     "required": [],
                 },
@@ -110,7 +110,7 @@ class ImportExportToolProvider(ToolProvider):
                     "properties": {
                         "program_path": {"type": "string", "description": "Path to the program in the Ghidra project to check out."},
                         "exclusive": {"type": "boolean", "default": False, "description": "Whether to request an exclusive (write-lock) checkout. Exclusive checkout fails if others already have it checked out."},
-                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format: markdown (default) or json"},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
                     },
                     "required": [],
                 },
@@ -122,7 +122,7 @@ class ImportExportToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "program_path": {"type": "string", "description": "Path to the program in the Ghidra project to query."},
-                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format: markdown (default) or json"},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
                     },
                     "required": [],
                 },

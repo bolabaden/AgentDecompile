@@ -174,14 +174,17 @@ RUN set -eux; \
     ; then \
         ARCH_APK="${ARCH}"; \
         INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/APKINDEX.tar.gz"; \
-        ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
-        test -n "${ONNXRUNTIME_VERSION}"; \
-        ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
-        apk add --no-cache \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            "${ONNXRUNTIME_APK_URL}" \
-        ; \
+        ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}' || true)"; \
+        if [ -n "${ONNXRUNTIME_VERSION}" ]; then \
+            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
+            apk add --no-cache \
+                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+                "${ONNXRUNTIME_APK_URL}" \
+            || echo "WARNING: direct onnxruntime APK install failed for ${ARCH_APK}; continuing."; \
+        else \
+            echo "WARNING: py3-onnxruntime unavailable for ${ARCH_APK}; continuing without system onnxruntime."; \
+        fi; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \
         cargo \
@@ -192,12 +195,15 @@ RUN set -eux; \
         musl-dev \
         python3-dev \
         libffi-dev \
+        protobuf \
         protobuf-dev \
         protoc \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade setuptools wheel; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --prefer-binary chromadb==${CHROMADB_VERSION}; \
+    if ! ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --prefer-binary chromadb==${CHROMADB_VERSION}; then \
+        echo "WARNING: chromadb installation failed; semantic vector features will be disabled in this image."; \
+    fi; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir /src/agentdecompile; \
     apk del .chromadb-build || true
 
