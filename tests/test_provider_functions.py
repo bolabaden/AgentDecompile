@@ -61,8 +61,8 @@ class TestFunctionProviderSchema:
         tool = next(t for t in p.list_tools() if t.name == "get-functions")
         assert_tool_schema_invariants(tool, expected_name="get-functions")
         props = tool.inputSchema["properties"]
-        assert "view" in props
-        enum_vals = props["view"]["enum"]
+        assert "mode" in props
+        enum_vals = props["mode"]["enum"]
         for expected in ("decompile", "disassemble", "info", "calls"):
             assert expected in enum_vals
 
@@ -127,6 +127,50 @@ class TestFunctionProviderValidation:
         p._handle_list = fake_list
         await p.call_tool("get-functions", {"view": "info"})
         assert len(list_called) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_functions_without_view_returns_all_views(self):
+        p = _make_provider(with_program=True)
+
+        target_func = MagicMock()
+        target_func.getName.return_value = "main"
+        target_func.getEntryPoint.return_value = "0x401000"
+        target_func.getSignature.return_value = "int main(void)"
+        p._resolve_function = MagicMock(return_value=target_func)
+
+        calls = {"info": 0, "calls": 0, "decompile": 0, "disassemble": 0}
+
+        async def fake_info(args, target_func, program, max_results, timeout):
+            calls["info"] += 1
+            from agentdecompile_cli.mcp_server.tool_providers import create_success_response
+            return create_success_response({"view": "info", "marker": "i"})
+
+        async def fake_calls(args, target_func, program, max_results, timeout):
+            calls["calls"] += 1
+            from agentdecompile_cli.mcp_server.tool_providers import create_success_response
+            return create_success_response({"view": "calls", "marker": "c"})
+
+        async def fake_decompile(args, target_func, program, max_results, timeout):
+            calls["decompile"] += 1
+            from agentdecompile_cli.mcp_server.tool_providers import create_success_response
+            return create_success_response({"view": "decompile", "marker": "d"})
+
+        async def fake_disassemble(args, target_func, program, max_results, timeout):
+            calls["disassemble"] += 1
+            from agentdecompile_cli.mcp_server.tool_providers import create_success_response
+            return create_success_response({"view": "disassemble", "marker": "a"})
+
+        p._handle_info = fake_info
+        p._handle_calls = fake_calls
+        p._handle_decompile = fake_decompile
+        p._handle_disassemble = fake_disassemble
+
+        resp = await p.call_tool("get-functions", {"function": "main", "format": "json"})
+        result = _parse(resp)
+
+        assert result["view"] == "all"
+        assert set(result["views"].keys()) == {"info", "calls", "decompile", "disassemble"}
+        assert calls == {"info": 1, "calls": 1, "decompile": 1, "disassemble": 1}
 
 
 # ---------------------------------------------------------------------------

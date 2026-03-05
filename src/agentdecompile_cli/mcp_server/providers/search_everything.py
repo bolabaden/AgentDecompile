@@ -38,7 +38,11 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 
 logger = logging.getLogger(__name__)
 
-_REGEX_HINT = re.compile(r"[\[\]\\(){}|*+?^$.]")
+_REGEX_HINT = re.compile(r"[\[\]\\(){}|*+?^$]")
+
+# Detects patterns that look like file extensions (e.g., ".sav", ".exe", ".dll")
+# where the dot should be treated literally, not as a regex wildcard.
+_FILE_EXTENSION_PATTERN = re.compile(r"^\.[a-zA-Z0-9]{1,10}$")
 _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
     ("eol", 0),
     ("pre", 1),
@@ -86,7 +90,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="search-everything",
-                description="CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED SEARCH ACROSS MOST STRING-BEARING ANALYSIS DATA.",
+                description="CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED SEARCH ACROSS MOST STRING-BEARING ANALYSIS DATA. Pass ALL related search terms as a 'queries' array in ONE call instead of calling this tool multiple times with individual keywords.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -98,32 +102,32 @@ class SearchEverythingToolProvider(ToolProvider):
                             ],
                         },
                         "binaryName": {
-                            "description": "Alias for programPath. String or array.",
+                            "description": "Program path or binary name. String or array.",
                             "oneOf": [
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
                         },
                         "programName": {
-                            "description": "Alias for programPath. String or array.",
+                            "description": "Program path or name. String or array.",
                             "oneOf": [
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
                         },
-                        "query": {"type": "string", "description": "Single search term or pattern."},
+                        "query": {"type": "string", "description": "Single search term or pattern. PREFER queries (array) over this when you have multiple terms — do NOT call this tool repeatedly with individual keywords."},
                         "queries": {
                             "oneOf": [
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
-                            "description": "Multiple search terms or patterns.",
+                            "description": "BATCH multiple search terms in ONE call instead of calling this tool repeatedly. E.g. [\"SaveGame\", \"LoadGame\", \".sav\", \"SAVEGAME\"] searches all at once. Deduplication and ranking are automatic.",
                         },
                         "mode": {
                             "type": "string",
                             "enum": ["auto", "literal", "regex", "fuzzy"],
                             "default": "auto",
-                            "description": "Match strategy.",
+                            "description": "Match strategy. 'auto' detects regex chars and falls back to substring — WARNING: can produce false positives (e.g. '.sav' matches 'handleScreenSaver'). Use 'literal' to force exact substring matching (required for file extensions like '.sav', '.exe', or identifiers with dots). Use 'regex' to write an explicit anchored pattern. Use 'fuzzy' for approximate/similarity matching.",
                         },
                         "scopes": {
                             "type": "array",
@@ -481,11 +485,23 @@ class SearchEverythingToolProvider(ToolProvider):
         flags = 0 if case_sensitive else re.IGNORECASE
         compiled: dict[str, re.Pattern[str]] = {}
         for q in queries:
-            if mode == "regex" or _REGEX_HINT.search(q):
+            if mode == "regex":
+                # Explicit regex mode: compile as-is
                 try:
                     compiled[q] = re.compile(q, flags)
                 except re.error as e:
                     raise ValueError(f"Invalid regex '{q}': {e}") from e
+            elif mode == "auto":
+                # Auto mode: only compile as regex if it has real regex syntax
+                # (brackets, pipes, quantifiers, etc.) but NOT mere dots.
+                # File extension patterns like ".sav" should remain literal.
+                if _FILE_EXTENSION_PATTERN.match(q):
+                    continue  # Treat as literal — skip regex compilation
+                if _REGEX_HINT.search(q):
+                    try:
+                        compiled[q] = re.compile(q, flags)
+                    except re.error as e:
+                        raise ValueError(f"Invalid regex '{q}': {e}") from e
         return compiled
 
     def _search_scope(

@@ -133,8 +133,8 @@ class TestPublishedPackage7Commands:
         assert ok, f"get-functions failed\nstdout: {out}\nstderr: {err}"
         data = _parse_output(out)
         assert data is not None
-        assert "functions" in data, f"Expected 'functions' key: {out[:300]}"
-        assert isinstance(data["functions"], list)
+        assert "results" in data, f"Expected 'results' key: {out[:300]}"
+        assert isinstance(data["results"], list)
 
     def test_cmd4_search_symbols_by_name(self, env: dict[str, str]) -> None:
         args_json = json.dumps({"programPath": PROGRAM_PATH, "query": "main", "maxResults": 5})

@@ -84,6 +84,7 @@ class TestUnifiedProviderAdvertisement:
             assert_string_invariants(arg_name)
 
         expected_args = {to_snake_case(param_name) for param_name in ADVERTISED_TOOL_PARAMS[tool_name]}
+        expected_args.add("format")
         assert set(properties.keys()) == expected_args
         assert_mapping_invariants({"expected": list(expected_args), "actual": list(properties.keys())})
 

@@ -98,21 +98,16 @@ _TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
         "analyze-data-flow",
         "analyze-program",
         "analyze-vtables",
-        "capture-agentdecompile-debug-info",
         "change-processor",
         "checkin-program",
         "get-call-graph",
         "get-current-address",
         "get-current-function",
-        "get-current-program",
         "get-data",
         "get-functions",
         "get-references",
         "inspect-memory",
         "list-functions",
-        "list-open-programs",
-        "list-project-binaries",
-        "list-project-binary-metadata",
         "list-project-files",
         "manage-bookmarks",
         "manage-comments",
@@ -336,7 +331,7 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
         or _backend_host_for_recovery(ctx)
     )
     shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
-    
+
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
@@ -370,14 +365,14 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
             },
         )
     open_attempts.append({"path": requested_program})
-    
+
     return open_attempts
 
 
 async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> bool:
     """Try to open a program with the given payload."""
     try:
-        open_result = await client.call_tool("open", open_payload)
+        open_result = await client.call_tool("open-project", open_payload)
         if _get_error_result_message(open_result):
             return False
     except Exception:
@@ -461,7 +456,7 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
     result = await _call_raw(ctx, tool, payload)
-    
+
     # data is already a dict from AgentDecompileMcpClient._extract_result()
     err_msg = _get_error_result_message(result)
     if err_msg is not None:
@@ -496,6 +491,12 @@ async def _call_raw(
         Raw tool result dictionary from MCP server
     """
     from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    # CLI always requests JSON from the MCP server so it can apply local
+    # formatting via format_output() / the -f flag.  The server's default
+    # is markdown (rich output for direct MCP consumers like VS Code / Claude),
+    # but the CLI needs structured data for its own shell/json/xml/table modes.
+    payload.setdefault("format", "json")
 
     # Canonicalize tool + args through the shared registry path when known.
     call_tool_name, safe_payload = _resolve_tool_call_target(tool, payload)
@@ -1276,12 +1277,6 @@ def list_project_files(ctx: click.Context, program_path: str | None) -> None:
     _run_async(_call(ctx, "list-project-files", **payload))
 
 
-@list_grp.command("open-programs", help="List open programs (list-open-programs, GUI)")
-@click.pass_context
-def list_open_programs(ctx: click.Context) -> None:
-    _run_async(_call(ctx, "list-open-programs"))
-
-
 # ---------------------------------------------------------------------------
 # Data (get-data, apply-data-type, create-label)
 # ---------------------------------------------------------------------------
@@ -1391,7 +1386,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # Open the cached program
                     await _call_raw(
                         ctx,
-                        "open",
+                        "open-project",
                         {"path": cached_prog, "local": True},
                     )
                     # Retry resource read
@@ -1568,31 +1563,6 @@ def functions_calls(ctx: click.Context, program_path: str, identifier: str) -> N
 )
 def symbols_grp() -> None:
     pass
-
-
-@main.command("search-symbols-by-name", help="Search symbols by name (manage-symbols mode=symbols)")
-@click.option("--program_path", "program_path", required=True)
-@click.option("--query", "query", required=True)
-@click.option("--max_results", "max_results", type=int, default=50)
-@click.option("--offset", "offset", type=int, default=0)
-@click.pass_context
-def search_symbols_by_name_cmd(
-    ctx: click.Context,
-    program_path: str,
-    query: str,
-    max_results: int,
-    offset: int,
-) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "search-symbols-by-name",
-            programPath=program_path,
-            query=query,
-            maxResults=max_results,
-            offset=offset,
-        ),
-    )
 
 
 @symbols_grp.command("run", help="Run manage-symbols with --mode and optional params")
@@ -2227,7 +2197,7 @@ def memory_run(
 # ---------------------------------------------------------------------------
 
 
-@main.command("open", help="Open project or program (open)")
+@main.command("open", help="Open project or program (open-project)")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
 @click.option(
     "--extensions",
@@ -2303,7 +2273,7 @@ def open_cmd(
         payload["serverHost"] = server_host
     if server_port is not None:
         payload["serverPort"] = server_port
-    _run_async(_call(ctx, "open", **payload))
+    _run_async(_call(ctx, "open-project", **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3663,16 +3633,6 @@ def _gui_only_command_error(tool_name: str) -> None:
     sys.exit(1)
 
 
-@main.command("current-program", help="Get current program (get-current-program, GUI)")
-@click.option("-b", "--binary", "program_path")
-@click.pass_context
-def current_program(ctx: click.Context, program_path: str | None) -> None:
-    payload: dict[str, Any] = {}
-    if program_path is not None and program_path.strip():
-        payload["programPath"] = program_path
-    _run_async(_call(ctx, "get-current-program", **payload))
-
-
 # TODO: GUI Only tools/commands
 @main.command("current-address", help="Get current address (get-current-address, GUI)")
 @click.pass_context
@@ -3727,24 +3687,6 @@ def open_all_in_code_browser(
 
 
 # ---------------------------------------------------------------------------
-# capture-agentdecompile-debug-info
-# ---------------------------------------------------------------------------
-
-
-@main.command(
-    "debug-info",
-    help="Capture debug info zip (capture-agentdecompile-debug-info)",
-)
-@click.option("--message")
-@click.pass_context
-def debug_info(ctx: click.Context, message: str | None) -> None:
-    payload: dict[str, Any] = {}
-    if message:
-        payload["message"] = message
-    _run_async(_call(ctx, "capture-agentdecompile-debug-info", **payload))
-
-
-# ---------------------------------------------------------------------------
 # delete (stub)
 # ---------------------------------------------------------------------------
 
@@ -3775,7 +3717,7 @@ def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
     _run_async(
         _call(
             ctx,
-            "open",
+            "open-project",
             path=resolved_path,
             analyzeAfterImport=not no_analyze,
         ),
@@ -3802,13 +3744,6 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
             length=length,
         ),
     )
-
-
-@main.command("metadata", help="Binary metadata (get-current-program)")
-@click.option("-b", "--binary", "program_path", required=True)
-@click.pass_context
-def metadata_cmd(ctx: click.Context, program_path: str) -> None:
-    _run_async(_call(ctx, "get-current-program", programPath=program_path))
 
 
 # ---------------------------------------------------------------------------

@@ -1843,7 +1843,7 @@ def init_agentdecompile_context(
             async with client:
                 for path in bin_paths:
                     try:
-                        await client.call_tool("open", {"path": str(path.resolve()), "runAnalysis": True})
+                        await client.call_tool("open-project", {"path": str(path.resolve()), "runAnalysis": True})
                         sys.stderr.write(f"Imported: {path}\n")
                     except Exception as e:
                         sys.stderr.write(f"Import failed for {path}: {e}\n")

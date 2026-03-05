@@ -96,7 +96,9 @@ class PythonMcpServer:
             (any case/separator variant accepted) before dispatch.  The MCP SDK's
             jsonschema validation would reject valid aliased params.
             """
-            return await self.tool_providers.call_tool(name, arguments, self.program_info)
+            call_args: dict[str, Any] = dict(arguments or {})
+            call_args.setdefault("format", "markdown")
+            return await self.tool_providers.call_tool(name, call_args, self.program_info)
 
         @server.list_resources()
         async def list_resources() -> list[types.Resource]:
