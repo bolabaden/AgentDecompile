@@ -6,7 +6,7 @@ import json
 import logging
 from itertools import islice
 
-from datetime import datetime
+from datetime import datetime, timezone
 from mcp import types
 from pydantic import AnyUrl
 
@@ -34,21 +34,35 @@ class StaticAnalysisResultsResource(ResourceProvider):
         if uri != "ghidra://static-analysis-results":
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        if self.program_info is None or self.program_info.program is None:
+        logger.info(f"StaticAnalysisResultsResource: reading resource for URI {uri}")
+        logger.info(f"  program_info: {self.program_info}")
+        logger.info(f"  program_info.program: {self.program_info.program if self.program_info else 'N/A'}")
+        
+        # Check if program is loaded using correct attribute name
+        has_program = self.program_info is not None and getattr(self.program_info, 'program', None) is not None
+        logger.info(f"  has_program: {has_program}")
+        
+        if not has_program:
             # Return empty SARIF report when no program is loaded
-            logger.debug("No program loaded for static analysis results")
+            logger.info("No program loaded for static analysis results, returning empty SARIF")
             return json.dumps(self._empty_sarif_report(), indent=2)
 
         try:
+            logger.info("Program loaded, generating SARIF report")
             sarif_report = await self._generate_sarif_report()
+            logger.info(f"SARIF report generated successfully, {len(json.dumps(sarif_report))} bytes")
             return json.dumps(sarif_report, indent=2)
         except Exception as e:
-            logger.error(f"Error generating SARIF report: {e!s}")
-            raise
+            logger.error(f"Error generating SARIF report: {e!s}", exc_info=True)
+            # Return empty SARIF with error information instead of raising
+            empty_report = self._empty_sarif_report()
+            empty_report["runs"][0]["properties"]["error"] = str(e)
+            empty_report["runs"][0]["properties"]["status"] = "error"
+            return json.dumps(empty_report, indent=2)
 
     def _empty_sarif_report(self) -> dict:
         """Generate an empty SARIF 2.1.0 report when no program is loaded."""
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat() + "Z"
 
         return {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -86,7 +100,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
         results.extend(await self._collect_bookmarks())
         results.extend(await self._collect_analysis_warnings())
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat() + "Z"
 
         return {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",

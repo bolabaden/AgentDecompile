@@ -7,6 +7,7 @@ maintaining 1:1 API compatibility.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -108,7 +109,22 @@ class PythonMcpServer:
         @server.read_resource()
         async def read_resource(uri: str) -> str:
             """Read a resource by URI."""
-            return await self.resource_providers.read_resource(uri, self.program_info)
+            try:
+                logger.info(f"MCP read_resource called with URI: {uri}")
+                result = await self.resource_providers.read_resource(uri, self.program_info)
+                logger.info(f"MCP read_resource succeeded for {uri}, returning {len(result)} bytes")
+                return result
+            except Exception as e:
+                logger.error(f"MCP read_resource failed for {uri}: {type(e).__name__}: {e}", exc_info=True)
+                # Return empty JSON object for failed resources instead of propagating exception
+                # This prevents MCP protocol errors while still indicating failure
+                return json.dumps({"error": str(e), "uri": uri, "status": "failed"})
+
+        @server.list_prompts()
+        async def list_prompts() -> list[types.Prompt]:
+            """List all available MCP prompts."""
+            # No prompts are currently implemented, return empty list
+            return []
 
         return server
 

@@ -38,18 +38,33 @@ class DebugInfoResource(ResourceProvider):
         if uri != "ghidra://agentdecompile-debug-info":
             raise NotImplementedError(f"Unknown resource: {uri}")
 
+        logger.info(f"DebugInfoResource: reading resource for URI {uri}")
         self._resource_read_count += 1
 
-        # Build comprehensive debug info
-        debug_info = {
-            "metadata": self._get_metadata(),
-            "server": self._get_server_state(),
-            "program": self._get_program_state(),
-            "analysis": self._get_analysis_state(),
-            "resources": self._get_resource_metrics(),
-        }
+        try:
+            # Build comprehensive debug info
+            debug_info = {
+                "metadata": self._get_metadata(),
+                "server": self._get_server_state(),
+                "program": self._get_program_state(),
+                "analysis": self._get_analysis_state(),
+                "resources": self._get_resource_metrics(),
+            }
 
-        return json.dumps(debug_info, indent=2)
+            result = json.dumps(debug_info, indent=2)
+            logger.info(f"DebugInfoResource: successfully generated debug info, {len(result)} bytes")
+            return result
+        except Exception as e:
+            logger.error(f"DebugInfoResource: Error generating debug info: {e}", exc_info=True)
+            # Return minimal debug info on error
+            fallback_info = {
+                "metadata": self._get_metadata(),
+                "server": {"status": "error", "error": str(e)},
+                "program": {"status": "error"},
+                "analysis": {"status": "error"},
+                "resources": {"read_count": self._resource_read_count},
+            }
+            return json.dumps(fallback_info, indent=2)
 
     def _get_metadata(self) -> dict:
         """Get metadata about the debug info itself."""
