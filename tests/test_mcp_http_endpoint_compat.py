@@ -44,6 +44,7 @@ def test_python_server_accepts_root_and_mcp_compat_paths() -> None:
     with TestClient(server.app) as client:
         _assert_initialize_ok(client, "/")
         _assert_initialize_ok(client, "/mcp")
+        _assert_initialize_ok(client, "/mcp/message")
         _assert_initialize_ok(client, "/mcp/message/")
 
         health = client.get("/health")
@@ -62,6 +63,7 @@ def test_proxy_server_accepts_root_and_mcp_compat_paths() -> None:
     with TestClient(proxy.app) as client:
         _assert_initialize_ok(client, "/")
         _assert_initialize_ok(client, "/mcp")
+        _assert_initialize_ok(client, "/mcp/message")
         _assert_initialize_ok(client, "/mcp/message/")
 
         health = client.get("/health")
