@@ -748,8 +748,8 @@ class AgentDecompileStdioBridge:
     async def _auto_open_shared_server(self, backend: RawMcpHttpBackend) -> None:
         """Auto-open a shared Ghidra server connection if CLI credentials are in env vars.
 
-        When the bridge is started with ``--server-host``, ``--server-port``,
-        ``--server-username``, ``--server-password``, and optionally
+        When the bridge is started with ``--ghidra-server-host``, ``--ghidra-server-port``,
+        ``--ghidra-server-username``, ``--ghidra-server-password``, and optionally
         ``--ghidra-server-repository``, these are stored as environment
         variables.  This method reads them and calls ``open`` on the remote
         backend so that tools like ``list-project-files`` work immediately

@@ -327,7 +327,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
     # Build the set of CLI flag strings that carry sensitive values.
     # For each name like "ghidra_server_password", generate:
     #   --ghidra-server-password, --ghidra_server_password (current forms)
-    #   --server-password, --server_password (legacy forms, for safety)
+    #   --ghidra-server-password, --ghidra-server_password (legacy forms, for safety)
     flag_variants: set[str] = set()
     for name in sensitive_arg_names:
         base = name.replace("_", "-")
@@ -562,7 +562,7 @@ def main() -> None:
         "--no-require-auth",
         dest="require_auth",
         action="store_false",
-        help="Disable HTTP Basic auth enforcement even when --server-username is set",
+        help="Disable HTTP Basic auth enforcement even when --ghidra-server-username is set",
     )
     g_server.add_argument(
         "--tls-cert",

@@ -338,7 +338,6 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--server-url",
         "--mcp-server-url",
-        "--backend-url",
         dest="server_url",
         type=str,
         help="Connect to an existing AgentDecompile MCP server (http(s)://host:port[/mcp/message])",
@@ -365,7 +364,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help="Output format for human-readable messages; don't change unless you need structured output!",
+        help="Output format for human-readable messages (default: text)",
     )
     parser.add_argument(
         "--verbose",
