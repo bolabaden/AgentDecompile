@@ -6,7 +6,9 @@
 #
 # AIO image: one container runs Ghidra server (13100-13102), BSim server (5432), and AgentDecompile MCP (8080).
 # PyGhidra headless and Ghidra AnalyzeHeadless: docker exec -it <container> bash, then run there.
-FROM alpine:latest AS build
+#ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
+ARG ALPINE_BASE_IMAGE="public.ecr.aws/docker/library/alpine:latest"
+FROM ${ALPINE_BASE_IMAGE} AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
 ARG GHIDRA_HOME="/ghidra"
