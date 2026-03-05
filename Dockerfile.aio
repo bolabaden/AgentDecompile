@@ -6,7 +6,8 @@
 #
 # AIO image: one container runs Ghidra server (13100-13102), BSim server (5432), and AgentDecompile MCP (8080).
 # PyGhidra headless and Ghidra AnalyzeHeadless: docker exec -it <container> bash, then run there.
-FROM alpine:latest AS build
+ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
+FROM ${ALPINE_BASE_IMAGE} AS build
 
 # --- Layer 1: env and args (change rarely; keep before any RUN so cache is stable) ---
 ARG GHIDRA_HOME="/ghidra"
@@ -161,25 +162,29 @@ RUN set -eux; \
         fi
 
 # --- Layer 5: install AgentDecompile Python package into venv ---
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 ARG CHROMADB_VERSION=1.5.2
 ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     ARCH="$(uname -m)"; \
-    if [ "${ARCH}" = "aarch64" ]; then \
-        if ! apk add --no-cache \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-            --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            py3-onnxruntime \
-        ; then \
-            INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/APKINDEX.tar.gz"; \
-            ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
-            test -n "${ONNXRUNTIME_VERSION}"; \
-            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
+    if ! apk add --no-cache \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+        py3-onnxruntime \
+    ; then \
+        ARCH_APK="${ARCH}"; \
+        INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/APKINDEX.tar.gz"; \
+        ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}' || true)"; \
+        if [ -n "${ONNXRUNTIME_VERSION}" ]; then \
+            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
             apk add --no-cache \
                 --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
                 --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
                 "${ONNXRUNTIME_APK_URL}" \
-            ; \
+            || echo "WARNING: direct onnxruntime APK install failed for ${ARCH_APK}; continuing."; \
+        else \
+            echo "WARNING: py3-onnxruntime unavailable for ${ARCH_APK}; continuing without system onnxruntime."; \
         fi; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \
@@ -187,13 +192,19 @@ RUN set -eux; \
         rust \
         gcc \
         g++ \
+        make \
         musl-dev \
         python3-dev \
         libffi-dev \
+        protobuf \
+        protobuf-dev \
+        protoc \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade setuptools wheel; \
-    ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --prefer-binary chromadb==${CHROMADB_VERSION}; \
+    if ! ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --prefer-binary chromadb==${CHROMADB_VERSION}; then \
+        echo "WARNING: chromadb installation failed; semantic vector features will be disabled in this image."; \
+    fi; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir /src/agentdecompile; \
     apk del .chromadb-build || true
 

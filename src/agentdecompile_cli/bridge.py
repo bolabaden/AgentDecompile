@@ -63,7 +63,6 @@ from agentdecompile_cli.mcp_server.session_context import get_current_mcp_sessio
 from agentdecompile_cli.registry import resolve_tool_name
 
 if TYPE_CHECKING:
-
     from mcp.server.lowlevel.helper_types import ReadResourceContents
     from mcp.server.lowlevel.server import (
         CombinationContent,
@@ -203,7 +202,7 @@ class RawMcpHttpBackend:
 
         MCP Streamable HTTP may return multiple SSE events; the final one
         with ``"result"`` or ``"error"`` is the JSON-RPC response.
-        
+
         Optimized to find the last data line without processing all lines
         when only the final result matters.
         """
@@ -293,13 +292,31 @@ class RawMcpHttpBackend:
 
     async def initialize(self) -> dict[str, Any]:
         """Send ``initialize`` + ``notifications/initialized``."""
-        result = await self._request("initialize", {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "AgentDecompile-Bridge", "version": "1.0.0"},
-        })
+        result = await self._request(
+            "initialize",
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "AgentDecompile-Bridge", "version": "1.0.0"},
+            },
+        )
         await self._notify("notifications/initialized")
         self._initialized = True
+        # Log server identity so the user can see backend name/version at startup.
+        if isinstance(result, dict):
+            info = result.get("serverInfo", {}) or {}
+            name = info.get("name", "")
+            version = info.get("version", "")
+            proto = result.get("protocolVersion", "")
+            parts = []
+            if name:
+                parts.append(name)
+            if version:
+                parts.append(f"v{version}")
+            if proto:
+                parts.append(f"(protocol {proto})")
+            if parts:
+                sys.stderr.write(f"Backend: {' '.join(parts)}\n")
         return result
 
     async def list_tools(self) -> list[dict[str, Any]]:
@@ -731,21 +748,50 @@ class AgentDecompileStdioBridge:
     async def _auto_open_shared_server(self, backend: RawMcpHttpBackend) -> None:
         """Auto-open a shared Ghidra server connection if CLI credentials are in env vars.
 
-        When the bridge is started with ``--server-host``, ``--server-port``,
-        ``--server-username``, ``--server-password``, and optionally
-        ``--ghidra-server-repository``, these are stored as environment
-        variables.  This method reads them and calls ``open`` on the remote
+        Shared-server host/auth values should be supplied via environment
+        variables (``AGENT_DECOMPILE_GHIDRA_SERVER_HOST``,
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_PORT``,
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME``,
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD``, and optionally
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY``). This method reads them and calls ``open`` on the remote
         backend so that tools like ``list-project-files`` work immediately
         without requiring a manual ``open`` call.
         """
-        server_host = os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        server_host = (
+
+            os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        )
         if not server_host:
             return  # No shared server configured – nothing to auto-open.
 
-        server_port = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
-        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-        repository = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        server_port = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or "13100"
+        )
+        server_username = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        )
+        server_password = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        )
+        repository = (
+            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+        )
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
@@ -758,28 +804,50 @@ class AgentDecompileStdioBridge:
         if repository:
             open_args["path"] = repository
 
-        sys.stderr.write(
-            f"Auto-opening shared server {server_host}:{open_args['server_port']}"
-            f"{(' repo=' + repository) if repository else ''} ...\n"
-        )
+        sys.stderr.write(f"Auto-opening shared server {server_host}:{open_args['server_port']}{(' repo=' + repository) if repository else ''} ...\n")
 
         try:
-            result = await backend.call_tool("open-project", open_args)
-            # Log a short summary of the result.
+            result = await backend.call_tool("connect-shared-project", open_args)
+            # Log a structured summary of the result.
             if isinstance(result, dict):
                 content = result.get("content", [])
                 is_error = result.get("isError", False)
                 if is_error:
-                    text_parts = [
-                        c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
-                    ]
+                    text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
                     sys.stderr.write(f"Auto-open FAILED: {' '.join(text_parts)}\n")
                 else:
-                    # Extract program count from the JSON response embedded in content.
-                    text_parts = [
-                        c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
-                    ]
-                    sys.stderr.write(f"Auto-open OK: {' '.join(text_parts)[:200]}\n")
+                    # Parse the embedded JSON to get structured fields.
+                    data: dict[str, Any] = {}
+                    for c in content:
+                        if isinstance(c, dict) and c.get("type") == "text":
+                            try:
+                                data = json.loads(c["text"])
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+                            break
+                    if data:
+                        repo = data.get("repository", "")
+                        avail_repos = data.get("availableRepositories", [])
+                        prog_count = data.get("programCount", 0)
+                        programs = data.get("programs", [])
+                        server_connected = data.get("serverConnected", False)
+                        checked_out = data.get("checkedOutProgram")
+                        sys.stderr.write(
+                            f"Auto-open OK: connected={server_connected}"
+                            f", repo={repo!r}"
+                            f", availableRepositories={avail_repos}"
+                            f", programs={prog_count}\n"
+                        )
+                        if programs:
+                            prog_paths = [p.get("path", p.get("name", str(p))) for p in programs[:20]]
+                            sys.stderr.write(f"  programs: {prog_paths}\n")
+                            if len(programs) > 20:
+                                sys.stderr.write(f"  ... and {len(programs) - 20} more\n")
+                        if checked_out:
+                            sys.stderr.write(f"  checked-out: {checked_out}\n")
+                    else:
+                        text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                        sys.stderr.write(f"Auto-open OK: {' '.join(text_parts)[:300]}\n")
             else:
                 sys.stderr.write(f"Auto-open returned: {str(result)[:200]}\n")
         except Exception as exc:
@@ -819,8 +887,7 @@ class AgentDecompileStdioBridge:
                 last_exc = exc
                 if attempt == 0 and self._is_connection_error(exc):
                     sys.stderr.write(
-                        f"Backend connection error on {method}, reconnecting... "
-                        f"({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
+                        f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
                     )
                     # Invalidate the session so _ensure_backend creates a fresh one.
                     await self._reset_backend_session(session_id)
@@ -858,6 +925,7 @@ class AgentDecompileStdioBridge:
                     except Exception:
                         pass
                 advertised.append(tool)
+            sys.stderr.write(f"Tools advertised: {len(advertised)}\n")
             return advertised
         except Exception as e:
             sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
@@ -867,14 +935,16 @@ class AgentDecompileStdioBridge:
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:
+    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult: # pyright: ignore[reportInvalidTypeForm]
         """Handle MCP call_tool request by forwarding to backend."""
         backend_name = resolve_tool_name(name) if isinstance(name, str) else None
         if backend_name is None:
             backend_name = name
 
         try:
-            raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, arguments)
+            call_args: dict[str, Any] = dict(arguments or {})
+            call_args.setdefault("format", "markdown")
+            raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, call_args)
             # raw_result is the JSON-RPC "result" value which should be
             # a CallToolResult-shaped dict: {content: [...], isError: bool}
             return CallToolResult.model_validate(raw_result)
@@ -897,7 +967,9 @@ class AgentDecompileStdioBridge:
             from mcp.types import Resource as _Resource
 
             raw: list[dict[str, Any]] = await self._backend_request("list_resources")
-            return [_Resource.model_validate(r) for r in raw]
+            resources = [_Resource.model_validate(r) for r in raw]
+            sys.stderr.write(f"Resources available: {len(resources)}\n")
+            return resources
         except Exception as e:
             sys.stderr.write(f"ERROR: list_resources failed: {e.__class__.__name__}: {e}\n")
             return []
@@ -925,7 +997,9 @@ class AgentDecompileStdioBridge:
             from mcp.types import Prompt as _Prompt
 
             raw: list[dict[str, Any]] = await self._backend_request("list_prompts")
-            return [_Prompt.model_validate(p) for p in raw]
+            prompts = [_Prompt.model_validate(p) for p in raw]
+            sys.stderr.write(f"Prompts available: {len(prompts)}\n")
+            return prompts
         except Exception as e:
             sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
             return []

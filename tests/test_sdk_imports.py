@@ -89,10 +89,10 @@ class TestToolProviderManagerInstantiation:
         }
         # list_tools() returns Tool objects whose .name uses underscores
         expected = {
-            "manage_symbols",
+            "search_symbols",
             "inspect_memory",
-            "manage_comments",
-            "manage_bookmarks",
+            "manage_function_tags",
+            "list_functions",
         }
         missing = expected - names
         assert not missing, f"Expected tools not advertised: {missing}"

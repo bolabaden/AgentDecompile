@@ -95,26 +95,32 @@ class ResourceProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
-        logger.debug(f"Attempting to read resource: {uri}")
+        logger.info(f"ResourceProviderManager: Attempting to read resource: {uri}")
+        logger.info(f"  Current program_info: {self.program_info}")
+        logger.info(f"  Registered providers: {[p.__class__.__name__ for p in self.providers]}")
         attempted_providers = []
+        last_exception = None
 
         for provider in self.providers:
             provider_name = provider.__class__.__name__
             attempted_providers.append(provider_name)
             
             try:
-                logger.debug(f"  Trying provider: {provider_name}")
+                logger.info(f"  Trying provider: {provider_name}")
                 result: str = await provider.read_resource(uri)
-                logger.debug(f"  Provider {provider_name} succeeded")
+                logger.info(f"  Provider {provider_name} succeeded, returned {len(result)} bytes")
                 return result
             except NotImplementedError as e:
                 logger.debug(f"  Provider {provider_name} does not handle this URI: {e}")
                 continue
             except Exception as e:
-                logger.warning(f"  Provider {provider_name} raised exception: {type(e).__name__}: {e}")
+                logger.error(f"  Provider {provider_name} raised exception: {type(e).__name__}: {e}", exc_info=True)
+                last_exception = e
                 continue
 
         error_msg = f"Unknown resource: {uri}. Attempted providers: {', '.join(attempted_providers)}"
+        if last_exception:
+            error_msg += f". Last exception: {type(last_exception).__name__}: {last_exception}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 

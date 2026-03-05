@@ -382,8 +382,10 @@ class AgentDecompileStdioBridge:
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # pyright: ignore[reportInvalidTypeForm]
             try:
                 async with self._with_backend_session("call_tool") as session:
+                    call_args: dict[str, Any] = dict(arguments or {})
+                    call_args.setdefault("format", "markdown")
                     result = await asyncio.wait_for(
-                        session.call_tool(name, arguments),
+                        session.call_tool(name, call_args),
                         timeout=BACKEND_OP_TIMEOUT,
                     )
                     return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")] if result is None else result.content

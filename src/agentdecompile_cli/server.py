@@ -1,11 +1,9 @@
-"""Compatibility entrypoint built on top of launcher.py.
-
-Server entry point with project initialization and transport selection.
+"""Server entry point with project initialization and transport selection.
 
 Provides init_agentdecompile_context() and a main() that supports:
 - Project path (.gpr file or directory) and project name
 - Transport: stdio (bridge to Python MCP server) or streamable-http (Python MCP server on host:port)
-- Proxy mode: local MCP transports forwarding to a remote MCP backend via --backend-url
+- Proxy mode: --backend-url forwards all MCP requests to a remote backend (no local PyGhidra/JVM)
 - List/delete project binaries (then exit)
 - Import binaries (input_paths) before serving
 
@@ -15,8 +13,8 @@ Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
 - AGENT_DECOMPILE_PORT: Server port (applied when no config file)
 - AGENT_DECOMPILE_SERVER_USERNAME, AGENT_DECOMPILE_SERVER_PASSWORD: Shared project auth
 - AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_SERVER_PORT: Ghidra server for shared projects
-- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH
-- AGENT_DECOMPILE_BACKEND_URL (or AGENT_DECOMPILE_MCP_SERVER_URL): Remote MCP backend URL for proxy mode
+- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENT_DECOMPILE_REPOSITORY / AGENTDECOMPILE_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH
+- AGENT_DECOMPILE_BACKEND_URL / AGENT_DECOMPILE_MCP_SERVER_URL: Remote MCP backend for proxy mode
 """
 
 from __future__ import annotations
@@ -29,12 +27,16 @@ import sys
 import time
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.launcher import AgentDecompileLauncher
+from agentdecompile_cli.mcp_server.auth import AuthConfig
+from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.utils import get_client, run_async
+
+if TYPE_CHECKING:
+    from mcp.client.session import ClientSession
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -68,6 +70,9 @@ def init_agentdecompile_context(
     port: int | None = None,
     host: str | None = None,
     config_file: Path | None = None,
+    auth_config: AuthConfig | None = None,
+    tls_certfile: str | None = None,
+    tls_keyfile: str | None = None,
 ) -> tuple[AgentDecompileLauncher, ProjectManager | None]:
     """Initialize AgentDecompile: project resolution, PyGhidra, launcher, optional list/delete/import.
 
@@ -89,18 +94,21 @@ def init_agentdecompile_context(
 
     # Launcher is started by the caller after PyGhidra is initialized (see main()).
     # We only compute launcher args here; actual start happens in main() after pyghidra.start().
-    use_random_port = port is None
+    use_random_port: bool = port is None
     launcher = AgentDecompileLauncher(config_file=config_file, use_random_port=use_random_port)
     project_manager: ProjectManager | None = None
-    if not os.getenv("AGENT_DECOMPILE_PROJECT_PATH"):
+    if not (os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")):
         project_manager = ProjectManager()
 
     # Start the server (caller must have called pyghidra.start() before)
-    started_port = launcher.start(
+    started_port: int = launcher.start(
         port=port,
         host=host,
         project_directory=project_directory if project_path_gpr is None else None,
         project_name=project_name if project_path_gpr is None else None,
+        auth_config=auth_config,
+        tls_certfile=tls_certfile,
+        tls_keyfile=tls_keyfile,
     )
 
     async def _list_and_exit() -> None:
@@ -122,7 +130,7 @@ def init_agentdecompile_context(
                             sys.exit(0)
                 sys.stderr.write("No programs in project.\n")
             except Exception as e:
-                sys.stderr.write(f"Error listing programs: {e}\n")
+                sys.stderr.write(f"Error listing programs: {e.__class__.__name__}: {e}\n")
             sys.exit(0)
 
     if list_project_binaries:
@@ -142,14 +150,14 @@ def init_agentdecompile_context(
         logger.info("Importing binaries: %s", ", ".join(str(p) for p in bin_paths))
 
         async def _import_binaries() -> None:
-            client = get_client(host="127.0.0.1", port=started_port)
+            client: ClientSession = get_client(host="127.0.0.1", port=started_port)
             async with client:
                 for path in bin_paths:
                     try:
                         await client.call_tool("open-project", {"path": str(path.resolve()), "runAnalysis": True})
                         sys.stderr.write(f"Imported: {path}\n")
                     except Exception as e:
-                        sys.stderr.write(f"Import failed for {path}: {e}\n")
+                        sys.stderr.write(f"Import failed for {path}: {e.__class__.__name__}: {e}\n")
 
         run_async(_import_binaries())
 
@@ -177,29 +185,6 @@ def _env_host() -> str:
     return (os.environ.get("AGENT_DECOMPILE_HOST") or "").strip() or "127.0.0.1"
 
 
-def _resolve_default_project_path(project_path_arg: Path) -> Path:
-    """Resolve effective default project path for server mode.
-
-    If caller did not override ``--project-path`` (still using
-    ``agentdecompile_projects``) and a mounted ``/projects`` directory exists,
-    prefer that persistent location so domain storage survives container restarts.
-    """
-    raw = str(project_path_arg).strip()
-    is_builtin_default = raw in {"agentdecompile_projects", "./agentdecompile_projects"}
-    if not is_builtin_default:
-        return project_path_arg
-
-    explicit_default = (os.environ.get("AGENT_DECOMPILE_DEFAULT_PROJECT_DIR") or "").strip()
-    if explicit_default:
-        return Path(explicit_default)
-
-    persistent_root = Path("/projects")
-    if persistent_root.exists() and persistent_root.is_dir():
-        return persistent_root / "agentdecompile_projects"
-
-    return project_path_arg
-
-
 def _resolve_proxy_backend_url(
     explicit_backend_url: str | None,
     explicit_mcp_server_url: str | None = None,
@@ -223,19 +208,33 @@ def _resolve_proxy_backend_url(
     return normalize_backend_url(raw.strip())
 
 
+def _resolve_default_project_path(project_path_arg: Path) -> Path:
+    """Resolve effective default project path for server mode.
+
+    If caller did not override ``--project-path`` (still using
+    ``agentdecompile_projects``) and a mounted ``/projects`` directory exists,
+    prefer that persistent location so domain storage survives container restarts.
+    """
+    raw: str = str(project_path_arg).strip()
+    is_builtin_default = raw in {"agentdecompile_projects", "./agentdecompile_projects"}
+    if not is_builtin_default:
+        return project_path_arg
+
+    explicit_default: str = (os.environ.get("AGENT_DECOMPILE_DEFAULT_PROJECT_DIR") or "").strip()
+    if explicit_default:
+        return Path(explicit_default)
+
+    persistent_root = Path("/projects")
+    if persistent_root.exists() and persistent_root.is_dir():
+        return persistent_root / "agentdecompile_projects"
+
+    return project_path_arg
+
+
 def _configure_http_debug_logging(verbose: bool) -> None:
     level = logging.INFO if verbose else logging.WARNING
     logging.getLogger("httpx").setLevel(level)
     logging.getLogger("httpcore").setLevel(level)
-
-
-def _validate_proxy_mode_args(parser: Any, args: Any) -> None:
-    if args.list_project_binaries:
-        parser.error("--list-project-binaries is not supported with --backend-url proxy mode")
-    if args.delete_project_binary:
-        parser.error("--delete-project-binary is not supported with --backend-url proxy mode")
-    if args.input_paths:
-        parser.error("input_paths import is not supported with --backend-url proxy mode")
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -244,13 +243,138 @@ def _configure_logging(verbose: bool) -> None:
     _configure_http_debug_logging(verbose)
 
 
+class CredentialSanitizer(logging.Filter):
+    """Logging filter that redacts registered sensitive strings from all log records."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secrets: set[str] = set()
+
+    def register(self, value: str) -> None:
+        if value and value.strip():
+            self._secrets.add(value.strip())
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._secrets:
+            return True
+        try:
+            msg = record.getMessage()
+            for secret in self._secrets:
+                if secret in msg:
+                    record.msg = record.msg.replace(secret, "***") if isinstance(record.msg, str) else record.msg
+                    record.args = _redact_args(record.args, secret)
+        except Exception:
+            pass
+        return True
+
+
+def _redact_args(args: Any, secret: str) -> Any:
+    if args is None:
+        return args
+    if isinstance(args, str):
+        return args.replace(secret, "***")
+    if isinstance(args, dict):
+        return {k: _redact_args(v, secret) for k, v in args.items()}
+    if isinstance(args, (list, tuple)):
+        redacted = [_redact_args(a, secret) for a in args]
+        return type(args)(redacted)
+    return args
+
+
+# Module-level sanitizer — installed once in _set_env_from_args and reused
+_credential_sanitizer = CredentialSanitizer()
+
+
+def _first_non_empty_env(*keys: str) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _set_env_if_missing(target: str, *sources: str) -> None:
+    current = os.environ.get(target)
+    if current is not None and current.strip():
+        return
+    resolved = _first_non_empty_env(*sources)
+    if resolved is not None:
+        os.environ[target] = resolved
+
+
+def _normalize_shared_server_env_aliases() -> None:
+    """Normalize shared-server environment aliases to canonical names.
+
+    Supports both canonical AGENT_DECOMPILE_* variables and compact
+    AGENTDECOMPILE_* variants so external MCP launchers can supply either form.
+    """
+
+    # Canonical Ghidra-prefixed env vars used by server/launcher/auth logic.
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+        "AGENTDECOMPILE_GHIDRA_SERVER_HOST",
+        "AGENT_DECOMPILE_SERVER_HOST",
+        "AGENTDECOMPILE_SERVER_HOST",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PORT",
+        "AGENT_DECOMPILE_SERVER_PORT",
+        "AGENTDECOMPILE_SERVER_PORT",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+        "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME",
+        "AGENT_DECOMPILE_SERVER_USERNAME",
+        "AGENTDECOMPILE_SERVER_USERNAME",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD",
+        "AGENT_DECOMPILE_SERVER_PASSWORD",
+        "AGENTDECOMPILE_SERVER_PASSWORD",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENT_DECOMPILE_REPOSITORY",
+        "AGENTDECOMPILE_REPOSITORY",
+    )
+
+    # Mirror canonical values into legacy/non-ghidra names used by bridge paths.
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_HOST", "AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_PORT", "AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_USERNAME", "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_PASSWORD", "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_HOST", "AGENT_DECOMPILE_SERVER_HOST")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_PORT", "AGENT_DECOMPILE_SERVER_PORT")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_USERNAME", "AGENT_DECOMPILE_SERVER_USERNAME")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_PASSWORD", "AGENT_DECOMPILE_SERVER_PASSWORD")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+    _set_env_if_missing(
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+    )
+    _set_env_if_missing("AGENT_DECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+    _set_env_if_missing("AGENTDECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+
+
 def _set_env_from_args(args: Any) -> None:
-    """Populate AGENT_DECOMPILE_* env vars from CLI args when provided."""
+    """Populate AGENT_DECOMPILE_* env vars from CLI args when provided.
+
+    Also scrubs credential values from sys.argv and the args namespace so they
+    cannot appear in process listings, debug logs, or exception tracebacks, and
+    installs a root logging filter that redacts any residual occurrences.
+    """
+    _SENSITIVE_ARGS = {"ghidra_server_username", "ghidra_server_password"}
     mappings = {
-        "server_host": "AGENT_DECOMPILE_SERVER_HOST",
-        "server_port": "AGENT_DECOMPILE_SERVER_PORT",
-        "server_username": "AGENT_DECOMPILE_SERVER_USERNAME",
-        "server_password": "AGENT_DECOMPILE_SERVER_PASSWORD",
+        "ghidra_server_host": "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+        "ghidra_server_port": "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+        "ghidra_server_username": "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+        "ghidra_server_password": "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
         "ghidra_server_repository": "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
     }
     for arg_name, env_name in mappings.items():
@@ -260,6 +384,60 @@ def _set_env_from_args(args: Any) -> None:
         if isinstance(value, str) and not value.strip():
             continue
         os.environ[env_name] = str(value)
+        # Register with sanitizer before clearing from args
+        if arg_name in _SENSITIVE_ARGS:
+            _credential_sanitizer.register(str(value))
+        # Overwrite on the namespace so exception dumps don't expose it
+        setattr(args, arg_name, None)
+
+    # Scrub sensitive flags and their values from sys.argv
+    _scrub_argv(_SENSITIVE_ARGS)
+
+    # Install sanitizer on the root logger (idempotent)
+    root_logger = logging.getLogger()
+    if _credential_sanitizer not in root_logger.filters:
+        root_logger.addFilter(_credential_sanitizer)
+
+
+def _scrub_argv(sensitive_arg_names: set[str]) -> None:
+    """Remove credential flags and their values from sys.argv in-place."""
+    # Build the set of CLI flag strings that carry sensitive values.
+    # For each name like "ghidra_server_password", generate:
+    #   --ghidra-server-password, --ghidra_server_password (current forms)
+    #   --ghidra-server-password, --ghidra-server_password (legacy forms, for safety)
+    flag_variants: set[str] = set()
+    for name in sensitive_arg_names:
+        base = name.replace("_", "-")
+        flag_variants.update(
+            {
+                f"--{base}",
+                f"--{name}",
+            }
+        )
+        # Also scrub the legacy --server-* form in case it appears in sys.argv
+        short = name.replace("ghidra_server_", "")
+        flag_variants.update(
+            {
+                f"--server-{short}",
+                f"--server_{short}",
+            }
+        )
+
+    scrubbed: list[str] = []
+    skip_next = False
+    for token in sys.argv:
+        if skip_next:
+            skip_next = False
+            continue
+        token_key = token.split("=", 1)[0] if "=" in token else token
+        if token_key in flag_variants:
+            # --flag value  (two-token form)
+            if "=" not in token:
+                skip_next = True
+            # --flag=value  (single-token form) — just drop it
+            continue
+        scrubbed.append(token)
+    sys.argv[:] = scrubbed
 
 
 def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
@@ -338,33 +516,6 @@ async def _run_http_mode(host: str, port: int | None) -> None:
         await asyncio.sleep(3600)
 
 
-async def _run_proxy_mode(host: str, port: int, backend_url: str) -> None:
-    """Run HTTP proxy mode and forward all requests to backend_url."""
-    from agentdecompile_cli.mcp_server.proxy_server import (
-        AgentDecompileMcpProxyServer,
-        ProxyServerConfig,
-    )
-
-    proxy_server = AgentDecompileMcpProxyServer(
-        ProxyServerConfig(
-            host=host,
-            port=port,
-            backend_url=backend_url,
-        ),
-    )
-    started_port = proxy_server.start()
-    try:
-        sys.stderr.write(
-            f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
-        )
-        sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
-        sys.stderr.write("Press Ctrl+C to stop.\n")
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        proxy_server.stop()
-
-
 def _cleanup_resources(
     launcher: AgentDecompileLauncher | None,
     project_manager: ProjectManager | None,
@@ -406,9 +557,10 @@ def main() -> None:
     g_server.add_argument(
         "-p",
         "--port",
+        "--mcp-server-port",
         type=int,
         default=None,
-        help="Port for HTTP transports (default: AGENT_DECOMPILE_PORT or 8080)",
+        help="Port for the MCP server (default: AGENT_DECOMPILE_PORT or 8080)",
     )
     g_server.add_argument(
         "-o",
@@ -418,14 +570,22 @@ def main() -> None:
         help="Host for HTTP transports (default: AGENT_DECOMPILE_HOST or 127.0.0.1)",
     )
     g_server.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Enable verbose logs (including HTTP request diagnostics)",
+    )
+    g_server.add_argument(
         "--backend-url",
         "--server-url",
         dest="backend_url",
         type=str,
         default=None,
         help=(
-            "Run in proxy mode and forward all MCP requests to an existing MCP server "
-            "(http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"
+            "Run in proxy mode: forward all MCP requests to an existing "
+            "MCP server (http(s)://host:port[/mcp/message]); "
+            "skips local PyGhidra/JVM startup"
         ),
     )
     g_server.add_argument(
@@ -439,46 +599,61 @@ def main() -> None:
         ),
     )
     g_server.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        default=False,
-        help="Enable verbose logs (including HTTP request diagnostics)",
-    )
-    g_server.add_argument(
-        "--server-host",
         "--ghidra-server-host",
         type=str,
         default=None,
-        help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+        help="Shared Ghidra server host (prefer AGENT_DECOMPILE_GHIDRA_SERVER_HOST in environment)",
     )
     g_server.add_argument(
-        "--server-port",
         "--ghidra-server-port",
         type=int,
         default=None,
-        help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+        help="Shared Ghidra server port (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PORT in environment)",
     )
     g_server.add_argument(
-        "--server-username",
         "--ghidra-server-username",
         type=str,
         default=None,
-        help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+        help="Shared Ghidra server username (prefer AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME in environment)",
     )
     g_server.add_argument(
-        "--server-password",
         "--ghidra-server-password",
         type=str,
         default=None,
-        help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+        help="Shared Ghidra server password (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD in environment)",
     )
     g_server.add_argument(
         "--ghidra-server-repository",
-        "--server-repository",
         type=str,
         default=None,
-        help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+        help="Shared Ghidra repository (prefer AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY in environment)",
+    )
+    g_server.add_argument(
+        "--require-auth",
+        dest="require_auth",
+        action="store_true",
+        default=None,
+        help="Require HTTP Basic auth on every MCP request (auto-enabled when --ghidra-server-username is set)",
+    )
+    g_server.add_argument(
+        "--no-require-auth",
+        dest="require_auth",
+        action="store_false",
+        help="Disable HTTP Basic auth enforcement even when --ghidra-server-username is set",
+    )
+    g_server.add_argument(
+        "--tls-cert",
+        dest="tls_certfile",
+        type=str,
+        default=None,
+        help="Path to TLS certificate (PEM) for HTTPS. Requires --tls-key. Env: AGENT_DECOMPILE_TLS_CERT",
+    )
+    g_server.add_argument(
+        "--tls-key",
+        dest="tls_keyfile",
+        type=str,
+        default=None,
+        help="Path to TLS private key (PEM) for HTTPS. Requires --tls-cert. Env: AGENT_DECOMPILE_TLS_KEY",
     )
     g_server.add_argument(
         "--project-path",
@@ -532,32 +707,133 @@ def main() -> None:
     # Configure logging
     _configure_logging(args.verbose)
 
+    # Normalize compact and legacy shared-server env aliases before consuming
+    # defaults from the process environment.
+    _normalize_shared_server_env_aliases()
+
     # Set environment variables from args
     _set_env_from_args(args)
+    # Re-run normalization so CLI-provided values are mirrored to compatibility
+    # aliases used by older bridge/bootstrap code paths.
+    _normalize_shared_server_env_aliases()
+
+    # Resolve TLS paths (CLI > env)
+    tls_certfile: str | None = args.tls_certfile or os.environ.get("AGENT_DECOMPILE_TLS_CERT") or None
+    tls_keyfile: str | None = args.tls_keyfile or os.environ.get("AGENT_DECOMPILE_TLS_KEY") or None
+    if bool(tls_certfile) != bool(tls_keyfile):
+        parser.error("--tls-cert and --tls-key must be provided together")
+
+    # Build AuthConfig from CLI args / env.
+    # EXPERIMENTAL: Auth is disabled by default.  Set the env var
+    # AGENT_DECOMPILE_AUTH_ENABLED=true (or pass --require-auth) to enable it.
+    # NOTE: Auth is ONLY applied for HTTP transports.  In stdio mode the internal
+    # HTTP server is used exclusively by the in-process bridge — no external
+    # clients ever reach it, so requiring auth would block the bridge itself.
+    _require_auth_flag = getattr(args, "require_auth", None)
+    _auth_env_enabled = os.environ.get(
+        "AGENT_DECOMPILE_AUTH_ENABLED", ""
+    ).lower() in ("true", "1", "yes", "on")
+    _is_http_transport = args.transport in _HTTP_TRANSPORTS
+    auth_config: AuthConfig | None = None
+    if _is_http_transport and (_require_auth_flag or _auth_env_enabled):
+        auth_config = AuthConfig(
+            require_auth=bool(_require_auth_flag),
+            default_server_host=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_HOST")
+                or getattr(args, "ghidra_server_host", None)
+            ),
+            default_server_port=int(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_PORT")
+                or getattr(args, "ghidra_server_port", None)
+                or 13100
+            ),
+            default_username=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME")
+                or getattr(args, "ghidra_server_username", None)
+            ),
+            default_password=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD")
+                or getattr(args, "ghidra_server_password", None)
+            ),
+            default_repository=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                or os.environ.get("AGENT_DECOMPILE_REPOSITORY")
+                or getattr(args, "ghidra_server_repository", None)
+            ),
+        )
 
     # Resolve transport configuration
-    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
 
-    # Handle proxy mode
-    if backend_url:
-        from agentdecompile_cli.bridge import _apply_mcp_session_fix
+    # ---------------------------------------------------------------
+    # Proxy mode: forward to a remote backend (no local PyGhidra/JVM)
+    # ---------------------------------------------------------------
+    backend_url = _resolve_proxy_backend_url(
+        getattr(args, "backend_url", None),
+        getattr(args, "mcp_server_url", None),
+    )
+    if backend_url is not None:
+        # Validate: proxy mode is incompatible with local-only options
+        if args.list_project_binaries:
+            parser.error("--list-project-binaries is not supported in proxy mode (--backend-url)")
+        if args.delete_project_binary:
+            parser.error("--delete-project-binary is not supported in proxy mode (--backend-url)")
+        if args.input_paths:
+            parser.error("Importing binaries is not supported in proxy mode (--backend-url)")
 
-        _apply_mcp_session_fix()
-        _validate_proxy_mode_args(parser, args)
+        from agentdecompile_cli.mcp_server.proxy_server import (
+            AgentDecompileMcpProxyServer,
+            ProxyServerConfig,
+        )
 
+        sys.stderr.write(f"Proxy mode: forwarding to {backend_url}\n")
+
+        if args.transport == "stdio":
+            # stdio proxy: run bridge directly
+            from agentdecompile_cli.bridge import AgentDecompileStdioBridge
+
+            bridge = AgentDecompileStdioBridge(backend_url)
+            try:
+                run_async(bridge.run())
+            except KeyboardInterrupt:
+                sys.stderr.write("\nShutdown complete\n")
+            return
+
+        # HTTP proxy mode
+        proxy_server = AgentDecompileMcpProxyServer(
+            ProxyServerConfig(
+                host=host,
+                port=port,
+                backend_url=backend_url,
+                tls_certfile=tls_certfile,
+                tls_keyfile=tls_keyfile,
+            ),
+            auth_config=auth_config,
+        )
         try:
-            if args.transport == "stdio":
-                run_async(_run_stdio_mode(None, None, backend_url))
-            elif args.transport in _HTTP_TRANSPORTS:
-                run_async(_run_proxy_mode(host, port, backend_url))
-            else:
-                sys.stderr.write(f"Unknown transport: {args.transport}\n")
-                sys.exit(1)
+            started_port = proxy_server.start()
+            sys.stderr.write(
+                f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n"
+            )
+            sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
+            sys.stderr.write("Press Ctrl+C to stop.\n")
+            while True:
+                time.sleep(3600)
         except KeyboardInterrupt:
             sys.stderr.write("\nShutdown complete\n")
+        finally:
+            proxy_server.stop()
         return
+
+    # ---------------------------------------------------------------
+    # Local mode: full PyGhidra / JVM startup
+    # ---------------------------------------------------------------
 
     # Setup project paths
     project_directory, project_name, project_path_gpr = _setup_project_paths(parser, args)
@@ -583,9 +859,12 @@ def main() -> None:
         delete_project_binary=args.delete_project_binary,
         symbols_path=str(args.symbols_path) if args.symbols_path else None,
         sym_file_path=str(args.sym_file_path) if args.sym_file_path else None,
-        port=port if args.transport != "stdio" else None,
-        host=host if args.transport != "stdio" else None,
+        port=port,
+        host=host,
         config_file=args.config,
+        auth_config=auth_config,
+        tls_certfile=tls_certfile,
+        tls_keyfile=tls_keyfile,
     )
 
     # Run the appropriate transport mode

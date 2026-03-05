@@ -7,6 +7,7 @@ maintaining 1:1 API compatibility.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -20,8 +21,8 @@ from mcp import types
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
-
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
+from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
@@ -39,6 +40,10 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
     keep_alive_interval: int = 30
+    tls_certfile: str | None = None
+    """Path to TLS certificate file (PEM). Enables HTTPS when combined with tls_keyfile."""
+    tls_keyfile: str | None = None
+    """Path to TLS private key file (PEM). Enables HTTPS when combined with tls_certfile."""
 
 
 class PythonMcpServer:
@@ -51,8 +56,10 @@ class PythonMcpServer:
     def __init__(
         self,
         config: ServerConfig | None = None,
+        auth_config: AuthConfig | None = None,
     ) -> None:
         self.config: ServerConfig = ServerConfig() if config is None else config
+        self.auth_config: AuthConfig | None = auth_config
         self.app: FastAPI = FastAPI(title=self.config.name, version=self.config.version)
 
         # Core components
@@ -72,7 +79,7 @@ class PythonMcpServer:
         self._session_manager = StreamableHTTPSessionManager(
             app=self.mcp_server,
             json_response=True,
-            stateless=False,
+            stateless=True,
         )
         self._session_manager_cm = None
 
@@ -105,42 +112,41 @@ class PythonMcpServer:
             """List all available MCP resources."""
             return self.resource_providers.list_resources()
 
-        @server.read_resource()
+        @server.read_resource()  # pyright: ignore[reportArgumentType]
         async def read_resource(uri: str) -> str:
             """Read a resource by URI."""
-            return await self.resource_providers.read_resource(uri, self.program_info)
+            try:
+                logger.info(f"MCP read_resource called with URI: {uri}")
+                result = await self.resource_providers.read_resource(uri, self.program_info)
+                logger.info(f"MCP read_resource succeeded for {uri}, returning {len(result)} bytes")
+                return result
+            except Exception as e:
+                logger.error(f"MCP read_resource failed for {uri}: {e.__class__.__name__}: {e}", exc_info=True)
+                # Return empty JSON object for failed resources instead of propagating exception
+                # This prevents MCP protocol errors while still indicating failure
+                return json.dumps({"error": f"{e.__class__.__name__}: {e}", "uri": uri, "status": "failed"})
+
+        @server.list_prompts()
+        async def list_prompts() -> list[types.Prompt]:
+            """List all available MCP prompts."""
+            # No prompts are currently implemented, return empty list
+            return []
 
         return server
 
+    # Paths that the MCP session handler should serve.
+    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+
     def _setup_routes(self) -> None:
-        """Setup FastAPI routes for MCP communication."""
+        """Setup FastAPI routes for MCP communication.
 
-        class _SessionContextASGI:
-            def __init__(self, inner_app: Any):
-                self._inner_app: Any = inner_app
-
-            async def __call__(
-                self,
-                scope: dict[str, Any],
-                receive: Any,
-                send: Any,
-            ):
-                session_id = "default"
-                if scope.get("type") == "http":
-                    key_b: bytes
-                    value_b: bytes
-                    for key_b, value_b in scope.get("headers", []):
-                        if key_b.decode("latin1").lower() == "mcp-session-id":
-                            value = value_b.decode("latin1").strip()
-                            if value:
-                                session_id = value
-                            break
-
-                token = CURRENT_MCP_SESSION_ID.set(session_id)
-                try:
-                    await self._inner_app(scope, receive, send)
-                finally:
-                    CURRENT_MCP_SESSION_ID.reset(token)
+        Uses an outer ASGI middleware to intercept ``/mcp`` and
+        ``/mcp/message`` *before* Starlette's router so that all HTTP
+        methods (POST, GET, DELETE) arrive at the MCP session handler
+        with ``path="/"`` as the SDK expects.  Every other path
+        (``/docs``, ``/redoc``, ``/openapi.json``, ``/health``) falls
+        through to FastAPI's normal router.
+        """
 
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
@@ -150,12 +156,8 @@ class PythonMcpServer:
         @self.app.on_event("shutdown")
         async def _shutdown_session_manager() -> None:
             if self._session_manager_cm is not None:
-                await self._session_manager_cm.__aexit__(None, None, None)
+                await self._session_manager_cm.__aexit__(None, None, None)  # pyright: ignore[reportGeneralTypeIssues]
                 self._session_manager_cm = None
-
-        mcp_asgi = _SessionContextASGI(self._session_manager.handle_request)
-        self.app.mount("/mcp/message", mcp_asgi)
-        self.app.mount("/mcp/message/", mcp_asgi)
 
         @self.app.get("/health")
         async def health_check() -> dict[str, Any]:
@@ -166,6 +168,52 @@ class PythonMcpServer:
                 "version": self.config.version,
                 "programs": (1 if self.program_info and self.program_info.program else 0),
             }
+
+        # Build the innermost ASGI handler: session-context → MCP SDK
+        mcp_handle = self._session_manager.handle_request
+
+        async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            """Propagate MCP session ID into ContextVar, then delegate."""
+            session_id = "default"
+            if scope.get("type") == "http":
+                key_b: bytes
+                value_b: bytes
+                for key_b, value_b in scope.get("headers", []):
+                    if key_b.decode("latin1").lower() == "mcp-session-id":
+                        value = value_b.decode("latin1").strip()
+                        if value:
+                            session_id = value
+                        break
+            token = CURRENT_MCP_SESSION_ID.set(session_id)
+            try:
+                await mcp_handle(scope, receive, send)
+            finally:
+                CURRENT_MCP_SESSION_ID.reset(token)
+
+        # Optionally wrap with auth (experimental, off by default).
+        mcp_app: Any = _mcp_asgi
+        if self.auth_config is not None:
+            mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
+
+        # Wrap the entire FastAPI app with an outer middleware that
+        # intercepts MCP paths before Starlette's router sees them.
+        inner_app = self.app  # the FastAPI ASGI app itself
+        mcp_paths = self._MCP_PATHS
+
+        class _MCPRoutingMiddleware:
+            """ASGI middleware: route /mcp and /mcp/message to the MCP handler."""
+
+            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+                if scope.get("type") == "http":
+                    path = (scope.get("path") or "").rstrip("/") or "/"
+                    if path in mcp_paths:
+                        rewritten = dict(scope, path="/")
+                        await mcp_app(rewritten, receive, send)
+                        return
+                await inner_app(scope, receive, send)
+
+        # Replace self.app so uvicorn serves the middleware-wrapped version.
+        self.app = _MCPRoutingMiddleware()  # type: ignore[assignment]
 
     def set_project_manager(
         self,
@@ -221,13 +269,9 @@ class PythonMcpServer:
             return self.config.port
 
         if not self._is_port_available(self.config.host, self.config.port):
-            requested_port = self.config.port
-            self.config.port = self._find_free_port(self.config.host)
-            logger.warning(
-                "Port %s is in use on %s; falling back to free port %s",
-                requested_port,
-                self.config.host,
-                self.config.port,
+            raise RuntimeError(
+                f"Port {self.config.port} on {self.config.host} is already in use. "
+                f"Use --port to specify a different port, or stop the other process."
             )
 
         self._running = True
@@ -265,17 +309,20 @@ class PythonMcpServer:
         except OSError:
             return False
 
-    def _find_free_port(self, host: str) -> int:
-        """Find an ephemeral free port bound to host."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((host, 0))
-            return int(sock.getsockname()[1])
-
     def _run_server(self) -> None:
         """Run the FastAPI server in a background thread."""
         import uvicorn
 
-        config = uvicorn.Config(app=self.app, host=self.config.host, port=self.config.port, log_level="info")
+        uvicorn_kwargs: dict[str, Any] = {
+            "app": self.app,
+            "host": self.config.host,
+            "port": self.config.port,
+            "log_level": "info",
+        }
+        if self.config.tls_certfile and self.config.tls_keyfile:
+            uvicorn_kwargs["ssl_certfile"] = self.config.tls_certfile
+            uvicorn_kwargs["ssl_keyfile"] = self.config.tls_keyfile
+        config = uvicorn.Config(**uvicorn_kwargs)
         server = uvicorn.Server(config)
 
         try:
@@ -294,8 +341,12 @@ class PythonMcpServer:
         try:
             import httpx
 
-            with httpx.Client() as client:
-                response = client.get(f"http://{self.config.host}:{self.config.port}/health", timeout=1.0)
+            scheme = "https" if (self.config.tls_certfile and self.config.tls_keyfile) else "http"
+            with httpx.Client(verify=False) as client:  # noqa: S501 (local readiness probe)
+                response = client.get(
+                    f"{scheme}://{self.config.host}:{self.config.port}/health",
+                    timeout=1.0,
+                )
                 return response.status_code == 200
         except Exception:
             return False

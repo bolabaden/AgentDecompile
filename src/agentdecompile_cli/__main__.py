@@ -58,7 +58,7 @@ def _redirect_java_outputs():
         if not isJVMStarted():
             return
     except Exception as e:
-        sys.stderr.write(f"Warning: JVM output redirection setup skipped: {e}\n")
+        sys.stderr.write(f"Warning: JVM output redirection setup skipped: {e.__class__.__name__}: {e}\n")
 
 
 class StderrFilter:
@@ -364,7 +364,10 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help="Output format for human-readable messages (default: text)",
+        help=(
+            "Output format for CLI messages (default: text). Use -f/--format json "
+            "only when you strictly need machine-readable output; text is recommended."
+        ),
     )
     parser.add_argument(
         "--verbose",

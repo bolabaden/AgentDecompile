@@ -52,6 +52,11 @@ if [[ -n "${GHIDRA_IP}" ]]; then
         else
             echo 'wrapper.app.parameter.4=${ghidra.repositories.dir}' >> "${SERVER_CONF}"
         fi
+
+        # Fix YAJSW wrapper log permission: redirect to /tmp
+        echo "wrapper.logfile=/tmp/wrapper.log" >> "${SERVER_CONF}"
+        # Increase startup timeout (default 30s is too short for resource-constrained hosts)
+        echo "wrapper.startup.timeout=300" >> "${SERVER_CONF}"
     fi
 fi
 
