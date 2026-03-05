@@ -3745,3 +3745,9 @@ if __name__ == "__main__":
 # (important for subcommand resolution before main() callback runs).
 _ensure_dynamic_commands_registered()
 _register_output_format_option_on_all_commands(main)
+
+
+def cli_entry_point() -> None:
+    """Entry point for the CLI (referenced by pyproject.toml scripts)."""
+    _ensure_dynamic_commands_registered()
+    main()
