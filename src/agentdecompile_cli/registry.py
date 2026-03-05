@@ -95,7 +95,7 @@ TOOLS = [
     "checkout-status",
     "create-label",
     "decompile-function",
-    "sync-shared-project",
+    "sync-project",
     "export",
     "delete-project-binary",
     "gen-callgraph",
@@ -248,7 +248,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "match-function": _params( "programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize" ),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
     "open-program-in-code-browser": _params("programPath"),
-    "open-project": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort" ),
+    "open-project": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName" ),
     "read-bytes": _params("programPath", "address", "length"),
     "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
@@ -256,7 +256,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
-    "sync-shared-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
+    "sync-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
 }
 
 # Populated from TOOLS_LIST.md when available.
@@ -273,11 +273,12 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
     "open": "open-project",
     "create-label": "manage-symbols",
-    "download-shared-repository": "sync-shared-project",
-    "sync-shared-repository": "sync-shared-project",
-    "pull-shared-repository": "sync-shared-project",
-    "push-shared-repository": "sync-shared-project",
-    "download-shared-project": "sync-shared-project",
+    "download-shared-repository": "sync-project",
+    "sync-shared-repository": "sync-project",
+    "sync-shared-project": "sync-project",
+    "pull-shared-repository": "sync-project",
+    "push-shared-repository": "sync-project",
+    "download-shared-project": "sync-project",
     "gen-callgraph": "get-call-graph",
     "list-cross-references": "get-references",
     "list-exports": "manage-symbols",
@@ -674,7 +675,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "search-everything",
     "search-strings",
     "search-symbols",
-    "sync-shared-project",
+    "sync-project",
 )
 
 # Tools that are hidden by default; exposed only when AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1
