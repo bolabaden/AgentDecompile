@@ -186,6 +186,7 @@ RUN set -eux; \
         rust \
         gcc \
         g++ \
+        make \
         musl-dev \
         python3-dev \
         libffi-dev \
