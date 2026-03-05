@@ -64,8 +64,8 @@ Issues = "https://github.com/bolabaden/AgentDecompile/issues"
 Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 
 [project.scripts]
-agentdecompile        = "agentdecompile_cli.cli:main"
-agentdecompile-cli    = "agentdecompile_cli.cli:main"
+agentdecompile        = "agentdecompile_cli.cli:cli_entry_point"
+agentdecompile-cli    = "agentdecompile_cli.cli:cli_entry_point"
 # MCP stdio entrypoint.
 agentdecompile-mcp    = "agentdecompile_cli.__main__:main"
 mcp_agentdecompile    = "agentdecompile_cli.__main__:main"

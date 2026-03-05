@@ -29,12 +29,15 @@ import sys
 import time
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.launcher import AgentDecompileLauncher
 from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.utils import get_client, run_async
+
+if TYPE_CHECKING:
+    from mcp.client import ClientSession
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -89,14 +92,14 @@ def init_agentdecompile_context(
 
     # Launcher is started by the caller after PyGhidra is initialized (see main()).
     # We only compute launcher args here; actual start happens in main() after pyghidra.start().
-    use_random_port = port is None
+    use_random_port: bool = port is None
     launcher = AgentDecompileLauncher(config_file=config_file, use_random_port=use_random_port)
     project_manager: ProjectManager | None = None
     if not (os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")):
         project_manager = ProjectManager()
 
     # Start the server (caller must have called pyghidra.start() before)
-    started_port = launcher.start(
+    started_port: int = launcher.start(
         port=port,
         host=host,
         project_directory=project_directory if project_path_gpr is None else None,
@@ -122,7 +125,7 @@ def init_agentdecompile_context(
                             sys.exit(0)
                 sys.stderr.write("No programs in project.\n")
             except Exception as e:
-                sys.stderr.write(f"Error listing programs: {e}\n")
+                sys.stderr.write(f"Error listing programs: {e.__class__.__name__}: {e}\n")
             sys.exit(0)
 
     if list_project_binaries:
@@ -142,14 +145,14 @@ def init_agentdecompile_context(
         logger.info("Importing binaries: %s", ", ".join(str(p) for p in bin_paths))
 
         async def _import_binaries() -> None:
-            client = get_client(host="127.0.0.1", port=started_port)
+            client: ClientSession = get_client(host="127.0.0.1", port=started_port)
             async with client:
                 for path in bin_paths:
                     try:
                         await client.call_tool("open-project", {"path": str(path.resolve()), "runAnalysis": True})
                         sys.stderr.write(f"Imported: {path}\n")
                     except Exception as e:
-                        sys.stderr.write(f"Import failed for {path}: {e}\n")
+                        sys.stderr.write(f"Import failed for {path}: {e.__class__.__name__}: {e}\n")
 
         run_async(_import_binaries())
 
@@ -184,12 +187,12 @@ def _resolve_default_project_path(project_path_arg: Path) -> Path:
     ``agentdecompile_projects``) and a mounted ``/projects`` directory exists,
     prefer that persistent location so domain storage survives container restarts.
     """
-    raw = str(project_path_arg).strip()
+    raw: str = str(project_path_arg).strip()
     is_builtin_default = raw in {"agentdecompile_projects", "./agentdecompile_projects"}
     if not is_builtin_default:
         return project_path_arg
 
-    explicit_default = (os.environ.get("AGENT_DECOMPILE_DEFAULT_PROJECT_DIR") or "").strip()
+    explicit_default: str = (os.environ.get("AGENT_DECOMPILE_DEFAULT_PROJECT_DIR") or "").strip()
     if explicit_default:
         return Path(explicit_default)
 
@@ -213,11 +216,7 @@ def _resolve_proxy_backend_url(
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())
@@ -244,8 +243,56 @@ def _configure_logging(verbose: bool) -> None:
     _configure_http_debug_logging(verbose)
 
 
+class CredentialSanitizer(logging.Filter):
+    """Logging filter that redacts registered sensitive strings from all log records."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secrets: set[str] = set()
+
+    def register(self, value: str) -> None:
+        if value and value.strip():
+            self._secrets.add(value.strip())
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._secrets:
+            return True
+        try:
+            msg = record.getMessage()
+            for secret in self._secrets:
+                if secret in msg:
+                    record.msg = record.msg.replace(secret, "***") if isinstance(record.msg, str) else record.msg
+                    record.args = _redact_args(record.args, secret)
+        except Exception:
+            pass
+        return True
+
+
+def _redact_args(args: Any, secret: str) -> Any:
+    if args is None:
+        return args
+    if isinstance(args, str):
+        return args.replace(secret, "***")
+    if isinstance(args, dict):
+        return {k: _redact_args(v, secret) for k, v in args.items()}
+    if isinstance(args, (list, tuple)):
+        redacted = [_redact_args(a, secret) for a in args]
+        return type(args)(redacted)
+    return args
+
+
+# Module-level sanitizer — installed once in _set_env_from_args and reused
+_credential_sanitizer = CredentialSanitizer()
+
+
 def _set_env_from_args(args: Any) -> None:
-    """Populate AGENT_DECOMPILE_* env vars from CLI args when provided."""
+    """Populate AGENT_DECOMPILE_* env vars from CLI args when provided.
+
+    Also scrubs credential values from sys.argv and the args namespace so they
+    cannot appear in process listings, debug logs, or exception tracebacks, and
+    installs a root logging filter that redacts any residual occurrences.
+    """
+    _SENSITIVE_ARGS = {"server_username", "server_password"}
     mappings = {
         "server_host": "AGENT_DECOMPILE_SERVER_HOST",
         "server_port": "AGENT_DECOMPILE_SERVER_PORT",
@@ -260,6 +307,52 @@ def _set_env_from_args(args: Any) -> None:
         if isinstance(value, str) and not value.strip():
             continue
         os.environ[env_name] = str(value)
+        # Register with sanitizer before clearing from args
+        if arg_name in _SENSITIVE_ARGS:
+            _credential_sanitizer.register(str(value))
+        # Overwrite on the namespace so exception dumps don't expose it
+        setattr(args, arg_name, None)
+
+    # Scrub sensitive flags and their values from sys.argv
+    _scrub_argv(_SENSITIVE_ARGS)
+
+    # Install sanitizer on the root logger (idempotent)
+    root_logger = logging.getLogger()
+    if _credential_sanitizer not in root_logger.filters:
+        root_logger.addFilter(_credential_sanitizer)
+
+
+def _scrub_argv(sensitive_arg_names: set[str]) -> None:
+    """Remove credential flags and their values from sys.argv in-place."""
+    # Build the set of CLI flag strings that carry sensitive values
+    # e.g. server_password -> --server-password, --ghidra-server-password, --server_password
+    flag_variants: set[str] = set()
+    for name in sensitive_arg_names:
+        base = name.replace("_", "-")
+        flag_variants.update(
+            {
+                f"--{base}",
+                f"--{name}",
+                f"--ghidra-{base}",
+                f"--ghidra-{name}",
+            }
+        )
+
+    scrubbed: list[str] = []
+    skip_next = False
+    for token in sys.argv:
+        if skip_next:
+            skip_next = False
+            continue
+        token_key = token.split("=", 1)[0] if "=" in token else token
+        if token_key in flag_variants:
+            # --flag value  (two-token form)
+            if "=" not in token:
+                skip_next = True
+            # --flag=value  (single-token form) — just drop it
+            continue
+        scrubbed.append(token)
+    sys.argv[:] = scrubbed
 
 
 def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
@@ -423,20 +516,14 @@ def main() -> None:
         dest="backend_url",
         type=str,
         default=None,
-        help=(
-            "Run in proxy mode and forward all MCP requests to an existing MCP server "
-            "(http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"
-        ),
+        help=("Run in proxy mode and forward all MCP requests to an existing MCP server (http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"),
     )
     g_server.add_argument(
         "--mcp-server-url",
         dest="mcp_server_url",
         type=str,
         default=None,
-        help=(
-            "Fallback backend URL if --backend-url is not provided "
-            "(equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"
-        ),
+        help=("Fallback backend URL if --backend-url is not provided (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"),
     )
     g_server.add_argument(
         "--verbose",
@@ -536,7 +623,7 @@ def main() -> None:
     _set_env_from_args(args)
 
     # Resolve transport configuration
-    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, 'mcp_server_url', None))
+    backend_url = _resolve_proxy_backend_url(args.backend_url, getattr(args, "mcp_server_url", None))
     port = args.port if args.port is not None else _env_port()
     host = args.host if args.host is not None else _env_host()
 
