@@ -217,7 +217,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.2 List project files
 
-Tool payload (`name=list_project_files`):
+Tool payload (`name=list-project-files`):
 
 ```json
 {"program_path":"/K1/k1_win_gog_swkotor.exe"}
@@ -227,7 +227,7 @@ Tool payload (`name=list_project_files`):
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 102 list_project_files '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
+call_tool 102 list-project-files '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -235,7 +235,7 @@ call_tool 102 list_project_files '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 102 -Name "list_project_files" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
+Invoke-McpTool -Id 102 -Name "list-project-files" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -249,7 +249,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.3 Get current program
 
-Tool payload (`name=get_current_program`):
+Tool payload (`name=get-current-program`):
 
 ```json
 {"program_path":"/K1/k1_win_gog_swkotor.exe"}
@@ -259,7 +259,7 @@ Tool payload (`name=get_current_program`):
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 103 get_current_program '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
+call_tool 103 get-current-program '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -267,7 +267,7 @@ call_tool 103 get_current_program '{"program_path":"/K1/k1_win_gog_swkotor.exe"}
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 103 -Name "get_current_program" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
+Invoke-McpTool -Id 103 -Name "get-current-program" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -281,7 +281,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.4 Get functions (limit)
 
-Tool payload (`name=get_functions`):
+Tool payload (`name=get-functions`):
 
 ```json
 {"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}
@@ -291,7 +291,7 @@ Tool payload (`name=get_functions`):
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 104 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+call_tool 104 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 ```
 
 </details>
@@ -299,7 +299,7 @@ call_tool 104 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 104 -Name "get_functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+Invoke-McpTool -Id 104 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 ```
 
 </details>
@@ -313,7 +313,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.5 Search symbols by name
 
-Tool payload (`name=search_symbols_by_name`):
+Tool payload (`name=search-symbols-by-name`):
 
 ```json
 {"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}
@@ -323,7 +323,7 @@ Tool payload (`name=search_symbols_by_name`):
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 105 search_symbols_by_name '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
+call_tool 105 search-symbols-by-name '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
 ```
 
 </details>
@@ -331,7 +331,7 @@ call_tool 105 search_symbols_by_name '{"program_path":"/K1/k1_win_gog_swkotor.ex
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 105 -Name "search_symbols_by_name" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
+Invoke-McpTool -Id 105 -Name "search-symbols-by-name" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
 ```
 
 </details>
@@ -345,7 +345,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.6 References to
 
-Tool payload (`name=get_references`):
+Tool payload (`name=get-references`):
 
 ```json
 {"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}
@@ -355,7 +355,7 @@ Tool payload (`name=get_references`):
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 106 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
+call_tool 106 get-references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
 ```
 
 </details>
@@ -363,7 +363,7 @@ call_tool 106 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 106 -Name "get_references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
+Invoke-McpTool -Id 106 -Name "get-references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
 ```
 
 </details>
@@ -388,13 +388,13 @@ Tool payload (info):
 
 ```bash
 # info
-call_tool 107 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
+call_tool 107 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
 
 # decompile
-call_tool 108 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
+call_tool 108 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
 
 # disassemble
-call_tool 109 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
+call_tool 109 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
 ```
 
 </details>
@@ -403,13 +403,13 @@ call_tool 109 get_functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","ident
 
 ```powershell
 # info
-Invoke-McpTool -Id 107 -Name "get_functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
+Invoke-McpTool -Id 107 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
 
 # decompile
-Invoke-McpTool -Id 108 -Name "get_functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
+Invoke-McpTool -Id 108 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
 
 # disassemble
-Invoke-McpTool -Id 109 -Name "get_functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
+Invoke-McpTool -Id 109 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
 ```
 
 </details>
@@ -435,10 +435,10 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 ```bash
 # call graph
-call_tool 110 get_call_graph '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
+call_tool 110 get-call-graph '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
 
 # references from
-call_tool 111 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
+call_tool 111 get-references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
 ```
 
 </details>
@@ -447,10 +447,10 @@ call_tool 111 get_references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode
 
 ```powershell
 # call graph
-Invoke-McpTool -Id 110 -Name "get_call_graph" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
+Invoke-McpTool -Id 110 -Name "get-call-graph" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
 
 # references from
-Invoke-McpTool -Id 111 -Name "get_references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
+Invoke-McpTool -Id 111 -Name "get-references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
 ```
 
 </details>
@@ -473,13 +473,13 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 ```bash
 # strings
-call_tool 112 manage_strings '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
+call_tool 112 manage-strings '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
 
 # constants
-call_tool 113 search_constants '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
+call_tool 113 search-constants '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
 
 # data-flow
-call_tool 114 analyze_data_flow '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
+call_tool 114 analyze-data-flow '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
 ```
 
 </details>
@@ -488,13 +488,13 @@ call_tool 114 analyze_data_flow '{"program_path":"/K1/k1_win_gog_swkotor.exe","f
 
 ```powershell
 # strings
-Invoke-McpTool -Id 112 -Name "manage_strings" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
+Invoke-McpTool -Id 112 -Name "manage-strings" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
 
 # constants
-Invoke-McpTool -Id 113 -Name "search_constants" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
+Invoke-McpTool -Id 113 -Name "search-constants" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
 
 # data-flow
-Invoke-McpTool -Id 114 -Name "analyze_data_flow" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
+Invoke-McpTool -Id 114 -Name "analyze-data-flow" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
 ```
 
 </details>
@@ -520,16 +520,16 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 ```bash
 # rename
-call_tool 115 manage_function '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
+call_tool 115 manage-function '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
 
 # comment
-call_tool 116 manage_comments '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
+call_tool 116 manage-comments '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
 
 # tags
-call_tool 117 manage_function_tags '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
+call_tool 117 manage-function-tags '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
 
 # bookmark
-call_tool 118 manage_bookmarks '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
+call_tool 118 manage-bookmarks '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
 ```
 
 </details>
@@ -538,16 +538,16 @@ call_tool 118 manage_bookmarks '{"program_path":"/K1/k1_win_gog_swkotor.exe","mo
 
 ```powershell
 # rename
-Invoke-McpTool -Id 115 -Name "manage_function" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
+Invoke-McpTool -Id 115 -Name "manage-function" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
 
 # comment
-Invoke-McpTool -Id 116 -Name "manage_comments" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
+Invoke-McpTool -Id 116 -Name "manage-comments" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
 
 # tags
-Invoke-McpTool -Id 117 -Name "manage_function_tags" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
+Invoke-McpTool -Id 117 -Name "manage-function-tags" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
 
 # bookmark
-Invoke-McpTool -Id 118 -Name "manage_bookmarks" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
+Invoke-McpTool -Id 118 -Name "manage-bookmarks" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
 ```
 
 </details>
@@ -575,8 +575,8 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 119 list_imports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-call_tool 120 list_exports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+call_tool 119 list-imports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+call_tool 120 list-exports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 ```
 
 </details>
@@ -584,8 +584,8 @@ call_tool 120 list_exports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit"
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 119 -Name "list_imports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-Invoke-McpTool -Id 120 -Name "list_exports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+Invoke-McpTool -Id 119 -Name "list-imports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+Invoke-McpTool -Id 120 -Name "list-exports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 ```
 
 </details>
@@ -601,7 +601,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 </details>
 ### 2.12 Shared sync workflow (validated)
 
-Verified against `http://***:8080/mcp/message/` with repository `Odyssey` on 2026-03-02.
+Verified against `http://***:8080/mcp/message/` with repository `Odyssey` on 2026-03-05.
 
 <details>
 <summary><b>Linux (bash/zsh)</b></summary>
@@ -659,6 +659,6 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 - This file is intentionally organized in three tabs for each workflow: Linux, Windows, and `uvx`.
 - For strict output comparability, run all HTTP calls in one session and run `open` first.
 - In PowerShell `uvx ... tool <name> <json>`, pass JSON via a variable like `$a`.
-- Verified behavior (2026-03-02): shared pull and push dry-runs succeed in both PowerShell and `uvx` when `open` and `sync-shared-project` run in the same MCP session.
-- Verified behavior (2026-03-02): shared push actual succeeds after pull (`mode="push"`, non-dry-run).
+- Verified behavior (2026-03-05): shared pull and push dry-runs succeed in both PowerShell and `uvx` when `open` and `sync-shared-project` run in the same MCP session.
+- Verified behavior (2026-03-05): shared push actual succeeds after pull (`mode="push"`, non-dry-run).
 - `checkin-program` can still fail when the active program is non-project-backed (`path` like `/Untitled`); use sync pull/push flow for shared updates.

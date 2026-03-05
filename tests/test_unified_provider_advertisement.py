@@ -15,7 +15,15 @@ from pathlib import Path
 import pytest
 
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProvider
-from agentdecompile_cli.registry import ADVERTISED_TOOL_PARAMS, ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, NON_ADVERTISED_TOOL_ALIASES, TOOLS, normalize_identifier, to_snake_case
+from agentdecompile_cli.registry import (
+    ADVERTISED_TOOLS,
+    ADVERTISED_TOOL_PARAMS,
+    DISABLED_GUI_ONLY_TOOLS,
+    NON_ADVERTISED_TOOL_ALIASES,
+    TOOLS,
+    normalize_identifier,
+    to_snake_case,
+)
 from mcp import types
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
@@ -32,12 +40,12 @@ def _extract_canonical_tools_from_docs(markdown_text: str) -> list[str]:
     if marker not in lower_text:
         raise AssertionError("TOOLS_LIST.md missing 'Canonical Tools' section")
 
-    lines_after_marker = markdown_text.splitlines()[lower_text.splitlines().index(next(l for l in lower_text.splitlines() if marker in l)):]
+    lines_after_marker = markdown_text.splitlines()[lower_text.splitlines().index(next(l for l in lower_text.splitlines() if marker in l)) :]
     extracted: list[str] = []
 
     for raw_line in lines_after_marker:
         line = raw_line.strip()
-        match: re.Match | None = re.match(r'^###\s+`([^`]+)`\s*$', line)
+        match: re.Match | None = re.match(r"^###\s+`([^`]+)`\s*$", line)
         if match:
             extracted.append(match.group(1))
 
