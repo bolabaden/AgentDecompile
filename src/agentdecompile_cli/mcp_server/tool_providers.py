@@ -1628,7 +1628,7 @@ class ToolProviderManager:
                 "type": "string",
                 "enum": ["markdown", "json"],
                 "default": "markdown",
-                "description": "Output format: markdown (default) or json",
+                "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended.",
             }
 
             required_norm: set[str] = {n(str(item)) for item in required}

@@ -364,7 +364,10 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help="Output format for human-readable messages (default: text)",
+        help=(
+            "Output format for CLI messages (default: text). Use -f/--format json "
+            "only when you strictly need machine-readable output; text is recommended."
+        ),
     )
     parser.add_argument(
         "--verbose",
