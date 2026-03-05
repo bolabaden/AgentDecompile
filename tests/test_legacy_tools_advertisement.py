@@ -47,8 +47,6 @@ def clean_env() -> Generator[None, None, None]:
     env_vars = (
         "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
         "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
-        "AGENTDECOMPILE_ENABLE_TOOLS",
-        "AGENTDECOMPILE_DISABLE_TOOLS",
     )
     
     # Save original values
@@ -81,8 +79,6 @@ def restore_registry_after_module() -> Generator[None, None, None]:
     env_vars = (
         "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
         "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
-        "AGENTDECOMPILE_ENABLE_TOOLS",
-        "AGENTDECOMPILE_DISABLE_TOOLS",
     )
     original_values = {var: os.environ.get(var) for var in env_vars}
     
@@ -273,77 +269,3 @@ class TestAdvertisedToolsConsistency:
         advertised = set(ADVERTISED_TOOLS)
         
         assert params_tools == advertised, "ADVERTISED_TOOL_PARAMS should match ADVERTISED_TOOLS"
-
-
-class TestExplicitEnableTools:
-    """Validate AGENTDECOMPILE_ENABLE_TOOLS env var behavior."""
-
-    def test_enable_tools_restricts_to_exact_list(self, clean_env):
-        """AGENTDECOMPILE_ENABLE_TOOLS=a,b should advertise exactly those tools."""
-        os.environ["AGENTDECOMPILE_ENABLE_TOOLS"] = "checkin-program,decompile-function"
-
-        import agentdecompile_cli.registry
-        importlib.reload(agentdecompile_cli.registry)
-
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, normalize_identifier
-
-        advertised_normalized = {normalize_identifier(t) for t in ADVERTISED_TOOLS}
-        assert advertised_normalized == {"checkinprogram", "decompilefunction"}, (
-            "AGENTDECOMPILE_ENABLE_TOOLS should restrict advertisement to exactly the listed tools"
-        )
-
-    def test_enable_tools_overrides_disable_tools(self, clean_env):
-        """AGENTDECOMPILE_ENABLE_TOOLS overrides AGENTDECOMPILE_DISABLE_TOOLS."""
-        os.environ["AGENTDECOMPILE_ENABLE_TOOLS"] = "decompile-function,list-functions"
-        os.environ["AGENTDECOMPILE_DISABLE_TOOLS"] = "decompile-function"
-
-        import agentdecompile_cli.registry
-        importlib.reload(agentdecompile_cli.registry)
-
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, normalize_identifier
-
-        advertised_normalized = {normalize_identifier(t) for t in ADVERTISED_TOOLS}
-        assert "decompilefunction" in advertised_normalized, (
-            "ENABLE_TOOLS should override DISABLE_TOOLS — explicitly enabled tool must appear"
-        )
-
-    def test_empty_enable_tools_falls_back_to_defaults(self, clean_env):
-        """Empty AGENTDECOMPILE_ENABLE_TOOLS should fall back to normal behavior."""
-        os.environ["AGENTDECOMPILE_ENABLE_TOOLS"] = ""
-
-        import agentdecompile_cli.registry
-        importlib.reload(agentdecompile_cli.registry)
-
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, DEFAULT_ADVERTISED_TOOLS
-
-        assert len(ADVERTISED_TOOLS) >= len(DEFAULT_ADVERTISED_TOOLS) - 5, (
-            "Empty ENABLE_TOOLS should fall back to default advertisement count"
-        )
-
-    def test_enable_tools_can_expose_legacy_tool(self, clean_env):
-        """A legacy tool can be included via AGENTDECOMPILE_ENABLE_TOOLS without ENABLE_LEGACY_TOOLS."""
-        os.environ["AGENTDECOMPILE_ENABLE_TOOLS"] = "suggest,decompile-function"
-
-        import agentdecompile_cli.registry
-        importlib.reload(agentdecompile_cli.registry)
-
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, normalize_identifier
-
-        advertised_normalized = {normalize_identifier(t) for t in ADVERTISED_TOOLS}
-        assert "suggest" in advertised_normalized, (
-            "Legacy tool 'suggest' should be advertised when explicitly listed in ENABLE_TOOLS"
-        )
-
-    def test_enable_tools_whitespace_tolerance(self, clean_env):
-        """AGENTDECOMPILE_ENABLE_TOOLS should tolerate spaces around tool names."""
-        os.environ["AGENTDECOMPILE_ENABLE_TOOLS"] = " decompile-function , list-functions "
-
-        import agentdecompile_cli.registry
-        importlib.reload(agentdecompile_cli.registry)
-
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, normalize_identifier
-
-        advertised_normalized = {normalize_identifier(t) for t in ADVERTISED_TOOLS}
-        assert advertised_normalized == {"decompilefunction", "listfunctions"}, (
-            "Tool names with surrounding whitespace should still be recognized"
-        )

@@ -1,6 +1,6 @@
 {
   "servers": {
-    "agentdecompile-proxy": {
+    "agentdecompile-mcp": {
       "type": "stdio",
       "command": "uvx",
       "args": [
@@ -12,8 +12,6 @@
         "agentdecompile-server",
         "--transport",
         "stdio",
-        "--mcp-server-url",
-        "http://170.9.241.140:8080",
         "--ghidra-server-host",
         "170.9.241.140",
         "--server-username",

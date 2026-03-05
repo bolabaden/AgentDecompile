@@ -48,7 +48,7 @@ class ProgramListResource(ResourceProvider):
             raise NotImplementedError(f"Unknown resource: {uri}")
 
         logger.info(f"ProgramListResource: reading resource for URI {uri}")
-        
+
         try:
             session_id = get_current_mcp_session_id()
             session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
@@ -85,9 +85,9 @@ class ProgramListResource(ResourceProvider):
                             "address": str(program.getMinAddress()),
                         },
                     )
-                    logger.info(f"ProgramListResource: found 1 program from program_info")
+                    logger.info("ProgramListResource: found 1 program from program_info")
                 except Exception as e:
-                    logger.warning(f"ProgramListResource: Error getting program details: {e}")
+                    logger.warning(f"ProgramListResource: Error getting program details: {e.__class__.__name__}: {e}")
                     programs.append(
                         {
                             "programPath": self.program_info.name,

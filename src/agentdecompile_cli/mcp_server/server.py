@@ -115,10 +115,10 @@ class PythonMcpServer:
                 logger.info(f"MCP read_resource succeeded for {uri}, returning {len(result)} bytes")
                 return result
             except Exception as e:
-                logger.error(f"MCP read_resource failed for {uri}: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"MCP read_resource failed for {uri}: {e.__class__.__name__}: {e}", exc_info=True)
                 # Return empty JSON object for failed resources instead of propagating exception
                 # This prevents MCP protocol errors while still indicating failure
-                return json.dumps({"error": str(e), "uri": uri, "status": "failed"})
+                return json.dumps({"error": f"{e.__class__.__name__}: {e}", "uri": uri, "status": "failed"})
 
         @server.list_prompts()
         async def list_prompts() -> list[types.Prompt]:
@@ -250,7 +250,7 @@ class PythonMcpServer:
         self._shutdown_event.clear()
 
         # Enable debug logging if configured
-        if self._is_truthy_env(os.getenv("AGENT_DECOMPILE_DEBUG") or os.getenv("AGENTDECOMPILE_DEBUG")):
+        if self._is_truthy_env(os.getenv("AGENT_DECOMPILE_DEBUG")):
             DebugLogger.set_debug_enabled(True)
             DebugLogger.debug(self, "Debug logging enabled")
 
