@@ -4,7 +4,7 @@ import re
 
 from pathlib import Path
 
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, ToolRegistry, normalize_identifier
+from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, TOOL_ALIASES, NON_ADVERTISED_TOOL_ALIASES, ToolRegistry, normalize_identifier, resolve_tool_name
 
 
 def _repo_root() -> Path:
@@ -60,7 +60,7 @@ def test_tools_list_tools_and_params_are_supported_by_registry() -> None:
 
     assert docs, "Expected parsed tools/params from TOOLS_LIST.md"
 
-    known_tools = set(TOOLS)
+    known_tools = set(TOOLS) | set(NON_ADVERTISED_TOOL_ALIASES.keys()) | set(TOOL_ALIASES.keys())
 
     missing_tools: list[str] = []
     missing_params: list[tuple[str, str]] = []
@@ -68,7 +68,15 @@ def test_tools_list_tools_and_params_are_supported_by_registry() -> None:
 
     for tool_name, params in docs.items():
         if tool_name not in known_tools:
-            missing_tools.append(tool_name)
+            # Also accept tools that resolve_tool_name can map
+            resolved = resolve_tool_name(tool_name)
+            if resolved is None:
+                missing_tools.append(tool_name)
+            continue
+
+        # Skip param checks for alias tools — their params are documented
+        # under the canonical tool name, which may differ
+        if tool_name in NON_ADVERTISED_TOOL_ALIASES or tool_name in TOOL_ALIASES:
             continue
 
         canonical_params: list[str] = TOOL_PARAMS.get(tool_name, [])

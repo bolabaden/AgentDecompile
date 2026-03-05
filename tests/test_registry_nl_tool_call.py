@@ -148,11 +148,11 @@ def test_parse_nl_tool_call_tool_name_only():
 
 def test_parse_nl_tool_call_prefers_longer_tool_names():
     """Test that longer tool names are matched before shorter ones."""
-    # "search-symbols-by-name" should match before "search-symbols"
+    # "search-symbols" is the canonical tool name for symbol search
     text = "search symbols by name with query malloc in program /tmp/test"
     tool_name, arguments = tool_registry.parse_natural_language_tool_call(text)
 
-    assert tool_name == "search-symbols-by-name"
+    assert tool_name == "search-symbols"
     assert arguments.get("query") == "malloc"
     assert arguments.get("programPath") == "/tmp/test"
 

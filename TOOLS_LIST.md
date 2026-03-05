@@ -2757,6 +2757,10 @@ Calculate jump address to shellcode
 **Overloads**:
 - `get-current-function()` canonical signature.
 
+### `get-current-program`
+**Overloads**:
+- `get-current-program()` canonical signature.
+
 ### `get-data`
 **Overloads**:
 - `get-data()` canonical signature.

@@ -556,8 +556,6 @@ async def _call_raw(
     if explicit_program is not None:
         _set_cached_program(ctx, explicit_program)
 
-    call_tool_name = to_snake_case(call_tool_name)
-
     return await _execute_tool_call(ctx, call_tool_name, safe_payload, client_override)
 
 
@@ -2209,10 +2207,10 @@ def memory_run(
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
 @click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
 @click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
-@click.option("--ghidra-server-username", "--ghidra_server_username", "server_username")
-@click.option("--ghidra-server-password", "--ghidra_server_password", "server_password")
-@click.option("--ghidra-server-host", "--ghidra_server_host", "server_host")
-@click.option("--ghidra-server-port", "--ghidra_server_port", "server_port", type=int)
+@click.option("--ghidra-server-username", "--ghidra_server_username", "--server-username", "--server_username", "server_username")
+@click.option("--ghidra-server-password", "--ghidra_server_password", "--server-password", "--server_password", "server_password")
+@click.option("--ghidra-server-host", "--ghidra_server_host", "--server-host", "--server_host", "server_host")
+@click.option("--ghidra-server-port", "--ghidra_server_port", "--server-port", "--server_port", "server_port", type=int)
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
