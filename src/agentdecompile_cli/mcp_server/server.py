@@ -165,6 +165,46 @@ class PythonMcpServer:
                 finally:
                     CURRENT_MCP_SESSION_ID.reset(token)
 
+        class _CompatPathASGI:
+            """Compatibility wrapper for legacy MCP endpoint paths.
+
+            Some MCP clients send initialize/call traffic to the server root
+            (``/``) or ``/mcp`` when only a host:port URL is configured.
+            StreamableHTTPSessionManager expects to run at the mounted root of
+            its ASGI app, so we rewrite compatible paths to ``/`` before
+            delegating to the real MCP ASGI handler.
+            """
+
+            def __init__(self, inner_app: Any, allowed_paths: set[str]):
+                self._inner_app: Any = inner_app
+                self._allowed_paths: set[str] = allowed_paths
+
+            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+                if scope.get("type") != "http":
+                    await self._inner_app(scope, receive, send)
+                    return
+
+                raw_path = str(scope.get("path") or "")
+                normalized_path = raw_path.rstrip("/") or "/"
+                if normalized_path not in self._allowed_paths:
+                    body = b'{"detail":"Not Found"}'
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 404,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode("ascii")),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": body, "more_body": False})
+                    return
+
+                rewritten_scope = dict(scope)
+                rewritten_scope["path"] = "/"
+                await self._inner_app(rewritten_scope, receive, send)
+
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
             self._session_manager_cm = self._session_manager.run()
@@ -176,12 +216,6 @@ class PythonMcpServer:
                 await self._session_manager_cm.__aexit__(None, None, None)  # pyright: ignore[reportGeneralTypeIssues]
                 self._session_manager_cm = None
 
-        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
-        if self.auth_config is not None:
-            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
-        self.app.mount("/mcp/message", mcp_asgi)
-        self.app.mount("/mcp/message/", mcp_asgi)
-
         @self.app.get("/health")
         async def health_check() -> dict[str, Any]:
             """Health check endpoint."""
@@ -191,6 +225,15 @@ class PythonMcpServer:
                 "version": self.config.version,
                 "programs": (1 if self.program_info and self.program_info.program else 0),
             }
+
+        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
+        if self.auth_config is not None:
+            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
+
+        compat_mcp_asgi: Any = _CompatPathASGI(mcp_asgi, {"/", "/mcp"})
+        self.app.mount("/mcp/message", mcp_asgi)
+        self.app.mount("/mcp/message/", mcp_asgi)
+        self.app.mount("/", compat_mcp_asgi)
 
     def set_project_manager(
         self,

@@ -16,6 +16,8 @@ Program: /K1/k1_win_gog_swkotor.exe
 Server URL (uvx): http://***:8080/
 ```
 
+Endpoint compatibility note: the MCP server accepts canonical `/mcp/message` and also supports root (`/`) and `/mcp` for clients that initialize using host:port base URLs.
+
 Diagnostics note: HTTP request logs are hidden by default. Add `--verbose` (or `-v`) to `agentdecompile-cli` or `agentdecompile-server` when transport-level diagnostics are needed.
 
 Parameter alias note: shared-server connection options are interchangeable with/without the `ghidra-` prefix (for example `--server-host` == `--ghidra-server-host`, same for port/username/password/repository).
