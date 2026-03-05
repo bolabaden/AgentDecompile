@@ -1,30 +1,59 @@
 {
   "servers": {
-		"agentdecompile-proxy": {
-			"type": "stdio",
-			"command": "uvx",
-			"args": [
-				"--refresh",
-				"--from",
-				".",
-				"--with-editable",
-				".",
-				"agentdecompile-server",
-				"--transport",
-				"stdio",
-				"--ghidra-server-host",
-				"170.9.241.140",
-				"--server-port",
-				"13100",
-				"--server-username",
-				"OpenKotOR",
-				"--server-password",
-				"MuchaShakaPaka",
-				"--ghidra-server-repository",
-				"Odyssey"
-			]
-		}
+    "agentdecompile-local": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        ".",
+        "--with-editable",
+        ".",
+        "agentdecompile-server",
+        "--transport",
+        "stdio"
+      ]
+    },
+    "agentdecompile-shared": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        ".",
+        "--with-editable",
+        ".",
+        "agentdecompile-server",
+        "--transport",
+        "stdio",
+        "--ghidra-server-host",
+        "170.9.241.140",
+        "--server-port",
+        "13100",
+        "--server-username",
+        "${input:ghidra-username}",
+        "--server-password",
+        "${input:ghidra-password}",
+        "--ghidra-server-repository",
+        "Odyssey"
+      ]
+    },
+    "agentdecompile-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp/message"
+    }
   },
   "inputs": [
+    {
+      "id": "ghidra-username",
+      "type": "promptString",
+      "description": "Ghidra shared server username"
+    },
+    {
+      "id": "ghidra-password",
+      "type": "promptString",
+      "description": "Ghidra shared server password",
+      "password": true
+    }
   ]
 }
