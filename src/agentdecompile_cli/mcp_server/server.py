@@ -82,7 +82,7 @@ class PythonMcpServer:
         self._session_manager = StreamableHTTPSessionManager(
             app=self.mcp_server,
             json_response=True,
-            stateless=True,
+            stateless=False,
         )
         self._session_manager_cm = None
 
@@ -206,15 +206,49 @@ class PythonMcpServer:
         # intercepts MCP paths before Starlette's router sees them.
         inner_app = self.app  # the FastAPI ASGI app itself
         mcp_paths = self._MCP_PATHS
+        session_manager = self._session_manager
 
         class _MCPRoutingMiddleware:
-            """ASGI middleware: route /mcp and /mcp/message to the MCP handler."""
+            """ASGI middleware: route /mcp and /mcp/message to the MCP handler.
+
+            Before forwarding a request, this middleware validates the
+            ``mcp-session-id`` header against the session manager's live
+            session registry.  If the header references an expired or
+            unknown session (e.g. after a server restart), the header is
+            silently stripped so the SDK creates a fresh session instead
+            of returning HTTP 404.
+            """
+
+            @staticmethod
+            def _strip_stale_session_header(scope: dict[str, Any]) -> dict[str, Any]:
+                """Return *scope* with a stale mcp-session-id header removed.
+
+                If the header is absent or references a live session the
+                scope is returned as-is (no copy).
+                """
+                raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
+                for key_b, value_b in raw_headers:
+                    if key_b.lower() == b"mcp-session-id":
+                        sid = value_b.decode("latin1", errors="replace").strip()
+                        if sid and sid not in session_manager._server_instances:
+                            cleaned = [
+                                (k, v) for k, v in raw_headers
+                                if k.lower() != b"mcp-session-id"
+                            ]
+                            logger.info(
+                                "Stripped stale mcp-session-id %s — a new session will be created.",
+                                sid[:12],
+                            )
+                            return {**scope, "headers": cleaned}
+                        break
+                return scope
 
             async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
-                        rewritten = dict(scope, path="/")
+                        scope = self._strip_stale_session_header(scope)
+                        rewritten = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
                 await inner_app(scope, receive, send)
