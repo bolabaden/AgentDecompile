@@ -30,33 +30,32 @@ It works by giving the AI specific "tools" to interact with Ghidra—reading mem
 
 ## Installation
 
-> **Note**: AgentDecompile requires Ghidra 12.0 or higher.
+AgentDecompile is a Python MCP server — no Ghidra Java extension installation required.
 
-### Option 1: Release Installation (Recommended)
-1. Download the latest release from the [Releases page](https://github.com/bolabaden/AgentDecompile/releases).
-2. Open Ghidra.
-3. Go to **File > Install Extensions**.
-4. Click the **+** (Plus) sign and select the downloaded zip file.
-5. Restart Ghidra.
+### Option 1: Run directly with uvx (no local install)
 
-### Option 2: Install from Source
-If you want the absolute latest features:
 ```bash
-# Clone the repository
-git clone https://github.com/bolabaden/AgentDecompile.git
-cd AgentDecompile
-
-# Install in development mode
-pip install -e .
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
 
-### Enabling the Extension
-Once installed, you need to turn it on:
-1. Open a binary in the **Code Browser**.
-2. Go to **File > Configure**.
-3. Click the **plug icon** (Configure All Plugins) in the top right.
-4. Find **AgentDecompile** or **AgentDecompile Plugin** in the list and check the box.
-5. Click **OK**.
+Requires [uv](https://docs.astral.sh/uv/) (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+### Option 2: Install from source
+
+```bash
+git clone https://github.com/bolabaden/agentdecompile.git
+cd agentdecompile
+pip install -e .
+agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
+```
+
+### Option 3: Docker (run the server)
+
+```bash
+docker compose up -d
+```
+
+The MCP server starts on port 8080 at `http://localhost:8080/mcp/message/`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
 
 ## Usage
 
@@ -141,7 +140,7 @@ The examples below use the published Git source install form and redact sensitiv
 
 ```powershell
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
 
 # concise output
 mode: shared-server
@@ -151,7 +150,7 @@ programCount: 26
 checkedOutProgram: /K1/k1_win_gog_swkotor.exe
 
 # 2) List files in the shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 list project-files
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list project-files
 
 # concise output
 folder: /
@@ -159,7 +158,7 @@ count: 26
 source: shared-server-session
 
 # 3) List a small function sample
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
 
 # concise output
 count: 5
@@ -167,7 +166,7 @@ totalMatched: 24242
 hasMore: True
 
 # 4) Search symbols by name
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
 
 # concise output
 query: main
@@ -176,22 +175,34 @@ totalMatched: 58
 hasMore: True
 
 # 5) Find references to a symbol
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
 
 # concise output
 mode: to
 target: 004041f0
 count: 1
 
-# 6) Raw tool mode examples
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+# 6) Get current program metadata
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+
+# concise output
+loaded: True
+name: swkotor.exe
+language: x86:LE:32:default
+compiler: windows
+functionCount: 24591
+
+# 7) Raw tool mode examples
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 
 # concise output
 mode: imports
 count: 5
+totalImports: 350
 mode: exports
 count: 1
+totalExports: 1
 ```
 
 Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
@@ -271,7 +282,7 @@ Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server
   "mcpServers": {
     "AgentDecompile": {
       "command": "mcp-agentdecompile",
-      "args": ["--server-url", "http://127.0.0.1:8080"],
+      "args": ["--server-url", "http://127.0.0.1:8080/"],
       "env": {
         "GHIDRA_INSTALL_DIR": "/path/to/ghidra"
       }
@@ -284,14 +295,14 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 52 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 51 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- Default advertised tool names are the curated set returned by `agentdecompile-cli tool --list-tools`.
-- All other tool names (including non-default canonical names and alias/synonym names) are legacy compatibility names.
-- Legacy names remain accepted for compatibility; set `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` (or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`) to advertise the full legacy surface.
+- **37 tools** are advertised by default — returned by `agentdecompile-cli tool --list-tools`.
+- **10 legacy tools** are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` to expose them (`manage-function`, `manage-comments`, `manage-bookmarks`, `get-functions`, and others).
+- All canonical names use **kebab-case** (e.g. `get-current-program`, `search-symbols-by-name`). JSON argument keys use camelCase (e.g. `programPath`, `serverHost`). CLI flags use `--snake_case`.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
-- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-references`, `inspect-memory`, `manage-symbols`, `manage-comments`, `get-call-graph`
+- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols-by-name`, `inspect-memory`, `manage-function-tags`, `get-call-graph`
 
 Use `agentdecompile-cli tool --list-tools` to view tool names available from your running server, and use [TOOLS_LIST.md](TOOLS_LIST.md) for the reference.
 

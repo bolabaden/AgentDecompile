@@ -10,7 +10,7 @@ This module provides:
 Auth is conditional:
 - When no Ghidra server is configured and no X-Ghidra-Server-Host header is sent,
   requests pass through anonymously.
-- When a server IS configured (--server-username set) or the client sends
+- When a server IS configured (--ghidra-server-username set) or the client sends
   X-Ghidra-Server-Host, Basic auth is required.
 
 The /health endpoint is a FastAPI route mounted separately and is always exempt.
@@ -53,7 +53,7 @@ class AuthConfig:
     """Ghidra server host from --server-host (used for credential validation)."""
 
     default_server_port: int = 13100
-    """Ghidra server port from --server-port."""
+    """Ghidra server port from --ghidra-server-port."""
 
     default_username: str | None = None
     """Username that clients must supply when targeting the default server."""
@@ -246,6 +246,8 @@ class AuthMiddleware:
         agent_username = ""
         agent_password = ""
         agent_repo = ""
+        key_b: bytes
+        value_b: bytes
         for key_b, value_b in scope.get("headers", []):
             key = key_b.decode("latin1").lower()
             val = value_b.decode("latin1").strip()
