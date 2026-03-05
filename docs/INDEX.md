@@ -20,9 +20,21 @@
    - Advanced topics
    - Full API documentation
 
+3. **[MCP_CONFIGURATION_SECURITY.md](./MCP_CONFIGURATION_SECURITY.md)** ⚠️ Security Best Practices
+   - Secure MCP client configuration
+   - Dynamic input prompts vs hardcoded credentials
+   - Environment variable patterns
+   - Migration guide from hardcoded configs
+
+4. **[../README.md](../README.md)** + **[../USAGE.md](../USAGE.md)** - Project Defaults and Locking
+   - Default server project behavior (`agentdecompile_projects` + `my_project`)
+   - Override precedence (`--project-path`/`--project-name` over env)
+   - Environment variables (`AGENT_DECOMPILE_PROJECT_PATH`, `AGENT_DECOMPILE_PROJECT_NAME`)
+   - `.gpr` project-name derivation and lock troubleshooting (`Unable to lock project`)
+
 ### For Developers
 
-3. **[IMPLEMENTATION_COMPLETE.md](./IMPLEMENTATION_COMPLETE.md)** - Technical Deep Dive
+5. **[IMPLEMENTATION_COMPLETE.md](./IMPLEMENTATION_COMPLETE.md)** - Technical Deep Dive
    - Architecture overview
    - Data collection patterns
    - SARIF 2.1.0 schema details
@@ -30,14 +42,14 @@
    - Ghidra API integration
    - Testing validation
 
-4. **[../TOOLS_LIST.md](../TOOLS_LIST.md)** (Lines 510-560, 781-810) - Tool Specifications
+6. **[../TOOLS_LIST.md](../TOOLS_LIST.md)** (Lines 510-560, 781-810) - Tool Specifications
    - Full `export` tool reference
    - Full `import-binary` tool reference
    - Parameter synonyms (for normalization)
   - Non-default tool names documented as legacy compatibility names
    - API references to Ghidra documentation
 
-5. **[../MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md)** - MCP Protocol Guide
+7. **[../MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md)** - MCP Protocol Guide
    - Resource interface documentation
    - Tool invocation patterns
    - Error handling conventions

@@ -72,7 +72,68 @@ services:
     ports:
       # AgentDecompile MCP HTTP server (binds to container port 8080 by default).
       - ${BIOMEDWAREHOUSE_MCP_PORT:-8080}:8080  # AgentDecompile MCP HTTP
-    command: --transport streamable-http
+    environment:
+      <<: *common-env
+      # ── Core server ─────────────────────────────────────────────────────────
+      # Transport: stdio | streamable-http | sse | http  (default: streamable-http)
+      AGENT_DECOMPILE_TRANSPORT: ${AGENT_DECOMPILE_TRANSPORT:-streamable-http}
+      AGENT_DECOMPILE_HOST: ${AGENT_DECOMPILE_HOST:-0.0.0.0}
+      AGENT_DECOMPILE_PORT: ${AGENT_DECOMPILE_PORT:-8080}
+      # Enable verbose server logs (true/1)
+      #AGENT_DECOMPILE_VERBOSE: "false"
+      # ── Project / config ────────────────────────────────────────────────────
+      # Path to a .gpr file or project directory (mounted via volumes below)
+      AGENT_DECOMPILE_PROJECT_PATH: ${AGENT_DECOMPILE_PROJECT_PATH:-}
+      # Project name when not using a .gpr file (default: my_project)
+      #AGENT_DECOMPILE_PROJECT_NAME: my_project
+      # Path to an AgentDecompile config file
+      AGENT_DECOMPILE_CONFIG_FILE: ${AGENT_DECOMPILE_CONFIG_FILE:-}
+      # ── Proxy / backend (skip local JVM; forward to an existing MCP server) ─
+      #AGENT_DECOMPILE_BACKEND_URL: "http://other-host:8080/mcp/message"
+      #AGENT_DECOMPILE_MCP_SERVER_URL: ""   # alias for BACKEND_URL
+      # ── Ghidra shared-project server ────────────────────────────────────────
+      AGENT_DECOMPILE_GHIDRA_SERVER_HOST: ${AGENT_DECOMPILE_GHIDRA_SERVER_HOST:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_PORT: ${AGENT_DECOMPILE_GHIDRA_SERVER_PORT:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: ${AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME: ${AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD: ${AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD:-}
+      # ── HTTP auth ────────────────────────────────────────────────────────────
+      # true/1 = always require Basic auth; false/0 = never; unset = auto
+      #AGENT_DECOMPILE_REQUIRE_AUTH: ""
+      # ── TLS (HTTPS) ──────────────────────────────────────────────────────────
+      # Mount certs as volumes and set these paths inside the container
+      #AGENT_DECOMPILE_TLS_CERT: "/certs/server.crt"
+      #AGENT_DECOMPILE_TLS_KEY: "/certs/server.key"
+      # ── Analysis options ─────────────────────────────────────────────────────
+      # Force re-analysis of every binary on startup (true/1)
+      #AGENT_DECOMPILE_FORCE_ANALYSIS: "false"
+      # Verbose Ghidra analysis log (true/1)
+      #AGENT_DECOMPILE_VERBOSE_ANALYSIS: "false"
+      # Disable symbol loading (true/1)
+      #AGENT_DECOMPILE_NO_SYMBOLS: "false"
+      # Path to symbols directory (mounted via volume)
+      #AGENT_DECOMPILE_SYMBOLS_PATH: ""
+      # Path to a single PDB symbol file
+      #AGENT_DECOMPILE_SYM_FILE_PATH: ""
+      # Colon-separated GDT file paths
+      #AGENT_DECOMPILE_GDT: ""
+      # Path to JSON program-options file
+      #AGENT_DECOMPILE_PROGRAM_OPTIONS: ""
+      # GZF output path
+      #AGENT_DECOMPILE_GZFS_PATH: ""
+      # ── Analysis performance ─────────────────────────────────────────────────
+      # Worker count for analysis (0 = CPU count)
+      #AGENT_DECOMPILE_MAX_WORKERS: "0"
+      # Wait for initial analysis before serving (true/1)
+      #AGENT_DECOMPILE_WAIT_FOR_ANALYSIS: "false"
+      # Disable threaded analysis (false/0 to disable)
+      #AGENT_DECOMPILE_THREADED: "true"
+      # ── Input binaries ───────────────────────────────────────────────────────
+      # Colon-separated binary paths to import at startup (paths inside container)
+      #AGENT_DECOMPILE_INPUT_PATHS: ""
+    volumes:
+      - ${CONFIG_PATH:-./volumes}/agentdecompile-mcp/projects:/projects
+      - ${CONFIG_PATH:-./volumes}/agentdecompile-mcp/work:/work
     labels:
       traefik.enable: true
       traefik.tcp.routers.agentdecompile-mcp.rule: HostSNI(`agentdecompile-mcp.$DOMAIN`) || HostSNI(`agentdecompile-mcp.$TS_HOSTNAME.$DOMAIN`)

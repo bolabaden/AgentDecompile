@@ -22,6 +22,10 @@ Diagnostics note: HTTP request logs are hidden by default. Add `--verbose` (or `
 
 Parameter alias note: shared-server connection options are interchangeable with/without the `ghidra-` prefix (for example `--server-host` == `--ghidra-server-host`, same for port/username/password/repository).
 
+Project default note: `agentdecompile-server` defaults to `--project-path agentdecompile_projects` and `--project-name my_project`. Set `AGENT_DECOMPILE_PROJECT_PATH` and `AGENT_DECOMPILE_PROJECT_NAME` to change defaults, or pass `--project-path` / `--project-name` per run. For `.gpr` paths, project name is derived from the file stem.
+
+Locking note: if multiple server instances run against the same project and you hit `Unable to lock project`, give each instance a unique project path/name pair.
+
 Error response contract: tool failures now return actionable payloads with explicit state and next calls. Expect:
 
 ```json
