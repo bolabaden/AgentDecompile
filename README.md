@@ -30,33 +30,32 @@ It works by giving the AI specific "tools" to interact with Ghidra—reading mem
 
 ## Installation
 
-> **Note**: AgentDecompile requires Ghidra 12.0 or higher.
+AgentDecompile is a Python MCP server — no Ghidra Java extension installation required.
 
-### Option 1: Release Installation (Recommended)
-1. Download the latest release from the [Releases page](https://github.com/bolabaden/AgentDecompile/releases).
-2. Open Ghidra.
-3. Go to **File > Install Extensions**.
-4. Click the **+** (Plus) sign and select the downloaded zip file.
-5. Restart Ghidra.
+### Option 1: Run directly with uvx (no local install)
 
-### Option 2: Install from Source
-If you want the absolute latest features:
 ```bash
-# Clone the repository
-git clone https://github.com/bolabaden/AgentDecompile.git
-cd AgentDecompile
-
-# Install in development mode
-pip install -e .
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
 
-### Enabling the Extension
-Once installed, you need to turn it on:
-1. Open a binary in the **Code Browser**.
-2. Go to **File > Configure**.
-3. Click the **plug icon** (Configure All Plugins) in the top right.
-4. Find **AgentDecompile** or **AgentDecompile Plugin** in the list and check the box.
-5. Click **OK**.
+Requires [uv](https://docs.astral.sh/uv/) (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+### Option 2: Install from source
+
+```bash
+git clone https://github.com/bolabaden/agentdecompile.git
+cd agentdecompile
+pip install -e .
+agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
+```
+
+### Option 3: Docker (run the server)
+
+```bash
+docker compose up -d
+```
+
+The MCP server starts on port 8080 at `http://localhost:8080/mcp/message/`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
 
 ## Usage
 
@@ -96,12 +95,12 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 | **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
-The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message`. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
+The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message` (canonical). For compatibility with MCP clients that only accept a base URL, `http://<host>:<port>/` and `http://<host>:<port>/mcp` are also accepted and routed to the same Streamable HTTP MCP handler. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
-Local proxy mode (no local Ghidra/JVM startup):
+Local proxy mode (no local Ghidra/JVM startup — forwards to a remote MCP backend):
 
 ```bash
-agentdecompile-server -t streamable-http -o 127.0.0.1 -p 8081 --backend-url http://170.9.241.140:8080
+agentdecompile-server --backend-url http://***:8080 --transport streamable-http --host 127.0.0.1 --port 8081
 ```
 
 This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp/message` and forwards all tools/resources/prompts to the remote backend 1:1.
@@ -131,9 +130,9 @@ For a command-line interface to a **running** server (no new Ghidra process per 
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
-HTTP request diagnostics are disabled by default in CLI/server/proxy output. Use `--verbose` (or `-v`) to enable transport-level request logs during troubleshooting.
+HTTP request diagnostics are disabled by default in CLI/server output. Use `--verbose` (or `-v`) to enable transport-level request logs during troubleshooting.
 
-Shared Ghidra connection flags are accepted with or without the `ghidra-` prefix in CLI/server/proxy entrypoints. For example, `--server-host` and `--ghidra-server-host` are equivalent (same for `port`, `username`, `password`, and `repository`).
+Shared Ghidra connection flags are accepted with or without the `ghidra-` prefix in CLI/server entrypoints. For example, `--server-host` and `--ghidra-server-host` are equivalent (same for `port`, `username`, `password`, and `repository`).
 
 #### Shared server quick usage (concise)
 
@@ -141,7 +140,7 @@ The examples below use the published Git source install form and redact sensitiv
 
 ```powershell
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 open --server_host 170.9.241.140 --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 
 # concise output
 mode: shared-server
@@ -151,7 +150,7 @@ programCount: 26
 checkedOutProgram: /K1/k1_win_gog_swkotor.exe
 
 # 2) List files in the shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 list project-files
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list project-files
 
 # concise output
 folder: /
@@ -159,7 +158,7 @@ count: 26
 source: shared-server-session
 
 # 3) List a small function sample
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
 
 # concise output
 count: 5
@@ -167,7 +166,7 @@ totalMatched: 24242
 hasMore: True
 
 # 4) Search symbols by name
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
 
 # concise output
 query: main
@@ -176,34 +175,46 @@ totalMatched: 58
 hasMore: True
 
 # 5) Find references to a symbol
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
 
 # concise output
 mode: to
 target: 004041f0
 count: 1
 
-# 6) Raw tool mode examples
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080 tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+# 6) Get current program metadata
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+
+# concise output
+loaded: True
+name: swkotor.exe
+language: x86:LE:32:default
+compiler: windows
+functionCount: 24591
+
+# 7) Raw tool mode examples
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 
 # concise output
 mode: imports
 count: 5
+totalImports: 350
 mode: exports
 count: 1
+totalExports: 1
 ```
 
 Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
 
-For shared Ghidra server workflows (`open --server-host ... --server-port ...`), you can set defaults once with environment variables:
+For shared Ghidra server workflows (`open --ghidra-server-host ... --ghidra-server-port ...`), you can set defaults once with environment variables:
 
 ```bash
-export AGENT_DECOMPILE_SERVER_HOST=170.9.241.140
-export AGENT_DECOMPILE_SERVER_PORT=13100
-export AGENT_DECOMPILE_SERVER_USERNAME=OpenKotOR
-export AGENT_DECOMPILE_SERVER_PASSWORD='***'
-export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY=Odyssey
+export AGENT_DECOMPILE_GHIDRA_SERVER_HOST='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PORT='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
 Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
@@ -240,7 +251,7 @@ To start the HTTP server for `agentdecompile-http`:
 agentdecompile-server -t streamable-http
 
 # Proxy to a remote shared server
-agentdecompile-server -t streamable-http --backend-url http://170.9.241.140:8080
+agentdecompile-server --backend-url http://***:8080 --transport streamable-http
 ```
 
 ### Claude Desktop
@@ -271,7 +282,7 @@ Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server
   "mcpServers": {
     "AgentDecompile": {
       "command": "mcp-agentdecompile",
-      "args": ["--server-url", "http://127.0.0.1:8080"],
+      "args": ["--server-url", "http://127.0.0.1:8080/"],
       "env": {
         "GHIDRA_INSTALL_DIR": "/path/to/ghidra"
       }
@@ -284,14 +295,14 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 52 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 51 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- Default advertised tool names are the curated set returned by `agentdecompile-cli tool --list-tools`.
-- All other tool names (including non-default canonical names and alias/synonym names) are legacy compatibility names.
-- Legacy names remain accepted for compatibility; set `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` (or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`) to advertise the full legacy surface.
+- **37 tools** are advertised by default — returned by `agentdecompile-cli tool --list-tools`.
+- **10 legacy tools** are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` to expose them (`manage-function`, `manage-comments`, `manage-bookmarks`, `get-functions`, and others).
+- All canonical names use **kebab-case** (e.g. `get-current-program`, `search-symbols-by-name`). JSON argument keys use camelCase (e.g. `programPath`, `serverHost`). CLI flags use `--snake_case`.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
-- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-references`, `inspect-memory`, `manage-symbols`, `manage-comments`, `get-call-graph`
+- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols-by-name`, `inspect-memory`, `manage-function-tags`, `get-call-graph`
 
 Use `agentdecompile-cli tool --list-tools` to view tool names available from your running server, and use [TOOLS_LIST.md](TOOLS_LIST.md) for the reference.
 
@@ -308,13 +319,13 @@ Use `agentdecompile-cli tool --list-tools` to view tool names available from you
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Python MCP server, then bridges stdio to it.
 - **Connect mode (no local runtime startup):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
-- **Local proxy server mode:** run `agentdecompile-server --backend-url http://host:port` (or set `AGENT_DECOMPILE_BACKEND_URL`) to host local MCP transports (`stdio`, `streamable-http`, `sse`) that forward to a remote MCP backend without starting local PyGhidra/JVM.
+- **Local proxy server mode:** run `agentdecompile-server --backend-url http://host:port --transport streamable-http` (or set `AGENT_DECOMPILE_BACKEND_URL`) to host local MCP transports that forward to a remote MCP backend without starting local PyGhidra/JVM.
 
 ### Remote access
 
 AgentDecompile does not include SSH or WebSocket transport. To allow remote MCP access: (1) run a Python-hosted MCP server bound to `0.0.0.0` (env `AGENT_DECOMPILE_HOST=0.0.0.0`); (2) open the chosen port on the firewall; (3) point clients at `http://{remote_ip}:{port}/mcp/message` or use `--server-url http://{remote_ip}:{port}` in CLI connect mode.
 
-**Note:** `AGENT_DECOMPILE_SERVER_USERNAME` and `AGENT_DECOMPILE_SERVER_PASSWORD` are for **Ghidra Server** (shared project repositories), not for authenticating to the MCP server itself.
+**Note:** `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` and `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` are for **Ghidra Server** (shared project repositories), not for authenticating to the MCP server itself.
 
 ### Docker
 
@@ -324,17 +335,19 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 
 | Variable | Purpose | CLI argument equivalent |
 |----------|---------|-------------------------|
-| `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for proxy mode. | `agentdecompile-server --backend-url` (aliases: `--server-url`, `--mcp-server-url`); `agentdecompile-proxy --backend-url` (alias: `--backend`) |
+| `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for proxy mode. | `agentdecompile-server --backend-url` (alias: `--server-url`) |
 | `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). | None (environment/config only) |
-| `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. | `mcp-agentdecompile --mcp-server-url` (alias: `--server-url`); `agentdecompile-cli --mcp-server-url` (alias: `--server-url`); `agentdecompile-server --mcp-server-url` (aliases: `--server-url`, `--backend-url`); `agentdecompile-proxy --mcp-server-url` |
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. | `mcp-agentdecompile --mcp-server-url` (alias: `--server-url`); `agentdecompile-cli --mcp-server-url` (alias: `--server-url`); `agentdecompile-server --mcp-server-url` |
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). | `agentdecompile-server --project-path` |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |
 | `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). | `agentdecompile-server --port` |
-| `AGENT_DECOMPILE_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-server --server-username`; `agentdecompile-cli --ghidra-server-username`; `agentdecompile-proxy --server-username` |
-| `AGENT_DECOMPILE_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-server --server-password`; `agentdecompile-cli --ghidra-server-password`; `agentdecompile-proxy --server-password` |
-| `AGENT_DECOMPILE_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --server-host`; `agentdecompile-cli --ghidra-server-host`; `agentdecompile-proxy --server-host` |
-| `AGENT_DECOMPILE_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-server --server-port`; `agentdecompile-cli --ghidra-server-port`; `agentdecompile-proxy --server-port` |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository`; `agentdecompile-proxy --ghidra-server-repository` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-server --ghidra-server-username`; `agentdecompile-cli --ghidra-server-username` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-server --ghidra-server-password`; `agentdecompile-cli --ghidra-server-password` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --ghidra-server-host`; `agentdecompile-cli --ghidra-server-host` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-server --ghidra-server-port`; `agentdecompile-cli --ghidra-server-port` |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository` |
+
+Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PASSWORD/REPOSITORY` are accepted and normalized automatically for launchers that emit no-underscore variants.
 
 ### Shared project authentication
 

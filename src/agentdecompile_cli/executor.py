@@ -57,13 +57,12 @@ def create_error_response(error: str | Exception) -> list[types.TextContent]:
 def get_server_start_message() -> str:
     """Return the standardized server start message."""
     return (
-        "Please start the server first.\n\n"
-        "Connect to an existing AgentDecompile MCP server:\n\n"
-        "  mcp-agentdecompile --server-url http://host:port\n"
-        "  mcp-agentdecompile --host 127.0.0.1 --port 8080\n"
-        "  AGENT_DECOMPILE_MCP_SERVER_URL=http://host:port mcp-agentdecompile\n"
-        "  AGENT_DECOMPILE_MCP_SERVER_HOST=host AGENT_DECOMPILE_MCP_SERVER_PORT=8080 mcp-agentdecompile\n\n"
-        "Or run Ghidra with AgentDecompile enabled and use the URL from File > Edit Tool Options > AgentDecompile."
+        "Please start the AgentDecompile server first:\n\n"
+        "  agentdecompile-server --transport streamable-http\n\n"
+        "If the server is on a different host or port, pass --server-url:\n\n"
+        "  agentdecompile-cli --server-url http://host:port <command>\n"
+        "  AGENT_DECOMPILE_MCP_SERVER_URL=http://host:port agentdecompile-cli <command>\n\n"
+        "The default connection target is http://127.0.0.1:8080 — no flags needed when the server is local."
     )
 
 
@@ -119,11 +118,11 @@ def resolve_backend_url(
         val = os.getenv(key)
         if val and val.strip():
             return val.strip()
-    h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST")
+    h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST") or os.getenv("AGENTDECOMPILE_SERVER_HOST")
     p = port
     if p is None:
         try:
-            p = int(os.getenv(env_port_key, "") or os.getenv("AGENT_DECOMPILE_SERVER_PORT", "") or default_port)
+            p = int(os.getenv(env_port_key, "") or os.getenv("AGENT_DECOMPILE_SERVER_PORT", "") or os.getenv("AGENTDECOMPILE_SERVER_PORT", "") or default_port)
         except ValueError:
             p = default_port
     if h is not None and h.strip():
@@ -138,7 +137,7 @@ def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
 
     fmt: 'shell' (default) | 'json' | 'markdown' | 'xml' | legacy aliases ('text', 'table')
     """
-    normalized = (fmt or "shell").strip().lower()
+    normalized: str = (fmt or "shell").strip().lower()
 
     if normalized == "json":
         return _json.dumps(data, indent=2)
@@ -164,15 +163,9 @@ def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
         return str(data)
 
     if normalized == "xml":
+
         def _xml_escape(value: Any) -> str:
-            return (
-                str(value)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;")
-                .replace("'", "&apos;")
-            )
+            return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;")
 
         def _to_xml(value: Any, tag: str = "item") -> str:
             if isinstance(value, dict):
@@ -203,7 +196,7 @@ def handle_noisy_mcp_errors(error_msg: str) -> bool:
 
     Returns True if the error was handled (was noisy), False otherwise.
     """
-    noisy_patterns = [
+    noisy_patterns: list[str] = [
         "async_generator",
         "GeneratorExit",
         "aclose()",
@@ -858,26 +851,55 @@ class DynamicToolExecutor:
     def _is_array_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as an array."""
         array_params: set[str] = {
-            "address", "labelname", "newname", "identifiers", "functionidentifier",
-            "functions", "prototype", "propagateprogrampaths", "tags",
-            "targetprogrampaths", "fields", "comments", "bookmarks", "commenttypes",
-            "addresses", "names", "symbols",
+            "address",
+            "labelname",
+            "newname",
+            "identifiers",
+            "functionidentifier",
+            "functions",
+            "prototype",
+            "propagateprogrampaths",
+            "tags",
+            "targetprogrampaths",
+            "fields",
+            "comments",
+            "bookmarks",
+            "commenttypes",
+            "addresses",
+            "names",
+            "symbols",
         }
         return param_name.lower() in array_params
 
     def _is_boolean_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as a boolean."""
-        boolean_keywords = {
-            "analyze", "disable", "enable", "exclude", "filter", "include",
-            "remove", "resolve", "set", "sensitive",
+        boolean_keywords: set[str] = {
+            "analyze",
+            "disable",
+            "enable",
+            "exclude",
+            "filter",
+            "include",
+            "remove",
+            "resolve",
+            "set",
+            "sensitive",
         }
         return any(keyword in param_name.lower() for keyword in boolean_keywords)
 
     def _is_integer_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as an integer."""
-        integer_keywords = {
-            "count", "depth", "index", "length", "limit", "max", "min",
-            "offset", "size", "timeout",
+        integer_keywords: set[str] = {
+            "count",
+            "depth",
+            "index",
+            "length",
+            "limit",
+            "max",
+            "min",
+            "offset",
+            "size",
+            "timeout",
         }
         return any(keyword in param_name.lower() for keyword in integer_keywords)
 

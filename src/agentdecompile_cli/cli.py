@@ -52,11 +52,11 @@ from agentdecompile_cli.ghidrecomp.decompile import decompile
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,
-    TOOLS,
-    TOOL_PARAMS,
     RESOURCE_URI_DEBUG_INFO,
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
+    TOOLS,
+    TOOL_PARAMS,
     to_snake_case,
     tool_registry,
 )
@@ -68,7 +68,7 @@ _dynamic_commands_registered = False
 _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
-_DEFAULT_OUTPUT_FORMAT = "shell"
+_DEFAULT_OUTPUT_FORMAT = "text"
 
 
 def _configure_runtime_logging(verbose: bool) -> None:
@@ -120,6 +120,7 @@ _TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
         "manage-symbols",
         "match-function",
         "search-constants",
+        "sync-project",
         "sync-shared-project",
     },
 )
@@ -340,7 +341,11 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
     shared_user = str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
     shared_pass = str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
     shared_repo = (
-        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
     )
 
     open_attempts: list[dict[str, Any]] = []
@@ -450,7 +455,6 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
         tool: Tool name to call
         **kwargs: Tool arguments (None values are filtered out)
     """
-    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
@@ -490,7 +494,6 @@ async def _call_raw(
     Returns:
         Raw tool result dictionary from MCP server
     """
-    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
 
     # CLI always requests JSON from the MCP server so it can apply local
     # formatting via format_output() / the -f flag.  The server's default
@@ -746,7 +749,7 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
         "--format",
         type=str,
         default=_DEFAULT_OUTPUT_FORMAT,
-        help="Output format (shell/json/markdown/xml/etc.)",
+        help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
     )(cmd)
     return cmd
 
@@ -795,7 +798,7 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
                     default=None,
                     expose_value=False,
                     callback=_set_output_format_option,
-                    help="Output format (shell/json/markdown/xml/etc.)",
+                    help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
                 ),
             )
 
@@ -910,32 +913,32 @@ def _ensure_dynamic_commands_registered() -> None:
     "--ghidra-server-host",
     "--server-host",
     "ghidra_server_host",
-    help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+    help="Default shared Ghidra server host (prefer AGENT_DECOMPILE_GHIDRA_SERVER_HOST in environment)",
 )
 @click.option(
     "--ghidra-server-port",
     "--server-port",
     "ghidra_server_port",
     type=int,
-    help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+    help="Default shared Ghidra server port (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PORT in environment)",
 )
 @click.option(
     "--ghidra-server-username",
     "--server-username",
     "ghidra_server_username",
-    help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+    help="Default shared Ghidra server username (prefer AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME in environment)",
 )
 @click.option(
     "--ghidra-server-password",
     "--server-password",
     "ghidra_server_password",
-    help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+    help="Default shared Ghidra server password (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD in environment)",
 )
 @click.option(
     "--ghidra-server-repository",
     "--server-repository",
     "ghidra_server_repository",
-    help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+    help="Default shared Ghidra repository (prefer AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY in environment)",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logs (including HTTP request diagnostics)")
 @click.option(
@@ -943,7 +946,7 @@ def _ensure_dynamic_commands_registered() -> None:
     "--format",
     type=str,
     default=_DEFAULT_OUTPUT_FORMAT,
-    help="Output format (shell/json/markdown/xml/etc.)",
+    help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
 )
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
@@ -1180,7 +1183,7 @@ def list_grp() -> None:
     "local_format",
     type=str,
     default=None,
-    help="Output format override for this command",
+    help=("Output format override (default: inherited text output). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
 )
 @click.pass_context
 def list_binaries(ctx: click.Context, local_format: str | None) -> None:
@@ -1935,51 +1938,27 @@ for _mode in ("all", "search", "similarity", "undefined", "count", "by_identifie
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "function",
-    help="Manage function (manage-function): create, rename_function, rename_variable, set_prototype, set_variable_type, change_datatypes",
-)
+@main.group("function", help="Manage function (manage-function): create, rename_function, rename_variable, set_prototype, set_variable_type, change_datatypes")
 def function_grp() -> None:
     pass
 
 
 @function_grp.command("run", help="Run manage-function with --action and optional params")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--action",
-    type=click.Choice(
-        [
-            "create",
-            "rename_function",
-            "rename_variable",
-            "set_prototype",
-            "set_variable_type",
-            "change_datatypes",
-        ],
-    ),
-    required=True,
-)
+@click.option("--action", type=click.Choice(["create", "rename_function", "rename_variable", "set_prototype", "set_variable_type", "change_datatypes"]), required=True)
 @click.option("--address", multiple=True)
 @click.option("--function-identifier", "functionIdentifier", multiple=True)
 @click.option("--name")
 @click.option("--functions", help="JSON array of function rename objects")
 @click.option("--old-name", "oldName")
 @click.option("--new-name", "newName")
-@click.option(
-    "--variable-mappings",
-    "variableMappings",
-    help="oldName1:newName1,oldName2:newName2",
-)
+@click.option("--variable-mappings", "variableMappings", help="oldName1:newName1,oldName2:newName2")
 @click.option("--prototype", "prototype", multiple=True)
 @click.option("--variable-name", "variableName")
 @click.option("--new-type", "newType")
 @click.option("--datatype-mappings", "datatypeMappings", help="varName1:type1,varName2:type2")
 @click.option("--archive-name", "archiveName")
-@click.option(
-    "--create-if-not-exists/--no-create-if-not-exists",
-    "createIfNotExists",
-    default=True,
-)
+@click.option("--create-if-not-exists/--no-create-if-not-exists", "createIfNotExists", default=True)
 @click.option("--propagate/--no-propagate", default=True)
 @click.option("--propagate-program-paths", "propagateProgramPaths", multiple=True)
 @click.option("--propagate-max-candidates", "propagateMaxCandidates", type=int)
@@ -2053,10 +2032,7 @@ def function_run(
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "function-tags",
-    help="Manage function tags (manage-function-tags): get, set, add, remove, list",
-)
+@main.group("function-tags", help="Manage function tags (manage-function-tags): get, set, add, remove, list")
 def function_tags_grp() -> None:
     pass
 
@@ -2098,11 +2074,7 @@ def function_tags_run(
 @click.option("--propagate-names/--no-propagate-names", "propagateNames", default=True)
 @click.option("--propagate-tags/--no-propagate-tags", "propagateTags", default=True)
 @click.option("--propagate-comments/--no-propagate-comments", "propagateComments", default=False)
-@click.option(
-    "--filter-default-names/--no-filter-default-names",
-    "filterDefaultNames",
-    default=True,
-)
+@click.option("--filter-default-names/--no-filter-default-names", "filterDefaultNames", default=True)
 @click.option("--filter-by-tag", "filterByTag")
 @click.option("--max-functions", "maxFunctions", type=int)
 @click.option("--batch-size", "batchSize", type=int)
@@ -2151,21 +2123,14 @@ def match_function(
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "memory",
-    help="Inspect memory (inspect-memory): blocks, read, data_at, data_items, segments",
-)
+@main.group("memory", help="Inspect memory (inspect-memory): blocks, read, data_at, data_items, segments")
 def memory_grp() -> None:
     pass
 
 
 @memory_grp.command("run", help="Run inspect-memory with --mode")
 @click.option("-b", "--binary", "program_path", required=True)
-@click.option(
-    "--mode",
-    type=click.Choice(["blocks", "read", "data_at", "data_items", "segments"]),
-    required=True,
-)
+@click.option("--mode", type=click.Choice(["blocks", "read", "data_at", "data_items", "segments"]), required=True)
 @click.option("--address")
 @click.option("--length", type=int)
 @click.option("--offset", type=int)
@@ -2199,29 +2164,10 @@ def memory_run(
 
 @main.command("open", help="Open project or program (open-project)")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
-@click.option(
-    "--extensions",
-    help="Comma-separated extensions for bulk open (e.g. exe,dll)",
-)
-@click.option(
-    "--open_all_programs/--no-open_all_programs",
-    "--open-all-programs/--no-open-all-programs",
-    "open_all_programs",
-    default=True,
-)
+@click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
-@click.option(
-    "--analyze_after_import/--no-analyze_after_import",
-    "--analyze-after-import/--no-analyze-after-import",
-    "analyze_after_import",
-    default=True,
-)
-@click.option(
-    "--enable_version_control/--no-enable_version_control",
-    "--enable-version-control/--no-enable-version-control",
-    "enable_version_control",
-    default=True,
-)
+@click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
+@click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
 @click.option("--server_username", "--server-username", "--ghidra_server_username", "--ghidra-server-username", "server_username")
 @click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
 @click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
@@ -2281,44 +2227,23 @@ def open_cmd(
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "references",
-    help="Cross-references (get-references): to, from, both, function, referencers_decomp, import, thunk",
-)
+@main.group("references", help="Cross-references (get-references): to, from, both, function, referencers_decomp, import, thunk")
 def references_grp() -> None:
     pass
 
 
 @references_grp.command("run", help="Run get-references with --target and --mode")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--target",
-    required=True,
-    help="Address, symbol, function, or import name",
-)
-@click.option(
-    "--mode",
-    type=click.Choice(
-        ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"],
-    ),
-    default="both",
-)
+@click.option("--target", required=True, help="Address, symbol, function, or import name")
+@click.option("--mode", type=click.Choice(["to", "from", "both", "function", "referencers_decomp", "import", "thunk"]), default="both")
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
 @click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--library-name", "libraryName")
 @click.option("--start-index", "startIndex", type=int)
 @click.option("--max-referencers", "maxReferencers", type=int)
-@click.option(
-    "--include-ref-context/--no-include-ref-context",
-    "includeRefContext",
-    default=True,
-)
-@click.option(
-    "--include-data-refs/--no-include-data-refs",
-    "includeDataRefs",
-    default=True,
-)
+@click.option("--include-ref-context/--no-include-ref-context", "includeRefContext", default=True)
+@click.option("--include-data-refs/--no-include-data-refs", "includeDataRefs", default=True)
 @click.pass_context
 def references_run(
     ctx: click.Context,
@@ -2398,21 +2323,14 @@ for _mode in ("to", "from", "both", "function", "referencers_decomp", "import", 
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "datatypes",
-    help="Manage data types (manage-data-types): archives, list, by_string, apply",
-)
+@main.group("datatypes", help="Manage data types (manage-data-types): archives, list, by_string, apply")
 def datatypes_grp() -> None:
     pass
 
 
 @datatypes_grp.command("run", help="Run manage-data-types with --action")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--action",
-    type=click.Choice(["archives", "list", "by_string", "apply"]),
-    required=True,
-)
+@click.option("--action", type=click.Choice(["archives", "list", "by_string", "apply"]), required=True)
 @click.option("--archive-name", "archiveName")
 @click.option("--category-path", "categoryPath", default="/")
 @click.option("--include-subcategories", "includeSubcategories", is_flag=True)
@@ -2507,10 +2425,7 @@ for _action in ("archives", "list", "by_string", "apply"):
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "structures",
-    help="Manage structures (manage-structures): parse, validate, create, add_field, modify_field, modify_from_c, info, apply, delete, parse_header",
-)
+@main.group("structures", help="Manage structures (manage-structures): parse, validate, create, add_field, modify_field, modify_from_c, info, apply, delete, parse_header")
 def structures_grp() -> None:
     pass
 
@@ -2672,30 +2587,19 @@ for _action in ("parse", "validate", "create", "add_field", "modify_field", "mod
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "comments",
-    help="Manage comments (manage-comments): set, get, remove, search, search_decomp",
-)
+@main.group("comments", help="Manage comments (manage-comments): set, get, remove, search, search_decomp")
 def comments_grp() -> None:
     pass
 
 
 @comments_grp.command("run", help="Run manage-comments with --action")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--action",
-    type=click.Choice(["set", "get", "remove", "search", "search_decomp"]),
-    required=True,
-)
+@click.option("--action", type=click.Choice(["set", "get", "remove", "search", "search_decomp"]), required=True)
 @click.option("--address-or-symbol", "addressOrSymbol")
 @click.option("--function")
 @click.option("--line-number", "lineNumber", type=int)
 @click.option("--comment")
-@click.option(
-    "--comment-type",
-    "commentType",
-    type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]),
-)
+@click.option("--comment-type", "commentType", type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]))
 @click.option("--comments", help="JSON array of comment objects")
 @click.option("--start")
 @click.option("--end")
@@ -2704,11 +2608,7 @@ def comments_grp() -> None:
 @click.option("--pattern")
 @click.option("--case-sensitive", "caseSensitive", is_flag=True)
 @click.option("--max-results", "maxResults", type=int)
-@click.option(
-    "--override-max-functions-limit",
-    "overrideMaxFunctionsLimit",
-    is_flag=True,
-)
+@click.option("--override-max-functions-limit", "overrideMaxFunctionsLimit", is_flag=True)
 @click.pass_context
 def comments_run(
     ctx: click.Context,
@@ -2818,27 +2718,16 @@ for _action in ("set", "get", "remove", "search", "search_decomp"):
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "bookmarks",
-    help="Manage bookmarks (manage-bookmarks): set, get, search, remove, removeAll, categories",
-)
+@main.group("bookmarks", help="Manage bookmarks (manage-bookmarks): set, get, search, remove, removeAll, categories")
 def bookmarks_grp() -> None:
     pass
 
 
 @bookmarks_grp.command("run", help="Run manage-bookmarks with --action")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--action",
-    type=click.Choice(["set", "get", "search", "remove", "removeAll", "categories"]),
-    required=True,
-)
+@click.option("--action", type=click.Choice(["set", "get", "search", "remove", "removeAll", "categories"]), required=True)
 @click.option("--address-or-symbol", "addressOrSymbol")
-@click.option(
-    "--type",
-    "type_",
-    type=click.Choice(["Note", "Warning", "TODO", "Bug", "Analysis"]),
-)
+@click.option("--type", "type_", type=click.Choice(["Note", "Warning", "TODO", "Bug", "Analysis"]))
 @click.option("--category")
 @click.option("--comment")
 @click.option("--bookmarks", help="JSON array of bookmark objects")
@@ -2937,19 +2826,12 @@ for _action in ("set", "get", "search", "remove", "categories"):
 # ---------------------------------------------------------------------------
 
 
-@main.command(
-    "dataflow",
-    help="Trace data flow (analyze-data-flow): backward, forward, variable_accesses",
-)
+@main.command("dataflow", help="Trace data flow (analyze-data-flow): backward, forward, variable_accesses")
 @click.option("-b", "--binary", "program_path")
 @click.option("--function-address", "functionAddress", required=True)
 @click.option("--start-address", "startAddress")
 @click.option("--variable-name", "variableName")
-@click.option(
-    "--direction",
-    type=click.Choice(["backward", "forward", "variable_accesses"]),
-    required=True,
-)
+@click.option("--direction", type=click.Choice(["backward", "forward", "variable_accesses"]), required=True)
 @click.pass_context
 def dataflow(
     ctx: click.Context,
@@ -2977,10 +2859,7 @@ def dataflow(
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "callgraph",
-    help="Call graph (get-call-graph): graph, tree, callers, callees, callers_decomp, common_callers",
-)
+@main.group("callgraph", help="Call graph (get-call-graph): graph, tree, callers, callees, callers_decomp, common_callers")
 def callgraph_grp() -> None:
     pass
 
@@ -2988,28 +2867,14 @@ def callgraph_grp() -> None:
 @callgraph_grp.command("run", help="Run get-call-graph")
 @click.option("-b", "--binary", "program_path")
 @click.option("--function", "functionIdentifier", required=True)
-@click.option(
-    "--mode",
-    type=click.Choice(
-        ["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"],
-    ),
-    default="graph",
-)
+@click.option("--mode", type=click.Choice(["graph", "tree", "callers", "callees", "callers_decomp", "common_callers"]), default="graph")
 @click.option("--depth", type=int)
 @click.option("--direction", type=click.Choice(["callers", "callees"]))
 @click.option("--max-depth", "maxDepth", type=int)
 @click.option("--start-index", "startIndex", type=int)
 @click.option("--max-callers", "maxCallers", type=int)
-@click.option(
-    "--include-call-context/--no-include-call-context",
-    "includeCallContext",
-    default=True,
-)
-@click.option(
-    "--function-addresses",
-    "functionAddresses",
-    help="Comma-separated for common_callers",
-)
+@click.option("--include-call-context/--no-include-call-context", "includeCallContext", default=True)
+@click.option("--function-addresses", "functionAddresses", help="Comma-separated for common_callers")
 @click.pass_context
 def callgraph_run(
     ctx: click.Context,
@@ -3087,21 +2952,14 @@ for _mode in ("graph", "tree", "callers", "callees", "callers_decomp", "common_c
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "constants",
-    help="Search constants (search-constants): specific, range, common",
-)
+@main.group("constants", help="Search constants (search-constants): specific, range, common")
 def constants_grp() -> None:
     pass
 
 
 @constants_grp.command("run", help="Run search-constants")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--mode",
-    type=click.Choice(["specific", "range", "common"]),
-    required=True,
-)
+@click.option("--mode", type=click.Choice(["specific", "range", "common"]), required=True)
 @click.option("--value")
 @click.option("--min-value", "minValue")
 @click.option("--max-value", "maxValue")
@@ -3187,21 +3045,14 @@ for _mode in ("specific", "range", "common"):
 # ---------------------------------------------------------------------------
 
 
-@main.group(
-    "vtables",
-    help="Analyze vtables (analyze-vtables): analyze, callers, containing",
-)
+@main.group("vtables", help="Analyze vtables (analyze-vtables): analyze, callers, containing")
 def vtables_grp() -> None:
     pass
 
 
 @vtables_grp.command("run", help="Run analyze-vtables")
 @click.option("-b", "--binary", "program_path")
-@click.option(
-    "--mode",
-    type=click.Choice(["analyze", "callers", "containing"]),
-    required=True,
-)
+@click.option("--mode", type=click.Choice(["analyze", "callers", "containing"]), required=True)
 @click.option("--vtable-address", "vtableAddress")
 @click.option("--function-address", "functionAddress")
 @click.option("--max-entries", "maxEntries", type=int)
@@ -3276,10 +3127,7 @@ for _mode in ("analyze", "callers", "containing"):
 # ---------------------------------------------------------------------------
 
 
-@main.command(
-    "suggest",
-    help="Context-aware suggestions (suggest): comments, names, tags, types",
-)
+@main.command("suggest", help="Context-aware suggestions (suggest): comments, names, tags, types")
 @click.option("-b", "--binary", "program_path", required=True)
 @click.option("--suggestion-type", "suggestionType", required=True)
 @click.option("--address")
@@ -3362,10 +3210,7 @@ def change_processor(
     _run_async(_call(ctx, "change-processor", **payload))
 
 
-@main.group(
-    "files",
-    help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout",
-)
+@main.group("files", help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout")
 def files_grp() -> None:
     pass
 
@@ -3395,7 +3240,7 @@ def files_grp() -> None:
             "delete",
             "copy",
             "move",
-        ],
+        ]
     ),
     required=True,
 )
@@ -3412,28 +3257,12 @@ def files_grp() -> None:
 @click.option("--recursive/--no-recursive", default=True)
 @click.option("--max-results", "max_results", type=int)
 @click.option("--max-depth", "max_depth", type=int)
-@click.option(
-    "--analyze-after-import/--no-analyze-after-import",
-    "analyze_after_import",
-    default=True,
-)
-@click.option(
-    "--strip-leading-path/--no-strip-leading-path",
-    "strip_leading_path",
-    default=True,
-)
+@click.option("--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
+@click.option("--strip-leading-path/--no-strip-leading-path", "strip_leading_path", default=True)
 @click.option("--strip-all-container-path", "strip_all_container_path", is_flag=True)
 @click.option("--mirror-fs", "mirror_fs", is_flag=True)
-@click.option(
-    "--enable-version-control/--no-enable-version-control",
-    "enable_version_control",
-    default=True,
-)
-@click.option(
-    "--export-type",
-    "export_type",
-    type=click.Choice(["program", "function_info", "strings"]),
-)
+@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--export-type", "export_type", type=click.Choice(["program", "function_info", "strings"]))
 @click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
 @click.option("--include-parameters", "include_parameters", is_flag=True)
 @click.option("--include-variables", "include_variables", is_flag=True)
@@ -3516,18 +3345,12 @@ def files_run(
     _run_async(_call(ctx, "manage-files", **payload))
 
 
-@main.group(
-    "shared",
-    help="Shared repository workflows",
-)
+@main.group("shared", help="Shared repository workflows")
 def shared_grp() -> None:
     pass
 
 
-@shared_grp.command(
-    "download",
-    help="Pull shared repository files into local project storage",
-)
+@shared_grp.command("download", help="Pull shared repository files into local project storage")
 @click.option("--source", "source_path", default="/", show_default=True, help="Shared repository folder/path to download")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination folder in local project")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
@@ -3553,13 +3376,10 @@ def shared_download(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
-@shared_grp.command(
-    "push",
-    help="Push local project files toward shared-backed storage mapping",
-)
+@shared_grp.command("push", help="Push local project files toward shared-backed storage mapping")
 @click.option("--source", "source_path", default="/", show_default=True, help="Local project source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination mapping path")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
@@ -3585,13 +3405,10 @@ def shared_push(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
-@shared_grp.command(
-    "sync",
-    help="Bidirectional shared/local synchronization",
-)
+@shared_grp.command("sync", help="Bidirectional shared/local synchronization")
 @click.option("--source", "source_path", default="/", show_default=True, help="Scope source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Scope destination mapping")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
@@ -3617,7 +3434,7 @@ def shared_sync(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
 def _gui_only_command_error(tool_name: str) -> None:
@@ -3641,20 +3458,14 @@ def current_address(ctx: click.Context) -> None:
 
 
 # TODO: GUI Only tools/commands
-@main.command(
-    "current-function",
-    help="Get current function (get-current-function, GUI)",
-)
+@main.command("current-function", help="Get current function (get-current-function, GUI)")
 @click.pass_context
 def current_function(ctx: click.Context) -> None:
     _gui_only_command_error("get-current-function")
 
 
 # TODO: GUI Only tools/commands
-@main.command(
-    "open-in-code-browser",
-    help="Open program in Code Browser (open-program-in-code-browser, GUI)",
-)
+@main.command("open-in-code-browser", help="Open program in Code Browser (open-program-in-code-browser, GUI)")
 @click.option("-b", "--binary", "program_path", required=True)
 @click.pass_context
 def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
@@ -3662,21 +3473,9 @@ def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
 
 
 # TODO: GUI Only tools/commands
-@main.command(
-    "open-all-in-code-browser",
-    help="Open all programs matching extensions in Code Browser (open-all-programs-in-code-browser, GUI)",
-)
-@click.option(
-    "--extensions",
-    default="exe,dll",
-    help="Comma-separated file extensions to open (default: exe,dll)",
-)
-@click.option(
-    "--folder-path",
-    "folderPath",
-    default="/",
-    help="Project folder to search (default: /)",
-)
+@main.command("open-all-in-code-browser", help="Open all programs matching extensions in Code Browser (open-all-programs-in-code-browser, GUI)")
+@click.option("--extensions", default="exe,dll", help="Comma-separated file extensions to open (default: exe,dll)")
+@click.option("--folder-path", "folderPath", default="/", help="Project folder to search (default: /)")
 @click.pass_context
 def open_all_in_code_browser(
     ctx: click.Context,
@@ -3802,10 +3601,7 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
 # ---------------------------------------------------------------------------
 
 
-@main.command(
-    "alias",
-    help="Show alias/overload mappings and signatures for a tool name.",
-)
+@main.command("alias", help="Show alias/overload mappings and signatures for a tool name.")
 @click.argument("name", required=True)
 def alias_cmd(name: str) -> None:
     """Show alias details for a canonical or alias tool name."""
@@ -3845,21 +3641,10 @@ def alias_cmd(name: str) -> None:
             click.echo(f"  - {alias}")
 
 
-@main.command(
-    "tool",
-    help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'',
-)
+@main.command("tool", help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'')
 @click.argument("name", required=True)
-@click.argument(
-    "arguments",
-    required=False,
-    default="{}",
-)
-@click.option(
-    "--list-tools",
-    is_flag=True,
-    help="List valid tool names and exit",
-)
+@click.argument("arguments", required=False, default="{}")
+@click.option("--list-tools", is_flag=True, help="List valid tool names and exit")
 @click.pass_context
 def tool_cmd(
     ctx: click.Context,
@@ -3906,10 +3691,7 @@ def tool_cmd(
     _run_async(_run())
 
 
-@main.command(
-    "tool-seq",
-    help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]'),
-)
+@main.command("tool-seq", help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]'))
 @click.argument("steps", required=True)
 @click.option("--continue-on-error", is_flag=True, help="Continue remaining steps after a tool failure")
 @click.pass_context
@@ -3976,3 +3758,9 @@ if __name__ == "__main__":
 # (important for subcommand resolution before main() callback runs).
 _ensure_dynamic_commands_registered()
 _register_output_format_option_on_all_commands(main)
+
+
+def cli_entry_point() -> None:
+    """Entry point for the CLI (referenced by pyproject.toml scripts)."""
+    _ensure_dynamic_commands_registered()
+    main()

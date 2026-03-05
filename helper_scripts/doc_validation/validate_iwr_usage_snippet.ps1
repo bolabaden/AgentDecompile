@@ -1,4 +1,4 @@
-$McpUrl = "http://170.9.241.140:8080/mcp/message/"
+$McpUrl = "http://***:8080/mcp/message/"
 
 $InitBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ps-check","version":"1.0"}}}'
 $InitResp = Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Headers @{

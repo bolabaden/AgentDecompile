@@ -10,7 +10,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
   - [Table of Contents](#table-of-contents)
-  - [Canonical Tools (53)](#canonical-tools-53)
+  - [Canonical Tool Docs](#canonical-tool-docs)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
@@ -20,7 +20,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
-    - [`sync-shared-project`](#sync-shared-project)
+    - [`sync-project`](#sync-project)
     - [`export`](#export)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
@@ -160,6 +160,58 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
       - [GOT/PLT Overwrite](#gotplt-overwrite)
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
+  - [Canonical Tools](#canonical-tools)
+    - [`analyze-data-flow`](#analyze-data-flow-1)
+    - [`analyze-program`](#analyze-program-1)
+    - [`analyze-vtables`](#analyze-vtables-1)
+    - [`apply-data-type`](#apply-data-type-1)
+    - [`change-processor`](#change-processor-1)
+    - [`checkin-program`](#checkin-program-1)
+    - [`checkout-program`](#checkout-program)
+    - [`checkout-status`](#checkout-status)
+    - [`create-label`](#create-label-1)
+    - [`decompile-function`](#decompile-function-1)
+    - [`sync-project`](#sync-project-1)
+    - [`export`](#export-1)
+    - [`delete-project-binary`](#delete-project-binary-1)
+    - [`gen-callgraph`](#gen-callgraph-1)
+    - [`get-call-graph`](#get-call-graph-1)
+    - [`get-current-address`](#get-current-address-1)
+    - [`get-current-function`](#get-current-function-1)
+    - [`get-current-program`](#get-current-program-1)
+    - [`get-data`](#get-data-1)
+    - [`get-functions`](#get-functions-1)
+    - [`get-references`](#get-references-1)
+    - [`import-binary`](#import-binary-1)
+    - [`inspect-memory`](#inspect-memory-1)
+    - [`list-cross-references`](#list-cross-references-1)
+    - [`list-exports`](#list-exports-1)
+    - [`list-functions`](#list-functions-1)
+    - [`list-imports`](#list-imports-1)
+    - [`list-project-files`](#list-project-files-1)
+    - [`list-processors`](#list-processors-1)
+    - [`list-strings`](#list-strings-1)
+    - [`manage-bookmarks`](#manage-bookmarks-1)
+    - [`manage-comments`](#manage-comments-1)
+    - [`manage-data-types`](#manage-data-types-1)
+    - [`manage-files`](#manage-files-1)
+    - [`manage-function-tags`](#manage-function-tags-1)
+    - [`manage-function`](#manage-function-1)
+    - [`manage-strings`](#manage-strings-1)
+    - [`manage-structures`](#manage-structures-1)
+    - [`manage-symbols`](#manage-symbols-1)
+    - [`match-function`](#match-function-1)
+    - [`execute-script`](#execute-script-1)
+    - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser-1)
+    - [`open-program-in-code-browser`](#open-program-in-code-browser-1)
+    - [`open-project`](#open-project)
+    - [`read-bytes`](#read-bytes-1)
+    - [`search-code`](#search-code-1)
+    - [`search-constants`](#search-constants-1)
+    - [`search-everything`](#search-everything-1)
+    - [`search-strings`](#search-strings-1)
+    - [`search-symbols`](#search-symbols-1)
+    - [`suggest`](#suggest-1)
 
 ## Canonical Tool Docs
 
@@ -460,9 +512,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
 
-### `sync-shared-project`
+### `sync-project`
 
-**Description**: Transfers and synchronizes content between an active Ghidra shared repository session and the local project. It supports explicit pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning.
+**Description**: Transfers and synchronizes content between local and/or shared Ghidra projects. Supports pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning. Works with shared repository sessions (shared↔local) and local-only projects.
 
 **Parameters**:
 - `mode` (string, optional): Transfer mode (`pull`, `push`, `bidirectional`, default: `pull`).
@@ -480,14 +532,14 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `dryRun` (boolean, optional): Preview planned transfers without writing data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `sync-shared-project(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
+- `sync-project(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
 
-**Synonyms**: `sync-shared-project`, `sync_shared_project`, `syncsharedproject`, `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`
+**Synonyms**: `sync-project`, `sync_project`, `syncproject`, `sync-shared-project`, `sync_shared_project`, `syncsharedproject`, `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`
 
 **Examples**:
-- Pull all repository files: `sync-shared-project mode="pull" path="/" newPath="/" recursive=true`.
-- Push local scope mapping: `sync-shared-project mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
-- Plan bidirectional sync: `sync-shared-project mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
+- Pull all repository files: `sync-project mode="pull" path="/" newPath="/" recursive=true`.
+- Push local scope mapping: `sync-project mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
+- Plan bidirectional sync: `sync-project mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
 
 ### `export`
 
@@ -2690,97 +2742,209 @@ Calculate jump address to shellcode
 ## Canonical Tools
 
 ### `analyze-data-flow`
+**Overloads**:
+- `analyze-data-flow()` canonical signature.
 
 ### `analyze-program`
+**Overloads**:
+- `analyze-program()` canonical signature.
 
 ### `analyze-vtables`
+**Overloads**:
+- `analyze-vtables()` canonical signature.
 
 ### `apply-data-type`
+**Overloads**:
+- `apply-data-type()` canonical signature.
 
 ### `change-processor`
+**Overloads**:
+- `change-processor()` canonical signature.
 
 ### `checkin-program`
+**Overloads**:
+- `checkin-program()` canonical signature.
+
+### `checkout-program`
+**Overloads**:
+- `checkout-program()` canonical signature.
+
+### `checkout-status`
+**Overloads**:
+- `checkout-status()` canonical signature.
 
 ### `create-label`
+**Overloads**:
+- `create-label()` canonical signature.
 
 ### `decompile-function`
+**Overloads**:
+- `decompile-function()` canonical signature.
 
-### `sync-shared-project`
+### `sync-project`
+**Overloads**:
+- `sync-project()` canonical signature.
 
 ### `export`
+**Overloads**:
+- `export()` canonical signature.
 
 ### `delete-project-binary`
+**Overloads**:
+- `delete-project-binary()` canonical signature.
 
 ### `gen-callgraph`
+**Overloads**:
+- `gen-callgraph()` canonical signature.
 
 ### `get-call-graph`
+**Overloads**:
+- `get-call-graph()` canonical signature.
 
 ### `get-current-address`
+**Overloads**:
+- `get-current-address()` canonical signature.
 
 ### `get-current-function`
+**Overloads**:
+- `get-current-function()` canonical signature.
+
+### `get-current-program`
+**Overloads**:
+- `get-current-program()` canonical signature.
 
 ### `get-data`
+**Overloads**:
+- `get-data()` canonical signature.
 
 ### `get-functions`
+**Overloads**:
+- `get-functions()` canonical signature.
 
 ### `get-references`
+**Overloads**:
+- `get-references()` canonical signature.
 
 ### `import-binary`
+**Overloads**:
+- `import-binary()` canonical signature.
 
 ### `inspect-memory`
+**Overloads**:
+- `inspect-memory()` canonical signature.
 
 ### `list-cross-references`
+**Overloads**:
+- `list-cross-references()` canonical signature.
 
 ### `list-exports`
+**Overloads**:
+- `list-exports()` canonical signature.
 
 ### `list-functions`
+**Overloads**:
+- `list-functions()` canonical signature.
 
 ### `list-imports`
+**Overloads**:
+- `list-imports()` canonical signature.
 
 ### `list-project-files`
+**Overloads**:
+- `list-project-files()` canonical signature.
 
 ### `list-processors`
+**Overloads**:
+- `list-processors()` canonical signature.
 
 ### `list-strings`
+**Overloads**:
+- `list-strings()` canonical signature.
 
 ### `manage-bookmarks`
+**Overloads**:
+- `manage-bookmarks()` canonical signature.
 
 ### `manage-comments`
+**Overloads**:
+- `manage-comments()` canonical signature.
 
 ### `manage-data-types`
+**Overloads**:
+- `manage-data-types()` canonical signature.
 
 ### `manage-files`
+**Overloads**:
+- `manage-files()` canonical signature.
 
 ### `manage-function-tags`
+**Overloads**:
+- `manage-function-tags()` canonical signature.
 
 ### `manage-function`
+**Overloads**:
+- `manage-function()` canonical signature.
 
 ### `manage-strings`
+**Overloads**:
+- `manage-strings()` canonical signature.
 
 ### `manage-structures`
+**Overloads**:
+- `manage-structures()` canonical signature.
 
 ### `manage-symbols`
+**Overloads**:
+- `manage-symbols()` canonical signature.
 
 ### `match-function`
+**Overloads**:
+- `match-function()` canonical signature.
 
 ### `execute-script`
+**Overloads**:
+- `execute-script()` canonical signature.
 
 ### `open-all-programs-in-code-browser`
+**Overloads**:
+- `open-all-programs-in-code-browser()` canonical signature.
 
 ### `open-program-in-code-browser`
+**Overloads**:
+- `open-program-in-code-browser()` canonical signature.
 
 ### `open-project`
+**Overloads**:
+- `open-project()` canonical signature.
 
 ### `read-bytes`
+**Overloads**:
+- `read-bytes()` canonical signature.
 
 ### `search-code`
+**Overloads**:
+- `search-code()` canonical signature.
 
 ### `search-constants`
+**Overloads**:
+- `search-constants()` canonical signature.
 
 ### `search-everything`
+**Overloads**:
+- `search-everything()` canonical signature.
 
 ### `search-strings`
+**Overloads**:
+- `search-strings()` canonical signature.
 
 ### `search-symbols`
+**Overloads**:
+- `search-symbols()` canonical signature.
 
 ### `suggest`
+**Overloads**:
+- `suggest()` canonical signature.
+
+
+**Examples**:
+- `checkout-status`

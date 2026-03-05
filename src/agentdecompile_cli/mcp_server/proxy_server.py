@@ -18,8 +18,8 @@ from typing import Any
 from fastapi import FastAPI
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
-
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
+from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
 
 logger = logging.getLogger(__name__)
@@ -33,19 +33,24 @@ class ProxyServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
     backend_url: str
+    tls_certfile: str | None = None
+    """Path to TLS certificate file (PEM). Enables HTTPS when combined with tls_keyfile."""
+    tls_keyfile: str | None = None
+    """Path to TLS private key file (PEM). Enables HTTPS when combined with tls_certfile."""
 
 
 class AgentDecompileMcpProxyServer:
     """Run a local MCP server that proxies requests to a remote MCP server."""
 
-    def __init__(self, config: ProxyServerConfig):
+    def __init__(self, config: ProxyServerConfig, auth_config: AuthConfig | None = None):
         self.config: ProxyServerConfig = config
+        self.auth_config: AuthConfig | None = auth_config
         self.app: FastAPI = FastAPI(title=self.config.name, version=self.config.version)
         self._bridge: AgentDecompileStdioBridge = AgentDecompileStdioBridge(self.config.backend_url)
         self._session_manager: StreamableHTTPSessionManager = StreamableHTTPSessionManager(
             app=self._bridge.server,
             json_response=True,
-            stateless=False,
+            stateless=True,
         )
         self._session_manager_cm: Any | None = None
         self._running: bool = False
@@ -54,29 +59,9 @@ class AgentDecompileMcpProxyServer:
 
         self._setup_routes()
 
+    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+
     def _setup_routes(self) -> None:
-        class _SessionContextASGI:
-            def __init__(self, inner_app: Any):
-                self._inner_app: Any = inner_app
-
-            async def __call__(self, scope, receive, send):
-                session_id = "default"
-                if scope.get("type") == "http":
-                    key_b: bytes
-                    value_b: bytes
-                    for key_b, value_b in scope.get("headers", []):
-                        if key_b.decode("latin1").lower() == "mcp-session-id":
-                            value = value_b.decode("latin1").strip()
-                            if value:
-                                session_id = value
-                            break
-
-                token = CURRENT_MCP_SESSION_ID.set(session_id)
-                try:
-                    await self._inner_app(scope, receive, send)
-                finally:
-                    CURRENT_MCP_SESSION_ID.reset(token)
-
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
             self._session_manager_cm = self._session_manager.run()
@@ -89,10 +74,6 @@ class AgentDecompileMcpProxyServer:
                 self._session_manager_cm = None
             await self._bridge._reset_backend_session()
 
-        mcp_asgi = _SessionContextASGI(self._session_manager.handle_request)
-        self.app.mount("/mcp/message", mcp_asgi)
-        self.app.mount("/mcp/message/", mcp_asgi)
-
         @self.app.get("/health")
         async def health_check() -> dict[str, Any]:
             return {
@@ -102,6 +83,47 @@ class AgentDecompileMcpProxyServer:
                 "mode": "proxy",
                 "backend": self.config.backend_url,
             }
+
+        mcp_handle = self._session_manager.handle_request
+
+        async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            session_id = "default"
+            if scope.get("type") == "http":
+                for key_b, value_b in scope.get("headers", []):
+                    key_b: bytes
+                    value_b: bytes
+                    if key_b.decode("latin1").lower() == "mcp-session-id":
+                        value = value_b.decode("latin1").strip()
+                        if value:
+                            session_id = value
+                        break
+            token = CURRENT_MCP_SESSION_ID.set(session_id)
+            try:
+                await mcp_handle(scope, receive, send)
+            finally:
+                CURRENT_MCP_SESSION_ID.reset(token)
+
+        # Optionally wrap with auth (experimental, off by default).
+        mcp_app: Any = _mcp_asgi
+        if self.auth_config is not None:
+            mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
+
+        inner_app = self.app
+        mcp_paths = self._MCP_PATHS
+
+        class _MCPRoutingMiddleware:
+            """ASGI middleware: route /mcp and /mcp/message to MCP handler."""
+
+            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+                if scope.get("type") == "http":
+                    path = (scope.get("path") or "").rstrip("/") or "/"
+                    if path in mcp_paths:
+                        rewritten = dict(scope, path="/")
+                        await mcp_app(rewritten, receive, send)
+                        return
+                await inner_app(scope, receive, send)
+
+        self.app = _MCPRoutingMiddleware()  # type: ignore[assignment]
 
     def _is_port_available(self, host: str, port: int) -> bool:
         try:
@@ -123,8 +145,12 @@ class AgentDecompileMcpProxyServer:
         try:
             import httpx
 
-            with httpx.Client() as client:
-                response = client.get(f"http://{self.config.host}:{self.config.port}/health", timeout=1.0)
+            scheme = "https" if (self.config.tls_certfile and self.config.tls_keyfile) else "http"
+            with httpx.Client(verify=False) as client:  # noqa: S501 (local readiness probe)
+                response = client.get(
+                    f"{scheme}://{self.config.host}:{self.config.port}/health",
+                    timeout=1.0,
+                )
                 return response.status_code == 200
         except Exception:
             return False
@@ -132,12 +158,16 @@ class AgentDecompileMcpProxyServer:
     def _run_server(self) -> None:
         import uvicorn
 
-        uvicorn_config = uvicorn.Config(
-            app=self.app,
-            host=self.config.host,
-            port=self.config.port,
-            log_level="info",
-        )
+        uvicorn_kwargs: dict[str, Any] = {
+            "app": self.app,
+            "host": self.config.host,
+            "port": self.config.port,
+            "log_level": "info",
+        }
+        if self.config.tls_certfile and self.config.tls_keyfile:
+            uvicorn_kwargs["ssl_certfile"] = self.config.tls_certfile
+            uvicorn_kwargs["ssl_keyfile"] = self.config.tls_keyfile
+        uvicorn_config = uvicorn.Config(**uvicorn_kwargs)
         self._uvicorn_server = uvicorn.Server(uvicorn_config)
 
         try:

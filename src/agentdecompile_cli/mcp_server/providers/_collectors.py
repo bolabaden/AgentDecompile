@@ -240,7 +240,9 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
                 return normalized[:limit]
         except Exception as e:
             logger.warning(f"GhidraTools.get_all_strings failed: {e}")
+            # Fallback to direct iterator access below
 
+    # Fallback 1: Try direct DefinedDataIterator access
     results: list[dict[str, Any]] = []
     try:
         from ghidra.program.util import DefinedDataIterator  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
@@ -259,8 +261,57 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
             )
             if limit is not None and len(results) >= limit:
                 break
+        return results
     except Exception as e:
-        logger.warning(f"String iteration error: {e.__class__.__name__}: {e}")
+        logger.warning(f"String iteration via DefinedDataIterator failed: {e.__class__.__name__}: {e}")
+    
+    # Fallback 2: Listing-based traversal for environments where iterators are unavailable
+    # This provides coverage for shared-server/proxy contexts
+    try:
+        listing = program.getListing()
+        memory = program.getMemory()
+        
+        # Iterate through all data in the program
+        data_iter = listing.getDefinedData(memory, True)
+        while data_iter.hasNext() if hasattr(data_iter, 'hasNext') else len(results) < (limit or 10000):
+            if not hasattr(data_iter, 'hasNext'):
+                break
+            try:
+                data = data_iter.next()
+                data_type = data.getDataType()
+                # Check if it's a string-like type
+                if data_type and hasattr(data_type, 'getName'):
+                    type_name = str(data_type.getName()).lower()
+                    if 'string' in type_name or 'unicode' in type_name:
+                        value = str(data.getValue() or "")
+                        if len(value) >= min_len:
+                            results.append(
+                                {
+                                    "address": str(data.getAddress()),
+                                    "value": value,
+                                    "length": len(value),
+                                    "dataType": str(data_type),
+                                },
+                            )
+                            if limit is not None and len(results) >= limit:
+                                break
+            except Exception as item_exc:
+                # Skip individual items that fail
+                continue
+        
+        if results:
+            logger.info(f"String collection via listing-based fallback found {len(results)} strings")
+            return results
+    except Exception as e:
+        logger.warning(f"Listing-based string fallback failed: {e.__class__.__name__}: {e}")
+    
+    # If all fallback paths failed and we have no results, log a clear diagnostic
+    if not results:
+        logger.error(
+            "All string collection methods failed. This program context may not support "
+            "string enumeration (e.g., shared-server checkout without iterator support)."
+        )
+    
     return results
 
 

@@ -28,6 +28,8 @@ class ImportExportToolProvider(ToolProvider):
         "analyzeprogram": "_handle_analyze",
         "changeprocessor": "_handle_change_processor",
         "checkinprogram": "_handle_checkin",
+        "checkoutprogram": "_handle_checkout",
+        "checkoutstatus": "_handle_checkout_status",
         "listprocessors": "_handle_list_processors",
     }
 
@@ -92,9 +94,35 @@ class ImportExportToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Your local version of the file you intend to push upstream."},
-                        "message": {"type": "string", "description": "The commit message for history tracking."},
-                        "keepCheckedOut": {"type": "boolean", "default": False, "description": "Whether to retain an exclusive file lock after pushing the changes."},
+                        "program_path": {"type": "string", "description": "Your local version of the file you intend to push upstream."},
+                        "comment": {"type": "string", "description": "The commit message for history tracking."},
+                        "keep_checked_out": {"type": "boolean", "default": False, "description": "Whether to retain an exclusive file lock after pushing the changes."},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="checkout-program",
+                description="Check out a versioned file from the shared Ghidra Server repository so it can be modified. Must be called before making changes when working with a version-controlled project. Use checkin-program when done.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "program_path": {"type": "string", "description": "Path to the program in the Ghidra project to check out."},
+                        "exclusive": {"type": "boolean", "default": False, "description": "Whether to request an exclusive (write-lock) checkout. Exclusive checkout fails if others already have it checked out."},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="checkout-status",
+                description="Query the checkout state of a versioned Ghidra project file. Shows whether the file is checked out, who has it checked out, and whether it has local modifications since checkout.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "program_path": {"type": "string", "description": "Path to the program in the Ghidra project to query."},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
                     },
                     "required": [],
                 },
@@ -627,25 +655,58 @@ class ImportExportToolProvider(ToolProvider):
     async def _handle_checkin(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         assert self.program_info is not None
-        message = self._get_str(args, "message", default="AgentDecompile checkin")
+        comment = self._get_str(args, "comment", "message", default="AgentDecompile checkin")
         keep_checked_out = self._get_bool(args, "keepcheckedout", default=False)
         program = self.program_info.program
 
         try:
+            from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
-            
+
             domain_file = program.getDomainFile()
             if domain_file is None:
                 raise RuntimeError("No domain file associated with active program")
-            domain_file.save(TaskMonitor.DUMMY)
+
+            if not domain_file.isVersioned():
+                # Not version-controlled — just save locally.
+                domain_file.save(TaskMonitor.DUMMY)
+                return create_success_response(
+                    {
+                        "action": "checkin",
+                        "program": program.getName(),
+                        "comment": comment,
+                        "keep_checked_out": keep_checked_out,
+                        "success": True,
+                        "note": "File is not versioned; saved locally.",
+                    },
+                )
+
+            if not domain_file.isCheckedOut():
+                raise RuntimeError(
+                    "File is not checked out. Call checkout-program first before making changes."
+                )
+
+            _keep = keep_checked_out
+
+            class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
+                def getComment(self) -> str:  # noqa: N802
+                    return comment
+
+                def keepCheckedOut(self) -> bool:  # noqa: N802
+                    return _keep
+
+                def createKeepFile(self) -> bool:  # noqa: N802
+                    return False
+
+            domain_file.checkin(_SimpleCheckinHandler(), TaskMonitor.DUMMY)
             return create_success_response(
                 {
                     "action": "checkin",
                     "program": program.getName(),
-                    "message": message,
-                    "keepCheckedOut": keep_checked_out,
+                    "comment": comment,
+                    "keep_checked_out": keep_checked_out,
+                    "version": domain_file.getLatestVersion(),
                     "success": True,
-                    "note": "Saved domain file; repository check-in API may vary by backend.",
                 },
             )
         except Exception as exc:
@@ -653,8 +714,129 @@ class ImportExportToolProvider(ToolProvider):
                 {
                     "action": "checkin",
                     "program": program.getName(),
-                    "message": message,
-                    "keepCheckedOut": keep_checked_out,
+                    "comment": comment,
+                    "keep_checked_out": keep_checked_out,
+                    "success": False,
+                    "error": str(exc),
+                },
+            )
+
+    async def _handle_checkout(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_program()
+        assert self.program_info is not None
+        exclusive = self._get_bool(args, "exclusive", default=False)
+        program = self.program_info.program
+
+        try:
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+            domain_file = program.getDomainFile()
+            if domain_file is None:
+                raise RuntimeError("No domain file associated with active program")
+
+            if not domain_file.isVersioned():
+                return create_success_response(
+                    {
+                        "action": "checkout",
+                        "program": program.getName(),
+                        "success": True,
+                        "already_private": True,
+                        "note": "File is not version-controlled; no checkout needed.",
+                    },
+                )
+
+            if domain_file.isCheckedOut():
+                return create_success_response(
+                    {
+                        "action": "checkout",
+                        "program": program.getName(),
+                        "success": True,
+                        "already_checked_out": True,
+                        "exclusive": domain_file.isCheckedOutExclusive(),
+                        "note": "File is already checked out.",
+                    },
+                )
+
+            if not domain_file.canCheckout():
+                raise RuntimeError(
+                    "Cannot check out this file (read-only repository access or versioning restriction)."
+                )
+
+            success = domain_file.checkout(exclusive, TaskMonitor.DUMMY)
+            return create_success_response(
+                {
+                    "action": "checkout",
+                    "program": program.getName(),
+                    "exclusive": exclusive,
+                    "success": success,
+                    "is_checked_out": domain_file.isCheckedOut(),
+                    "note": None if success else "Exclusive checkout was not available; others have it checked out.",
+                },
+            )
+        except Exception as exc:
+            return create_success_response(
+                {
+                    "action": "checkout",
+                    "program": program.getName(),
+                    "exclusive": exclusive,
+                    "success": False,
+                    "error": str(exc),
+                },
+            )
+
+    async def _handle_checkout_status(self, args: dict[str, Any]) -> list[types.TextContent]:
+        self._require_program()
+        assert self.program_info is not None
+        program = self.program_info.program
+
+        try:
+            domain_file = program.getDomainFile()
+            if domain_file is None:
+                raise RuntimeError("No domain file associated with active program")
+
+            is_versioned = domain_file.isVersioned()
+            is_checked_out = domain_file.isCheckedOut() if is_versioned else False
+            is_exclusive = domain_file.isCheckedOutExclusive() if is_checked_out else False
+            modified = domain_file.modifiedSinceCheckout() if is_checked_out else False
+            can_checkin = domain_file.canCheckin() if is_versioned else False
+            can_checkout = domain_file.canCheckout() if is_versioned else False
+            latest_version = domain_file.getLatestVersion() if is_versioned else None
+            current_version = domain_file.getVersion() if is_versioned else None
+
+            checkout_status_obj = None
+            if is_checked_out:
+                try:
+                    status = domain_file.getCheckoutStatus()
+                    if status is not None:
+                        checkout_status_obj = {
+                            "checkout_id": status.getCheckoutId(),
+                            "user": status.getUser(),
+                            "checkout_version": status.getCheckoutVersion(),
+                            "checkout_time": status.getCheckoutTime(),
+                        }
+                except Exception:
+                    pass
+
+            return create_success_response(
+                {
+                    "action": "checkout_status",
+                    "program": program.getName(),
+                    "is_versioned": is_versioned,
+                    "is_checked_out": is_checked_out,
+                    "is_exclusive": is_exclusive,
+                    "modified_since_checkout": modified,
+                    "can_checkout": can_checkout,
+                    "can_checkin": can_checkin,
+                    "latest_version": latest_version,
+                    "current_version": current_version,
+                    "checkout_status": checkout_status_obj,
+                },
+            )
+        except Exception as exc:
+            return create_success_response(
+                {
+                    "action": "checkout_status",
+                    "program": program.getName(),
                     "success": False,
                     "error": str(exc),
                 },

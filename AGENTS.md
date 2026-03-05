@@ -1,0 +1,64 @@
+# AGENTS.md
+
+See [README.md](README.md) for project overview, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details.
+
+## Cursor Cloud specific instructions
+
+### Environment
+
+- **Python 3.10+** and **Java 21** (OpenJDK) are pre-installed in the VM.
+- **Ghidra 12.0.4** is installed at `/opt/ghidra-install/ghidra_12.0.4_PUBLIC`. Set `GHIDRA_INSTALL_DIR` accordingly.
+- **uv** package manager is at `~/.local/bin/uv`. Ensure `$HOME/.local/bin` is on `PATH`.
+- **PyGhidra** is installed from Ghidra's bundled pypkg (not PyPI). The update script reinstalls it from `$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg`.
+- **ruff** is installed for linting (not a project dependency, installed separately via `uv pip install ruff`).
+- chromadb (semantic search) is optional and not installed; the server logs a warning but operates normally without it.
+
+### Injected secrets (environment variables)
+
+Several `AGENT_DECOMPILE_*` secrets are injected and will cause the server to enter proxy mode or require auth. When running locally with PyGhidra, **unset** these before starting the server:
+
+```bash
+unset AGENT_DECOMPILE_BACKEND_URL
+unset AGENT_DECOMPILE_MCP_SERVER_URL
+unset AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME
+unset AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD
+unset AGENT_DECOMPILE_GHIDRA_SERVER_HOST
+unset AGENT_DECOMPILE_GHIDRA_SERVER_PORT
+unset AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY
+```
+
+Without unsetting `AGENT_DECOMPILE_BACKEND_URL`, the server starts in **proxy mode** (forwarding to a remote backend). Without unsetting the Ghidra server credentials, the server requires HTTP Basic Auth on every MCP request.
+
+### Running the MCP server locally
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export GHIDRA_INSTALL_DIR=/opt/ghidra-install/ghidra_12.0.4_PUBLIC
+# Unset secrets that trigger proxy/auth (see above)
+uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 \
+  --project-path /tmp/agentdecompile-projects /path/to/binary
+```
+
+The server takes ~3 seconds to initialize PyGhidra/JVM. Once running, use the CLI:
+
+```bash
+uv run agentdecompile-cli --server-url http://127.0.0.1:8080 tool-seq \
+  '[{"name":"open-project","arguments":{"path":"/path/to/binary"}},
+    {"name":"analyze-program","arguments":{"programPath":"binaryname"}},
+    {"name":"list-functions","arguments":{"programPath":"binaryname","limit":10}}]'
+```
+
+### Session state caveat
+
+Each CLI invocation creates a new MCP session. Programs loaded in one session are not available in the next. Use `tool-seq` to chain multiple tool calls (open, analyze, list, decompile) within a single session. Alternatively, pass binaries as positional arguments to `agentdecompile-server` so they are imported at startup.
+
+### Lint, test, build
+
+| Task | Command |
+|------|---------|
+| Lint | `uv run ruff check --no-fix src/ tests/` |
+| Test (all) | `uv run pytest tests/ -v --timeout=180` |
+| Test (unit only) | `uv run pytest -m unit -v` |
+| Build | `uv build` |
+
+Pre-existing lint violations (49 errors) and test failures (46 of ~1300) exist in the codebase; they are not caused by the development environment.

@@ -82,10 +82,23 @@ jobs:
           VERSION_TAG_UPSTREAM_API: ${{ env.VERSION_TAG_UPSTREAM_API }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
           SHOULD_BUILD="true"
           GHIDRA_VERSION=""
-          IMAGE_TAG="${{ github.ref_name }}"
+          RAW_IMAGE_TAG="${{ github.ref_name }}"
+
+          if [[ "${EVENT_NAME}" == "pull_request" && -n "${PR_NUMBER}" ]]; then
+            RAW_IMAGE_TAG="pr-${PR_NUMBER}"
+          fi
+
+          # Docker tags cannot contain "/" (for example refs/pull/28/merge), so sanitize.
+          IMAGE_TAG=$(echo "${RAW_IMAGE_TAG}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's|[^a-z0-9._-]+|-|g; s|^-+||; s|-+$||')
+          if [[ -z "${IMAGE_TAG}" ]]; then
+            IMAGE_TAG="dev"
+          fi
 
           if [[ -n "${VERSION_TAG_UPSTREAM_API}" ]]; then
             UPSTREAM_JSON=$(curl -sSL -H 'Accept: application/vnd.github+json' "${VERSION_TAG_UPSTREAM_API}")
@@ -111,6 +124,10 @@ jobs:
               echo "No-op: upstream Ghidra version could not be resolved."
             fi
           fi
+
+          # Docker tags cannot contain '/'. Sanitize: e.g. PR ref "27/merge" → "27-merge",
+          # branch "feature/foo" → "feature-foo".
+          IMAGE_TAG="$(echo "${IMAGE_TAG}" | sed 's|/|-|g')"
 
           echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "GHIDRA_VERSION=${GHIDRA_VERSION}" >> $GITHUB_OUTPUT
@@ -204,6 +221,7 @@ jobs:
           fi
 
       - name: "Log in to GitHub Container Registry"
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -211,7 +229,7 @@ jobs:
           password: ${{ env.GITHUB_AUTH_TOKEN }}
 
       - name: "Log in to Docker Hub (if secrets present)"
-        if: env.DOCKERHUB_AUTH == 'true'
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_AUTH == 'true'
         uses: docker/login-action@v3
         with:
           registry: docker.io

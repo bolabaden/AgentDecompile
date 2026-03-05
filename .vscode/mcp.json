@@ -1,46 +1,15 @@
 {
   "servers": {
-    "agentdecompile-local": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "--refresh",
-        "--from",
-        ".",
-        "--with-editable",
-        ".",
-        "agentdecompile-server",
-        "--transport",
-        "stdio"
-      ]
-    },
-    "agentdecompile-shared": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "--refresh",
-        "--from",
-        ".",
-        "--with-editable",
-        ".",
-        "agentdecompile-server",
-        "--transport",
-        "stdio",
-        "--ghidra-server-host",
-        "170.9.241.140",
-        "--server-port",
-        "13100",
-        "--server-username",
-        "${input:ghidra-username}",
-        "--server-password",
-        "${input:ghidra-password}",
-        "--ghidra-server-repository",
-        "Odyssey"
-      ]
-    },
-    "agentdecompile-http": {
-      "type": "http",
-      "url": "http://127.0.0.1:8080/mcp/message"
+    "agdec-http": {
+      "url": "http://${input:ad-http-host}:${input:ad-http-port}/mcp",
+      "headers": {
+        "User-Agent": "PyKotorAgent/1.0",
+        "X-Agent-Server-Username": "${input:ghidra-username}",
+        "X-Agent-Server-Password": "${input:ghidra-password}",
+        "X-Agent-Server-Repository": "${input:ad-http-ghidra-server-repository}",
+        "X-Ghidra-Server-Host": "${input:ad-http-ghidra-server-host}",
+        "X-Ghidra-Server-Port": "${input:ad-http-ghidra-server-port}"
+      }
     }
   },
   "inputs": [
@@ -54,6 +23,33 @@
       "type": "promptString",
       "description": "Ghidra shared server password",
       "password": true
+    },
+    {
+      "id": "ad-http-host",
+      "type": "promptString",
+      "description": "AgentDecompile HTTP server host",
+    },
+    {
+      "id": "ad-http-port",
+      "type": "promptString",
+      "description": "AgentDecompile HTTP server port",
+      "default": "8080",
+    },
+    {
+      "id": "ad-http-ghidra-server-host",
+      "type": "promptString",
+      "description": "Ghidra server host for AgentDecompile HTTP server",
+    },
+    {
+      "id": "ad-http-ghidra-server-port",
+      "type": "promptString",
+      "description": "Ghidra server port for AgentDecompile HTTP server",
+      "default": "13100",
+    },
+    {
+      "id": "ad-http-ghidra-server-repository",
+      "type": "promptString",
+      "description": "Ghidra server repository for AgentDecompile HTTP server",
     }
   ]
 }
