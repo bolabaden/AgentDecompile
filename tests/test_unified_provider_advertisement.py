@@ -102,7 +102,13 @@ class TestUnifiedProviderAdvertisement:
         provider = UnifiedToolProvider()
         advertised_names = {tool.name for tool in provider.list_tools()}
 
+        # Only check aliases that are NOT also in the TOOLS list
+        # (some tools appear in both TOOLS and NON_ADVERTISED_TOOL_ALIASES
+        # because they are canonical tools that also forward to parent tools)
+        tools_set = set(TOOLS)
         for alias_name in NON_ADVERTISED_TOOL_ALIASES:
+            if alias_name in tools_set:
+                continue  # legitimately advertised
             assert to_snake_case(alias_name) not in advertised_names
 
     def test_gui_only_tools_are_not_advertised(self):
