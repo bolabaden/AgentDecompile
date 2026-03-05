@@ -2,6 +2,19 @@ $ErrorActionPreference = 'Continue'
 $baseUrl = 'http://***:8080/mcp/message/'
 $program = '/K1/k1_win_gog_swkotor.exe'
 $uvxPrefix = 'uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/'
+$ghidraHost = $env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST
+$ghidraPort = if ($env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT) { [int]$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT } else { 13100 }
+$ghidraUser = $env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME
+$ghidraPass = $env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD
+$ghidraRepo = if ($env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY) { $env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY } else { 'Odyssey' }
+
+$missing = @()
+if (-not $ghidraHost) { $missing += 'AGENT_DECOMPILE_GHIDRA_SERVER_HOST' }
+if (-not $ghidraUser) { $missing += 'AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME' }
+if (-not $ghidraPass) { $missing += 'AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD' }
+if ($missing.Count -gt 0) {
+    throw ("Missing required environment variables: " + ($missing -join ', '))
+}
 
 function New-PayloadFile {
     param([string]$Path, [object]$Object)
@@ -31,7 +44,7 @@ New-PayloadFile -Path 'tmp\mcp_validate_initialized.json' -Object $notifPayload
 curl.exe -s -X POST $baseUrl -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "Mcp-Session-Id: $SID" --data @tmp\mcp_validate_initialized.json | Out-Null
 
 $cases = @(
-    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password idekanymore $program"; Tool = 'open'; Args = @{server_host = '***'; server_port = 13100; server_username = 'OpenKotOR'; server_password = 'idekanymore'; repository_name = 'Odyssey'; program_path = $program } },
+    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host $ghidraHost --server_port $ghidraPort --server_username $ghidraUser --server_password $ghidraPass $program"; Tool = 'open'; Args = @{server_host = $ghidraHost; server_port = $ghidraPort; server_username = $ghidraUser; server_password = $ghidraPass; repository_name = $ghidraRepo; program_path = $program } },
     @{ Name = 'list project-files'; Uvx = "$uvxPrefix list project-files"; Tool = 'list_project_files'; Args = @{} },
     @{ Name = 'get-current-program'; Uvx = "$uvxPrefix get-current-program --program_path $program"; Tool = 'get_current_program'; Args = @{program_path = $program } },
     @{ Name = 'get-functions limit'; Uvx = "$uvxPrefix get-functions --program_path $program --limit 5"; Tool = 'get_functions'; Args = @{program_path = $program; limit = 5 } },

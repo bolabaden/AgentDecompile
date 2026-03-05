@@ -140,7 +140,7 @@ The examples below use the published Git source install form and redact sensitiv
 
 ```powershell
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password *** /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 
 # concise output
 mode: shared-server
@@ -210,11 +210,11 @@ Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool na
 For shared Ghidra server workflows (`open --ghidra-server-host ... --ghidra-server-port ...`), you can set defaults once with environment variables:
 
 ```bash
-export AGENT_DECOMPILE_GHIDRA_SERVER_HOST=***
-export AGENT_DECOMPILE_GHIDRA_SERVER_PORT=13100
-export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME=OpenKotOR
-export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='***'
-export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY=Odyssey
+export AGENT_DECOMPILE_GHIDRA_SERVER_HOST='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PORT='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
 Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
