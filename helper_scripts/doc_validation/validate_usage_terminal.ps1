@@ -31,7 +31,7 @@ New-PayloadFile -Path 'tmp\mcp_validate_initialized.json' -Object $notifPayload
 curl.exe -s -X POST $baseUrl -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "Mcp-Session-Id: $SID" --data @tmp\mcp_validate_initialized.json | Out-Null
 
 $cases = @(
-    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password MuchaShakaPaka $program"; Tool = 'open'; Args = @{server_host = '***'; server_port = 13100; server_username = 'OpenKotOR'; server_password = 'MuchaShakaPaka'; repository_name = 'Odyssey'; program_path = $program } },
+    @{ Name = 'open'; Uvx = "$uvxPrefix open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password idekanymore $program"; Tool = 'open'; Args = @{server_host = '***'; server_port = 13100; server_username = 'OpenKotOR'; server_password = 'idekanymore'; repository_name = 'Odyssey'; program_path = $program } },
     @{ Name = 'list project-files'; Uvx = "$uvxPrefix list project-files"; Tool = 'list_project_files'; Args = @{} },
     @{ Name = 'get-current-program'; Uvx = "$uvxPrefix get-current-program --program_path $program"; Tool = 'get_current_program'; Args = @{program_path = $program } },
     @{ Name = 'get-functions limit'; Uvx = "$uvxPrefix get-functions --program_path $program --limit 5"; Tool = 'get_functions'; Args = @{program_path = $program; limit = 5 } },

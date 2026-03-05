@@ -1934,6 +1934,8 @@ def main() -> None:
     g_server.add_argument(
         "-p",
         "--port",
+        "--mcp-port",
+        "--mcp-listen-port",
         type=int,
         default=None,
         help="Port for HTTP transports (default: AGENT_DECOMPILE_PORT or 8080)",
@@ -1941,11 +1943,15 @@ def main() -> None:
     g_server.add_argument(
         "-o",
         "--host",
+        "--mcp-host",
+        "--mcp-listen-ip",
+        "--mcp-listen-host",
         type=str,
         default=None,
         help="Host for HTTP transports (default: AGENT_DECOMPILE_HOST or 127.0.0.1)",
     )
     g_server.add_argument(
+        "--mcp-backend-url",
         "--backend-url",
         "--server-url",
         dest="backend_url",

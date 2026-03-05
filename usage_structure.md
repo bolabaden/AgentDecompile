@@ -1,6 +1,6 @@
 
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password MuchaShakaPaka /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host *** --server_port 13100 --server_username OpenKotOR --server_password idekanymore /K1/k1_win_gog_swkotor.exe
 
 # output
 mode: shared-server
@@ -11,7 +11,7 @@ checkedOutProgram: /K1/k1_win_gog_swkotor.exe
 
 # Set env vars to reduce amount of parameters in the cli:
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME="OpenKotOR"
-$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD="MuchaShakaPaka"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD="idekanymore"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST="***"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT="13100"
 
@@ -54,7 +54,7 @@ target: 004041f0
 references: [{'fromAddress': '006fb509', 'toAddress': '004041f0', 'type': 'UNCONDITIONAL_CALL', 'function': 'entry'}]       
 count: 1
 
-# 6) uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli agentdecompile-cli --server-url http://***:8080 get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+# 6) uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 
 # output
 loaded: True                                                                                                                
