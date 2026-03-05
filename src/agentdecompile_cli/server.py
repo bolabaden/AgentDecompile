@@ -602,31 +602,31 @@ def main() -> None:
         "--ghidra-server-host",
         type=str,
         default=None,
-        help="Shared Ghidra server host (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_HOST)",
+        help="Shared Ghidra server host (prefer AGENT_DECOMPILE_GHIDRA_SERVER_HOST in environment)",
     )
     g_server.add_argument(
         "--ghidra-server-port",
         type=int,
         default=None,
-        help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_PORT)",
+        help="Shared Ghidra server port (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PORT in environment)",
     )
     g_server.add_argument(
         "--ghidra-server-username",
         type=str,
         default=None,
-        help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME)",
+        help="Shared Ghidra server username (prefer AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME in environment)",
     )
     g_server.add_argument(
         "--ghidra-server-password",
         type=str,
         default=None,
-        help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
+        help="Shared Ghidra server password (prefer AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD in environment)",
     )
     g_server.add_argument(
         "--ghidra-server-repository",
         type=str,
         default=None,
-        help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+        help="Shared Ghidra repository (prefer AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY in environment)",
     )
     g_server.add_argument(
         "--require-auth",

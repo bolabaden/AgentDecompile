@@ -69,9 +69,9 @@ UVX_PREFIX='uvx --from git+https://github.com/bolabaden/agentdecompile agentdeco
 PROGRAM_PATH='/K1/k1_win_gog_swkotor.exe'
 export AGENT_DECOMPILE_SERVER_HOST='***'
 export AGENT_DECOMPILE_SERVER_PORT='13100'
-export AGENT_DECOMPILE_SERVER_USERNAME='OpenKotOR'
-export AGENT_DECOMPILE_SERVER_PASSWORD='idekanymore'
-export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='Odyssey'
+export AGENT_DECOMPILE_SERVER_USERNAME='<set-in-user-env>'
+export AGENT_DECOMPILE_SERVER_PASSWORD='<set-in-user-env>'
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
 </details>
@@ -171,11 +171,11 @@ function Invoke-McpTool {
 # No manual initialize/session handling required in uvx mode.
 # The CLI handles transport/session lifecycle per command.
 
-$env:AGENT_DECOMPILE_SERVER_HOST = "***"
-$env:AGENT_DECOMPILE_SERVER_PORT = "13100"
-$env:AGENT_DECOMPILE_SERVER_USERNAME = "OpenKotOR"
-$env:AGENT_DECOMPILE_SERVER_PASSWORD = "idekanymore"
-$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "Odyssey"
+$env:AGENT_DECOMPILE_SERVER_HOST = "<set-in-user-env>"
+$env:AGENT_DECOMPILE_SERVER_PORT = "<set-in-user-env>"
+$env:AGENT_DECOMPILE_SERVER_USERNAME = "<set-in-user-env>"
+$env:AGENT_DECOMPILE_SERVER_PASSWORD = "<set-in-user-env>"
+$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
 
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ list project-files --binary /K1/k1_win_gog_swkotor.exe
 ```
@@ -190,14 +190,14 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 Tool payload (`name=open`):
 
 ```json
-{"server_host":"***","server_port":13100,"server_username":"OpenKotOR","server_password":"idekanymore","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}
+{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}
 ```
 
 <details>
 <summary><b>Linux (bash/zsh)</b></summary>
 
 ```bash
-call_tool 101 open '{"server_host":"***","server_port":13100,"server_username":"OpenKotOR","server_password":"idekanymore","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}'
+call_tool 101 open '{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -205,7 +205,7 @@ call_tool 101 open '{"server_host":"***","server_port":13100,"server_username":"
 <summary><b>Windows (PowerShell)</b></summary>
 
 ```powershell
-Invoke-McpTool -Id 101 -Name "open" -ArgumentsJson '{"server_host":"***","server_port":13100,"server_username":"OpenKotOR","server_password":"idekanymore","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}'
+Invoke-McpTool -Id 101 -Name "open" -ArgumentsJson '{"server_host":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 </details>
@@ -213,7 +213,7 @@ Invoke-McpTool -Id 101 -Name "open" -ArgumentsJson '{"server_host":"***","server
 <summary><b>uvx</b></summary>
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ open --ghidra-server-host *** --ghidra-server-port 13100 --server_username OpenKotOR --server_password idekanymore /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ open --ghidra-server-host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --ghidra-server-port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 ```
 
 </details>
@@ -610,7 +610,7 @@ Verified against `http://***:8080/mcp/message/` with repository `Odyssey` on 202
 
 ```bash
 # 1) Open shared repository session
-call_tool 201 open '{"server_host":"***","server_port":13100,"server_username":"OpenKotOR","server_password":"idekanymore","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}'
+call_tool 201 open '{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
 
 # 2) Pull plan
 call_tool 202 sync-shared-project '{"mode":"pull","path":"/K1","newPath":"/K1_sync_test","recursive":true,"maxResults":1,"dryRun":true}'
@@ -633,7 +633,7 @@ $sid = ($r.Headers.GetEnumerator() | Where-Object { $_.Key -ieq "mcp-session-id"
 $hdr["mcp-session-id"] = $sid
 Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json -Depth 5) -UseBasicParsing | Out-Null
 
-$open = @{ jsonrpc="2.0"; id=2; method="tools/call"; params=@{ name="open"; arguments=@{ server_host="***"; server_port=13100; server_username="OpenKotOR"; server_password="idekanymore"; repository_name="Odyssey"; program_path="/K1/k1_win_gog_swkotor.exe" } } } | ConvertTo-Json -Depth 10
+$open = @{ jsonrpc="2.0"; id=2; method="tools/call"; params=@{ name="open"; arguments=@{ server_host="$env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST"; server_port=$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT; server_username="$env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME"; server_password="$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD"; repository_name="$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY"; program_path="/K1/k1_win_gog_swkotor.exe" } } } | ConvertTo-Json -Depth 10
 Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $open -UseBasicParsing
 
 $pull = @{ jsonrpc="2.0"; id=3; method="tools/call"; params=@{ name="sync-shared-project"; arguments=@{ mode="pull"; path="/K1"; newPath="/K1_ps_sync"; recursive=$true; maxResults=1; dryRun=$true } } } | ConvertTo-Json -Depth 10
@@ -648,7 +648,7 @@ Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $push -UseBasicPars
 <summary><b>uvx</b></summary>
 
 ```powershell
-$steps = '[{"name":"open","arguments":{"server_host":"***","server_port":13100,"server_username":"OpenKotOR","server_password":"idekanymore","repository_name":"Odyssey","program_path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"sync-shared-project","arguments":{"mode":"pull","path":"/K1","newPath":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}},{"name":"sync-shared-project","arguments":{"mode":"push","path":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}}]'
+$steps = '[{"name":"open","arguments":{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"sync-shared-project","arguments":{"mode":"pull","path":"/K1","newPath":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}},{"name":"sync-shared-project","arguments":{"mode":"push","path":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}}]'
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ tool-seq $steps
 ```
 
