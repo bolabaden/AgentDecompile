@@ -95,8 +95,6 @@ class ResourceProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
-        uri = str(uri)  # Normalize AnyUrl/pydantic objects to plain string
-
         logger.info(f"ResourceProviderManager: Attempting to read resource: {uri}")
         logger.info(f"  Current program_info: {self.program_info}")
         logger.info(f"  Registered providers: {[p.__class__.__name__ for p in self.providers]}")

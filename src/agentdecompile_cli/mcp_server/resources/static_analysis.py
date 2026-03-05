@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+from itertools import islice
 
 from datetime import datetime, timezone
-from itertools import islice
-from typing import Any
-
 from mcp import types
+from pydantic import AnyUrl
 
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
 
@@ -23,7 +22,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
         """Return list of static analysis resources."""
         return [
             types.Resource(
-                uri="ghidra://static-analysis-results",  # pyright: ignore[reportArgumentType]
+                uri=AnyUrl(url="ghidra://static-analysis-results"),
                 name="Static Analysis Results",
                 description="Results from static analysis of the current program (SARIF 2.1.0)",
                 mimeType="application/json",
@@ -54,7 +53,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
             logger.info(f"SARIF report generated successfully, {len(json.dumps(sarif_report))} bytes")
             return json.dumps(sarif_report, indent=2)
         except Exception as e:
-            logger.error(f"Error generating SARIF report: {e.__class__.__name__}: {e}", exc_info=True)
+            logger.error(f"Error generating SARIF report: {e!s}", exc_info=True)
             # Return empty SARIF with error information instead of raising
             empty_report = self._empty_sarif_report()
             empty_report["runs"][0]["properties"]["error"] = str(e)
@@ -93,7 +92,6 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _generate_sarif_report(self) -> dict:
         """Generate a SARIF 2.1.0 compliant static analysis report."""
-        assert self.program_info is not None, "Program info is required to generate SARIF report"
         program = self.program_info.program
         results = []
 
@@ -192,7 +190,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
                         },
                     )
         except Exception as e:
-            logger.debug(f"Error collecting undefined references: {e.__class__.__name__}: {e}")
+            logger.debug(f"Error collecting undefined references: {e!s}")
 
         return results
 
@@ -231,14 +229,13 @@ class StaticAnalysisResultsResource(ResourceProvider):
                             },
                         )
         except Exception as e:
-            logger.debug(f"Error collecting bookmarks: {e.__class__.__name__}: {e}")
+            logger.debug(f"Error collecting bookmarks: {e!s}")
 
         return results
 
     async def _collect_analysis_warnings(self) -> list[dict]:
         """Collect analysis warnings (functions with issues, etc.)."""
-        results: list[Any] = []
-        assert self.program_info is not None, "program info not available"
+        results = []
         program = self.program_info.program
 
         try:
@@ -293,6 +290,6 @@ class StaticAnalysisResultsResource(ResourceProvider):
                         },
                     )
         except Exception as e:
-            logger.debug(f"Error collecting analysis warnings: {e.__class__.__name__}: {e}")
+            logger.debug(f"Error collecting analysis warnings: {e!s}")
 
         return results
