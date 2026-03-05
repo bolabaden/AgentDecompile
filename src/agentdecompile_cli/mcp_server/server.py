@@ -21,7 +21,6 @@ from mcp import types
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
-
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
 from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
@@ -135,75 +134,19 @@ class PythonMcpServer:
 
         return server
 
+    # Paths that the MCP session handler should serve.
+    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+
     def _setup_routes(self) -> None:
-        """Setup FastAPI routes for MCP communication."""
+        """Setup FastAPI routes for MCP communication.
 
-        class _SessionContextASGI:
-            def __init__(self, inner_app: Any):
-                self._inner_app: Any = inner_app
-
-            async def __call__(
-                self,
-                scope: dict[str, Any],
-                receive: Any,
-                send: Any,
-            ):
-                session_id = "default"
-                if scope.get("type") == "http":
-                    key_b: bytes
-                    value_b: bytes
-                    for key_b, value_b in scope.get("headers", []):
-                        if key_b.decode("latin1").lower() == "mcp-session-id":
-                            value = value_b.decode("latin1").strip()
-                            if value:
-                                session_id = value
-                            break
-
-                token = CURRENT_MCP_SESSION_ID.set(session_id)
-                try:
-                    await self._inner_app(scope, receive, send)
-                finally:
-                    CURRENT_MCP_SESSION_ID.reset(token)
-
-        class _CompatPathASGI:
-            """Compatibility wrapper for legacy MCP endpoint paths.
-
-            Some MCP clients send initialize/call traffic to the server root
-            (``/``) or ``/mcp`` when only a host:port URL is configured.
-            StreamableHTTPSessionManager expects to run at the mounted root of
-            its ASGI app, so we rewrite compatible paths to ``/`` before
-            delegating to the real MCP ASGI handler.
-            """
-
-            def __init__(self, inner_app: Any, allowed_paths: set[str]):
-                self._inner_app: Any = inner_app
-                self._allowed_paths: set[str] = allowed_paths
-
-            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-                if scope.get("type") != "http":
-                    await self._inner_app(scope, receive, send)
-                    return
-
-                raw_path = str(scope.get("path") or "")
-                normalized_path = raw_path.rstrip("/") or "/"
-                if normalized_path not in self._allowed_paths:
-                    body = b'{"detail":"Not Found"}'
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": 404,
-                            "headers": [
-                                (b"content-type", b"application/json"),
-                                (b"content-length", str(len(body)).encode("ascii")),
-                            ],
-                        }
-                    )
-                    await send({"type": "http.response.body", "body": body, "more_body": False})
-                    return
-
-                rewritten_scope = dict(scope)
-                rewritten_scope["path"] = "/"
-                await self._inner_app(rewritten_scope, receive, send)
+        Uses an outer ASGI middleware to intercept ``/mcp`` and
+        ``/mcp/message`` *before* Starlette's router so that all HTTP
+        methods (POST, GET, DELETE) arrive at the MCP session handler
+        with ``path="/"`` as the SDK expects.  Every other path
+        (``/docs``, ``/redoc``, ``/openapi.json``, ``/health``) falls
+        through to FastAPI's normal router.
+        """
 
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
@@ -226,14 +169,51 @@ class PythonMcpServer:
                 "programs": (1 if self.program_info and self.program_info.program else 0),
             }
 
-        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
-        if self.auth_config is not None:
-            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
+        # Build the innermost ASGI handler: session-context → MCP SDK
+        mcp_handle = self._session_manager.handle_request
 
-        compat_mcp_asgi: Any = _CompatPathASGI(mcp_asgi, {"/", "/mcp", "/mcp/message"})
-        self.app.mount("/mcp/message", mcp_asgi)
-        self.app.mount("/mcp/message/", mcp_asgi)
-        self.app.mount("/", compat_mcp_asgi)
+        async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            """Propagate MCP session ID into ContextVar, then delegate."""
+            session_id = "default"
+            if scope.get("type") == "http":
+                key_b: bytes
+                value_b: bytes
+                for key_b, value_b in scope.get("headers", []):
+                    if key_b.decode("latin1").lower() == "mcp-session-id":
+                        value = value_b.decode("latin1").strip()
+                        if value:
+                            session_id = value
+                        break
+            token = CURRENT_MCP_SESSION_ID.set(session_id)
+            try:
+                await mcp_handle(scope, receive, send)
+            finally:
+                CURRENT_MCP_SESSION_ID.reset(token)
+
+        # Optionally wrap with auth (experimental, off by default).
+        mcp_app: Any = _mcp_asgi
+        if self.auth_config is not None:
+            mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
+
+        # Wrap the entire FastAPI app with an outer middleware that
+        # intercepts MCP paths before Starlette's router sees them.
+        inner_app = self.app  # the FastAPI ASGI app itself
+        mcp_paths = self._MCP_PATHS
+
+        class _MCPRoutingMiddleware:
+            """ASGI middleware: route /mcp and /mcp/message to the MCP handler."""
+
+            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+                if scope.get("type") == "http":
+                    path = (scope.get("path") or "").rstrip("/") or "/"
+                    if path in mcp_paths:
+                        rewritten = dict(scope, path="/")
+                        await mcp_app(rewritten, receive, send)
+                        return
+                await inner_app(scope, receive, send)
+
+        # Replace self.app so uvicorn serves the middleware-wrapped version.
+        self.app = _MCPRoutingMiddleware()  # type: ignore[assignment]
 
     def set_project_manager(
         self,

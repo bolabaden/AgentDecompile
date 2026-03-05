@@ -1,5 +1,10 @@
 """HTTP Basic Auth middleware for AgentDecompile MCP server.
 
+.. warning:: **EXPERIMENTAL** — This auth module is experimental and its API
+   may change in future releases.  Auth is disabled by default; set the
+   environment variable ``AGENT_DECOMPILE_AUTH_ENABLED=true`` (or pass
+   ``--require-auth``) to enable it.
+
 This module provides:
 - AuthConfig: server-level auth requirements and default Ghidra credentials
 - AuthContext: per-request authenticated credential/server state
@@ -203,6 +208,9 @@ async def _send_401(send: Any) -> None:
 
 class AuthMiddleware:
     """ASGI middleware enforcing HTTP Basic Auth on MCP requests.
+
+    .. warning:: **EXPERIMENTAL** — Disabled by default.  Enable via
+       ``AGENT_DECOMPILE_AUTH_ENABLED=true`` or ``--require-auth``.
 
     Middleware chain (innermost last):
         AuthMiddleware → _SessionContextASGI → StreamableHTTPSessionManager

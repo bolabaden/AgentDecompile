@@ -723,50 +723,49 @@ def main() -> None:
     if bool(tls_certfile) != bool(tls_keyfile):
         parser.error("--tls-cert and --tls-key must be provided together")
 
-    # Build AuthConfig from CLI args / env (auto-enable when credentials are configured)
+    # Build AuthConfig from CLI args / env.
+    # EXPERIMENTAL: Auth is disabled by default.  Set the env var
+    # AGENT_DECOMPILE_AUTH_ENABLED=true (or pass --require-auth) to enable it.
     # NOTE: Auth is ONLY applied for HTTP transports.  In stdio mode the internal
     # HTTP server is used exclusively by the in-process bridge — no external
     # clients ever reach it, so requiring auth would block the bridge itself.
     _require_auth_flag = getattr(args, "require_auth", None)
-    _has_credentials = bool(
-        os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
-        or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME")
-        or getattr(args, "ghidra_server_username", None)
-    )
+    _auth_env_enabled = os.environ.get(
+        "AGENT_DECOMPILE_AUTH_ENABLED", ""
+    ).lower() in ("true", "1", "yes", "on")
     _is_http_transport = args.transport in _HTTP_TRANSPORTS
     auth_config: AuthConfig | None = None
-    if _is_http_transport and _require_auth_flag is not False:
-        if _require_auth_flag or _has_credentials:
-            auth_config = AuthConfig(
-                require_auth=bool(_require_auth_flag),
-                default_server_host=(
-                    os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
-                    or os.environ.get("AGENT_DECOMPILE_SERVER_HOST")
-                    or getattr(args, "ghidra_server_host", None)
-                ),
-                default_server_port=int(
-                    os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
-                    or os.environ.get("AGENT_DECOMPILE_SERVER_PORT")
-                    or getattr(args, "ghidra_server_port", None)
-                    or 13100
-                ),
-                default_username=(
-                    os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
-                    or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME")
-                    or getattr(args, "ghidra_server_username", None)
-                ),
-                default_password=(
-                    os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
-                    or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD")
-                    or getattr(args, "ghidra_server_password", None)
-                ),
-                default_repository=(
-                    os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
-                    or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
-                    or os.environ.get("AGENT_DECOMPILE_REPOSITORY")
-                    or getattr(args, "ghidra_server_repository", None)
-                ),
-            )
+    if _is_http_transport and (_require_auth_flag or _auth_env_enabled):
+        auth_config = AuthConfig(
+            require_auth=bool(_require_auth_flag),
+            default_server_host=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_HOST")
+                or getattr(args, "ghidra_server_host", None)
+            ),
+            default_server_port=int(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_PORT")
+                or getattr(args, "ghidra_server_port", None)
+                or 13100
+            ),
+            default_username=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME")
+                or getattr(args, "ghidra_server_username", None)
+            ),
+            default_password=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD")
+                or getattr(args, "ghidra_server_password", None)
+            ),
+            default_repository=(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                or os.environ.get("AGENT_DECOMPILE_REPOSITORY")
+                or getattr(args, "ghidra_server_repository", None)
+            ),
+        )
 
     # Resolve transport configuration
     port = args.port if args.port is not None else _env_port()

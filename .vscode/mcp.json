@@ -1,38 +1,14 @@
 {
   "servers": {
-    "ad-http": {
-      "type": "http",
+    "agdec-http": {
       "url": "http://${input:ad-http-host}:${input:ad-http-port}/mcp",
       "headers": {
         "User-Agent": "PyKotorAgent/1.0",
         "X-Agent-Server-Username": "${input:ghidra-username}",
         "X-Agent-Server-Password": "${input:ghidra-password}",
-        "X-Agent-Server-Repository": "Odyssey",
+        "X-Agent-Server-Repository": "${input:ad-http-ghidra-server-repository}",
         "X-Ghidra-Server-Host": "${input:ad-http-ghidra-server-host}",
         "X-Ghidra-Server-Port": "${input:ad-http-ghidra-server-port}"
-      }
-    },
-    "agentdecompile-shared": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "--refresh",
-        "--from",
-        ".",
-        "--with-editable",
-        ".",
-        "agentdecompile-server",
-        "--transport",
-        "stdio",
-        "--ghidra-server-repository",
-        "Odyssey"
-      ],
-      "env": {
-        "AGENTDECOMPILE_PORT": "8078",
-        "AGENTDECOMPILE_GHIDRA_SERVER_HOST": "${input:ad-http-ghidra-server-host}",
-        "AGENTDECOMPILE_GHIDRA_SERVER_PORT": "${input:ad-http-ghidra-server-port}",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME": "${input:ghidra-username}",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": "${input:ghidra-password}"
       }
     }
   },
@@ -52,7 +28,6 @@
       "id": "ad-http-host",
       "type": "promptString",
       "description": "AgentDecompile HTTP server host",
-      "default": "localhost",
     },
     {
       "id": "ad-http-port",
@@ -64,13 +39,17 @@
       "id": "ad-http-ghidra-server-host",
       "type": "promptString",
       "description": "Ghidra server host for AgentDecompile HTTP server",
-      "default": "localhost",
     },
     {
       "id": "ad-http-ghidra-server-port",
       "type": "promptString",
       "description": "Ghidra server port for AgentDecompile HTTP server",
       "default": "13100",
+    },
+    {
+      "id": "ad-http-ghidra-server-repository",
+      "type": "promptString",
+      "description": "Ghidra server repository for AgentDecompile HTTP server",
     }
   ]
 }
