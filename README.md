@@ -95,7 +95,7 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 | **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
-The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message`. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
+The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message` (canonical). For compatibility with MCP clients that only accept a base URL, `http://<host>:<port>/` and `http://<host>:<port>/mcp` are also accepted and routed to the same Streamable HTTP MCP handler. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
 Local proxy mode (no local Ghidra/JVM startup — forwards to a remote MCP backend):
 
@@ -346,6 +346,8 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --ghidra-server-host`; `agentdecompile-cli --ghidra-server-host` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_PORT` | Ghidra Server port (default 13100). | `agentdecompile-server --ghidra-server-port`; `agentdecompile-cli --ghidra-server-port` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository` |
+
+Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PASSWORD/REPOSITORY` are accepted and normalized automatically for launchers that emit no-underscore variants.
 
 ### Shared project authentication
 
