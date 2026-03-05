@@ -79,7 +79,7 @@ class PythonMcpServer:
         self._session_manager = StreamableHTTPSessionManager(
             app=self.mcp_server,
             json_response=True,
-            stateless=False,
+            stateless=True,
         )
         self._session_manager_cm = None
 

@@ -50,7 +50,7 @@ class AgentDecompileMcpProxyServer:
         self._session_manager: StreamableHTTPSessionManager = StreamableHTTPSessionManager(
             app=self._bridge.server,
             json_response=True,
-            stateless=False,
+            stateless=True,
         )
         self._session_manager_cm: Any | None = None
         self._running: bool = False
