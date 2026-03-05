@@ -1,6 +1,6 @@
 {
   "chat.mcp.discovery.enabled": {
-    "cursor-workspace": false
+    "cursor-workspace": true
   },
   "cursorpyright.analysis.autoImportCompletions": true,
   "cursorpyright.analysis.stubPath": "${env:GHIDRA_INSTALL_DIR}/docs/ghidra_stubs/typestubs",

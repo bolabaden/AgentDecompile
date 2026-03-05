@@ -444,7 +444,8 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
     """Resolve and validate project path inputs into directory/name/.gpr tuple."""
     project_path = _resolve_default_project_path(args.project_path).resolve()
     if project_path.suffix.lower() == ".gpr":
-        if args.project_name != "my_project":
+        default_project_name = os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project")
+        if args.project_name != default_project_name:
             parser.error("Cannot use --project-name with a .gpr file")
         return str(project_path.parent), project_path.stem, project_path
     return str(project_path), args.project_name, None
@@ -664,8 +665,8 @@ def main() -> None:
     g_server.add_argument(
         "--project-name",
         type=str,
-        default="my_project",
-        help="Project name (ignored when using .gpr)",
+        default=os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project"),
+        help="Project name (ignored when using .gpr). Env: AGENT_DECOMPILE_PROJECT_NAME",
     )
     g_server.add_argument("--threaded", dest="threaded", action="store_true", help="Allow threaded analysis")
     g_server.add_argument("--no-threaded", dest="threaded", action="store_false", help="Disable threaded analysis")

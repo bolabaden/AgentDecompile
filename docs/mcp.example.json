@@ -1,0 +1,160 @@
+{
+  "servers": {
+    "agdec-http-mcp": {
+      "type": "http",
+      "url": "http://{input:ad-http-host}:{input:ad-http-port}"
+    },
+    "agdec-http-mcp-shared": {
+      "type": "http",
+      "url": "http://{input:ad-http-host}:{input:ad-http-port}",
+      "headers": {
+        "User-Agent": "PyKotorAgent/1.0",
+        "X-Agent-Server-Password": "{input:ghidra-password}",
+        "X-Agent-Server-Repository": "{input:ghidra-repository}",
+        "X-Agent-Server-Username": "{input:ghidra-username}",
+        "X-Agent-Version": "1.0",
+        "X-Ghidra-Server-Host": "{input:ad-http-ghidra-server-host}",
+        "X-Ghidra-Server-Port": "{input:ad-http-ghidra-server-port}"
+      }
+    },
+    "agdec-stdio-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        "git+https://github.com/bolabaden/agentdecompile",
+        "agentdecompile-server",
+        "--transport",
+        "stdio"
+      ]
+    },
+    "agdec-stdio-mcp-shared": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        "git+https://github.com/bolabaden/agentdecompile",
+        "agentdecompile-server",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "AGENTDECOMPILE_GHIDRA_SERVER_HOST": "{input:ad-http-ghidra-server-host}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD": "{input:ghidra-password}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PORT": "{input:ad-http-ghidra-server-port}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY": "{input:ghidra-repository}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME": "{input:ghidra-username}"
+      }
+    },
+    "agdec-stdio-proxy": {
+      "type": "stdio",
+      "args": [
+        "--refresh",
+        "--from",
+        "git+https://github.com/bolabaden/agentdecompile",
+        "agentdecompile-server",
+        "--transport",
+        "stdio",
+        "--mcp-server-url",
+        "http://{input:ad-http-host}:{input:ad-http-port}"
+      ],
+      "command": "uvx"
+    },
+    "agdec-stdio-proxy-shared": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        "git+https://github.com/bolabaden/agentdecompile",
+        "agentdecompile-server",
+        "--transport",
+        "stdio",
+        "--mcp-server-url",
+        "http://{input:ad-http-host}:{input:ad-http-port}"
+      ],
+      "env": {
+        "AGENTDECOMPILE_GHIDRA_SERVER_HOST": "{input:ad-http-ghidra-server-host}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD": "{input:ghidra-password}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PORT": "{input:ad-http-ghidra-server-port}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY": "{input:ghidra-repository}",
+        "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME": "{input:ghidra-username}"
+      }
+    },
+    "agdec-http-proxy": {
+      "type": "http",
+      "url": "http://{input:ad-http-host}:{input:ad-http-port}",
+      "headers": {
+        "User-Agent": "PyKotorAgent/1.0",
+        "X-Agent-Features": "decompilation,code-analysis",
+        "X-Agent-Server-Password": "{input:ghidra-password}",
+        "X-Agent-Server-Repository": "{input:ghidra-repository}",
+        "X-Agent-Server-Username": "{input:ghidra-username}",
+        "X-Agent-Version": "1.0",
+        "X-MCP-Server-Host": "{input:ad-http-host}",
+        "X-MCP-Server-Port": "{input:ad-http-port}"
+      }
+    },
+    "agdec-http-proxy-shared": {
+      "type": "http",
+      "url": "http://{input:ad-http-host}:{input:ad-http-port}",
+      "headers": {
+        "User-Agent": "PyKotorAgent/1.0",
+        "X-Agent-Features": "decompilation,code-analysis",
+        "X-Agent-Server-Password": "{input:ghidra-password}",
+        "X-Agent-Server-Repository": "{input:ghidra-repository}",
+        "X-Agent-Server-Username": "{input:ghidra-username}",
+        "X-Agent-Version": "1.0",
+        "X-Ghidra-Server-Host": "{input:ad-http-ghidra-server-host}",
+        "X-Ghidra-Server-Port": "{input:ad-http-ghidra-server-port}",
+        "X-MCP-Server-Host": "{input:ad-http-host}",
+        "X-MCP-Server-Port": "{input:ad-http-port}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "ghidra-username",
+      "type": "promptString",
+      "description": "Ghidra shared server username"
+    },
+    {
+      "id": "ghidra-password",
+      "type": "promptString",
+      "description": "Ghidra shared server password",
+      "password": true
+    },
+    {
+      "id": "ad-http-host",
+      "type": "promptString",
+      "description": "AgentDecompile HTTP server host",
+      "default": "localhost"
+    },
+    {
+      "id": "ad-http-port",
+      "type": "promptString",
+      "description": "AgentDecompile HTTP server port",
+      "default": "8080"
+    },
+    {
+      "id": "ad-http-ghidra-server-host",
+      "type": "promptString",
+      "description": "Ghidra server host for AgentDecompile HTTP server",
+      "default": "localhost"
+    },
+    {
+      "id": "ad-http-ghidra-server-port",
+      "type": "promptString",
+      "description": "Ghidra server port for AgentDecompile HTTP server",
+      "default": "13100"
+    },
+    {
+      "id": "ghidra-repository",
+      "type": "promptString",
+      "description": "Ghidra shared server repository name",
+      "default": "MyRepository"
+    }
+  ]
+}

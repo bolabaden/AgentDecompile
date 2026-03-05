@@ -82,10 +82,13 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 
 ### Project creation and opening
 
-- **Basic:** Run `mcp-agentdecompile` or `agentdecompile-server` with no project options; a default project directory is used (see env `AGENT_DECOMPILE_PROJECT_PATH`).
-- **Custom path/name:** Use `--project-path` and `--project-name` with the server (e.g. `agentdecompile-server --project-path ~/analysis/my_study --project-name my_study`).
+- **Default behavior:** If you do not pass project flags, the server uses `--project-path agentdecompile_projects` and `--project-name my_project`.
+- **Environment defaults:** Set `AGENT_DECOMPILE_PROJECT_PATH` and `AGENT_DECOMPILE_PROJECT_NAME` to change those defaults globally.
+- **CLI overrides env:** If both are provided, CLI flags win (`--project-path`, `--project-name`).
+- **Custom path/name:** Use both flags for explicit isolation (e.g. `agentdecompile-server --project-path ~/analysis/my_study --project-name my_study`).
 - **Multiple projects:** Use different `--project-path` / `--project-name` per run.
-- **Existing Ghidra project:** Pass a `.gpr` file: `--project-path /path/to/existing.gpr`. The server uses that project; name is derived from the file.
+- **Existing Ghidra project:** Pass a `.gpr` file: `--project-path /path/to/existing.gpr`. The server uses that project and derives the name from the file stem (`--project-name` is ignored in this mode).
+- **LockException tip:** If you see `Unable to lock project`, point each running server at a unique project path/name pair.
 
 ### Transports
 
@@ -339,6 +342,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). | None (environment/config only) |
 | `AGENT_DECOMPILE_MCP_SERVER_URL` | CLI connect mode target (`http(s)://host:port[/mcp/message]`). Skips local PyGhidra/JVM startup. | `mcp-agentdecompile --mcp-server-url` (alias: `--server-url`); `agentdecompile-cli --mcp-server-url` (alias: `--server-url`); `agentdecompile-server --mcp-server-url` |
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or directory for persistent project (CLI). | `agentdecompile-server --project-path` |
+| `AGENT_DECOMPILE_PROJECT_NAME` | Default project name for directory-based projects (default: `my_project`; ignored when `--project-path` points to a `.gpr`). | `agentdecompile-server --project-name` |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |
 | `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). | `agentdecompile-server --port` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-server --ghidra-server-username`; `agentdecompile-cli --ghidra-server-username` |
@@ -356,6 +360,14 @@ When opening a `.gpr` file connected to a Ghidra Server, authentication may be r
 ### Structure size (manage-structures)
 
 When adding fields with `add_field`, `useReplace` defaults to `true` so the structure size is preserved (fields replace bytes at the given offset). Use `preserveSize: true` to fail if the structure would grow. For byte-perfect layouts, use the `parse_header` action with a full C definition. See [CONTRIBUTING.md](CONTRIBUTING.md) (Structure Size Preservation) for technical details.
+
+### Security
+
+**⚠️ Never commit credentials or sensitive server details to version control.**
+
+- Use environment variables for credentials (see examples above)
+- For MCP client configuration, use dynamic input prompts instead of hardcoded values
+- See [MCP Configuration Security Guide](docs/MCP_CONFIGURATION_SECURITY.md) for best practices
 
 ## License
 

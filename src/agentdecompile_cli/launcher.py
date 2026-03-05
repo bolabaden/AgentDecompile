@@ -336,8 +336,8 @@ class PyGhidraContext:
         Returns:
             The Ghidra project object.
         """
-        from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.framework.model import ProjectLocator  # pyright: ignore[reportMissingModuleSource]
 
         # For standard Ghidra projects, use directory containing .gpr file
         project_dir = _ensure_directory(self.project_path)
@@ -1128,63 +1128,63 @@ class PyGhidraContext:
 
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
-        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options: ToolOptions = prog.getOptions(GhidraProgram.ANALYSIS_PROPERTIES)
         option_type = prog_options.getType(option_name)
 
-        match str(option_type):
-            case "INT_TYPE":
-                logger.debug("Setting type: INT")
-                prog_options.setInt(option_name, int(value))
-            case "LONG_TYPE":
-                logger.debug("Setting type: LONG")
-                prog_options.setLong(option_name, int(value))
-            case "STRING_TYPE":
-                logger.debug("Setting type: STRING")
-                prog_options.setString(option_name, value)
-            case "DOUBLE_TYPE":
-                logger.debug("Setting type: DOUBLE")
-                prog_options.setDouble(option_name, float(value))
-            case "FLOAT_TYPE":
-                logger.debug("Setting type: FLOAT")
-                prog_options.setFloat(option_name, float(value))
-            case "BOOLEAN_TYPE":
-                logger.debug("Setting type: BOOLEAN")
-                if isinstance(value, str):
-                    temp_bool = value.lower()
-                    if temp_bool in {"true", "false"}:
-                        prog_options.setBoolean(option_name, temp_bool == "true")
-                elif isinstance(value, bool):
-                    prog_options.setBoolean(option_name, value)
-                else:
-                    raise ValueError(
-                        f"Failed to setBoolean on {option_name} {option_type}",
-                    )
-            case "ENUM_TYPE":
-                logger.debug("Setting type: ENUM")
-                from java.lang import Enum  # type: ignore
+        option_type_str = str(option_type)
+        if option_type_str == "INT_TYPE":
+            logger.debug("Setting type: INT")
+            prog_options.setInt(option_name, int(value))
+        elif option_type_str == "LONG_TYPE":
+            logger.debug("Setting type: LONG")
+            prog_options.setLong(option_name, int(value))
+        elif option_type_str == "STRING_TYPE":
+            logger.debug("Setting type: STRING")
+            prog_options.setString(option_name, value)
+        elif option_type_str == "DOUBLE_TYPE":
+            logger.debug("Setting type: DOUBLE")
+            prog_options.setDouble(option_name, float(value))
+        elif option_type_str == "FLOAT_TYPE":
+            logger.debug("Setting type: FLOAT")
+            prog_options.setFloat(option_name, float(value))
+        elif option_type_str == "BOOLEAN_TYPE":
+            logger.debug("Setting type: BOOLEAN")
+            if isinstance(value, str):
+                temp_bool = value.lower()
+                if temp_bool in {"true", "false"}:
+                    prog_options.setBoolean(option_name, temp_bool == "true")
+            elif isinstance(value, bool):
+                prog_options.setBoolean(option_name, value)
+            else:
+                raise ValueError(
+                    f"Failed to setBoolean on {option_name} {option_type}",
+                )
+        elif option_type_str == "ENUM_TYPE":
+            logger.debug("Setting type: ENUM")
+            from java.lang import Enum  # type: ignore
 
-                enum_for_option = prog_options.getEnum(option_name, None)
-                if enum_for_option is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                new_enum = None
-                try:
-                    new_enum = Enum.valueOf(enum_for_option.getClass(), value)
-                except Exception:
-                    for enum_value in enum_for_option.values():  # type: ignore
-                        if value == enum_value.toString():
-                            new_enum = enum_value
-                            break
-                if new_enum is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                prog_options.setEnum(option_name, new_enum)
-            case _:
-                logger.warning(f"option {option_type} set not supported, ignoring")
+            enum_for_option = prog_options.getEnum(option_name, None)
+            if enum_for_option is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            new_enum = None
+            try:
+                new_enum = Enum.valueOf(enum_for_option.getClass(), value)
+            except Exception:
+                for enum_value in enum_for_option.values():  # type: ignore
+                    if value == enum_value.toString():
+                        new_enum = enum_value
+                        break
+            if new_enum is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            prog_options.setEnum(option_name, new_enum)
+        else:
+            logger.warning(f"option {option_type} set not supported, ignoring")
 
     def configure_symbols(
         self,
@@ -1193,9 +1193,9 @@ class PyGhidraContext:
         allow_remote: bool = True,
     ):
         """Configures symbol servers and attempts to load PDBs for programs."""
-        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource]
-            PdbAnalyzer,
-            PdbUniversalAnalyzer,
+        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+            PdbAnalyzer,  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportAttributeAccessIssue]
+            PdbUniversalAnalyzer,  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportAttributeAccessIssue]
         )
         from ghidra.app.util.pdb import PdbProgramAttributes  # pyright: ignore[reportMissingImports]
 
@@ -1251,9 +1251,9 @@ class PyGhidraContext:
             raise ValueError(f"Failed to open file archive {gdt_path}")
         always_replace = True
         create_bookmarks_enabled = True
-        cmd: ApplyFunctionDataTypesCmd = ApplyFunctionDataTypesCmd(
+        cmd: ApplyFunctionDataTypesCmd = ApplyFunctionDataTypesCmd(   # pyright: ignore[reportCallIssue, reportCallIssue]
             List.of(archive_dtm),
-            None,
+            None,  # pyright: ignore[reportArgumentType]
             SourceType.USER_DEFINED,
             always_replace,
             create_bookmarks_enabled,
@@ -2011,8 +2011,8 @@ def main() -> None:
     g_server.add_argument(
         "--project-name",
         type=str,
-        default="my_project",
-        help="Project name (ignored when using .gpr)",
+        default=os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project"),
+        help="Project name (ignored when using .gpr). Env: AGENT_DECOMPILE_PROJECT_NAME",
     )
     g_server.add_argument("--threaded", dest="threaded", action="store_true", help="Allow threaded analysis")
     g_server.add_argument("--no-threaded", dest="threaded", action="store_false", help="Disable threaded analysis")
@@ -2123,7 +2123,8 @@ def main() -> None:
     # Resolve project path (.gpr vs directory)
     project_path = args.project_path.resolve()
     if project_path.suffix.lower() == ".gpr":
-        if args.project_name != "my_project":
+        default_project_name = os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project")
+        if args.project_name != default_project_name:
             parser.error("Cannot use --project-name with a .gpr file")
         project_directory = str(project_path.parent)
         project_name = project_path.stem
