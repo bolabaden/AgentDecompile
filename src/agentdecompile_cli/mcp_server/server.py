@@ -230,7 +230,7 @@ class PythonMcpServer:
         if self.auth_config is not None:
             mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
 
-        compat_mcp_asgi: Any = _CompatPathASGI(mcp_asgi, {"/", "/mcp"})
+        compat_mcp_asgi: Any = _CompatPathASGI(mcp_asgi, {"/", "/mcp", "/mcp/message"})
         self.app.mount("/mcp/message", mcp_asgi)
         self.app.mount("/mcp/message/", mcp_asgi)
         self.app.mount("/", compat_mcp_asgi)
