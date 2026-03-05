@@ -102,7 +102,7 @@ class DecompilerToolProvider(ToolProvider):
             decomp, owns_decomp = self._setup_decompiler(session_decomp, program)
             
             try:
-                result = self._perform_decompilation(decomp, target_func, timeout, monitor, session_decomp)
+                result = self._perform_decompilation(decomp, target_func, timeout, monitor, session_decomp, program)
                 return create_success_response(result)
             finally:
                 if owns_decomp:
@@ -140,7 +140,7 @@ class DecompilerToolProvider(ToolProvider):
         
         return decomp, owns_decomp
 
-    def _perform_decompilation(self, decomp, target_func, timeout: int, monitor, session_decomp):
+    def _perform_decompilation(self, decomp, target_func, timeout: int, monitor, session_decomp, program=None):
         """Perform the actual decompilation with retry logic."""
         dr = decomp.decompileFunction(target_func, timeout, monitor)
         
@@ -149,12 +149,12 @@ class DecompilerToolProvider(ToolProvider):
         
         # Try retry with fresh interface if session decomp failed
         if session_decomp is not None:
-            retry_result = self._try_retry_decompilation(target_func, timeout, monitor, decomp)
+            retry_result = self._try_retry_decompilation(target_func, timeout, monitor, decomp, program)
             if retry_result:
                 return retry_result
         
         # Fallback to error handling
-        return self._handle_decompilation_failure(dr, decomp, target_func)
+        return self._handle_decompilation_failure(dr, decomp, target_func, program)
 
     def _extract_successful_decompilation(self, dr, target_func):
         """Extract results from a successful decompilation."""
@@ -169,13 +169,19 @@ class DecompilerToolProvider(ToolProvider):
             "decompilation": c_code,
         }
 
-    def _try_retry_decompilation(self, target_func, timeout: int, monitor, original_decomp):
+    def _try_retry_decompilation(self, target_func, timeout: int, monitor, original_decomp, program=None):
         """Try decompilation again with a fresh DecompInterface."""
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         
         try:
             retry = DecompInterface()
-            program = original_decomp.getProgram()
+            if program is None:
+                program = original_decomp.getProgram()
+            
+            # If we still don't have a program, we can't retry
+            if program is None:
+                return None
+            
             retry_options = DecompileOptions()
             retry_options.grabFromProgram(program)
             retry.setOptions(retry_options)
@@ -193,10 +199,22 @@ class DecompilerToolProvider(ToolProvider):
         
         return None
 
-    def _handle_decompilation_failure(self, dr, decomp, target_func):
+    def _handle_decompilation_failure(self, dr, decomp, target_func, program=None):
         """Handle failed decompilation by extracting error and providing fallback."""
         err_msg = self._extract_error_message(dr, decomp)
-        c_code = self._build_decompile_fallback(decomp.getProgram(), target_func, err_msg)
+        if program is None:
+            program = decomp.getProgram()
+        
+        # If we still don't have a program, build minimal error response
+        if program is None:
+            return {
+                "function": target_func.getName(),
+                "address": str(target_func.getEntryPoint()),
+                "signature": str(target_func.getSignature()),
+                "decompilation": f"// Decompilation failed: {err_msg or 'Program unavailable'}",
+            }
+        
+        c_code = self._build_decompile_fallback(program, target_func, err_msg)
         sig = str(target_func.getSignature())
         
         return {

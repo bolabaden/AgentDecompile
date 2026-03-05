@@ -50,7 +50,7 @@ class AgentDecompileMcpProxyServer:
         self._session_manager: StreamableHTTPSessionManager = StreamableHTTPSessionManager(
             app=self._bridge.server,
             json_response=True,
-            stateless=True,
+            stateless=False,
         )
         self._session_manager_cm: Any | None = None
         self._running: bool = False
@@ -110,15 +110,36 @@ class AgentDecompileMcpProxyServer:
 
         inner_app = self.app
         mcp_paths = self._MCP_PATHS
+        session_manager = self._session_manager
 
         class _MCPRoutingMiddleware:
-            """ASGI middleware: route /mcp and /mcp/message to MCP handler."""
+            """ASGI middleware: route /mcp and /mcp/message to MCP handler.
+
+            Strips stale ``mcp-session-id`` headers so the SDK creates a
+            fresh session instead of returning HTTP 404.
+            """
+
+            @staticmethod
+            def _strip_stale_session_header(scope: dict[str, Any]) -> dict[str, Any]:
+                raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
+                for key_b, value_b in raw_headers:
+                    if key_b.lower() == b"mcp-session-id":
+                        sid = value_b.decode("latin1", errors="replace").strip()
+                        if sid and sid not in session_manager._server_instances:
+                            cleaned = [
+                                (k, v) for k, v in raw_headers
+                                if k.lower() != b"mcp-session-id"
+                            ]
+                            return {**scope, "headers": cleaned}
+                        break
+                return scope
 
             async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
-                        rewritten = dict(scope, path="/")
+                        scope = self._strip_stale_session_header(scope)
+                        rewritten = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
                 await inner_app(scope, receive, send)
