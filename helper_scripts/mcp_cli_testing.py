@@ -217,7 +217,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
 # ============================================================================
 
 
-def build_validate_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "MuchaShakaPaka") -> list[dict[str, Any]]:
+def build_validate_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "idekanymore") -> list[dict[str, Any]]:
     """Build validation test cases."""
     uvx_prefix = (
         "uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli"
@@ -353,7 +353,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 # ============================================================================
 
 
-def build_verify_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "MuchaShakaPaka") -> list[dict[str, Any]]:
+def build_verify_cases(program_path: str, host: str = "170.9.241.140", port: int = 13100, username: str = "OpenKotOR", password: str = "idekanymore") -> list[dict[str, Any]]:
     """Build verification test cases with response key checks."""
     uvx_prefix = (
         "uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli"
@@ -530,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
     matrix_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
     matrix_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
     matrix_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    matrix_parser.add_argument("--password", default="MuchaShakaPaka", help="Ghidra shared-server password")
+    matrix_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
     matrix_parser.add_argument("--uvx-from", default="git+https://github.com/bolabaden/agentdecompile")
     matrix_parser.add_argument("--editable-local", action="store_true", help="Use local uvx package")
     matrix_parser.add_argument("--run", action="store_true", help="Execute cases")
@@ -546,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
     validate_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
     validate_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    validate_parser.add_argument("--password", default="MuchaShakaPaka", help="Ghidra shared-server password")
+    validate_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
     validate_parser.set_defaults(func=cmd_validate)
 
     # Verify subcommand
@@ -556,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--ghidra-host", default="170.9.241.140", help="Ghidra shared-server host")
     verify_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
     verify_parser.add_argument("--username", default="OpenKotOR", help="Ghidra shared-server username")
-    verify_parser.add_argument("--password", default="MuchaShakaPaka", help="Ghidra shared-server password")
+    verify_parser.add_argument("--password", default="idekanymore", help="Ghidra shared-server password")
     verify_parser.set_defaults(func=cmd_verify)
 
     args = parser.parse_args(argv or sys.argv[1:])
