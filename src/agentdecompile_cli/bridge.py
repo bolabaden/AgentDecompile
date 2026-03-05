@@ -758,23 +758,33 @@ class AgentDecompileStdioBridge:
         without requiring a manual ``open`` call.
         """
         server_host = (
-            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+
+            os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         )
         if not server_host:
             return  # No shared server configured – nothing to auto-open.
 
         server_port = (
-            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+            os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or "13100"
         )
         server_username = (
-            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
         )
         server_password = (
-            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
         )
         repository = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()

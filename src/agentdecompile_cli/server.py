@@ -285,6 +285,83 @@ def _redact_args(args: Any, secret: str) -> Any:
 _credential_sanitizer = CredentialSanitizer()
 
 
+def _first_non_empty_env(*keys: str) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _set_env_if_missing(target: str, *sources: str) -> None:
+    current = os.environ.get(target)
+    if current is not None and current.strip():
+        return
+    resolved = _first_non_empty_env(*sources)
+    if resolved is not None:
+        os.environ[target] = resolved
+
+
+def _normalize_shared_server_env_aliases() -> None:
+    """Normalize shared-server environment aliases to canonical names.
+
+    Supports both canonical AGENT_DECOMPILE_* variables and compact
+    AGENTDECOMPILE_* variants so external MCP launchers can supply either form.
+    """
+
+    # Canonical Ghidra-prefixed env vars used by server/launcher/auth logic.
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+        "AGENTDECOMPILE_GHIDRA_SERVER_HOST",
+        "AGENT_DECOMPILE_SERVER_HOST",
+        "AGENTDECOMPILE_SERVER_HOST",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PORT",
+        "AGENT_DECOMPILE_SERVER_PORT",
+        "AGENTDECOMPILE_SERVER_PORT",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+        "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME",
+        "AGENT_DECOMPILE_SERVER_USERNAME",
+        "AGENTDECOMPILE_SERVER_USERNAME",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+        "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD",
+        "AGENT_DECOMPILE_SERVER_PASSWORD",
+        "AGENTDECOMPILE_SERVER_PASSWORD",
+    )
+    _set_env_if_missing(
+        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENT_DECOMPILE_REPOSITORY",
+        "AGENTDECOMPILE_REPOSITORY",
+    )
+
+    # Mirror canonical values into legacy/non-ghidra names used by bridge paths.
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_HOST", "AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_PORT", "AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_USERNAME", "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+    _set_env_if_missing("AGENT_DECOMPILE_SERVER_PASSWORD", "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_HOST", "AGENT_DECOMPILE_SERVER_HOST")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_PORT", "AGENT_DECOMPILE_SERVER_PORT")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_USERNAME", "AGENT_DECOMPILE_SERVER_USERNAME")
+    _set_env_if_missing("AGENTDECOMPILE_SERVER_PASSWORD", "AGENT_DECOMPILE_SERVER_PASSWORD")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
+    _set_env_if_missing(
+        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+    )
+    _set_env_if_missing("AGENT_DECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+    _set_env_if_missing("AGENTDECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+
+
 def _set_env_from_args(args: Any) -> None:
     """Populate AGENT_DECOMPILE_* env vars from CLI args when provided.
 
@@ -630,8 +707,15 @@ def main() -> None:
     # Configure logging
     _configure_logging(args.verbose)
 
+    # Normalize compact and legacy shared-server env aliases before consuming
+    # defaults from the process environment.
+    _normalize_shared_server_env_aliases()
+
     # Set environment variables from args
     _set_env_from_args(args)
+    # Re-run normalization so CLI-provided values are mirrored to compatibility
+    # aliases used by older bridge/bootstrap code paths.
+    _normalize_shared_server_env_aliases()
 
     # Resolve TLS paths (CLI > env)
     tls_certfile: str | None = args.tls_certfile or os.environ.get("AGENT_DECOMPILE_TLS_CERT") or None

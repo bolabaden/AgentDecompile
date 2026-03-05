@@ -161,35 +161,39 @@ RUN set -eux; \
         fi
 
 # --- Layer 5: install AgentDecompile Python package into venv ---
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENTDECOMPILE}
 ARG CHROMADB_VERSION=1.5.2
 ENV CHROMADB_VERSION=${CHROMADB_VERSION}
 RUN set -eux; \
     ARCH="$(uname -m)"; \
-    if [ "${ARCH}" = "aarch64" ]; then \
-        if ! apk add --no-cache \
+    if ! apk add --no-cache \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+        py3-onnxruntime \
+    ; then \
+        ARCH_APK="${ARCH}"; \
+        INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/APKINDEX.tar.gz"; \
+        ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
+        test -n "${ONNXRUNTIME_VERSION}"; \
+        ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/${ARCH_APK}/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
+        apk add --no-cache \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
             --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-            py3-onnxruntime \
-        ; then \
-            INDEX_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/APKINDEX.tar.gz"; \
-            ONNXRUNTIME_VERSION="$(curl -fsSL "${INDEX_URL}" | tar -xzO APKINDEX | awk 'BEGIN{RS=""; FS="\n"} /P:py3-onnxruntime/ {for(i=1;i<=NF;i++) if($i ~ /^V:/){print substr($i,3); exit}}')"; \
-            test -n "${ONNXRUNTIME_VERSION}"; \
-            ONNXRUNTIME_APK_URL="https://dl-cdn.alpinelinux.org/alpine/edge/community/aarch64/py3-onnxruntime-${ONNXRUNTIME_VERSION}.apk"; \
-            apk add --no-cache \
-                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-                --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-                "${ONNXRUNTIME_APK_URL}" \
-            ; \
-        fi; \
+            "${ONNXRUNTIME_APK_URL}" \
+        ; \
     fi; \
     apk add --no-cache --virtual .chromadb-build \
         cargo \
         rust \
         gcc \
         g++ \
+        make \
         musl-dev \
         python3-dev \
         libffi-dev \
+        protobuf-dev \
+        protoc \
     ; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade pip; \
     ${GHIDRA_HOME}/venv/bin/python3 -m pip install --no-cache-dir --upgrade setuptools wheel; \
