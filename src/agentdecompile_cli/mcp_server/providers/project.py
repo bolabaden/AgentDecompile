@@ -63,7 +63,8 @@ class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
         "openproject": "_handle_open_project",
         "listprojectfiles": "_handle_list",
-        "syncsharedproject": "_handle_sync_shared_project",
+        "syncproject": "_handle_sync_project",
+        "syncsharedproject": "_handle_sync_project",  # backward compat alias
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
@@ -127,8 +128,8 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="sync-shared-project",
-                description="Sync with shared repository.",
+                name="sync-project",
+                description="Sync with local or shared repository. Supports pull, push, and bidirectional modes between local projects and shared Ghidra server repositories.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1482,11 +1483,11 @@ class ProjectToolProvider(ToolProvider):
         new_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else normalized_destination
         return create_success_response({"operation": "move", "scope": "project-domain", "path": old_path, "newPath": new_path, "success": True})
 
-    async def _handle_sync_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_sync_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")
 
     async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
-        return await self._handle_sync_shared_project(args)
+        return await self._handle_sync_project(args)
 
     def _resolve_domain_file(self, program_path: str | None) -> Any:
         if not program_path:
@@ -2186,21 +2187,59 @@ class ProjectToolProvider(ToolProvider):
             repository_adapter is not None,
             repository_name,
         )
-        if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
-            logger.warning("shared-sync aborted: no shared-server session handle present")
+        is_shared_session = handle and n(str(handle.get("mode", ""))) == "sharedserver"
+        is_local_gpr_session = handle and n(str(handle.get("mode", ""))) in {"localgpr", "local"}
+
+        if not is_shared_session:
+            # No shared server session — try local project operations
+            project_data = self._get_active_project_data()
+
+            if project_data is not None and mode == "push":
+                # Local push: save all modified domain files in the local project
+                logger.info("sync-project local push mode (no shared session)")
+                push_result = self._push_local_project_to_shared(args, "local-project", project_data)
+                return create_success_response(
+                    {
+                        "operation": "sync-project",
+                        "mode": mode,
+                        "direction": "local-save",
+                        "success": len(push_result["errors"]) == 0,
+                        **push_result,
+                        "note": "No shared server session. Performed local project save.",
+                    },
+                )
+
+            if project_data is not None and mode == "bidirectional":
+                # Local bidirectional: just save (can't pull without a source)
+                logger.info("sync-project local bidirectional mode (no shared session, saving only)")
+                push_result = self._push_local_project_to_shared(args, "local-project", project_data)
+                return create_success_response(
+                    {
+                        "operation": "sync-project",
+                        "mode": "bidirectional",
+                        "direction": "local-save-only",
+                        "success": len(push_result["errors"]) == 0,
+                        **push_result,
+                        "note": "No shared server session. Only local save was performed (pull requires a shared server connection).",
+                    },
+                )
+
+            logger.warning("sync-project aborted: no shared-server session and no actionable local project")
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
-                    "error": "No active shared-server session. Run open with --server-host first.",
+                    "error": "No active shared-server session or local project. Run open-project first.",
                     "context": {
-                        "state": "shared-session-unavailable",
-                        "requires": "open(shared-server)",
+                        "state": "no-sync-source",
+                        "hasLocalProject": project_data is not None,
+                        "isSharedSession": False,
                     },
                     "nextSteps": [
-                        "Call `open` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword`, and repository `path`.",
-                        "After `open` succeeds, retry `sync-shared-project`.",
+                        "Call `open-project` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword` for shared sync.",
+                        "Call `open-project` with a local `.gpr` project path for local project operations.",
+                        "After `open-project` succeeds, retry `sync-project`.",
                     ],
                 },
             )
@@ -2209,7 +2248,7 @@ class ProjectToolProvider(ToolProvider):
             logger.warning("shared-sync aborted: shared adapter missing repository=%s", repository_name)
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
                     "repository": repository_name,
@@ -2231,7 +2270,7 @@ class ProjectToolProvider(ToolProvider):
             logger.warning("shared-sync aborted: local project_data unavailable repository=%s", repository_name)
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
                     "repository": repository_name,
@@ -2242,7 +2281,7 @@ class ProjectToolProvider(ToolProvider):
                     },
                     "nextSteps": [
                         "Call `open` with a local project (`.gpr`) or import a program to initialize local project context.",
-                        "Retry `sync-shared-project` after local project context is available.",
+                        "Retry `sync-project` after local project context is available.",
                     ],
                 },
             )
@@ -2261,7 +2300,7 @@ class ProjectToolProvider(ToolProvider):
             )
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "direction": "shared-to-local",
                     "success": len(pull_result["errors"]) == 0,
@@ -2283,7 +2322,7 @@ class ProjectToolProvider(ToolProvider):
             )
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "direction": "local-to-shared",
                     "success": len(push_result["errors"]) == 0,
@@ -2309,7 +2348,7 @@ class ProjectToolProvider(ToolProvider):
 
         return create_success_response(
             {
-                "operation": "sync-shared",
+                "operation": "sync-project",
                 "mode": "bidirectional",
                 "direction": "shared-and-local",
                 "success": len(pull_result["errors"]) == 0 and len(push_result["errors"]) == 0,

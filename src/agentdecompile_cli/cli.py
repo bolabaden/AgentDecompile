@@ -120,6 +120,7 @@ _TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
         "manage-symbols",
         "match-function",
         "search-constants",
+        "sync-project",
         "sync-shared-project",
     },
 )
@@ -3362,7 +3363,7 @@ def shared_download(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
 @shared_grp.command("push", help="Push local project files toward shared-backed storage mapping")
@@ -3391,7 +3392,7 @@ def shared_push(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
 @shared_grp.command("sync", help="Bidirectional shared/local synchronization")
@@ -3420,7 +3421,7 @@ def shared_sync(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-shared-project", **payload))
+    _run_async(_call(ctx, "sync-project", **payload))
 
 
 def _gui_only_command_error(tool_name: str) -> None:
