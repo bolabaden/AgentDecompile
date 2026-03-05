@@ -68,6 +68,7 @@ class ProjectToolProvider(ToolProvider):
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
+        "switchproject": "_handle_switch_project",
         "deleteprojectbinary": "_handle_delete_project_binary",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
@@ -252,6 +253,37 @@ class ProjectToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Program path to verify (uses current if omitted)."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="switch-project",
+                description=(
+                    "Switch between project modes at any time without restarting the server. "
+                    "Use mode='download' to connect to the configured shared Ghidra server, pull all files to the "
+                    "local project, and then operate locally. Use mode='local' to open a local binary or .gpr "
+                    "project. Use mode='shared' to (re)connect to the shared Ghidra server. "
+                    "Credentials are read from arguments first, then the request auth context, then "
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_* environment variables automatically."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "description": "Operation: 'download' (connect shared + pull to local), 'local' (open local path), 'shared' (connect shared server).",
+                            "enum": ["download", "local", "shared"],
+                            "default": "download",
+                        },
+                        "serverHost": {"type": "string", "description": "Ghidra server host. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST env var."},
+                        "serverPort": {"type": "integer", "description": "Ghidra server port. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PORT or 13100."},
+                        "serverUsername": {"type": "string", "description": "Auth username. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME env var."},
+                        "serverPassword": {"type": "string", "description": "Auth password. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD env var."},
+                        "path": {"type": "string", "description": "Repository name (shared mode) or local file/project path (local mode)."},
+                        "localPath": {"type": "string", "description": "Explicit local path override for mode='local'."},
+                        "dryRun": {"type": "boolean", "default": False, "description": "Simulate download without writing (mode='download' only)."},
+                        "force": {"type": "boolean", "default": False, "description": "Overwrite existing local files on pull."},
                     },
                     "required": [],
                 },
@@ -1488,6 +1520,190 @@ class ProjectToolProvider(ToolProvider):
 
     async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._handle_sync_project(args)
+
+    async def _handle_switch_project(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Switch between project modes without restarting the server.
+
+        mode='download': connect to configured shared Ghidra server, pull all
+            files to the local project, then clear the shared-session handle so
+            subsequent tools operate on the local copy.
+        mode='local':    open a local binary / .gpr project (same as open-project
+            with a path arg).
+        mode='shared':   (re)connect to the shared Ghidra server (same as
+            connect-shared-project).
+
+        Credentials are resolved from: explicit args → request auth context →
+        AGENT_DECOMPILE_GHIDRA_SERVER_* environment variables.
+        """
+        mode: str = n(self._get_str(args, "mode", default="download"))
+        if mode in {"local", "openlocal", "localproject"}:
+            return await self._switch_to_local(args)
+        if mode in {"shared", "server", "sharedserver", "reconnect", "connectshared"}:
+            return await self._switch_to_shared(args)
+        # default: download / pull / sync
+        return await self._switch_download(args)
+
+    def _resolve_server_credentials(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Build a credentials dict by merging args, auth context, and env vars (in that priority order)."""
+        resolved: dict[str, Any] = dict(args)
+
+        # Layer 2: auth context
+        try:
+            from agentdecompile_cli.mcp_server.auth import get_current_auth_context  # noqa: PLC0415
+            _auth_ctx = get_current_auth_context()
+            if _auth_ctx is not None:
+                if not resolved.get("serverhost") and _auth_ctx.server_host:
+                    resolved["serverhost"] = _auth_ctx.server_host
+                if not resolved.get("serverport") and _auth_ctx.server_port:
+                    resolved["serverport"] = _auth_ctx.server_port
+                if not resolved.get("serverusername") and _auth_ctx.username:
+                    resolved["serverusername"] = _auth_ctx.username
+                if not resolved.get("serverpassword") and _auth_ctx.password is not None:
+                    resolved["serverpassword"] = _auth_ctx.password
+                if not resolved.get("path") and _auth_ctx.repository:
+                    resolved["path"] = _auth_ctx.repository
+        except Exception:
+            pass
+
+        # Layer 3: environment variables
+        if not resolved.get("serverhost"):
+            resolved["serverhost"] = (
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "")
+            )
+        if not resolved.get("serverport"):
+            _port_str = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "") or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "")
+            if _port_str:
+                resolved["serverport"] = _port_str
+        if not resolved.get("serverusername"):
+            resolved["serverusername"] = (
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "")
+            )
+        if not resolved.get("serverpassword"):
+            resolved["serverpassword"] = (
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "")
+                or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "")
+            )
+        if not resolved.get("path"):
+            _repo = (
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "")
+                or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "")
+            )
+            if _repo:
+                resolved["path"] = _repo
+
+        return resolved
+
+    async def _switch_to_shared(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """(Re)connect to the shared Ghidra server and store session handle."""
+        resolved = self._resolve_server_credentials(args)
+        return await self._handle_connect_shared_project(resolved)
+
+    async def _switch_to_local(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Open a local project/binary and clear any shared-server session handle."""
+        # Clear shared handle so the session is fully local
+        session_id: str = get_current_mcp_session_id()
+        SESSION_CONTEXTS.set_project_handle(session_id, None)
+
+        local_path: str = (
+            self._get_str(args, "localpath", "filepath", "path")
+        )
+        if not local_path:
+            return create_success_response(
+                {
+                    "action": "switch-project",
+                    "mode": "local",
+                    "success": False,
+                    "error": "No local path provided. Pass 'path' or 'localPath' pointing to a binary or .gpr file.",
+                    "nextSteps": [
+                        "Retry with 'path=/path/to/binary' or 'path=/path/to/project.gpr'.",
+                    ],
+                }
+            )
+        open_args = dict(args)
+        open_args["path"] = local_path
+        result = await self._handle_open(open_args)
+        return result
+
+    async def _switch_download(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Connect to shared server, pull all files to local project, then go-local."""
+        resolved = self._resolve_server_credentials(args)
+
+        if not resolved.get("serverhost"):
+            return create_success_response(
+                {
+                    "action": "switch-project",
+                    "mode": "download",
+                    "success": False,
+                    "error": (
+                        "Cannot determine shared Ghidra server host. "
+                        "Pass 'serverHost' explicitly or set AGENT_DECOMPILE_GHIDRA_SERVER_HOST."
+                    ),
+                    "nextSteps": [
+                        "Call switch-project with serverHost='<ghidra-server-host>' and serverUsername/serverPassword.",
+                        "Or set AGENT_DECOMPILE_GHIDRA_SERVER_HOST / _USERNAME / _PASSWORD environment variables.",
+                    ],
+                }
+            )
+
+        # Step 1: connect to shared server (populates session handle + repo adapter)
+        connect_result = await self._handle_connect_shared_project(resolved)
+        session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
+
+        connect_success = bool(handle and n(str(handle.get("mode", ""))) == "sharedserver")
+        if not connect_success:
+            return create_success_response(
+                {
+                    "action": "switch-project",
+                    "mode": "download",
+                    "success": False,
+                    "error": "Failed to connect to shared Ghidra server. See connectResult for details.",
+                    "connectResult": [t.text if hasattr(t, "text") else str(t) for t in connect_result],
+                    "nextSteps": [
+                        "Verify serverHost, serverPort, serverUsername, serverPassword.",
+                        "Ensure the Ghidra server is reachable.",
+                    ],
+                }
+            )
+
+        # Step 2: pull all files from shared to local
+        sync_result = await self._sync_shared_repository(resolved, default_mode="pull")
+
+        # Step 3: clear the shared-server handle so the session is now local
+        SESSION_CONTEXTS.set_project_handle(session_id, None)
+
+        # Build a combined summary response
+        sync_data: dict[str, Any] = {}
+        for item in sync_result:
+            if hasattr(item, "text"):
+                try:
+                    import json  # noqa: PLC0415
+                    sync_data = json.loads(item.text)
+                except Exception:
+                    pass
+                break
+
+        return create_success_response(
+            {
+                "action": "switch-project",
+                "mode": "download",
+                "success": sync_data.get("success", True),
+                "repository": repository_name,
+                "serverHost": resolved.get("serverhost", ""),
+                "localMode": True,
+                "note": (
+                    "Shared project pulled to local. Session is now operating in local mode. "
+                    "Call switch-project(mode='shared') at any time to reconnect to the shared server."
+                ),
+                "syncSummary": {
+                    "requested": sync_data.get("requested", 0),
+                    "transferred": sync_data.get("transferred", 0),
+                    "skipped": sync_data.get("skipped", 0),
+                    "errors": sync_data.get("errors", []),
+                },
+            }
+        )
 
     def _resolve_domain_file(self, program_path: str | None) -> Any:
         if not program_path:
