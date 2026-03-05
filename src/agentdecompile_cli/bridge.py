@@ -745,7 +745,12 @@ class AgentDecompileStdioBridge:
         server_port = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
         server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
         server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-        repository = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        repository = (
+            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+        )
 
         open_args: dict[str, Any] = {
             "server_host": server_host,

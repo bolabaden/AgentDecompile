@@ -1480,17 +1480,17 @@ def _log_config_block(projects_dir: Path, project_name: str) -> None:
         "AgentDecompile configuration:",
         f"  project: {projects_dir / project_name}",
     ]
-    project_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH")
+    project_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
     if project_path:
         lines.append(f"  AGENT_DECOMPILE_PROJECT_PATH: {project_path}")
-    host = os.getenv("AGENT_DECOMPILE_SERVER_HOST")
-    port = os.getenv("AGENT_DECOMPILE_SERVER_PORT")
-    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+    host = os.getenv("AGENT_DECOMPILE_SERVER_HOST") or os.getenv("AGENTDECOMPILE_SERVER_HOST")
+    port = os.getenv("AGENT_DECOMPILE_SERVER_PORT") or os.getenv("AGENTDECOMPILE_SERVER_PORT")
+    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.getenv("AGENT_DECOMPILE_REPOSITORY") or os.getenv("AGENTDECOMPILE_REPOSITORY")
     if host or port or repo:
         lines.append(f"  server: host={host or '(not set)'}, port={port or '(not set)'}, repository={repo or '(not set)'}")
-    if os.getenv("AGENT_DECOMPILE_SERVER_USERNAME"):
+    if os.getenv("AGENT_DECOMPILE_SERVER_USERNAME") or os.getenv("AGENTDECOMPILE_SERVER_USERNAME"):
         lines.append("  AGENT_DECOMPILE_SERVER_USERNAME: (set)")
-    if os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD"):
+    if os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD") or os.getenv("AGENTDECOMPILE_SERVER_PASSWORD"):
         lines.append("  AGENT_DECOMPILE_SERVER_PASSWORD: (set)")
     ghidra_dir = os.getenv("GHIDRA_INSTALL_DIR")
     if ghidra_dir:
@@ -1555,7 +1555,7 @@ class AgentDecompileLauncher:
             if host is not None:
                 os.environ["AGENT_DECOMPILE_HOST"] = host
 
-            selected_host = host or os.getenv("AGENT_DECOMPILE_HOST") or "127.0.0.1"
+            selected_host = host or os.getenv("AGENT_DECOMPILE_HOST") or os.getenv("AGENTDECOMPILE_HOST") or "127.0.0.1"
             selected_port: int | None = None
             if port is not None:
                 selected_port = int(port)
@@ -1568,7 +1568,7 @@ class AgentDecompileLauncher:
                 os.environ["AGENT_DECOMPILE_PORT"] = str(selected_port)
 
             # Check for AGENT_DECOMPILE_PROJECT_PATH environment variable
-            project_gpr_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH")
+            project_gpr_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
 
             if project_gpr_path:
                 # Use user-specified project from environment variable
@@ -1789,7 +1789,7 @@ def init_agentdecompile_context(
     use_random_port = port is None
     launcher = AgentDecompileLauncher(config_file=config_file, use_random_port=use_random_port)
     project_manager: ProjectManager | None = None
-    if not os.getenv("AGENT_DECOMPILE_PROJECT_PATH"):
+    if not (os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")):
         project_manager = ProjectManager()
 
     # Start the server (caller must have called pyghidra.start() before)
@@ -1984,7 +1984,7 @@ def main() -> None:
         "--ghidra-server-repository",
         type=str,
         default=None,
-        help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)",
+        help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_REPOSITORY)",
     )
     g_server.add_argument(
         "--project-path",

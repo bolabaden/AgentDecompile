@@ -55,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-port", "--ghidra-server-port", type=int, default=None, help="Shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)")
     parser.add_argument("--server-username", "--ghidra-server-username", default=None, help="Shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)")
     parser.add_argument("--server-password", "--ghidra-server-password", default=None, help="Shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)")
-    parser.add_argument("--ghidra-server-repository", "--server-repository", default=None, help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY)")
+    parser.add_argument("--ghidra-server-repository", "--server-repository", default=None, help="Shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_REPOSITORY)")
     parser.add_argument("--http", action="store_true", help="Run streamable-http proxy mode")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host for HTTP mode")
     parser.add_argument("--port", type=int, default=8081, help="Bind port for HTTP mode")
@@ -71,7 +71,9 @@ def main() -> None:
         or args.backend_url
         or args.mcp_server_url
         or os.getenv("AGENT_DECOMPILE_BACKEND_URL")
+        or os.getenv("AGENTDECOMPILE_BACKEND_URL")
         or os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL")
+        or os.getenv("AGENTDECOMPILE_MCP_SERVER_URL")
         or "http://127.0.0.1:8080"
     )
     backend_url: str = normalize_backend_url(backend_raw)
