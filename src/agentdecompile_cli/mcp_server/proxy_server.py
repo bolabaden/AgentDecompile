@@ -83,6 +83,39 @@ class AgentDecompileMcpProxyServer:
                 finally:
                     CURRENT_MCP_SESSION_ID.reset(token)
 
+        class _CompatPathASGI:
+            """Compatibility wrapper for legacy MCP endpoint paths."""
+
+            def __init__(self, inner_app: Any, allowed_paths: set[str]):
+                self._inner_app: Any = inner_app
+                self._allowed_paths: set[str] = allowed_paths
+
+            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+                if scope.get("type") != "http":
+                    await self._inner_app(scope, receive, send)
+                    return
+
+                raw_path = str(scope.get("path") or "")
+                normalized_path = raw_path.rstrip("/") or "/"
+                if normalized_path not in self._allowed_paths:
+                    body = b'{"detail":"Not Found"}'
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 404,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode("ascii")),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": body, "more_body": False})
+                    return
+
+                rewritten_scope = dict(scope)
+                rewritten_scope["path"] = "/"
+                await self._inner_app(rewritten_scope, receive, send)
+
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
             self._session_manager_cm = self._session_manager.run()
@@ -95,12 +128,6 @@ class AgentDecompileMcpProxyServer:
                 self._session_manager_cm = None
             await self._bridge._reset_backend_session()
 
-        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
-        if self.auth_config is not None:
-            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
-        self.app.mount("/mcp/message", mcp_asgi)
-        self.app.mount("/mcp/message/", mcp_asgi)
-
         @self.app.get("/health")
         async def health_check() -> dict[str, Any]:
             return {
@@ -110,6 +137,14 @@ class AgentDecompileMcpProxyServer:
                 "mode": "proxy",
                 "backend": self.config.backend_url,
             }
+
+        mcp_asgi: Any = _SessionContextASGI(self._session_manager.handle_request)
+        if self.auth_config is not None:
+            mcp_asgi = AuthMiddleware(mcp_asgi, self.auth_config)
+        compat_mcp_asgi: Any = _CompatPathASGI(mcp_asgi, {"/", "/mcp"})
+        self.app.mount("/mcp/message", mcp_asgi)
+        self.app.mount("/mcp/message/", mcp_asgi)
+        self.app.mount("/", compat_mcp_asgi)
 
     def _is_port_available(self, host: str, port: int) -> bool:
         try:
