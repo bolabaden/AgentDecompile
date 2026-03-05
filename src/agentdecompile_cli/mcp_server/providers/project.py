@@ -63,11 +63,12 @@ class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
         "openproject": "_handle_open_project",
         "listprojectfiles": "_handle_list",
-        "syncsharedproject": "_handle_sync_shared_project",
+        "syncproject": "_handle_sync_project",
+        "syncsharedproject": "_handle_sync_project",  # backward compat alias
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
-        "switchproject": "_handle_switch_project",
+        "switchproject": "_handle_open_project",  # switch-project folded into open-project
         "deleteprojectbinary": "_handle_delete_project_binary",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
@@ -90,6 +91,7 @@ class ProjectToolProvider(ToolProvider):
                         "serverPort": {"type": "integer", "description": "Ghidra server port (default: 13100)."},
                         "serverUsername": {"type": "string", "description": "Repository authentication username."},
                         "serverPassword": {"type": "string", "description": "Repository authentication password."},
+                        "repositoryName": {"type": "string", "description": "Shared repository name (optional, auto-detected from server)."},
                         "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
                         "openAllPrograms": {"type": "boolean", "default": False, "description": "Open all programs in project."},
                     },
@@ -127,8 +129,8 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="sync-shared-project",
-                description="Sync with shared repository.",
+                name="sync-project",
+                description="Sync with local or shared repository. Supports pull, push, and bidirectional modes between local projects and shared Ghidra server repositories.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -255,44 +257,78 @@ class ProjectToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
-            types.Tool(
-                name="switch-project",
-                description=(
-                    "Switch between project modes at any time without restarting the server. "
-                    "Use mode='download' to connect to the configured shared Ghidra server, pull all files to the "
-                    "local project, and then operate locally. Use mode='local' to open a local binary or .gpr "
-                    "project. Use mode='shared' to (re)connect to the shared Ghidra server. "
-                    "Credentials are read from arguments first, then the request auth context, then "
-                    "AGENT_DECOMPILE_GHIDRA_SERVER_* environment variables automatically."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "mode": {
-                            "type": "string",
-                            "description": "Operation: 'download' (connect shared + pull to local), 'local' (open local path), 'shared' (connect shared server).",
-                            "enum": ["download", "local", "shared"],
-                            "default": "download",
-                        },
-                        "serverHost": {"type": "string", "description": "Ghidra server host. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_HOST env var."},
-                        "serverPort": {"type": "integer", "description": "Ghidra server port. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PORT or 13100."},
-                        "serverUsername": {"type": "string", "description": "Auth username. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME env var."},
-                        "serverPassword": {"type": "string", "description": "Auth password. Defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD env var."},
-                        "path": {"type": "string", "description": "Repository name (shared mode) or local file/project path (local mode)."},
-                        "localPath": {"type": "string", "description": "Explicit local path override for mode='local'."},
-                        "dryRun": {"type": "boolean", "default": False, "description": "Simulate download without writing (mode='download' only)."},
-                        "force": {"type": "boolean", "default": False, "description": "Overwrite existing local files on pull."},
-                    },
-                    "required": [],
-                },
-            ),
+            # NOTE: switch-project was removed as an advertised tool.
+            # Its functionality is folded into open-project (which handles local,
+            # .gpr, and shared modes with env var auto-detection).
+            # Calling "switch-project" still works — it routes to open-project.
         ]
 
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
-        """Legacy open-project dispatcher: routes to connect-shared-project or manage-files"""
+        """Unified open-project dispatcher: handles local binaries, .gpr projects, AND shared servers.
+
+        Routing logic:
+        1. If serverHost is explicitly provided → shared server mode
+        2. If no serverHost but env vars set (AGENT_DECOMPILE_GHIDRA_SERVER_HOST) and
+           no local path given → auto-detect shared server mode
+        3. Otherwise → local mode (binary import, .gpr project, directory)
+        """
         server_host = self._get_str(args, "serverhost")
+        path = self._get_str(args, "path", "programpath", "filepath")
+
+        # Explicit shared server mode
         if server_host:
             return await self._handle_connect_shared_project(args)
+
+        # Auto-detect shared server from environment variables when no local path is given
+        # or when the path looks like a repository path (starts with / but doesn't exist locally)
+        if not server_host:
+            env_host = os.getenv(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+                os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")),
+            ).strip()
+            if env_host:
+                # If no path or path doesn't exist locally, try shared mode
+                if not path:
+                    # No path at all — connect to shared server and list programs
+                    shared_args = dict(args)
+                    shared_args["serverhost"] = env_host
+                    shared_args.setdefault(
+                        "serverport",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
+                    )
+                    shared_args.setdefault(
+                        "serverusername",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
+                    )
+                    shared_args.setdefault(
+                        "serverpassword",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
+                    )
+                    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
+                    if repo and "path" not in args:
+                        shared_args["path"] = repo
+                    return await self._handle_connect_shared_project(shared_args)
+
+                # Path is given — check if it's a local file/dir that exists
+                resolved_path = Path(path).expanduser().resolve()
+                if not resolved_path.exists():
+                    # Path doesn't exist locally → try shared mode with this as the program path
+                    shared_args = dict(args)
+                    shared_args["serverhost"] = env_host
+                    shared_args.setdefault(
+                        "serverport",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
+                    )
+                    shared_args.setdefault(
+                        "serverusername",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
+                    )
+                    shared_args.setdefault(
+                        "serverpassword",
+                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
+                    )
+                    return await self._handle_connect_shared_project(shared_args)
+
         return await self._handle_open(args)
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -688,7 +724,10 @@ class ProjectToolProvider(ToolProvider):
                 ]),
             )
 
-        if resolved.is_file() and resolved.suffix.lower() not in (".gpr",):
+        if resolved.is_file() and resolved.suffix.lower() == ".gpr":
+            return await self._open_gpr_project(resolved, args)
+
+        if resolved.is_file():
             return await self._import_file(str(resolved), args)
 
         files_discovered: int = 0
@@ -708,9 +747,114 @@ class ProjectToolProvider(ToolProvider):
                 "path": str(resolved),
                 "exists": True,
                 "isDirectory": resolved.is_dir(),
-                "isProject": resolved.suffix.lower() == ".gpr" or resolved.is_dir(),
                 "filesDiscovered": files_discovered,
                 "note": "Path resolved. Use manage-files mode=import for explicit binary imports.",
+            },
+        )
+
+    async def _open_gpr_project(self, gpr_path: Path, args: dict[str, Any]) -> list[types.TextContent]:
+        """Open an existing Ghidra .gpr project file.
+
+        This uses GhidraProject.openProject() to open a .gpr-backed project,
+        sets it as the active project on the manager, and lists available programs.
+        """
+        project_dir = gpr_path.parent
+        project_name = gpr_path.stem  # e.g. "my_project" from "my_project.gpr"
+
+        try:
+            from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+            ghidra_project = GhidraProject.openProject(str(project_dir), project_name, False)
+        except Exception as exc:
+            raise ActionableError(
+                f"Failed to open .gpr project '{gpr_path}': {exc}",
+                context={"action": "open", "mode": "gpr-project", "path": str(gpr_path), "state": "project-open-failed"},
+                next_steps=[
+                    "Verify the .gpr file is a valid Ghidra project (check for matching .rep directory).",
+                    "Retry with a valid .gpr project path.",
+                ],
+            ) from exc
+
+        # Set on the manager so all providers can use it
+        if self._manager is not None:
+            self._manager.ghidra_project = ghidra_project
+
+        # List available programs in the project
+        programs_list: list[dict[str, Any]] = []
+        first_program_path: str | None = None
+        try:
+            project_data = ghidra_project.getProject().getProjectData()
+            if project_data is not None:
+                root = project_data.getRootFolder()
+                items = self._list_domain_files(root, 1000)
+                for item in items:
+                    if item.get("type") != "Folder":
+                        programs_list.append(item)
+                        if first_program_path is None:
+                            first_program_path = item.get("path")
+        except Exception as exc:
+            logger.warning("Failed to list programs from .gpr project: %s", exc)
+
+        # Store project binaries in session
+        session_id: str = get_current_mcp_session_id()
+        SESSION_CONTEXTS.set_project_binaries(session_id, programs_list)
+        SESSION_CONTEXTS.set_project_handle(
+            session_id,
+            {
+                "mode": "local-gpr",
+                "path": str(gpr_path),
+                "project_name": project_name,
+                "project_dir": str(project_dir),
+            },
+        )
+
+        # Auto-open first program if available, or a specific requested program
+        analyze = self._get_bool(args, "analyzeafterimport", default=False)
+        open_all = self._get_bool(args, "openallprograms", default=False)
+        opened_program: str | None = None
+        requested_program = self._get_str(args, "programpath", "binary", "binaryname")
+
+        target_path = requested_program or first_program_path
+        if target_path and not open_all:
+            try:
+                project_data = ghidra_project.getProject().getProjectData()
+                domain_file = project_data.getFile(target_path)
+                if domain_file is not None:
+                    program = self._open_program_from_domain_file(domain_file)
+                    if program is not None:
+                        self._set_active_program_info(program, target_path)
+                        opened_program = target_path
+
+                        if analyze:
+                            try:
+                                from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                                flat_api = FlatProgramAPI(program)
+                                from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                                from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                                GhidraProgramUtilities.setAnalyzedFlag(program, True)
+                            except Exception as analysis_exc:
+                                logger.warning("Post-open analysis for .gpr program failed: %s", analysis_exc)
+            except Exception as exc:
+                logger.warning("Failed to auto-open program from .gpr project: %s", exc)
+
+        return create_success_response(
+            {
+                "action": "open",
+                "mode": "gpr-project",
+                "path": str(gpr_path),
+                "projectName": project_name,
+                "projectDir": str(project_dir),
+                "exists": True,
+                "isProject": True,
+                "programCount": len(programs_list),
+                "programs": programs_list,
+                "openedProgram": opened_program,
+                "message": (
+                    f"Opened .gpr project '{project_name}' with {len(programs_list)} programs."
+                    + (f" Active program: {opened_program}" if opened_program else "")
+                ),
             },
         )
 
@@ -1344,11 +1488,11 @@ class ProjectToolProvider(ToolProvider):
         new_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else normalized_destination
         return create_success_response({"operation": "move", "scope": "project-domain", "path": old_path, "newPath": new_path, "success": True})
 
-    async def _handle_sync_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_sync_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         return await self._sync_shared_repository(args, default_mode="pull")
 
     async def _handle_download_shared_repository(self, args: dict[str, Any]) -> list[types.TextContent]:
-        return await self._handle_sync_shared_project(args)
+        return await self._handle_sync_project(args)
 
     async def _handle_switch_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Switch between project modes without restarting the server.
@@ -2232,21 +2376,59 @@ class ProjectToolProvider(ToolProvider):
             repository_adapter is not None,
             repository_name,
         )
-        if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
-            logger.warning("shared-sync aborted: no shared-server session handle present")
+        is_shared_session = handle and n(str(handle.get("mode", ""))) == "sharedserver"
+        is_local_gpr_session = handle and n(str(handle.get("mode", ""))) in {"localgpr", "local"}
+
+        if not is_shared_session:
+            # No shared server session — try local project operations
+            project_data = self._get_active_project_data()
+
+            if project_data is not None and mode == "push":
+                # Local push: save all modified domain files in the local project
+                logger.info("sync-project local push mode (no shared session)")
+                push_result = self._push_local_project_to_shared(args, "local-project", project_data)
+                return create_success_response(
+                    {
+                        "operation": "sync-project",
+                        "mode": mode,
+                        "direction": "local-save",
+                        "success": len(push_result["errors"]) == 0,
+                        **push_result,
+                        "note": "No shared server session. Performed local project save.",
+                    },
+                )
+
+            if project_data is not None and mode == "bidirectional":
+                # Local bidirectional: just save (can't pull without a source)
+                logger.info("sync-project local bidirectional mode (no shared session, saving only)")
+                push_result = self._push_local_project_to_shared(args, "local-project", project_data)
+                return create_success_response(
+                    {
+                        "operation": "sync-project",
+                        "mode": "bidirectional",
+                        "direction": "local-save-only",
+                        "success": len(push_result["errors"]) == 0,
+                        **push_result,
+                        "note": "No shared server session. Only local save was performed (pull requires a shared server connection).",
+                    },
+                )
+
+            logger.warning("sync-project aborted: no shared-server session and no actionable local project")
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
-                    "error": "No active shared-server session. Run open with --server-host first.",
+                    "error": "No active shared-server session or local project. Run open-project first.",
                     "context": {
-                        "state": "shared-session-unavailable",
-                        "requires": "open(shared-server)",
+                        "state": "no-sync-source",
+                        "hasLocalProject": project_data is not None,
+                        "isSharedSession": False,
                     },
                     "nextSteps": [
-                        "Call `open` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword`, and repository `path`.",
-                        "After `open` succeeds, retry `sync-shared-project`.",
+                        "Call `open-project` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword` for shared sync.",
+                        "Call `open-project` with a local `.gpr` project path for local project operations.",
+                        "After `open-project` succeeds, retry `sync-project`.",
                     ],
                 },
             )
@@ -2255,7 +2437,7 @@ class ProjectToolProvider(ToolProvider):
             logger.warning("shared-sync aborted: shared adapter missing repository=%s", repository_name)
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
                     "repository": repository_name,
@@ -2277,7 +2459,7 @@ class ProjectToolProvider(ToolProvider):
             logger.warning("shared-sync aborted: local project_data unavailable repository=%s", repository_name)
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "success": False,
                     "repository": repository_name,
@@ -2288,7 +2470,7 @@ class ProjectToolProvider(ToolProvider):
                     },
                     "nextSteps": [
                         "Call `open` with a local project (`.gpr`) or import a program to initialize local project context.",
-                        "Retry `sync-shared-project` after local project context is available.",
+                        "Retry `sync-project` after local project context is available.",
                     ],
                 },
             )
@@ -2307,7 +2489,7 @@ class ProjectToolProvider(ToolProvider):
             )
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "direction": "shared-to-local",
                     "success": len(pull_result["errors"]) == 0,
@@ -2329,7 +2511,7 @@ class ProjectToolProvider(ToolProvider):
             )
             return create_success_response(
                 {
-                    "operation": "sync-shared",
+                    "operation": "sync-project",
                     "mode": mode,
                     "direction": "local-to-shared",
                     "success": len(push_result["errors"]) == 0,
@@ -2355,7 +2537,7 @@ class ProjectToolProvider(ToolProvider):
 
         return create_success_response(
             {
-                "operation": "sync-shared",
+                "operation": "sync-project",
                 "mode": "bidirectional",
                 "direction": "shared-and-local",
                 "success": len(pull_result["errors"]) == 0 and len(push_result["errors"]) == 0,
