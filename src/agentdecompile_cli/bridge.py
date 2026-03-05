@@ -918,7 +918,9 @@ class AgentDecompileStdioBridge:
             backend_name = name
 
         try:
-            raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, arguments)
+            call_args: dict[str, Any] = dict(arguments or {})
+            call_args.setdefault("format", "markdown")
+            raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, call_args)
             # raw_result is the JSON-RPC "result" value which should be
             # a CallToolResult-shaped dict: {content: [...], isError: bool}
             return CallToolResult.model_validate(raw_result)
