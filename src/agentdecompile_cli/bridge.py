@@ -911,7 +911,7 @@ class AgentDecompileStdioBridge:
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:
+    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult: # pyright: ignore[reportInvalidTypeForm]
         """Handle MCP call_tool request by forwarding to backend."""
         backend_name = resolve_tool_name(name) if isinstance(name, str) else None
         if backend_name is None:

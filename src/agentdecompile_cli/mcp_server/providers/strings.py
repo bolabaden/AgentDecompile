@@ -45,11 +45,7 @@ class StringToolProvider(ToolProvider):
                         "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
                         "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default, only set if you need a different page size."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset; omit unless fetching beyond the first page."},
-                        "includeReferencingFunctions": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "If true, also looks up what exact function uses this string (can be slow).",
-                        },
+                        "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "If true, also looks up what exact function uses this string (can be slow)."},
                     },
                     "required": [],
                 },
@@ -78,7 +74,7 @@ class StringToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The active program project."},
                         "query": {"type": "string", "description": "The exact text or regex to find."},
                         "mode": {"type": "string", "description": "Internal routing fallback logic.", "enum": ["search", "list"], "default": "list"},
-                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default."},
+                        "limit": {"type": "integer", "default": 100, "description": "Omit and do not specify this in most cases."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                         "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "Find referencing functions."},
                     },
@@ -203,32 +199,77 @@ class StringToolProvider(ToolProvider):
         )
 
     def _collect_strings(self, min_len: int) -> list[dict[str, Any]]:
-        """Collect all strings from the program using GhidraTools or direct API."""
+        """Collect all strings from the program using GhidraTools or direct API.
+
+        Returns empty list if string enumeration is unavailable in the current context
+        (e.g., shared-server checkout without iterator support). Diagnostics are logged.
+        """
         assert self.program_info is not None, "Program info is required to collect strings"
         program = self.program_info.program
-        return collect_strings(
+        strings = collect_strings(
             program,
             min_len=min_len,
             ghidra_tools=self.ghidra_tools,
         )
 
+        # Add diagnostic if no strings were found - could indicate collection failure
+        if not strings:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.debug(
+                "String collection returned empty results. This may indicate: "
+                "(1) binary contains no strings, or (2) string iterators unavailable "
+                "in current program context (shared-server/proxy mode)."
+            )
+
+        return strings
+
     async def _handle_list(
-        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+        self,
+        args: dict[str, Any],
+        strings: list[dict],
+        pattern: str,
+        min_len: int,
+        offset: int,
+        max_results: int,
+        include_refs: bool,
     ) -> list[types.TextContent]:
         return self._filter_strings(strings, "list", "", min_len, max_results, offset, include_refs)
 
     async def _handle_regex(
-        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+        self,
+        args: dict[str, Any],
+        strings: list[dict],
+        pattern: str,
+        min_len: int,
+        offset: int,
+        max_results: int,
+        include_refs: bool,
     ) -> list[types.TextContent]:
         return self._filter_strings(strings, "regex", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_search(
-        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+        self,
+        args: dict[str, Any],
+        strings: list[dict],
+        pattern: str,
+        min_len: int,
+        offset: int,
+        max_results: int,
+        include_refs: bool,
     ) -> list[types.TextContent]:
         return self._filter_strings(strings, "search", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_count(
-        self, args: dict[str, Any], strings: list[dict], pattern: str, min_len: int, offset: int, max_results: int, include_refs: bool
+        self,
+        args: dict[str, Any],
+        strings: list[dict],
+        pattern: str,
+        min_len: int,
+        offset: int,
+        max_results: int,
+        include_refs: bool,
     ) -> list[types.TextContent]:
         return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
 

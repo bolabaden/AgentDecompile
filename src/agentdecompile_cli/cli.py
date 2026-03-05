@@ -366,19 +366,25 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
     """Build a list of open attempts for the requested program."""
     opts = _get_opts(ctx)
     shared_host = (
-        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
+        str(opts.get("ghidra_server_host") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
         or _backend_host_for_recovery(ctx)
     )
-    shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
+    shared_port_raw = (
+        str(opts.get("ghidra_server_port") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+        or "13100"
+    )
 
     try:
         shared_port = int(shared_port_raw)
     except ValueError:
         shared_port = 13100
 
-    shared_user = str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    shared_pass = str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+    shared_user = str(opts.get("ghidra_server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+    shared_pass = str(opts.get("ghidra_server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
     shared_repo = (
         str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
@@ -777,8 +783,8 @@ def _run_async(coro: Coroutine[Any, Any, None]) -> None:
 
 
 def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | FunctionType:
-    cmd = click.option("--host", "--server-host", default="127.0.0.1", help="Server host")(cmd)
-    cmd = click.option("--port", "--server-port", type=int, default=8080, help="Server port")(cmd)
+    cmd = click.option("--host", default="127.0.0.1", help="Server host")(cmd)
+    cmd = click.option("--port", type=int, default=8080, help="Server port")(cmd)
     cmd = click.option(
         "--server-url",
         help="Full server URL (overrides --host/--port)",
@@ -950,32 +956,27 @@ def _ensure_dynamic_commands_registered() -> None:
 @click.option("--backend-url", help="Alias of --server-url for proxy/backend style configuration")
 @click.option(
     "--ghidra-server-host",
-    "--server-host",
     "ghidra_server_host",
-    help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_SERVER_HOST)",
+    help="Default shared Ghidra server host (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_HOST)",
 )
 @click.option(
     "--ghidra-server-port",
-    "--server-port",
     "ghidra_server_port",
     type=int,
-    help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_SERVER_PORT)",
+    help="Default shared Ghidra server port (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_PORT)",
 )
 @click.option(
     "--ghidra-server-username",
-    "--server-username",
     "ghidra_server_username",
-    help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_SERVER_USERNAME)",
+    help="Default shared Ghidra server username (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME)",
 )
 @click.option(
     "--ghidra-server-password",
-    "--server-password",
     "ghidra_server_password",
-    help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_SERVER_PASSWORD)",
+    help="Default shared Ghidra server password (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
 )
 @click.option(
     "--ghidra-server-repository",
-    "--server-repository",
     "ghidra_server_repository",
     help="Default shared Ghidra repository (equivalent to AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_REPOSITORY)",
 )
@@ -2204,13 +2205,14 @@ def memory_run(
 @main.command("open", help="Open project or program (open-project)")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
+@click.option("--open-all-programs/--no-open-all-programs", "--open_all_programs/--no_open_all_programs", "open_all_programs", default=False)
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
 @click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
 @click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
-@click.option("--server_username", "--server-username", "--ghidra_server_username", "--ghidra-server-username", "server_username")
-@click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
-@click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
-@click.option("--server_port", "--server-port", "--ghidra_server_port", "--ghidra-server-port", "server_port", type=int)
+@click.option("--ghidra-server-username", "--ghidra_server_username", "server_username")
+@click.option("--ghidra-server-password", "--ghidra_server_password", "server_password")
+@click.option("--ghidra-server-host", "--ghidra_server_host", "server_host")
+@click.option("--ghidra-server-port", "--ghidra_server_port", "server_port", type=int)
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
