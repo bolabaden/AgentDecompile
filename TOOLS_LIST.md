@@ -20,7 +20,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`checkin-program`](#checkin-program)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
-    - [`sync-shared-project`](#sync-shared-project)
+    - [`sync-project`](#sync-project)
     - [`export`](#export)
     - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
@@ -171,7 +171,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`checkout-status`](#checkout-status)
     - [`create-label`](#create-label-1)
     - [`decompile-function`](#decompile-function-1)
-    - [`sync-shared-project`](#sync-shared-project-1)
+    - [`sync-project`](#sync-project-1)
     - [`export`](#export-1)
     - [`delete-project-binary`](#delete-project-binary-1)
     - [`gen-callgraph`](#gen-callgraph-1)
@@ -512,9 +512,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
 
-### `sync-shared-project`
+### `sync-project`
 
-**Description**: Transfers and synchronizes content between an active Ghidra shared repository session and the local project. It supports explicit pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning.
+**Description**: Transfers and synchronizes content between local and/or shared Ghidra projects. Supports pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning. Works with shared repository sessions (shared↔local) and local-only projects.
 
 **Parameters**:
 - `mode` (string, optional): Transfer mode (`pull`, `push`, `bidirectional`, default: `pull`).
@@ -532,14 +532,14 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `dryRun` (boolean, optional): Preview planned transfers without writing data.
   - Synonyms: `dryRun`, `planOnly`, `preview`.
 **Overloads**:
-- `sync-shared-project(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
+- `sync-project(mode, path, newPath, recursive, maxResults, force, dryRun)` canonical signature.
 
-**Synonyms**: `sync-shared-project`, `sync_shared_project`, `syncsharedproject`, `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`
+**Synonyms**: `sync-project`, `sync_project`, `syncproject`, `sync-shared-project`, `sync_shared_project`, `syncsharedproject`, `download-shared-repository`, `download_shared_repository`, `downloadsharedrepository`, `download-shared-project`, `pull-shared-repository`, `push-shared-repository`, `sync-shared-repository`
 
 **Examples**:
-- Pull all repository files: `sync-shared-project mode="pull" path="/" newPath="/" recursive=true`.
-- Push local scope mapping: `sync-shared-project mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
-- Plan bidirectional sync: `sync-shared-project mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
+- Pull all repository files: `sync-project mode="pull" path="/" newPath="/" recursive=true`.
+- Push local scope mapping: `sync-project mode="push" path="/K1" newPath="/K1" recursive=true maxResults=100000`.
+- Plan bidirectional sync: `sync-project mode="bidirectional" path="/K1" newPath="/K1" dryRun=true`.
 
 ### `export`
 
@@ -2781,9 +2781,9 @@ Calculate jump address to shellcode
 **Overloads**:
 - `decompile-function()` canonical signature.
 
-### `sync-shared-project`
+### `sync-project`
 **Overloads**:
-- `sync-shared-project()` canonical signature.
+- `sync-project()` canonical signature.
 
 ### `export`
 **Overloads**:
