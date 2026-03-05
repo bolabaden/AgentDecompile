@@ -22,7 +22,7 @@ TOOLS = [
     "checkin-program",
     "create-label",
     "decompile-function",
-    "sync-shared-project",
+    "sync-project",
     "delete-project-binary",
     "gen-callgraph",
     "get-call-graph",
@@ -266,7 +266,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "get-current-address": _params("programPath"),
     "get-current-function": _params("programPath"),
     "list-project-files": [],
-    "sync-shared-project": _params(
+    "sync-project": _params(
         "mode",
         "path",
         "sourcePath",
