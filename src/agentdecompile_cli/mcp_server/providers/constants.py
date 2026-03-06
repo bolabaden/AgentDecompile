@@ -45,7 +45,7 @@ class ConstantSearchToolProvider(ToolProvider):
                         "value": {"type": "integer", "description": "The exact numeric value to search for when mode is 'specific'."},
                         "minValue": {"type": "integer", "description": "The lowest numeric value to match when mode is 'range'."},
                         "maxValue": {"type": "integer", "description": "The highest numeric value to match when mode is 'range'."},
-                        "limit": {"type": "integer", "default": 1000, "description": "Maximum number of constants to list in the results."},
+                        "limit": {"type": "integer", "default": 1000, "description": "Number of constants to return. Typical values are 500–2000. Do not set this below 200 unless the user explicitly asks for only a small sample."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination text offset."},
                         "maxInstructions": {
                             "type": "integer",

@@ -28,5 +28,5 @@
   "python.autoComplete.extraPaths": [],
   "search.exclude": {
     "**/.history/**": true
-  }
+  },
 }

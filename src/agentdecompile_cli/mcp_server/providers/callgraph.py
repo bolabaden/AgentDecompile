@@ -62,7 +62,7 @@ class CallGraphToolProvider(ToolProvider):
                 "condenseThreshold": {"type": "integer", "default": 50, "description": "If more than this many nodes exist at one level, combine them to keep the graph readable."},
                 "topLayers": {"type": "integer", "default": 5, "description": "Max upwards layers (callers) to show in the visual graph."},
                 "bottomLayers": {"type": "integer", "default": 5, "description": "Max downwards layers (callees) to show in the visual graph."},
-                "maxNodes": {"type": "integer", "default": 250, "description": "Total limit on how many functions to track. Stop early if the call tree explodes in size."},
+                "maxNodes": {"type": "integer", "default": 250, "description": "Number of functions to track in the call graph. Typical values are 250–1000. Do not set this below 100 unless the user explicitly wants a very shallow graph."},
                 "secondFunction": {"type": "string", "description": "Used only when mode is 'common_callers'. The name or address of the second function to compare callers against."},
             },
             "required": [],

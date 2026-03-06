@@ -85,7 +85,7 @@ class GetFunctionToolProvider(ToolProvider):
                             "default": "similar",
                             "description": "How to evaluate similarity: 'similar' (overall heuristics), 'callers' (functions grouped by who calls them), 'callees' (functions grouped by who they call), 'signature' (functions with identical argument types).",
                         },
-                        "maxResults": {"type": "integer", "default": 50, "description": "Maximum number of matched functions to return."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Number of matched functions to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                     },
                     "required": [],
                 },
