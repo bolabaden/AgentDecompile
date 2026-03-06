@@ -531,6 +531,29 @@ def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
     ]
 
 
+def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
+    steps: list[str] = []
+    error = data.get("error", "")
+    results = data.get("results", [])
+    
+    # If function not found, suggest searching first
+    if "not found" in error.lower() or "not exist" in error.lower():
+        steps.append("The function wasn't found. First, use `search-everything query={function_name}` to locate it in the binary.")
+        steps.append("Once found, use `search-code` for decompiled code search, or `list-functions` to browse all functions.")
+        steps.append("Then retry `match-function` with the correct function address or symbol name.")
+    # If successful matches
+    elif results:
+        steps.append("Compare matched functions across binaries to identify similarities (reused code, shared libraries).")
+        steps.append("Use `decompile function={name}` on matched functions to examine them side-by-side in detail.")
+        steps.append("Tag matched functions with `manage-function-tags` to group them by library or purpose.")
+    # Generic case
+    else:
+        steps.append("Use `search-everything` to find the function you want to match across builds/versions.")
+        steps.append("Once you have a function identifier (address or symbol), call `match-function` with it.")
+    
+    return steps
+
+
 # ---------------------------------------------------------------------------
 # TOOL_GUIDANCE: normalized tool name → (short description, next_steps_fn)
 # ---------------------------------------------------------------------------
@@ -694,7 +717,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     ),
     "matchfunction": (
         "Matches functions across different builds/versions of a binary.",
-        lambda d: ["Use `get-functions mode=decompile` to compare matched functions side by side."],
+        _next_steps_match_function,
     ),
     "managefunctiontags": (
         "Manages tags on functions for categorization.",
