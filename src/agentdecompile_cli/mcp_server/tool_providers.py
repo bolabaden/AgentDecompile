@@ -40,6 +40,7 @@ from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     ADVERTISED_TOOL_PARAMS,
     DISABLED_GUI_ONLY_TOOLS,
+    TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
     is_tool_advertised,
     normalize_identifier,
@@ -1718,6 +1719,15 @@ class ToolProviderManager:
 
         norm_name = n(resolved_name)
         provider = self._tool_map.get(norm_name)
+        # Follow alias chain: if the resolved name maps to an alias target, look that up
+        if provider is None:
+            alias_target: str | None = TOOL_ALIASES.get(norm_name)
+            if alias_target:
+                alias_norm = n(alias_target)
+                provider = self._tool_map.get(alias_norm)
+                if provider is not None:
+                    norm_name = alias_norm
+                    resolved_name = alias_target
         if provider is None:
             tools = self.list_tools()
             return create_error_response(
