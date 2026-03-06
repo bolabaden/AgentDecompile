@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
 from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
-from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
+from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 
@@ -160,9 +160,11 @@ class PythonMcpServer:
         async def _startup_session_manager() -> None:
             self._session_manager_cm = self._session_manager.run()
             await self._session_manager_cm.__aenter__()
+            SESSION_CONTEXTS.start_reaper()
 
         @self.app.on_event("shutdown")
         async def _shutdown_session_manager() -> None:
+            SESSION_CONTEXTS.stop_reaper()
             if self._session_manager_cm is not None:
                 await self._session_manager_cm.__aexit__(None, None, None)  # pyright: ignore[reportGeneralTypeIssues]
                 self._session_manager_cm = None
@@ -175,28 +177,54 @@ class PythonMcpServer:
                 "server": self.config.name,
                 "version": self.config.version,
                 "programs": (1 if self.program_info and self.program_info.program else 0),
+                "sessions": SESSION_CONTEXTS.stats(),
             }
 
         # Build the innermost ASGI handler: session-context → MCP SDK
         mcp_handle = self._session_manager.handle_request
 
         async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
-            """Propagate MCP session ID into ContextVar, then delegate."""
+            """Propagate MCP session ID into ContextVar, bind fingerprint, then delegate."""
             session_id = "default"
+            user_agent = ""
+            remote_addr = ""
             if scope.get("type") == "http":
-                key_b: bytes
-                value_b: bytes
                 for key_b, value_b in scope.get("headers", []):
-                    if key_b.decode("latin1").lower() == "mcp-session-id":
+                    header_name = key_b.decode("latin1").lower()
+                    if header_name == "mcp-session-id":
                         value = value_b.decode("latin1").strip()
                         if value:
                             session_id = value
-                        break
+                    elif header_name == "user-agent":
+                        user_agent = value_b.decode("latin1", errors="replace")
+                client_info = scope.get("client")
+                if client_info:
+                    remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
+
+            # Capture which sessions exist before the SDK handles the request.
+            pre_sessions = set(session_manager._server_instances.keys())
+
             token = CURRENT_MCP_SESSION_ID.set(session_id)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
+
+            # After the SDK processes the request, detect newly created sessions
+            # and bind the client fingerprint for reconnection support.
+            post_sessions = set(session_manager._server_instances.keys())
+            new_sids = post_sessions - pre_sessions
+            if new_sids and (user_agent or remote_addr):
+                fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
+                    user_agent=user_agent, remote_addr=remote_addr,
+                )
+                for new_sid in new_sids:
+                    SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)
+
+            # Detect sessions that disappeared (crashed/terminated) and evict to grace.
+            removed_sids = pre_sessions - post_sessions
+            for gone_sid in removed_sids:
+                SESSION_CONTEXTS.evict_to_grace(gone_sid)
 
         # Optionally wrap with auth (experimental, off by default).
         mcp_app: Any = _mcp_asgi
@@ -216,27 +244,39 @@ class PythonMcpServer:
             ``mcp-session-id`` header against the session manager's live
             session registry.  If the header references an expired or
             unknown session (e.g. after a server restart), the header is
-            silently stripped so the SDK creates a fresh session instead
-            of returning HTTP 404.
+            stripped so the SDK creates a fresh session.  When that new
+            session is created, the grace-period context (if any) is
+            migrated into it — preserving program state across brief
+            client disconnections.
             """
 
             @staticmethod
-            def _strip_stale_session_header(scope: dict[str, Any]) -> dict[str, Any]:
-                """Return *scope* with a stale mcp-session-id header removed.
+            def _handle_stale_session(scope: dict[str, Any]) -> dict[str, Any]:
+                """Handle a stale or unknown mcp-session-id.
 
-                If the header is absent or references a live session the
-                scope is returned as-is (no copy).
+                If the session is in the grace-period store, it will be
+                reclaimed when the SDK creates the replacement session
+                (handled in ``_mcp_asgi`` post-hook).  Either way, strip
+                the stale header so the SDK creates a fresh transport.
                 """
                 raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
                 for key_b, value_b in raw_headers:
                     if key_b.lower() == b"mcp-session-id":
                         sid = value_b.decode("latin1", errors="replace").strip()
                         if sid and sid not in session_manager._server_instances:
+                            in_grace = sid in SESSION_CONTEXTS._grace
                             cleaned = [(k, v) for k, v in raw_headers if k.lower() != b"mcp-session-id"]
-                            logger.info(
-                                "Stripped stale mcp-session-id %s — a new session will be created.",
-                                sid[:12],
-                            )
+                            if in_grace:
+                                logger.info(
+                                    "Session %s not in SDK but in grace period — "
+                                    "stripping header; state will be reclaimed on new session.",
+                                    sid[:12],
+                                )
+                            else:
+                                logger.info(
+                                    "Stripped stale mcp-session-id %s — a new session will be created.",
+                                    sid[:12],
+                                )
                             return {**scope, "headers": cleaned}
                         break
                 return scope
@@ -245,7 +285,7 @@ class PythonMcpServer:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
-                        scope = self._strip_stale_session_header(scope)
+                        scope = self._handle_stale_session(scope)
                         rewritten = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
@@ -406,6 +446,7 @@ class PythonMcpServer:
         logger.info("Stopping MCP server...")
         self._running = False
         self._shutdown_event.set()
+        SESSION_CONTEXTS.stop_reaper()
 
         # Cleanup providers
         self._cleanup_provider(self.tool_providers, "Tool providers")
