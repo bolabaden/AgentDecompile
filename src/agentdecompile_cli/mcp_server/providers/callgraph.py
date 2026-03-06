@@ -74,11 +74,6 @@ class CallGraphToolProvider(ToolProvider):
                 description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code.",
                 inputSchema=schema,
             ),
-            types.Tool(
-                name="gen-callgraph",
-                description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code.",
-                inputSchema=schema,
-            ),
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:

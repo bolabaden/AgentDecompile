@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
-from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
+from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,11 @@ class AgentDecompileMcpProxyServer:
         async def _startup_session_manager() -> None:
             self._session_manager_cm = self._session_manager.run()
             await self._session_manager_cm.__aenter__()
+            SESSION_CONTEXTS.start_reaper()
 
         @self.app.on_event("shutdown")
         async def _shutdown_session_manager() -> None:
+            SESSION_CONTEXTS.stop_reaper()
             if self._session_manager_cm is not None:
                 await self._session_manager_cm.__aexit__(None, None, None)
                 self._session_manager_cm = None
@@ -89,20 +91,40 @@ class AgentDecompileMcpProxyServer:
 
         async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
             session_id = "default"
+            user_agent = ""
+            remote_addr = ""
             if scope.get("type") == "http":
                 for key_b, value_b in scope.get("headers", []):
-                    key_b: bytes
-                    value_b: bytes
-                    if key_b.decode("latin1").lower() == "mcp-session-id":
+                    header_name = key_b.decode("latin1").lower()
+                    if header_name == "mcp-session-id":
                         value = value_b.decode("latin1").strip()
                         if value:
                             session_id = value
-                        break
+                    elif header_name == "user-agent":
+                        user_agent = value_b.decode("latin1", errors="replace")
+                client_info = scope.get("client")
+                if client_info:
+                    remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
+
+            pre_sessions = set(session_manager._server_instances.keys())
+
             token = CURRENT_MCP_SESSION_ID.set(session_id)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
+
+            post_sessions = set(session_manager._server_instances.keys())
+            new_sids = post_sessions - pre_sessions
+            if new_sids and (user_agent or remote_addr):
+                fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
+                    user_agent=user_agent, remote_addr=remote_addr,
+                )
+                for new_sid in new_sids:
+                    SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)
+            removed_sids = pre_sessions - post_sessions
+            for gone_sid in removed_sids:
+                SESSION_CONTEXTS.evict_to_grace(gone_sid)
 
         # Optionally wrap with auth (experimental, off by default).
         mcp_app: Any = _mcp_asgi
@@ -116,12 +138,13 @@ class AgentDecompileMcpProxyServer:
         class _MCPRoutingMiddleware:
             """ASGI middleware: route /mcp and /mcp/message to MCP handler.
 
-            Strips stale ``mcp-session-id`` headers so the SDK creates a
-            fresh session instead of returning HTTP 404.
+            Handles stale ``mcp-session-id`` headers with grace-period
+            awareness so the SDK creates a fresh session while preserving
+            session state for reconnecting clients.
             """
 
             @staticmethod
-            def _strip_stale_session_header(scope: dict[str, Any]) -> dict[str, Any]:
+            def _handle_stale_session(scope: dict[str, Any]) -> dict[str, Any]:
                 raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
                 for key_b, value_b in raw_headers:
                     if key_b.lower() == b"mcp-session-id":
@@ -136,7 +159,7 @@ class AgentDecompileMcpProxyServer:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
-                        scope = self._strip_stale_session_header(scope)
+                        scope = self._handle_stale_session(scope)
                         rewritten = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
