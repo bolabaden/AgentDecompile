@@ -89,7 +89,7 @@ class StructureToolProvider(ToolProvider):
                         "nameFilter": {"type": "string", "description": "Case-insensitive text to filter the struct list by."},
                         "query": {"type": "string", "description": "Alternative parameter for nameFilter."},
                         "filter": {"type": "string", "description": "Alternative parameter for nameFilter."},
-                        "maxResults": {"type": "integer", "default": 100, "description": "Max results; omit to use default."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Number of structure results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                     },
                     "required": [],
                 },

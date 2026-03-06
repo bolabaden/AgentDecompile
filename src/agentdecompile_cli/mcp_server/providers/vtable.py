@@ -45,7 +45,7 @@ class VtableToolProvider(ToolProvider):
                             "default": 200,
                             "description": "When analyzing a specific vtable, the maximum number of pointers to parse before stopping.",
                         },
-                        "limit": {"type": "integer", "default": 100, "description": "Maximum number of results (for containing or callers mode) to return."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of vtable results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                     },
                     "required": [],
                 },

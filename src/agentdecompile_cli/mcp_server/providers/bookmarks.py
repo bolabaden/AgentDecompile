@@ -47,7 +47,7 @@ class BookmarkToolProvider(ToolProvider):
                         "comment": {"type": "string", "description": "The actual text you want to save inside the bookmark."},
                         "bookmarks": {"type": "array", "description": "Allows creating or processing a batch of multiple bookmarks at once.", "items": {"type": "object"}},
                         "query": {"type": "string", "description": "If mode is 'search', the text to look for inside existing bookmarks."},
-                        "limit": {"type": "integer", "default": 100, "description": "Max results to return."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of bookmarks to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination text start index."},
                         "removeAll": {"type": "boolean", "description": "A safety toggle needed when deleting all bookmarks.", "default": False},
                         "confirmRemoveAll": {"type": "boolean", "description": "Required to be true to proceed with clearing every single bookmark.", "default": False},

@@ -57,7 +57,7 @@ class CommentToolProvider(ToolProvider):
                         },
                         "comments": {"type": "array", "description": "Batch creation parameter for multiple comments at once.", "items": {"type": "object"}},
                         "query": {"type": "string", "description": "If searching, the word, phrase, or regular expression you are looking for."},
-                        "limit": {"type": "integer", "default": 100, "description": "Maximum number of search results to return."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of comment search results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination tracking index."},
                     },
                     "required": [],
