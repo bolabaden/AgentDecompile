@@ -105,7 +105,10 @@ Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in t
 | **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
-The Python MCP server speaks HTTP at `http://<host>:<port>/mcp/message` (canonical). For compatibility with MCP clients that only accept a base URL, `http://<host>:<port>/` and `http://<host>:<port>/mcp` are also accepted and routed to the same Streamable HTTP MCP handler. The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
+The Python MCP server accepts MCP HTTP requests at `http://<host>:<port>/mcp/message` and `http://<host>:<port>/mcp`.
+Trailing-slash variants of those two paths also work because the server strips the trailing slash before matching.
+The bare root URL `http://<host>:<port>/` is not an MCP endpoint on the server; it only works in AgentDecompile's own client helpers because they normalize a base URL to `/mcp/message` before connecting.
+The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
 Local proxy mode (no local Ghidra/JVM startup — forwards to a remote MCP backend):
 
