@@ -1,131 +1,80 @@
-# GitHub Actions CI Workflows
+# GitHub Actions Workflow Setup
 
-This document explains the CI/CD workflows for the AgentDecompile project.
+This document explains how the repository's GitHub Actions workflows are structured and what you need locally to reproduce them.
+
+```mermaid
+flowchart TD
+	A[Local prerequisites] --> B[Java 21]
+	A --> C[Python 3.10 plus uv]
+	A --> D[Ghidra 12.0 or later]
+	A --> E[Gradle build chain]
+	B --> F[test-ghidra.yml]
+	C --> G[test-headless.yml]
+	D --> F
+	D --> G
+	E --> F
+	E --> G
+```
 
 ## Workflow Files
 
-The workflows are defined in `.github/workflows/`:
-- `test-ghidra.yml` - Extension build validation (Gradle)
-- `test-headless.yml` - Headless MCP server tests (PyGhidra + Python)
-- `publish-ghidra.yml` - Release publishing
-- `publish-pypi.yml` - PyPI package publishing
-- `docker-push.yml` - Docker image building
+The repository currently defines these workflow files in `.github/workflows/`:
 
-## Main Workflow: `test-ghidra.yml`
+- `test-ghidra.yml`: validates the packaged Ghidra extension build.
+- `test-headless.yml`: runs the Python and PyGhidra test suite.
+- `publish-ghidra.yml`: builds, signs, and publishes Ghidra release artifacts.
+- `publish-pypi.yml`: builds and publishes the Python package.
+- `docker-push.yml`: builds and publishes the maintained container images.
+- `claude.yml`: runs Claude Code automation for supported GitHub events.
 
-**Purpose**: Build the AgentDecompile extension across supported Ghidra versions.
+## Local Environment Requirements
 
-**Triggers**:
-- Push to `main` or `develop` branches
-- Pull requests to `main` or `develop` branches
+To reproduce the test workflows locally, match the same core toolchain they use:
 
-**What it does**:
-- Sets up Java 21 and Ghidra
-- Builds the extension using `gradle buildExtension`
-- Uploads extension build artifacts
+- Java 21.
+- Python 3.10 for the main test path.
+- `uv` for dependency management and test execution.
+- Ghidra 12.0 or newer, with `GHIDRA_INSTALL_DIR` pointing at the installation.
+- Gradle support for the extension packaging steps.
 
-**Matrix**:
-- OS: ubuntu-latest
-- Ghidra: 12.0, latest
+The headless workflow is not Python-only in CI. It still builds the packaged Ghidra extension first, then installs PyGhidra from the downloaded Ghidra tree, and only then runs `pytest`.
 
-**Total jobs**: 2 (matrix by Ghidra version)
+## Reproducing the Main Workflows
 
-## Headless Workflow: `test-headless.yml`
+### Extension build validation
 
-**Purpose**: Test AgentDecompile MCP server in headless mode with PyGhidra.
-
-**Triggers**:
-- Push to `main` or `develop` branches
-- Pull requests to `main` or `develop` branches
-- Manual workflow dispatch (Actions tab → "Run workflow")
-
-**What it does**:
-- Sets up Java 21 (required for PyGhidra)
-- Installs Ghidra
-- Builds the extension with Gradle
-- Sets up Python 3.10 and `uv`
-- Installs PyGhidra from the local Ghidra installation
-- Runs Python tests with `uv run pytest tests/`
-
-**Matrix**:
-- OS: [ubuntu-latest, macos-latest]
-- Ghidra: [12.0, latest]
-
-**Total jobs**: 4
-
-## Release Publishing Workflow (`publish-ghidra.yml`)
-
-Builds and publishes release artifacts.
-
-**Triggers**:
-- Manual workflow dispatch
-- Release tags
-## Running Tests Locally
-
-Before pushing, test locally:
-
-**Build extension (Gradle)**:
 ```bash
 gradle clean buildExtension
-gradle buildExtension
 ```
 
-**Test headless server (Python/PyGhidra)**:
+That is the core step exercised by `test-ghidra.yml` before artifact upload.
+
+### Headless MCP test flow
+
 ```bash
-# Requires: GHIDRA_INSTALL_DIR set, Ghidra 12.0+
+export GHIDRA_INSTALL_DIR=/path/to/ghidra
 uv sync
-uv run pytest tests/ -v
+uv pip install "$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg"
+uv run pytest tests/ -v --timeout=180 --tb=short
 ```
 
-## Monitoring Workflows
+If you are debugging CI parity, also install the generated extension zip into the local Ghidra `Extensions` directory first, because `test-headless.yml` performs that installation step.
 
-1. Go to Actions tab in GitHub
-2. Select a workflow name
-3. View recent runs
-4. Click on a run to see detailed logs
+## Workflow Intent
 
-## Troubleshooting
+- `test-ghidra.yml` is the fast packaging check.
+- `test-headless.yml` is the main runtime validation path for the Python MCP stack.
+- `publish-ghidra.yml` and `publish-pypi.yml` split release publication by artifact type.
+- `docker-push.yml` publishes the containerized deployment variants.
 
-### Workflow doesn't trigger
+## Common Failure Modes
 
-Check:
-- Branch matches (main or develop)
-- Workflow file is valid YAML
-- GitHub Actions is enabled for the repository
-
-### Tests fail in CI but pass locally
-
-Common causes:
-- Environment differences (Ghidra version, Java version, Python version)
-- Missing dependencies (GHIDRA_INSTALL_DIR not set)
-- Timeout too short (extension builds can take 10+ minutes)
-
-### Build fails in CI
-
-- Check Gradle logs for extension packaging errors
-- Ensure Ghidra version matches (12.0+)
-- Verify Java 21 is available
-
-## CI Best Practices
-
-1. **Run tests locally first** - both extension builds and headless tests
-2. **Maintain backwards compatibility** - changes should work with Ghidra 12.0 and latest
-3. **Keep extension builds fast** - avoid slow/large dependencies
-4. **Add markers to Python tests** - `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`, etc.
-5. **Handle Ghidra API changes carefully** - maintain compatibility across versions
-6. **Check CI status** before requesting review
-
-## Build Environment
-
-AgentDecompile is a hybrid Java/Python project:
-
-- **Ghidra Extension Packaging**: Gradle-built, requires Java 21, Ghidra 12.0+
-- **Python MCP Server**: Requires Python 3.10+, PyGhidra (depends on Ghidra installation)
-- **CI Testing**: Headless functional tests run in `test-headless.yml`; `test-ghidra.yml` validates extension builds
+- Missing or incorrect `GHIDRA_INSTALL_DIR` causes PyGhidra installation or runtime failures.
+- Java version drift can break Gradle or Ghidra startup.
+- Local runs that skip the extension build can differ from CI behavior.
+- Slow or integration-heavy tests may require the same timeout budget used in CI.
 
 ## References
 
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [Gradle Documentation](https://gradle.org/)
-- [Ghidra Documentation](https://ghidra-sre.org/)
-- [PyGhidra Documentation](https://github.com/dod-cyber-crime-center/pyghidra)
+- `AGENTS.md` for the contributor-facing test, lint, and build commands used in this repository.
+- `.github/CI_WORKFLOWS.md` for the current workflow-by-workflow summary.

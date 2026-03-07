@@ -2161,7 +2161,7 @@ def memory_run(
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
 @click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
-@click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=False)
 @click.option("--server_username", "--server-username", "--ghidra_server_username", "--ghidra-server-username", "server_username")
 @click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
 @click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
@@ -3182,9 +3182,13 @@ def checkin(
 
 @main.command("analyze", help="Run auto-analysis (analyze-program)")
 @click.option("-b", "--binary", "program_path", required=True)
+@click.option("--force", is_flag=True, help="Force re-analysis even if the program is already analyzed")
 @click.pass_context
-def analyze(ctx: click.Context, program_path: str) -> None:
-    _run_async(_call(ctx, "analyze-program", programPath=program_path))
+def analyze(ctx: click.Context, program_path: str, force: bool) -> None:
+    payload: dict[str, Any] = {"programPath": program_path}
+    if force:
+        payload["force"] = True
+    _run_async(_call(ctx, "analyze-program", **payload))
 
 
 @main.command("change-processor", help="Change processor (change-processor)")
@@ -3255,7 +3259,7 @@ def files_grp() -> None:
 @click.option("--strip-leading-path/--no-strip-leading-path", "strip_leading_path", default=True)
 @click.option("--strip-all-container-path", "strip_all_container_path", is_flag=True)
 @click.option("--mirror-fs", "mirror_fs", is_flag=True)
-@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=False)
 @click.option("--export-type", "export_type", type=click.Choice(["program", "function_info", "strings"]))
 @click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
 @click.option("--include-parameters", "include_parameters", is_flag=True)

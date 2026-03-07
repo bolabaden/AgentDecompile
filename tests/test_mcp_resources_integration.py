@@ -70,10 +70,12 @@ class TestResourceProvidersIntegration:
         assert "server" in data
         assert "program" in data
         assert "analysis" in data
+        assert "profiling" in data
         
         # Check program status
         assert data["program"]["status"] == "no_program_loaded"
         assert data["analysis"]["status"] == "no_program"
+        assert data["profiling"]["status"] == "available"
         print(f"✓ Debug info resource (no program): server uptime={data['server']['uptime']['seconds']}s")
 
     @pytest.mark.asyncio

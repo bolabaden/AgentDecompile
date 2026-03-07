@@ -25,7 +25,7 @@ src/
 │   ├── mcp_server/                  # MCP server implementation
 │   │   ├── server.py                # MCP server (FastAPI + MCP SDK)
 │   │   ├── tool_providers.py        # ToolProvider base class + ToolProviderManager
-│   │   └── providers/               # Tool provider implementations (19 files)
+│   │   └── providers/               # Tool provider implementations (21 files)
 │   ├── mcp_utils/                   # Shared utilities for Ghidra API access
 │   ├── tools/                       # GhidraTools wrapper class
 │   ├── registry.py                  # Tool registry, normalize_identifier()
@@ -101,7 +101,7 @@ uv run pytest --cov=src/agentdecompile_cli
 
 ### `mcp_server/providers/`
 
-19 tool provider implementations across functional domains:
+21 tool provider implementations across functional domains:
 - **symbols.py** - Symbol management tools
 - **functions.py** - Function analysis tools  
 - **memory.py** - Memory inspection and data type tools
@@ -109,7 +109,7 @@ uv run pytest --cov=src/agentdecompile_cli
 - **comments.py** - Comments and annotations
 - **bookmarks.py** - Bookmarks management
 - **project.py** - Project and file management
-- And 12 more...
+- And 14 more (constants, data, dataflow, datatypes, decompiler, getfunction, import_export, script, search_everything, strings, structures, suggestions, vtable, xrefs)
 
 ### `tools/wrappers.py`
 

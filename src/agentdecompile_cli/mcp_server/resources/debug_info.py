@@ -9,6 +9,7 @@ import time
 
 from mcp import types
 
+from ..profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
 from ..resource_providers import ResourceProvider
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class DebugInfoResource(ResourceProvider):
                 "server": self._get_server_state(),
                 "program": self._get_program_state(),
                 "analysis": self._get_analysis_state(),
+                "profiling": self._get_profiling_state(),
                 "resources": self._get_resource_metrics(),
             }
 
@@ -62,6 +64,7 @@ class DebugInfoResource(ResourceProvider):
                 "server": {"status": "error", "error": str(e)},
                 "program": {"status": "error"},
                 "analysis": {"status": "error"},
+                "profiling": {"status": "error"},
                 "resources": {"read_count": self._resource_read_count},
             }
             return json.dumps(fallback_info, indent=2)
@@ -197,4 +200,15 @@ class DebugInfoResource(ResourceProvider):
             ],
             "cache_status": "enabled",
             "debug_info_reads": self._resource_read_count,
+        }
+
+    def _get_profiling_state(self) -> dict:
+        analyzer_path = get_profile_analyzer_path()
+        recent_runs = list_recent_profiles()
+        return {
+            "status": "available",
+            "storage_dir": str(get_profile_storage_dir()),
+            "analyzer_path": str(analyzer_path) if analyzer_path is not None else None,
+            "recent_runs": recent_runs,
+            "run_count": len(recent_runs),
         }

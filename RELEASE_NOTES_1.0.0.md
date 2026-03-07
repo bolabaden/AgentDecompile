@@ -1,5 +1,7 @@
 # AgentDecompile 1.0.0
 
+> Historical release note: this file documents the 1.0.0 release and is intentionally version-specific.
+
 AgentDecompile 1.0.0 is the first stable release of the MCP server and CLI for Ghidra/PyGhidra workflows.
 
 ## Highlights

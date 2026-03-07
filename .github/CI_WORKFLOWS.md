@@ -1,263 +1,117 @@
 # GitHub Actions CI Workflows
 
-This document describes the CI/CD workflows for AgentDecompile.
+This document summarizes the GitHub Actions workflows that currently ship with AgentDecompile.
 
-## Workflows Overview
-
-### 1. `test-ghidra.yml` - Extension Build Validation (Gradle)
-
-**Triggers**: Push/PR to main or develop branches
-
-**What it does**:
-- Builds AgentDecompile extension using Gradle
-- Tests on multiple Ghidra versions (12.0, latest)
-- Uploads extension build artifacts
-
-**Jobs**:
-- `test` - Builds extension (`gradle buildExtension`) on 2 Ghidra versions and uploads artifacts
-
-**Duration**: ~5-10 minutes per matrix job
-
-**Environment**:
-- Java: 21 (Microsoft OpenJDK)
-- Gradle: 8.14
-- OS: Ubuntu only
-- Xvfb: For headless testing UI components
-
-### 2. `test-headless.yml` - Headless Mode Tests (Python/PyGhidra)
-
-**Triggers**:
-- Push/PR to main or develop
-- Manual workflow dispatch
-
-**What it does**:
-- Builds AgentDecompile extension with Gradle (required for PyGhidra)
-- Tests Python-based headless server via pytest
-- Tests on multiple OS (Ubuntu, macOS)
-- Tests on multiple Ghidra versions (12.0, latest)
-- Uses Python 3.10
-
-**Jobs**:
-- `test-headless` - Matrix testing on Ubuntu/macOS × Ghidra versions
-
-**Required Steps**:
-1. Checkout code with LFS
-2. Setup Java 21
-3. Setup Python 3.10
-4. Install Ghidra
-5. Setup Gradle 8.14
-6. Build extension (gradle clean buildExtension)
-7. Install extension to Ghidra
-8. Install uv package manager
-9. Install Python dependencies (uv sync)
-10. Install PyGhidra from local Ghidra installation
-11. Run pytest (uv run pytest tests/ --timeout=180)
-
-**Duration**: ~8-12 minutes per matrix job
-
-**Environment**:
-- Java: 21 (required for PyGhidra JVM)
-- Python: 3.10
-- Gradle: 8.14
-- uv: Latest (from astral-sh/setup-uv)
-- Timeout: 30 minutes per job
-
-### 3. `publish-ghidra.yml` - Release Publishing
-
-**Triggers**: Manual or release tags
-
-**What it does**:
-- Publishes release artifacts
-- Creates GitHub releases
-- Uploads extension zip files
-
-**Duration**: ~5 minutes
-
-### 4. `publish-pypi.yml` - PyPI Publishing
-
-**Triggers**: Manual or releases
-
-**What it does**:
-- Builds Python package distribution
-- Publishes to PyPI
-- Uses Python 3.12
-
-**Duration**: ~3-5 minutes
-
-### 5. `docker-push.yml` - Docker Image Publishing
-
-**Triggers**: Manual or tag pushes
-
-**What it does**:
-- Builds Docker images
-- Pushes to container registry
-
-**Duration**: ~10-15 minutes
-
-### 6. `claude.yml` - Claude-Specific Integration
-
-**Triggers**: Project-specific
-
-**What it does**:
-- Claude Code integration or automation
-- Purpose varies by configuration
-
-## Test Matrix Strategy
-
-### Extension Tests (`test-ghidra.yml`)
-
-```
-Matrix:
-  OS: [ubuntu-latest]
-  Ghidra: [12.0, latest]
-
-Total: 2 jobs
+```mermaid
+flowchart TD
+    A[Push PR Tag or Manual Dispatch] --> B[test-ghidra.yml]
+    A --> C[test-headless.yml]
+    A --> D[publish-ghidra.yml]
+    A --> E[publish-pypi.yml]
+    A --> F[docker-push.yml]
+    A --> G[claude.yml]
+    B --> H[Build Ghidra extension artifacts]
+    C --> I[Build extension install PyGhidra run pytest]
+    D --> J[Sign and publish Ghidra release zips]
+    E --> K[Build and publish Python packages]
+    F --> L[Build and publish container images]
+    G --> M[Run Claude Code automation]
 ```
 
-### Headless Mode Tests (`test-headless.yml`)
+## Workflow Inventory
 
+### `test-ghidra.yml`
+
+- Purpose: validate the Gradle-based Ghidra extension build.
+- Triggers: push and pull request activity targeting `main` or `develop`.
+- Matrix: `ubuntu-latest` x Ghidra `12.0` and `latest`.
+- Runtime: Java 21, Gradle 8.14, Xvfb, downloaded Ghidra installation.
+- Output: extension build artifacts uploaded from each matrix job.
+
+This workflow is the narrow extension-build check. It does not run the full Python test suite.
+
+### `test-headless.yml`
+
+- Purpose: exercise the Python and PyGhidra test stack in CI.
+- Triggers: push and pull request activity targeting `main` or `develop`, plus manual `workflow_dispatch`.
+- Matrix: `ubuntu-latest` and `macos-latest` x Ghidra `12.0` and `latest`.
+- Runtime: Java 21, Python 3.10, Gradle 8.14, `uv`, downloaded Ghidra installation.
+- Test command: `uv run pytest tests/ -v --timeout=180 --tb=short --junitxml=test-results.xml`.
+
+The workflow builds the extension, installs it into the downloaded Ghidra directory, installs PyGhidra from that same installation, and then runs the Python test suite. That makes it the closest CI approximation of the supported headless runtime.
+
+### `publish-ghidra.yml`
+
+- Purpose: build, sign, and attach Ghidra distribution archives to GitHub releases.
+- Triggers: release publication and manual `workflow_dispatch`.
+- Runtime: Java 21 with Gradle-based extension packaging.
+- Output: signed Ghidra extension zip artifacts uploaded to the corresponding release.
+
+### `publish-pypi.yml`
+
+- Purpose: build Python distributions and publish them to TestPyPI or PyPI.
+- Triggers: manual `workflow_dispatch` and release or tag driven publishing.
+- Runtime: Python 3.12 with build and publishing tooling.
+- Output: source distribution and wheel, published package artifacts, and release-attached signatures for tag builds.
+
+### `docker-push.yml`
+
+- Purpose: build and publish the container images maintained by this repository.
+- Triggers: tag-driven release flow and manual dispatch.
+- Output: multi-image Docker builds covering the AIO, MCP-only, Ghidra, and Ghidra BSIM server variants.
+- Platforms: workflow is set up for multi-architecture publishing, including `amd64` and `arm64` image variants where configured.
+
+### `claude.yml`
+
+- Purpose: run repository automation driven by Claude Code on supported GitHub events.
+- Triggers: issue comments, pull request reviews, and related events that include `@claude`.
+
+## Matrix Strategy
+
+### Extension Build Matrix
+
+```text
+OS:      ubuntu-latest
+Ghidra:  12.0, latest
+Jobs:    2
 ```
-Matrix:
-  OS: [ubuntu-latest, macos-latest]
-  Ghidra: [12.0, latest]
 
-Total: 4 jobs (2 OS × 2 Ghidra versions)
+### Headless Test Matrix
+
+```text
+OS:      ubuntu-latest, macos-latest
+Ghidra:  12.0, latest
+Jobs:    4
 ```
 
-## Key Dependencies
+Both test workflows disable fail-fast so the full matrix completes even when one configuration fails early.
 
-### Gradle Build Chain
-- Both workflows build the extension using Gradle
-- Java 21 is required (Microsoft OpenJDK)
-- Gradle 8.14
-- Xvfb required on Ubuntu for UI-dependent extension operations
+## Local Reproduction
 
-### Python Tests
-- Python 3.10 is tested
-- PyGhidra installed from local Ghidra installation
-- uv package manager for dependency management
-- pytest for test execution
+Use the commands below when you want to approximate the CI steps locally.
 
-## Workflow Optimization
-
-### Parallelization
-
-All matrix jobs run in parallel, significantly reducing total CI wall-clock time:
-- test-ghidra.yml: 2 parallel jobs
-- test-headless.yml: 4 parallel jobs
-
-### Fail-Fast: Disabled
-
-Both test workflows use `fail-fast: false` to ensure all matrix jobs complete regardless of failures. This provides complete visibility into which configurations pass/fail.
-
-## Running Workflows Locally
-
-### Extension Build Validation
+### Reproduce the extension build
 
 ```bash
-# Build extension
-gradle buildExtension
+gradle clean buildExtension
 ```
 
-### Python/Headless Tests
+### Reproduce the headless test flow
 
 ```bash
-# Install dependencies
-uv sync
-
-# Setup Ghidra (if GHIDRA_INSTALL_DIR not set)
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
-
-# Install extension to local Ghidra
-unzip dist/*.zip -d "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/"
-
-# Install PyGhidra
+uv sync
 uv pip install "$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg"
-
-# Run tests
-uv run pytest tests/ -v --timeout=180
+uv run pytest tests/ -v --timeout=180 --tb=short
 ```
 
-## Manual Workflow Triggers
+If you want to mirror `test-headless.yml` more closely, also build the extension and install the generated zip into the local Ghidra `Extensions` directory before running the tests.
 
-### Trigger headless tests from GitHub UI
+## Practical Notes
 
-1. Go to **Actions** tab
-2. Select **Test Headless Mode 🤖** workflow
-3. Click **Run workflow**
-4. Select branch
-5. Click green **Run workflow** button
-
-This is useful for:
-- Testing on feature branches
-- Debugging CI issues
-- Manual validation without pushing
-
-## Debugging Failed Tests
-
-### View Test Results
-
-1. Click on failed workflow run
-2. Click on failed job
-3. Expand failing step to see full logs
-4. Use Test Summary to identify failed tests
-
-### Download Artifacts
-
-Failed test runs upload:
-- JUnit XML results
-- Logs
-- Pytest cache
-- Test reports
-
-Download via workflow run page → Artifacts section
-
-### Common Issues
-
-**Issue: Gradle build fails**
-```
-Error: Could not find or load main class org.gradle.wrapper.GradleWrapperMain
-```
-**Solution**: Ensure gradle wrapper is properly initialized or use gradle/actions/setup-gradle
-
-**Issue: PyGhidra import fails**
-```
-ImportError: No module named 'pyghidra'
-```
-**Solution**: Verify PyGhidra installation step completed and Ghidra installation directory is accessible
-
-**Issue: Ghidra not found**
-```
-Error: GHIDRA_INSTALL_DIR not set or not found
-```
-**Solution**: Verify setup-ghidra action completed successfully; check logs
-
-**Issue: Tests timeout**
-```
-Error: Test script timed out after 30 minutes
-```
-**Solution**: Increase timeout value or profile slow tests locally
-
-**Issue: Xvfb display issues (Linux)**
-```
-Error: Cannot connect to X display
-```
-**Solution**: Ensure Xvfb is installed and DISPLAY environment variable is set
-
-## Performance Benchmarks
-
-### Expected Durations
-
-| Workflow | Jobs | Avg Time/Job | Total Time (parallel) |
-|----------|------|--------------|----------------------|
-| test-ghidra.yml | 2 | ~8 min | ~10 min |
-| test-headless.yml | 4 | ~10 min | ~12 min |
-| publish-ghidra.yml | 1 | ~5 min | ~5 min |
-| publish-pypi.yml | 1 | ~4 min | ~4 min |
-
-Matrix parallelization means all matrix jobs run simultaneously, so total time is ~max(job times) rather than sum.
-
-## CI/CD Best Practices
+- CI still validates both sides of the project: Gradle-built Ghidra artifacts and the Python MCP runtime.
+- User-facing documentation focuses on the Python and MCP entry points, but the repository still ships and tests the packaged Ghidra extension in CI.
+- `AGENTS.md` remains the best place for contributor-facing lint, test, and build commands.
 
 ### For Contributors
 

@@ -1,5 +1,13 @@
 # AgentDecompile Tests
 
+```mermaid
+flowchart TD
+    A[Unit tests] --> D[pytest]
+    B[Integration tests] --> D
+    C[E2E and CLI tests] --> D
+    D --> E[PyGhidra-backed validation]
+```
+
 Professional pytest suite for testing AgentDecompile with PyGhidra.
 
 ## Overview
@@ -155,23 +163,21 @@ uv run pytest tests/ -m "not slow" -v
 
 ## CI Integration
 
-The GitHub Actions workflow (`.github/workflows/test-headless.yml`) runs these tests:
+The GitHub Actions workflows under `.github/workflows/` run these tests and packaging checks:
 
-- **Matrix**: Ubuntu/macOS × Ghidra 12.0/latest
+- **Matrix**: see the workflow YAML files for the current OS and version matrix
 - **Timeout**: 30 minutes per job
 - **Python**: 3.10
-- **Artifacts**: Uploads test results and logs
+- **Artifacts**: uploads test results and logs when configured by the workflow
 
 Workflow steps:
 1. Setup Java 21 (required for PyGhidra)
 2. Install Ghidra
-3. Build AgentDecompile extension with Gradle
-4. Install extension to Ghidra
-5. Setup Python and `uv`
-6. Install Python dependencies (`uv sync`)
-7. Install PyGhidra from local Ghidra
-8. Run pytest (`uv run pytest tests/ -v --timeout=180`)
-9. Upload test results and artifacts
+3. Setup Python and `uv`
+4. Install Python dependencies (`uv sync`)
+5. Install PyGhidra from local Ghidra when needed
+6. Run pytest (`uv run pytest tests/ -v --timeout=180`)
+7. Upload test results and artifacts
 
 ## Writing New Tests
 

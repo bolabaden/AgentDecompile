@@ -1,6 +1,17 @@
 # AgentDecompile Import/Export Guide
 
+```mermaid
+flowchart TD
+  A[import-binary] --> B[project program]
+  B --> C[export sarif]
+  B --> D[export gzf]
+  B --> E[export cpp or c]
+  B --> F[resource static-analysis]
+```
+
 This document explains how to import and export binary files and analysis data using AgentDecompile tools.
+
+This is a current usage guide. For the shortest examples, use `QUICKSTART_IMPORT_EXPORT.md`. For canonical tool signatures, use `../TOOLS_LIST.md`.
 
 ## Overview
 
@@ -57,7 +68,7 @@ agentdecompile-cli tool import-binary '{
 | `stripLeadingPath` | boolean | `false` | Strip leading paths from names |
 | `stripAllContainerPath` | boolean | `false` | Strip all container paths |
 | `mirrorFs` | boolean | `false` | Mirror filesystem structure |
-| `enableVersionControl` | boolean | `false` | Enable version tracking |
+| `enableVersionControl` | boolean | `false` | Request shared-project version control; local-only imports fail because they cannot be promoted automatically |
 
 ### Response
 
@@ -365,7 +376,9 @@ To export custom analysis, you can extend the SARIF generation in `export` tool 
 
 ### Version Control
 
-When importing with `enableVersionControl=true`, AgentDecompile tracks program versions:
+`enableVersionControl=true` is a request, not a guarantee. It only makes sense when the program is being imported through a writable shared Ghidra server workflow.
+
+For local-only imports, AgentDecompile now fails early instead of pretending version control was enabled:
 
 ```bash
 agentdecompile-cli tool import-binary '{
@@ -374,11 +387,12 @@ agentdecompile-cli tool import-binary '{
 }'
 ```
 
-This enables:
-- Program version history
-- Change tracking
-- Collaborative analysis
-- Rollback capability
+Use shared-project version control only when all of the following are true:
+- You opened a shared Ghidra server project, not a local-only project.
+- The repository is writable for your user.
+- The import path is part of a shared-backed workflow rather than a plain local import.
+
+If those conditions are not met, checkout/checkin remain unavailable and the tool returns a precise error.
 
 ### Large Binary Handling
 
@@ -396,6 +410,12 @@ agentdecompile-cli tool import-binary '{
 # Later: analyze manually
 agentdecompile-cli tool analyze-program '{
   "programPath": "/large_binary.bin"
+}'
+
+# Only if you have a specific reason to rerun analysis
+agentdecompile-cli tool analyze-program '{
+  "programPath": "/large_binary.bin",
+  "force": true
 }'
 ```
 
@@ -420,6 +440,12 @@ agentdecompile-cli tool export '{
 ### SARIF Contains No Results
 
 **Cause:** Analysis incomplete. **Solution:** Re-run import with `analyzeAfterImport=true` or call `analyze-program`.
+
+### Analyze-Program Returns "Already Analyzed"
+
+**Cause:** Ghidra already marked the program as analyzed.
+
+**Solution:** Do not rerun analysis by default. Only call `analyze-program` with `force=true` when you have a concrete reason to invalidate or refresh prior analysis.
 
 ### GZF Export Fails
 

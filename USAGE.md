@@ -1,28 +1,175 @@
-# AgentDecompile Usage — Multi-Platform (Linux, Windows, UVX)
+# AgentDecompile Usage Guide
 
-This guide provides examples using standard HTML toggle sections so every workflow appears in three variants:
-
-- Linux (`bash`/`zsh`)
-- Windows (`PowerShell`)
-- `uvx`
-
----
-
-## 0) Shared constants
-
-```text
-MCP URL: http://***:8080/mcp/message/
-Program: /K1/k1_win_gog_swkotor.exe
-Server URL (uvx): http://***:8080/
+```mermaid
+flowchart TD
+  A[Start runtime] --> B[open or open-project]
+  B --> C[list project-files]
+  C --> D[get-current-program]
+  D --> E[search-symbols and get-references]
+  E --> F[tool or tool-seq for exact MCP payloads]
 ```
 
-Endpoint compatibility note: the MCP server accepts canonical `/mcp/message` and also supports root (`/`) and `/mcp` for clients that initialize using host:port base URLs.
+This guide keeps only the current command surface. Historical output captures were removed so the examples stay aligned with the live CLI and server help.
 
-Diagnostics note: HTTP request logs are hidden by default. Add `--verbose` (or `-v`) to `agentdecompile-cli` or `agentdecompile-server` when transport-level diagnostics are needed.
+## Shared constants
 
-Parameter alias note: shared-server connection options are interchangeable with/without the `ghidra-` prefix (for example `--server-host` == `--ghidra-server-host`, same for port/username/password/repository).
+```text
+Server URL: http://***:8080/
+MCP endpoint: http://***:8080/mcp/message
+Program path: /K1/k1_win_gog_swkotor.exe
+```
 
-Error response contract: tool failures now return actionable payloads with explicit state and next calls. Expect:
+Notes:
+
+- The HTTP server accepts `/mcp/message` as the canonical endpoint and also accepts `/` and `/mcp` for compatibility.
+- Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, or `mcp-agentdecompile` when you need transport diagnostics.
+- Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
+
+## 1. Start the runtime
+
+### Local stdio runtime
+
+```bash
+uv run mcp-agentdecompile
+```
+
+### HTTP server
+
+```bash
+uv run agentdecompile-server -t streamable-http --project-path ./agentdecompile_projects
+```
+
+### Proxy mode
+
+```bash
+uv run agentdecompile-server --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
+```
+
+## 2. Shared-server environment variables
+
+### Linux
+
+```bash
+export AGENT_DECOMPILE_GHIDRA_SERVER_HOST="<set-in-user-env>"
+export AGENT_DECOMPILE_GHIDRA_SERVER_PORT="13100"
+export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME="<set-in-user-env>"
+export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD="<set-in-user-env>"
+export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY="<set-in-user-env>"
+```
+
+### PowerShell
+
+```powershell
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = "<set-in-user-env>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "13100"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = "<set-in-user-env>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = "<set-in-user-env>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
+```
+
+## 3. Current CLI workflows
+
+### Open a program
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
+```
+
+Equivalent raw tool call:
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ tool open-project '{"path":"/K1/k1_win_gog_swkotor.exe"}'
+```
+
+### List project files
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ list project-files
+```
+
+### Verify the active program
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+```
+
+### Search symbols
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame --limit 20
+```
+
+If you specifically need the legacy alias for parity testing, use raw tool mode:
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ tool search-symbols-by-name '{"programPath":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","limit":20}'
+```
+
+### References to and from a target
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
+agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 100
+```
+
+### List imports and exports
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ list imports --binary /K1/k1_win_gog_swkotor.exe
+agentdecompile-cli --server-url http://***:8080/ list exports --binary /K1/k1_win_gog_swkotor.exe
+```
+
+### Read MCP resources
+
+```powershell
+agentdecompile-cli --server-url http://***:8080/ resource programs
+agentdecompile-cli --server-url http://***:8080/ resource static-analysis
+agentdecompile-cli --server-url http://***:8080/ resource debug-info
+```
+
+### Run a sequence of tool calls in one session
+
+```powershell
+$steps = '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":10}}]'
+agentdecompile-cli --server-url http://***:8080/ tool-seq $steps
+```
+
+This is the supported way to keep state inside one CLI invocation.
+
+## 4. Raw MCP HTTP example
+
+When you need to call the MCP endpoint directly, send requests to `http://host:port/mcp/message` after your client performs the normal MCP `initialize` handshake.
+
+Example `tools/call` payload:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 101,
+  "method": "tools/call",
+  "params": {
+    "name": "get-references",
+    "arguments": {
+      "programPath": "/K1/k1_win_gog_swkotor.exe",
+      "target": "WinMain",
+      "direction": "to",
+      "limit": 25
+    }
+  }
+}
+```
+
+## 5. Tool naming guidance
+
+- Prefer canonical tool names from [TOOLS_LIST.md](TOOLS_LIST.md).
+- Use `agentdecompile-cli tool --list-tools` to inspect the currently advertised set.
+- Use `agentdecompile-cli alias <tool-name>` when you need to understand compatibility forwards.
+- Prefer `search-symbols` for new docs and workflows; `search-symbols-by-name` remains a compatibility alias.
+- Prefer `open-project` in raw tool mode and `open` in the convenience CLI command set.
+
+## 6. Common failure states
+
+Typical tool errors include a `nextSteps` array. Follow those steps before broad retries. Example shape:
 
 ```json
 {
@@ -30,637 +177,18 @@ Error response contract: tool failures now return actionable payloads with expli
   "error": "Authentication failed for user@host:13100: ...",
   "context": {
     "state": "authentication-failed",
-    "tool": "open",
-    "serverHost": "***",
-    "serverPort": 13100
+    "tool": "open-project"
   },
   "nextSteps": [
-    "Verify serverUsername/serverPassword and retry open.",
+    "Verify serverUsername/serverPassword and retry open-project.",
     "If credentials are correct, verify server reachability and repository access."
   ]
 }
 ```
 
-Automation guidance: when `nextSteps` is present, execute those calls before falling back to broad discovery commands.
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-MCP_URL="http://***:8080/mcp/message/"
-PROGRAM_PATH="/K1/k1_win_gog_swkotor.exe"
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-$McpUrl = "http://***:8080/mcp/message/"
-$ProgramPath = "/K1/k1_win_gog_swkotor.exe"
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```bash
-UVX_PREFIX='uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/'
-PROGRAM_PATH='/K1/k1_win_gog_swkotor.exe'
-export AGENT_DECOMPILE_SERVER_HOST='***'
-export AGENT_DECOMPILE_SERVER_PORT='13100'
-export AGENT_DECOMPILE_SERVER_USERNAME='<set-in-user-env>'
-export AGENT_DECOMPILE_SERVER_PASSWORD='<set-in-user-env>'
-export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
-```
-
-</details>
----
-
-## 1) Bootstrap session / transport setup
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-MCP_URL="http://***:8080/mcp/message/"
-
-INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl-client","version":"1.0"}}}'
-RESP_HEADERS=$(mktemp)
-
-curl -s -D "$RESP_HEADERS" -o /tmp/mcp_init_resp.json \
-  -X POST "$MCP_URL" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  --data "$INIT"
-
-SID=$(grep -i '^mcp-session-id:' "$RESP_HEADERS" | awk -F': ' '{print $2}' | tr -d '\r')
-
-curl -s -X POST "$MCP_URL" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
-
-call_tool () {
-  local id="$1"
-  local name="$2"
-  local args_json="$3"
-  curl -s -X POST "$MCP_URL" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -H "Mcp-Session-Id: $SID" \
-    --data "{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"tools/call\",\"params\":{\"name\":\"${name}\",\"arguments\":${args_json}}}"
-}
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-$McpUrl = "http://***:8080/mcp/message/"
-
-$InitBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ps-client","version":"1.0"}}}'
-$InitResp = Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Headers @{
-  "Content-Type" = "application/json"
-  "Accept"       = "application/json, text/event-stream"
-} -Body $InitBody
-
-$SID = $InitResp.Headers["mcp-session-id"]
-if ($SID -is [array]) { $SID = $SID[0] }  # PowerShell 7 returns String[]
-
-$NotifBody = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Headers @{
-  "Content-Type"   = "application/json"
-  "Accept"         = "application/json, text/event-stream"
-  "Mcp-Session-Id" = $SID
-} -Body $NotifBody | Out-Null
-
-function Invoke-McpTool {
-  param(
-    [string]$Name,
-    [string]$ArgumentsJson,
-    [int]$Id = 100
-  )
-
-  $ArgsObject = $ArgumentsJson | ConvertFrom-Json
-  $Body = @{
-    jsonrpc = "2.0"
-    id      = $Id
-    method  = "tools/call"
-    params  = @{
-      name      = $Name
-      arguments = $ArgsObject
-    }
-  } | ConvertTo-Json -Depth 100 -Compress
-
-  Invoke-WebRequest -UseBasicParsing -Uri $McpUrl -Method POST -Headers @{
-    "Content-Type"   = "application/json"
-    "Accept"         = "application/json, text/event-stream"
-    "Mcp-Session-Id" = $SID
-  } -Body $Body
-}
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-# No manual initialize/session handling required in uvx mode.
-# The CLI handles transport/session lifecycle per command.
-
-$env:AGENT_DECOMPILE_SERVER_HOST = "<set-in-user-env>"
-$env:AGENT_DECOMPILE_SERVER_PORT = "<set-in-user-env>"
-$env:AGENT_DECOMPILE_SERVER_USERNAME = "<set-in-user-env>"
-$env:AGENT_DECOMPILE_SERVER_PASSWORD = "<set-in-user-env>"
-$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
-
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ list project-files --binary /K1/k1_win_gog_swkotor.exe
-```
-
-</details>
----
-
-## 2) Command mapping (1:1 intent across all tabs)
-
-### 2.1 Open program
-
-Tool payload (`name=open`):
-
-```json
-{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 101 open '{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 101 -Name "open" -ArgumentsJson '{"server_host":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ open --ghidra-server-host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --ghidra-server-port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
-```
-
-</details>
-### 2.2 List project files
-
-Tool payload (`name=list-project-files`):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe"}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 102 list-project-files '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 102 -Name "list-project-files" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ list project-files --binary /K1/k1_win_gog_swkotor.exe
-```
-
-</details>
-### 2.3 Get current program
-
-Tool payload (`name=get-current-program`):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe"}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 103 get-current-program '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 103 -Name "get-current-program" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
-```
-
-</details>
-### 2.4 Get functions (limit)
-
-Tool payload (`name=get-functions`):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 104 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 104 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
-```
-
-</details>
-### 2.5 Search symbols by name
-
-Tool payload (`name=search-symbols-by-name`):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 105 search-symbols-by-name '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 105 -Name "search-symbols-by-name" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","max_results":20}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame --max_results 20
-```
-
-</details>
-### 2.6 References to
-
-Tool payload (`name=get-references`):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 106 get-references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 106 -Name "get-references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"to","target":"WinMain","limit":25}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
-```
-
-</details>
-### 2.7 Get functions (info/decompile/disassemble)
-
-Tool payload (info):
-
-```json
-{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}
-```
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-# info
-call_tool 107 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
-
-# decompile
-call_tool 108 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
-
-# disassemble
-call_tool 109 get-functions '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# info
-Invoke-McpTool -Id 107 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"info","include_callers":true,"include_callees":true}'
-
-# decompile
-Invoke-McpTool -Id 108 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"decompile"}'
-
-# disassemble
-Invoke-McpTool -Id 109 -Name "get-functions" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","identifier":"0x004b58a0","view":"disassemble"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-# info
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier 0x004b58a0 --view info --include_callers true --include_callees true
-
-# decompile
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier 0x004b58a0 --view decompile
-
-# disassemble
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier 0x004b58a0 --view disassemble
-```
-
-</details>
-### 2.8 Call graph + references from
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-# call graph
-call_tool 110 get-call-graph '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
-
-# references from
-call_tool 111 get-references '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# call graph
-Invoke-McpTool -Id 110 -Name "get-call-graph" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_identifier":"0x004b58a0","mode":"callees","max_depth":2}'
-
-# references from
-Invoke-McpTool -Id 111 -Name "get-references" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"from","target":"0x004b58a0","limit":100}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-# call graph
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ get-call-graph --program_path /K1/k1_win_gog_swkotor.exe --function_identifier 0x004b58a0 --mode callees --max_depth 2
-
-# references from
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 100
-```
-
-</details>
-### 2.9 Strings, constants, data-flow
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-# strings
-call_tool 112 manage-strings '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
-
-# constants
-call_tool 113 search-constants '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
-
-# data-flow
-call_tool 114 analyze-data-flow '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# strings
-Invoke-McpTool -Id 112 -Name "manage-strings" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"regex","query":"Save|Load|Module|GIT|IFO","include_referencing_functions":true,"limit":100}'
-
-# constants
-Invoke-McpTool -Id 113 -Name "search-constants" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"specific","value":32,"max_results":200}'
-
-# data-flow
-Invoke-McpTool -Id 114 -Name "analyze-data-flow" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","function_address":"0x004b95b0","start_address":"0x004b97af","direction":"forward"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-# strings
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ manage-strings --program_path /K1/k1_win_gog_swkotor.exe --mode regex --query "Save|Load|Module|GIT|IFO" --include_referencing_functions true --limit 100
-
-# constants
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ search-constants --program_path /K1/k1_win_gog_swkotor.exe --mode specific --value 32 --max_results 200
-
-# data-flow
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ analyze-data-flow --program_path /K1/k1_win_gog_swkotor.exe --function_address 0x004b95b0 --start_address 0x004b97af --direction forward
-```
-
-</details>
-### 2.10 Rename, comment, tag, bookmark
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-# rename
-call_tool 115 manage-function '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
-
-# comment
-call_tool 116 manage-comments '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
-
-# tags
-call_tool 117 manage-function-tags '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
-
-# bookmark
-call_tool 118 manage-bookmarks '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# rename
-Invoke-McpTool -Id 115 -Name "manage-function" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"rename","function_identifier":"0x004b95b0","new_name":"LoadModule"}'
-
-# comment
-Invoke-McpTool -Id 116 -Name "manage-comments" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","comment_type":"PRE","comment":"LoadModule orchestrates per-resource GFF parsing"}'
-
-# tags
-Invoke-McpTool -Id 117 -Name "manage-function-tags" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"add","function":"0x004b95b0","tags":["save-load","serialization"]}'
-
-# bookmark
-Invoke-McpTool -Id 118 -Name "manage-bookmarks" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","mode":"set","address_or_symbol":"0x004b95b0","type":"TODO","category":"save-load","comment":"verify full GIT object-list write path"}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-# rename
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ manage-function --program_path /K1/k1_win_gog_swkotor.exe --mode rename --function_identifier 0x004b95b0 --new_name LoadModule
-
-# comment
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ manage-comments --program_path /K1/k1_win_gog_swkotor.exe --mode set --address_or_symbol 0x004b95b0 --comment_type PRE --comment "LoadModule orchestrates per-resource GFF parsing"
-
-# tags
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ manage-function-tags --program_path /K1/k1_win_gog_swkotor.exe --mode add --function 0x004b95b0 --tags save-load --tags serialization
-
-# bookmark
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ manage-bookmarks --program_path /K1/k1_win_gog_swkotor.exe --mode set --address_or_symbol 0x004b95b0 --type TODO --category "save-load" --comment "verify full GIT object-list write path"
-```
-
-</details>
-### 2.11 Raw tool mode examples
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-call_tool 119 list-imports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-call_tool 120 list-exports '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-Invoke-McpTool -Id 119 -Name "list-imports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-Invoke-McpTool -Id 120 -Name "list-exports" -ArgumentsJson '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-$a = '{"program_path":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ tool list-imports $a
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ tool list-exports $a
-```
-
-</details>
-### 2.12 Shared sync workflow (validated)
-
-Verified against `http://***:8080/mcp/message/` with repository `Odyssey` on 2026-03-05.
-
-<details>
-<summary><b>Linux (bash/zsh)</b></summary>
-
-```bash
-# 1) Open shared repository session
-call_tool 201 open '{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}'
-
-# 2) Pull plan
-call_tool 202 sync-shared-project '{"mode":"pull","path":"/K1","newPath":"/K1_sync_test","recursive":true,"maxResults":1,"dryRun":true}'
-
-# 3) Push plan
-call_tool 203 sync-shared-project '{"mode":"push","path":"/K1_sync_test","recursive":true,"maxResults":1,"dryRun":true}'
-```
-
-</details>
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-$url = "http://***:8080/mcp/message/"
-$hdr = @{ "Content-Type"="application/json"; "Accept"="application/json, text/event-stream" }
-
-$init = @{ jsonrpc="2.0"; id=1; method="initialize"; params=@{ protocolVersion="2025-03-26"; capabilities=@{}; clientInfo=@{ name="ps-sync"; version="0.1" } } } | ConvertTo-Json -Depth 8
-$r = Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $init -UseBasicParsing
-$sid = ($r.Headers.GetEnumerator() | Where-Object { $_.Key -ieq "mcp-session-id" } | Select-Object -First 1 -ExpandProperty Value)
-$hdr["mcp-session-id"] = $sid
-Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body (@{ jsonrpc="2.0"; method="notifications/initialized" } | ConvertTo-Json -Depth 5) -UseBasicParsing | Out-Null
-
-$open = @{ jsonrpc="2.0"; id=2; method="tools/call"; params=@{ name="open"; arguments=@{ server_host="$env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST"; server_port=$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT; server_username="$env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME"; server_password="$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD"; repository_name="$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY"; program_path="/K1/k1_win_gog_swkotor.exe" } } } | ConvertTo-Json -Depth 10
-Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $open -UseBasicParsing
-
-$pull = @{ jsonrpc="2.0"; id=3; method="tools/call"; params=@{ name="sync-shared-project"; arguments=@{ mode="pull"; path="/K1"; newPath="/K1_ps_sync"; recursive=$true; maxResults=1; dryRun=$true } } } | ConvertTo-Json -Depth 10
-Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $pull -UseBasicParsing
-
-$push = @{ jsonrpc="2.0"; id=4; method="tools/call"; params=@{ name="sync-shared-project"; arguments=@{ mode="push"; path="/K1_ps_sync"; recursive=$true; maxResults=1; dryRun=$true } } } | ConvertTo-Json -Depth 10
-Invoke-WebRequest -Uri $url -Method POST -Headers $hdr -Body $push -UseBasicParsing
-```
-
-</details>
-<details>
-<summary><b>uvx</b></summary>
-
-```powershell
-$steps = '[{"name":"open","arguments":{"server_host":"$AGENT_DECOMPILE_GHIDRA_SERVER_HOST","server_port":"$AGENT_DECOMPILE_GHIDRA_SERVER_PORT","server_username":"$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME","server_password":"$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD","repository_name":"$AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY","program_path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"sync-shared-project","arguments":{"mode":"pull","path":"/K1","newPath":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}},{"name":"sync-shared-project","arguments":{"mode":"push","path":"/K1_uvx_sync","recursive":true,"maxResults":1,"dryRun":true}}]'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-backend-url http://***:8080/ tool-seq $steps
-```
-
-</details>
-
----
-
-## 3) Notes
-
-- This file is intentionally organized in three tabs for each workflow: Linux, Windows, and `uvx`.
-- For strict output comparability, run all HTTP calls in one session and run `open` first.
-- In PowerShell `uvx ... tool <name> <json>`, pass JSON via a variable like `$a`.
-- Verified behavior (2026-03-05): shared pull and push dry-runs succeed in both PowerShell and `uvx` when `open` and `sync-shared-project` run in the same MCP session.
-- Verified behavior (2026-03-05): shared push actual succeeds after pull (`mode="push"`, non-dry-run).
-- `checkin-program` can still fail when the active program is non-project-backed (`path` like `/Untitled`); use sync pull/push flow for shared updates.
+## 7. Related docs
+
+- `README.md` for installation and transport overview.
+- `docs/MCP_AGENTDECOMPILE_USAGE.md` for MCP client configuration.
+- `docs/IMPORT_EXPORT_GUIDE.md` for import and export workflows.
+- `usage_structure.md` for the short shared-repository command chain.

@@ -280,7 +280,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
         "dryRun",
     ),
     "checkin-program": _params("programPath", "message", "keepCheckedOut"),
-    "analyze-program": _params("programPath"),
+    "analyze-program": _params("programPath", "analyzers", "force"),
     "change-processor": _params("programPath", "languageId", "compilerSpecId"),
     "manage-files": _params(
         "mode",
