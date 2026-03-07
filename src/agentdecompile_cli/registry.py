@@ -209,7 +209,7 @@ def _canonical_param_name(param: str) -> str:
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
 TOOL_PARAMS: dict[str, list[str]] = {
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
-    "analyze-program": _params("programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis"),
+    "analyze-program": _params("programPath", "analyzers", "force"),
     "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
     "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),

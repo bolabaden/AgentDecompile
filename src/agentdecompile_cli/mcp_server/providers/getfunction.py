@@ -8,11 +8,14 @@ from __future__ import annotations
 import heapq
 import logging
 
+from collections import defaultdict
+from dataclasses import dataclass
 from itertools import islice
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -22,7 +25,31 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(slots=True)
+class _FunctionMatchFeature:
+    function: Any
+    name: str
+    address: str
+    signature: str
+    param_count: int
+    return_type: str
+    callers: frozenset[str]
+    callees: frozenset[str]
+
+
+@dataclass(slots=True)
+class _FunctionMatchIndex:
+    function_count: int
+    features: list[_FunctionMatchFeature]
+    by_identity: dict[int, _FunctionMatchFeature]
+    by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]]
+    by_caller: dict[str, set[int]]
+    by_callee: dict[str, set[int]]
+
+
 class GetFunctionToolProvider(ToolProvider):
+    _MATCH_INDEX_CACHE: ClassVar[dict[int, _FunctionMatchIndex]] = {}
+
     HANDLERS = {
         "managefunction": "_handle_manage",
         "managefunctiontags": "_handle_tags",
@@ -306,6 +333,59 @@ class GetFunctionToolProvider(ToolProvider):
 
         raise ValueError(f"Unknown tag action: {action}")
 
+    def _get_match_index(self, program: Any, fm: Any) -> tuple[_FunctionMatchIndex, bool]:
+        cache_key = id(program)
+        function_count = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
+        cached = self._MATCH_INDEX_CACHE.get(cache_key)
+        if cached is not None and cached.function_count == function_count:
+            return cached, True
+
+        with ProfileCapture(
+            "match-function-index-build",
+            target=getattr(program, "getName", lambda: "")(),
+            metadata={"functionCount": function_count},
+        ) as capture:
+            features: list[_FunctionMatchFeature] = []
+            by_identity: dict[int, _FunctionMatchFeature] = {}
+            by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]] = defaultdict(list)
+            by_caller: dict[str, set[int]] = defaultdict(set)
+            by_callee: dict[str, set[int]] = defaultdict(set)
+
+            for func in fm.getFunctions(True):
+                callers = frozenset(c.getName() for c in func.getCallingFunctions(None))
+                callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
+                feature = _FunctionMatchFeature(
+                    function=func,
+                    name=func.getName(),
+                    address=str(func.getEntryPoint()),
+                    signature=str(func.getSignature()),
+                    param_count=func.getParameterCount(),
+                    return_type=str(func.getReturnType()),
+                    callers=callers,
+                    callees=callees,
+                )
+                features.append(feature)
+                feature_id = id(func)
+                by_identity[feature_id] = feature
+                by_signature[(feature.param_count, feature.return_type)].append(feature)
+                for caller in callers:
+                    by_caller[caller].add(feature_id)
+                for callee in callees:
+                    by_callee[callee].add(feature_id)
+
+            capture.add_metadata(indexedFunctions=len(features))
+
+        index = _FunctionMatchIndex(
+            function_count=function_count,
+            features=features,
+            by_identity=by_identity,
+            by_signature=dict(by_signature),
+            by_caller={name: set(ids) for name, ids in by_caller.items()},
+            by_callee={name: set(ids) for name, ids in by_callee.items()},
+        )
+        self._MATCH_INDEX_CACHE[cache_key] = index
+        return index, False
+
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         func_id = self._require_address_or_symbol(args)
@@ -321,6 +401,10 @@ class GetFunctionToolProvider(ToolProvider):
         fm = self._get_function_manager(program)
 
         mode_n = n(mode)
+        match_index: _FunctionMatchIndex | None = None
+        cache_hit = False
+        if mode_n in {"similar", "signature"}:
+            match_index, cache_hit = self._get_match_index(program, fm)
 
         if mode_n == "callers":
             callers = list(islice(func.getCallingFunctions(None), max_results))
@@ -348,44 +432,70 @@ class GetFunctionToolProvider(ToolProvider):
             sig = str(func.getSignature())
             param_count = func.getParameterCount()
             ret = str(func.getReturnType())
-            similar = []
-            for f in fm.getFunctions(True):
-                if f == func:
-                    continue
-                if f.getParameterCount() == param_count and str(f.getReturnType()) == ret:
-                    similar.append({"name": f.getName(), "address": str(f.getEntryPoint()), "signature": str(f.getSignature())})
-                    if len(similar) >= max_results:
-                        break
+            assert match_index is not None
+            candidates = [feature for feature in match_index.by_signature.get((param_count, ret), []) if feature.function != func]
+            similar = [
+                {"name": feature.name, "address": feature.address, "signature": feature.signature}
+                for feature in candidates[:max_results]
+            ]
             return create_success_response(
                 {
                     "function": func.getName(),
                     "mode": "signature",
                     "referenceSignature": sig,
+                    "indexedFunctionCount": match_index.function_count,
+                    "cacheHit": cache_hit,
                     "results": similar,
                     "count": len(similar),
                 },
             )
 
-        # similar
-        # Compare by callee overlap
-        my_callees = {c.getName() for c in func.getCalledFunctions(None)}
-        my_callers = {c.getName() for c in func.getCallingFunctions(None)}
-        scores = []
+        assert match_index is not None
+        target_feature = match_index.by_identity.get(id(func))
+        if target_feature is None:
+            raise ValueError(f"Function not indexed for matching: {func_id}")
+
+        candidate_ids: set[int] = set()
+        for caller in target_feature.callers:
+            candidate_ids.update(match_index.by_caller.get(caller, set()))
+        for callee in target_feature.callees:
+            candidate_ids.update(match_index.by_callee.get(callee, set()))
+
+        candidate_ids.discard(id(func))
+        if not candidate_ids:
+            signature_candidates = match_index.by_signature.get((target_feature.param_count, target_feature.return_type), [])
+            candidate_ids.update(id(feature.function) for feature in signature_candidates if feature.function != func)
+
+        scores: list[tuple[int, _FunctionMatchFeature]] = []
         top_k = max(max_results, 1)
-        for f in fm.getFunctions(True):
-            if f == func:
+        for feature_id in candidate_ids:
+            feature = match_index.by_identity.get(feature_id)
+            if feature is None:
                 continue
-            f_callees = {c.getName() for c in f.getCalledFunctions(None)}
-            f_callers = {c.getName() for c in f.getCallingFunctions(None)}
-            overlap = len(my_callees & f_callees) + len(my_callers & f_callers)
+            overlap = len(target_feature.callees & feature.callees) + len(target_feature.callers & feature.callers)
             if overlap > 0:
-                scores.append((overlap, f))
-        top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
-        similar = [{"name": f.getName(), "address": str(f.getEntryPoint()), "similarityScore": s} for s, f in top_matches]
+                scores.append((overlap, feature))
+
+        with ProfileCapture(
+            "match-function-similarity",
+            target=func.getName(),
+            metadata={
+                "mode": "similar",
+                "cacheHit": cache_hit,
+                "indexedFunctionCount": match_index.function_count,
+                "candidateCount": len(candidate_ids),
+            },
+        ):
+            top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
+
+        similar = [{"name": feature.name, "address": feature.address, "similarityScore": score} for score, feature in top_matches]
         return create_success_response(
             {
                 "function": func.getName(),
                 "mode": "similar",
+                "indexedFunctionCount": match_index.function_count,
+                "candidateCount": len(candidate_ids),
+                "cacheHit": cache_hit,
                 "results": similar,
                 "count": len(similar),
             },

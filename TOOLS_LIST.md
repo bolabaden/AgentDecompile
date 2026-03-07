@@ -254,35 +254,23 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - **Community**: [GitHub Discussion: "High P-code Normalization strategies for Cross-Arch Analysis"](https://github.com/NationalSecurityAgency/ghidra/discussions/8874) | [RE.SE: "Ghidra Python - Get Decompile Line Text by RVA"](https://reverseengineering.stackexchange.com/questions/24685/ghidra-python-get-decompile-line-text-by-rva)
 ### `analyze-program`
 
-**Description**: Initiates or manages Ghidra's full program analysis pipeline, including auto-analysis for functions, data types, references, and decompilation preparation. This tool triggers analyzers for disassembly, function discovery, reference creation, and advanced features like constant propagation or call graph building. It supports forcing re-analysis, verbose logging, and custom analyzer options (e.g., via program_options for symbols or GDTs). Useful for initial binary loading, updating analysis after manual changes, or applying PDB symbols. The process is resource-intensive and may run in threaded mode for performance, with options to wait for completion.
+**Description**: Initiates Ghidra's full program analysis pipeline for the active program. This is a heavy operation and should normally be run only once per binary. If Ghidra already marked the program as analyzed, the tool returns an error unless `force=true` is supplied for a deliberate reanalysis.
 
 **Parameters**:
 - `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `forceAnalysis` (boolean, optional): Force re-analysis even if already done (default: false).
-  - Synonyms: `forceAnalysis`, `forcea`.
-- `verbose` (boolean, optional): Enable detailed logging during analysis (default: false).
-  - Synonyms: `verbose`
-- `noSymbols` (boolean, optional): Disable symbol loading (default: false).
-  - Synonyms: `noSymbols`, `nos`.
-- `gdts` (array, optional): List of GDT file paths to apply.
-  - Synonyms: `gdts`
-- `programOptions` (object, optional): Custom analyzer settings (e.g., {"DecompilerParameterAnalyzer.useCPlusPlus": true}).
-  - Synonyms: `programOptions`, `programo`.
-- `threaded` (boolean, optional): Use multi-threading (default: true).
-  - Synonyms: `threaded`
-- `maxWorkers` (integer, optional): Number of worker threads (default: CPU count).
-  - Synonyms: `maxWorkers`, `maxw`.
-- `waitForAnalysis` (boolean, optional): Block until analysis completes (default: false).
-  - Synonyms: `binaryPath`, `program`, `force`, `verboseAnalysis`, `no_symbols`, `gdtFiles`, `options`, `useThreading`, `workers`, `wait`, `waitForAnalysis`
+- `analyzers` (array, optional): Specific analyzer names to target instead of the default analyzer set.
+  - Synonyms: `analyzers`.
+- `force` (boolean, optional): Force re-analysis even if Ghidra already marked the program as analyzed (default: false). This should be rare.
+  - Synonyms: `force`, `forceAnalysis`, `forcea`.
 **Overloads**:
 - `analyze-program(programPath)` → forwards to `analyze-program`.
 
 **Synonyms**: `analyze-program`, `tool_analyze_program`, `analyze_program_tool`, `cmd_analyze_program`, `run_analyze_program`, `do_analyze_program`, `api_analyze_program`, `mcp_analyze_program`, `ghidra_analyze_program`, `agentdecompile_analyze_program`, `analyze_program_command`, `analyze_program_action`, `analyze_program_op`, `analyze_program_task`, `execute_analyze_program`
 
 **Examples**:
-- Analyze a program: `analyze-program programPath="/bin.exe" forceAnalysis=true verbose=true`.
-- With custom options: `analyze-program programPath="/bin.exe" programOptions={"PDBAnalyzer.useRemote": true}`.
+- Analyze a program: `analyze-program programPath="/bin.exe"`.
+- Force a deliberate re-analysis: `analyze-program programPath="/bin.exe" force=true`.
 
 **API References**:
 - **`ghidra.program.flatapi.FlatProgramAPI`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/program/flatapi/FlatProgramAPI.html) | [GitHub source (v12)](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/Base/src/main/java/ghidra/program/flatapi/FlatProgramAPI.java)
@@ -791,7 +779,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - Get references to: `get-references programPath="/bin.exe" target="0x401000" direction="to" limit=50 includeRefContext=true`.
 ### `import-binary`
 
-**Description**: Imports a binary file into the Ghidra project, supporting recursive directory imports, analysis after import, and version control options. This tool handles file discovery, folder mirroring, and post-import analysis, making it the entry point for loading new binaries. It supports depth limits, stripping paths, and enabling version tracking for collaborative work.
+**Description**: Imports a binary file into the Ghidra project, supporting recursive directory imports, analysis after import, and optional shared-project version-control requests. This tool handles file discovery, folder mirroring, and post-import analysis. If `enableVersionControl=true` is requested for a local-only import, the tool fails explicitly instead of pretending shared versioning is available.
 
 **Parameters**:
 - `path` (string, required): File or directory path to import.
@@ -810,7 +798,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `stripAllContainerPath`, `stripacp`.
 - `mirrorFs` (boolean, optional): Mirror filesystem structure (default: false).
   - Synonyms: `mirrorFs`, `mirrorf`.
-- `enableVersionControl` (boolean, optional): Enable versioning (default: false).
+- `enableVersionControl` (boolean, optional): Request import into shared-project version control (default: false). Local-only imports cannot satisfy this request and fail explicitly.
   - Synonyms: `filePath`, `destFolder`, `recurse`, `depth`, `autoAnalyze`, `stripPath`, `stripContainer`, `mirror`, `versioning`, `enableVersionControl`
 **Overloads**:
 - `import_binary(binary_path)` → forwards to `import-binary`.
@@ -821,6 +809,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Import file: `import-binary path="/path/to/bin.exe" destinationFolder="/imports" analyzeAfterImport=true`.
 - Recursive import: `import-binary path="/dir" recursive=true maxDepth=3 mirrorFs=true`.
+- Shared version-control request on a local import fails explicitly: `import-binary path="/path/to/bin.exe" enableVersionControl=true`.
 
 ### `inspect-memory`
 
@@ -2948,3 +2937,18 @@ Calculate jump address to shellcode
 
 **Examples**:
 - `checkout-status`
+
+### `remove-program-binary`
+
+**Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.
+
+**Parameters**:
+- None.
+
+**Overloads**:
+- `remove-program-binary()` canonical signature.
+
+**Synonyms**: `remove-program-binary`
+
+**Examples**:
+- `remove-program-binary`

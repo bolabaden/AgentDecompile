@@ -50,6 +50,7 @@ class ImportExportToolProvider(ToolProvider):
                         "recursive": {"type": "boolean", "default": False, "description": "If filePath is a folder, whether to import everything inside it."},
                         "maxDepth": {"type": "integer", "default": 16, "description": "How deep to recurse if importing a folder."},
                         "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Whether to immediately run Ghidra's heavy auto-analysis (can take a long time) right after importing."},
+                        "enableVersionControl": {"type": "boolean", "default": False, "description": "Request import into shared-project version control. Local-only imports cannot satisfy this request."},
                     },
                     "required": [],
                 },
@@ -79,12 +80,13 @@ class ImportExportToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="analyze-program",
-                description="Trigger the heavy auto-analysis subsystem inside Ghidra. Use this after loading a program if you notice data looks incomplete, strings are unbroken, or functions fail to decompile correctly. Be warned: this takes time.",
+                description="Trigger the heavy auto-analysis subsystem inside Ghidra. Use this after loading a program if you notice data looks incomplete, strings are unbroken, or functions fail to decompile correctly. This tool refuses to rerun once Ghidra already analyzed the program unless you explicitly set force=true.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The target program to run analyzers over."},
                         "analyzers": {"type": "array", "items": {"type": "string"}, "description": "If provided, lists specific string names of Ghidra analyzer modules to use instead of 'all of them'."},
+                        "force": {"type": "boolean", "default": False, "description": "Force re-analysis even when Ghidra already marked the program as analyzed. This should be rare."},
                     },
                     "required": [],
                 },
@@ -179,6 +181,20 @@ class ImportExportToolProvider(ToolProvider):
         recursive = self._get_bool(args, "recursive", default=False)
         max_depth = self._get_int(args, "maxdepth", default=16)
         analyze_after_import = self._get_bool(args, "analyzeafterimport", default=False)
+        enable_version_control = self._get_bool(args, "enableversioncontrol", default=False)
+
+        if enable_version_control:
+            return create_success_response(
+                {
+                    "action": "import",
+                    "importedFrom": file_path,
+                    "analysisRequested": analyze_after_import,
+                    "versionControlRequested": True,
+                    "versionControlEnabled": False,
+                    "success": False,
+                    "error": "Automatic promotion of a local import into shared-project version control is not implemented here. Open a shared-server project first, then import through a shared-backed workflow.",
+                },
+            )
 
         source = Path(file_path).expanduser().resolve()
         if not source.exists():
@@ -552,11 +568,34 @@ class ImportExportToolProvider(ToolProvider):
         self._require_program()
         assert self.program_info is not None
         analyzers = self._get_list(args, "analyzers")
+        force = self._get_bool(args, "force", "forceanalysis", default=False)
         program = self.program_info.program
 
         try:
             from ghidra.app.plugin.core.analysis import AutoAnalysisManager  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+            session_marked_complete = bool(getattr(self.program_info, "analysis_complete", False))
+            ghidra_requires_analysis = True
+            try:
+                ghidra_requires_analysis = bool(GhidraProgramUtilities.shouldAskToAnalyze(program))
+            except Exception:
+                ghidra_requires_analysis = not session_marked_complete
+
+            already_analyzed = session_marked_complete or not ghidra_requires_analysis
+            if already_analyzed and not force:
+                return create_success_response(
+                    {
+                        "action": "analyze",
+                        "programName": program.getName(),
+                        "analyzers": analyzers or "all",
+                        "success": False,
+                        "alreadyAnalyzed": True,
+                        "forceAllowed": True,
+                        "error": "Program has already been analyzed. Re-run only when you have a specific reason; set force=true to override.",
+                    },
+                )
 
             mgr = AutoAnalysisManager.getAnalysisManager(program)
 
@@ -586,12 +625,15 @@ class ImportExportToolProvider(ToolProvider):
                 mgr.startAnalysis(monitor)
 
             self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
+            if hasattr(self.program_info, "ghidra_analysis_complete"):
+                self.program_info.ghidra_analysis_complete = True
 
             return create_success_response(
                 {
                     "action": "analyze",
                     "programName": program.getName(),
                     "analyzers": analyzers or "all",
+                    "force": force,
                     "success": True,
                 },
             )
@@ -599,11 +641,12 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "analyze",
+                    "force": force,
                     "note": "Auto-analysis requires full Ghidra environment",
                 },
             )
         except Exception as e:
-            return create_success_response({"action": "analyze", "success": False, "error": str(e)})
+            return create_success_response({"action": "analyze", "force": force, "success": False, "error": str(e)})
 
     async def _handle_change_processor(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
@@ -729,8 +772,6 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
-            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
-
             domain_file = program.getDomainFile()
             if domain_file is None:
                 raise RuntimeError("No domain file associated with active program")
@@ -740,11 +781,14 @@ class ImportExportToolProvider(ToolProvider):
                     {
                         "action": "checkout",
                         "program": program.getName(),
-                        "success": True,
+                        "success": False,
                         "already_private": True,
-                        "note": "File is not version-controlled; no checkout needed.",
+                        "versionControlEnabled": False,
+                        "error": "File is not version-controlled in a shared Ghidra repository. Checkout is unavailable for local-only project files.",
                     },
                 )
+
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             if domain_file.isCheckedOut():
                 return create_success_response(
@@ -831,6 +875,8 @@ class ImportExportToolProvider(ToolProvider):
                     "latest_version": latest_version,
                     "current_version": current_version,
                     "checkout_status": checkout_status_obj,
+                    "versionControlEnabled": is_versioned,
+                    "note": None if is_versioned else "Program is local-only. Shared checkout/checkin is unavailable until the program exists in a shared Ghidra repository.",
                 },
             )
         except Exception as exc:

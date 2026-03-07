@@ -1717,6 +1717,19 @@ class ProjectToolProvider(ToolProvider):
 
     async def _import_file(self, file_path: str, args: dict[str, Any]) -> list[types.TextContent]:
         session_id: str = get_current_mcp_session_id()
+        enable_version_control: bool = self._get_bool(args, "enableversioncontrol", default=False)
+        if enable_version_control:
+            return create_success_response(
+                {
+                    "operation": "import",
+                    "importedFrom": file_path,
+                    "versionControlRequested": True,
+                    "versionControlEnabled": False,
+                    "success": False,
+                    "error": "Automatic promotion of a local import into shared-project version control is not implemented for open-project local imports. Connect to a shared server first and use a shared-backed workflow.",
+                },
+            )
+
         source: Path = Path(file_path).expanduser().resolve()
         if not source.exists():
             raise ValueError(f"Import path not found: {source}")

@@ -56,7 +56,10 @@ class TestHelperScriptsCLI:
         )
         assert proc.returncode == 0, proc.stderr
         payload = json.loads(proc.stdout)
-        assert payload["total"] >= 4
+        assert payload["total"] >= 6
+        names = {result["name"] for result in payload["results"]}
+        assert "match_function_cold" in names
+        assert "match_function_warm" in names
         assert out.exists()
         saved = json.loads(out.read_text(encoding="utf-8"))
         assert saved["total"] == payload["total"]

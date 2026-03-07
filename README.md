@@ -6,6 +6,16 @@
 
 Built on the open standard [Model Context Protocol (MCP)](https://modelcontextprotocol.io), AgentDecompile turns Ghidra into an intelligent agent that can read, understand, and explain code for you.
 
+```mermaid
+flowchart TD
+  A[MCP client] --> B[mcp-agentdecompile or agentdecompile-mcp]
+  A --> C[agentdecompile-server streamable-http]
+  B --> D[AgentDecompile runtime]
+  C --> D
+  D --> E[PyGhidra and Ghidra projects]
+  D --> F[52 canonical tools and 3 resources]
+```
+
 ## Why AgentDecompile?
 
 Reverse engineering is hard. There are thousands of functions, cryptic variable names, and complex logic flows. AgentDecompile helps you make sense of it all by letting you ask plain English questions about your target code.
@@ -30,9 +40,9 @@ It works by giving the AI specific "tools" to interact with Ghidra—reading mem
 
 ## Installation
 
-AgentDecompile is a Python MCP server — no Ghidra Java extension installation required.
+For standard local usage, AgentDecompile runs as a Python MCP server, so you do not need to manually install a Ghidra Java extension.
 
-### Option 1: Run directly with uvx (no local install)
+### Option 1: Use the published CLI against a running server (no local install)
 
 ```bash
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
@@ -67,10 +77,10 @@ AgentDecompile runs as an MCP server so you can connect an AI client (Claude Des
 
 ```bash
 uv run mcp-agentdecompile
-# or: uvx agentdecompile  # if installed via pip/uv
+# or: uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile
 ```
 
-With no arguments, the CLI starts a local MCP server over stdio and uses a default project directory. Your MCP client (e.g. Claude Desktop) talks to it via stdio.
+With no arguments, the launcher starts a local MCP server over stdio and uses a default project directory. Your MCP client (e.g. Claude Desktop) talks to it via stdio.
 
 **Docker (one-liner):**
 
@@ -78,7 +88,7 @@ With no arguments, the CLI starts a local MCP server over stdio and uses a defau
 docker run -i --rm <your-agentdecompile-image> -t stdio
 ```
 
-Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in the repo). Use `-t stdable-http` or `-t sse` and `-p 8080:8080` for HTTP-based clients.
+Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in the repo). Use `-t streamable-http` or `-t sse` and `-p 8080:8080` for HTTP-based clients.
 
 ### Project creation and opening
 
@@ -125,7 +135,7 @@ For a command-line interface to a **running** server (no new Ghidra process per 
   agentdecompile-cli tool --list-tools
 
   # Call a tool directly by name
-  agentdecompile-cli tool open '{"path":"/path/to/binary"}'
+  agentdecompile-cli tool open-project '{"path":"/path/to/binary"}'
    ```
 
 Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
@@ -166,7 +176,7 @@ totalMatched: 24242
 hasMore: True
 
 # 4) Search symbols by name
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols-by-name --program_path /K1/k1_win_gog_swkotor.exe --query main --max_results 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
 
 # concise output
 query: main
@@ -217,7 +227,7 @@ export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
-Then `agentdecompile-cli open /K1/k1_win_gog_swkotor.exe` will automatically use those values.
+Then `agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe` will automatically use those shared-server values.
 
 ### Docker and volume mapping
 
@@ -234,15 +244,33 @@ Adjust the image name and port to match your build and client.
 
 ### VS Code / Cursor
 
-The `.vscode/mcp.json` file (included in the repo) provides three ready-to-use server entries:
+Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets. A minimal starting point looks like this:
+
+```json
+{
+  "servers": {
+    "agentdecompile-local": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "mcp-agentdecompile"]
+    },
+    "agentdecompile-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp/message"
+    }
+  }
+}
+```
+
+Typical entries:
 
 | Entry | When to use |
 |-------|-------------|
 | `agentdecompile-local` | Local binary analysis — no shared Ghidra server, no credentials needed. |
-| `agentdecompile-shared` | Shared Ghidra project — VS Code / Cursor prompts for your Ghidra username and password on first use. |
+| `agentdecompile-shared` | Shared Ghidra project — add environment variables or client prompts for your Ghidra username and password. |
 | `agentdecompile-http` | Connect to an **already-running** HTTP server at `http://127.0.0.1:8080/mcp/message`. Start it first with `agentdecompile-server -t streamable-http`. |
 
-**How credential prompting works for `agentdecompile-shared`:** the `inputs` block in `mcp.json` declares two prompt fields (`ghidra-username` and `ghidra-password`). VS Code / Cursor intercepts `${input:ghidra-username}` and `${input:ghidra-password}` placeholders and shows a secure input dialog before launching the server — no credentials are ever stored in source control.
+If you add an `inputs` block for `agentdecompile-shared`, VS Code or Cursor can prompt for `${input:ghidra-username}` and `${input:ghidra-password}` at launch time instead of storing credentials in the repo.
 
 To start the HTTP server for `agentdecompile-http`:
 
@@ -295,25 +323,24 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 51 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 52 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- **37 tools** are advertised by default — returned by `agentdecompile-cli tool --list-tools`.
-- **10 legacy tools** are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` to expose them (`manage-function`, `manage-comments`, `manage-bookmarks`, `get-functions`, and others).
-- All canonical names use **kebab-case** (e.g. `get-current-program`, `search-symbols-by-name`). JSON argument keys use camelCase (e.g. `programPath`, `serverHost`). CLI flags use `--snake_case`.
+- **36 tools** are advertised by default.
+- Compatibility aliases remain callable but are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` or `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` to re-advertise them.
+- Canonical MCP tool names use **kebab-case** (for example `open-project`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
-- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols-by-name`, `inspect-memory`, `manage-function-tags`, `get-call-graph`
+- Representative tools: `open-project`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`
 
-Use `agentdecompile-cli tool --list-tools` to view tool names available from your running server, and use [TOOLS_LIST.md](TOOLS_LIST.md) for the reference.
+Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
 
 ### Connection options
 
 | Mode | How to connect | Endpoint / transport |
 |------|-----------------|----------------------|
-| **GUI** | MCP client → HTTP to host:port | `http://localhost:8080/mcp/message` (POST; port/host configurable in File → Edit Tool Options → AgentDecompile) |
-| **CLI** | MCP client → stdio → `mcp-agentdecompile` | stdio JSON-RPC; bridge proxies to Python MCP server over HTTP |
-
-**GUI (plugin):** Start Ghidra, open a project, enable AgentDecompile (File → Configure → Plugins). Point your MCP client at the URL above (default port 8080, host 127.0.0.1).
+| **stdio** | MCP client spawns `mcp-agentdecompile` or `agentdecompile-mcp` | stdio JSON-RPC |
+| **streamable-http** | Client connects to `agentdecompile-server -t streamable-http` | `http://localhost:8080/mcp/message` |
+| **proxy mode** | Local `agentdecompile-server --backend-url ...` forwards to an existing backend | Local HTTP endpoint forwarding to remote MCP |
 
 **CLI (stdio):** Configure your MCP client to use `mcp-agentdecompile` (e.g. `claude mcp add AgentDecompile -- mcp-agentdecompile`).
 
@@ -351,11 +378,11 @@ Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PA
 
 ### Shared project authentication
 
-When opening a `.gpr` file connected to a Ghidra Server, authentication may be required. Provide credentials via the `open` tool parameters (`serverUsername`, `serverPassword`) or the environment variables above; tool parameters override env. Local projects do not need credentials. If you see "Shared project requires authentication but no credentials provided", set the env vars or pass parameters. For troubleshooting, see [CONTRIBUTING.md](CONTRIBUTING.md) (Ghidra Project Authentication Implementation).
+When opening a `.gpr` file connected to a Ghidra Server, authentication may be required. Provide credentials via the `open` tool parameters (`serverUsername`, `serverPassword`) or the environment variables above; tool parameters override env. Local projects do not need credentials. If shared-project open or authentication fails, set the env vars or pass parameters. For troubleshooting, see [CONTRIBUTING.md](CONTRIBUTING.md) (Ghidra Project Authentication Implementation).
 
-### Structure size (manage-structures)
+### Structures (manage-structures)
 
-When adding fields with `add_field`, `useReplace` defaults to `true` so the structure size is preserved (fields replace bytes at the given offset). Use `preserveSize: true` to fail if the structure would grow. For byte-perfect layouts, use the `parse_header` action with a full C definition. See [CONTRIBUTING.md](CONTRIBUTING.md) (Structure Size Preservation) for technical details.
+The current `manage-structures` provider supports `parse`, `validate`, `create`, `add_field`, `modify_field`, `modify_from_c`, `info`, `list`, `apply`, `delete`, and `parse_header`. For precise structure definitions, use `parse_header` or `modify_from_c` with a full C definition. See [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained command reference.
 
 ## License
 

@@ -1,3 +1,5 @@
+> Snapshot note: this file is a captured MCP tools response example. It is not the authoritative source of truth for the current tool set.
+
 {
   "id": 4,
   "jsonrpc": "2.0",

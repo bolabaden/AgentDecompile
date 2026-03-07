@@ -65,17 +65,16 @@ AgentDecompile exposes Ghidra capabilities through a Python MCP server.
 
 ```mermaid
 flowchart TD
-  A[MCP Client] --> B[stdio bridge]
-  B --> C[HTTP MCP server]
-  C --> D[tool/resource providers]
-  D --> E[PyGhidra + Ghidra APIs]
+  A[MCP Client] --> B[mcp-agentdecompile or agentdecompile-server]
+  B --> C[tool and resource providers]
+  C --> D[PyGhidra + Ghidra APIs]
 ```
 
 ### Runtime flow
 
-1. `agentdecompile_cli` initializes PyGhidra and project context.
-2. The MCP server starts on HTTP transport.
-3. The stdio bridge proxies MCP requests to HTTP.
+1. `agentdecompile_cli` initializes PyGhidra and project context when running locally.
+2. The runtime serves MCP over stdio or HTTP transports depending on the entrypoint.
+3. In connect or proxy modes, requests are forwarded to an existing MCP backend.
 4. Providers execute operations and return structured results.
 
 ---
@@ -104,9 +103,9 @@ flowchart TD
 Run focused tests first, then broader suites.
 
 ```bash
-uv run pytest tests/test_provider_*.py -v
-uv run pytest tests/test_mcp_tools.py -v
-uv run pytest tests/ -v
+uv run pytest -m unit -v
+uv run pytest tests/test_tools_list_generation_sync.py -v
+uv run pytest tests/ -v --timeout=180
 ```
 
 Use markers when needed:
@@ -114,6 +113,13 @@ Use markers when needed:
 ```bash
 uv run pytest -m "not slow" -v
 ```
+
+Authoritative commands are also listed in `AGENTS.md`:
+
+- `uv run ruff check --no-fix src/ tests/`
+- `uv run pytest tests/ -v --timeout=180`
+- `uv run pytest -m unit -v`
+- `uv build`
 
 ---
 
