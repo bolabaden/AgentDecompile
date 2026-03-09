@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import socket
+import sys
 import time
 
 from pathlib import Path
@@ -264,13 +266,63 @@ class ProjectToolProvider(ToolProvider):
             # Calling "switch-project" still works — it routes to open-project.
         ]
 
+    @staticmethod
+    def _is_foreign_os_path(path: str) -> bool:
+        """Return True when *path* looks like a Windows absolute path on a non-Windows host (or vice-versa).
+
+        The main case: an MCP client running on Windows sends ``C:/foo/bar``
+        to a Linux backend where ``Path.resolve()`` would produce nonsense
+        like ``/ghidra/C:/foo/bar``.
+        """
+        if sys.platform != "win32" and re.match(r'^[A-Za-z]:[/\\]', path):
+            return True
+        return False
+
+    def _get_shared_server_host(self) -> str:
+        """Return a shared Ghidra server host from env vars or the current auth context."""
+        env_host = os.getenv(
+            "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+            os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")),
+        ).strip()
+        if env_host:
+            return env_host
+        # Fall back to the per-request auth context (set by AuthMiddleware from
+        # X-Ghidra-Server-Host / X-Agent-Server-* HTTP headers).
+        try:
+            from agentdecompile_cli.mcp_server.auth import get_current_auth_context  # noqa: PLC0415
+
+            _auth_ctx = get_current_auth_context()
+            if _auth_ctx is not None and _auth_ctx.server_host:
+                return _auth_ctx.server_host
+        except Exception:
+            pass
+        return ""
+
+    def _build_shared_args(self, args: dict[str, Any], env_host: str) -> dict[str, Any]:
+        """Build shared-server connection args from env vars / auth context."""
+        shared_args = dict(args)
+        shared_args["serverhost"] = env_host
+        shared_args.setdefault(
+            "serverport",
+            os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
+        )
+        shared_args.setdefault(
+            "serverusername",
+            os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
+        )
+        shared_args.setdefault(
+            "serverpassword",
+            os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
+        )
+        return shared_args
+
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Unified open-project dispatcher: handles local binaries, .gpr projects, AND shared servers.
 
         Routing logic:
         1. If serverHost is explicitly provided → shared server mode
-        2. If no serverHost but env vars set (AGENT_DECOMPILE_GHIDRA_SERVER_HOST) and
-           no local path given → auto-detect shared server mode
+        2. If no serverHost but shared server is discoverable (env vars OR auth
+           context from HTTP headers) and no local path given → shared server mode
         3. Otherwise → local mode (binary import, .gpr project, directory)
         """
         server_host = self._get_str(args, "serverhost")
@@ -280,54 +332,38 @@ class ProjectToolProvider(ToolProvider):
         if server_host:
             return await self._handle_connect_shared_project(args)
 
-        # Auto-detect shared server from environment variables when no local path is given
-        # or when the path looks like a repository path (starts with / but doesn't exist locally)
+        # Auto-detect shared server from environment variables **or** auth context
+        # (AuthMiddleware populates auth context from X-Ghidra-Server-Host and
+        # related HTTP headers sent by remote MCP clients).
         if not server_host:
-            env_host = os.getenv(
-                "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
-                os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")),
-            ).strip()
+            env_host = self._get_shared_server_host()
             if env_host:
                 # If no path or path doesn't exist locally, try shared mode
                 if not path:
                     # No path at all — connect to shared server and list programs
-                    shared_args = dict(args)
-                    shared_args["serverhost"] = env_host
-                    shared_args.setdefault(
-                        "serverport",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
-                    )
-                    shared_args.setdefault(
-                        "serverusername",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
-                    )
-                    shared_args.setdefault(
-                        "serverpassword",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
-                    )
+                    shared_args = self._build_shared_args(args, env_host)
                     repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
                     if repo and "path" not in args:
                         shared_args["path"] = repo
                     return await self._handle_connect_shared_project(shared_args)
 
-                # Path is given — check if it's a local file/dir that exists
+                # Path is given — check if it's a local file/dir that exists.
+                # Detect Windows-style absolute paths (e.g. "C:/foo") on Linux;
+                # Path.resolve() would mangle them into "/cwd/C:/foo".
+                if self._is_foreign_os_path(path):
+                    # Certainly not a local path — route to shared mode.
+                    # Drop the foreign path; let _handle_connect_shared_project
+                    # pick up the repository from auth context instead.
+                    shared_args = self._build_shared_args(args, env_host)
+                    shared_args.pop("path", None)
+                    shared_args.pop("programpath", None)
+                    shared_args.pop("filepath", None)
+                    return await self._handle_connect_shared_project(shared_args)
+
                 resolved_path = Path(path).expanduser().resolve()
                 if not resolved_path.exists():
                     # Path doesn't exist locally → try shared mode with this as the program path
-                    shared_args = dict(args)
-                    shared_args["serverhost"] = env_host
-                    shared_args.setdefault(
-                        "serverport",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
-                    )
-                    shared_args.setdefault(
-                        "serverusername",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip(),
-                    )
-                    shared_args.setdefault(
-                        "serverpassword",
-                        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
-                    )
+                    shared_args = self._build_shared_args(args, env_host)
                     return await self._handle_connect_shared_project(shared_args)
 
         return await self._handle_open(args)
@@ -679,6 +715,24 @@ class ProjectToolProvider(ToolProvider):
                 ],
             )
 
+        # Detect Windows-style paths on a non-Windows backend early so we
+        # never feed them into Path.resolve() (which would mangle them into
+        # something like "/cwd/C:/Users/..." on Linux).
+        if self._is_foreign_os_path(path):
+            raise ActionableError(
+                f"The path '{path}' is a Windows filesystem path but this backend runs on {sys.platform}. "
+                "Local Windows paths are not accessible from the remote server.",
+                context={"action": "open", "path": path, "state": "path-not-found", "reason": "foreign-os-path"},
+                next_steps=filter_recommendations(
+                    [
+                        "Verify the path exists in the backend filesystem.",
+                        "Retry with an absolute path visible to the backend runtime.",
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
+                        "Retry with an absolute path that exists in the backend filesystem.",
+                    ]
+                ),
+            )
+
         resolved: Path = Path(path).expanduser().resolve()
         if not resolved.exists():
             normalized_project_path = self._normalize_repo_path(path)
@@ -714,10 +768,12 @@ class ProjectToolProvider(ToolProvider):
                         ) from exc
 
             raise ActionableError(
-                f"Path does not exist: {resolved}",
-                context={"action": "open", "path": str(resolved), "state": "path-not-found"},
+                f"Path does not exist: {path}",
+                context={"action": "open", "path": path, "state": "path-not-found"},
                 next_steps=filter_recommendations(
                     [
+                        "Verify the path exists in the backend filesystem.",
+                        "Retry with an absolute path visible to the backend runtime.",
                         "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ]
