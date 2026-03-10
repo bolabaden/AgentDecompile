@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -21,10 +22,52 @@ pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
 
 @pytest.fixture
-def local_http_session(isolated_workspace: Path) -> Generator[JsonRpcMcpSession, None, None]:
+def local_server_base_url(isolated_workspace: Path) -> Generator[str, None, None]:
     with _running_local_server_context(isolated_workspace) as base_url:
-        with JsonRpcMcpSession(base_url) as session:
-            yield session
+        yield base_url
+
+
+@pytest.fixture
+def local_http_session(local_server_base_url: str) -> Generator[JsonRpcMcpSession, None, None]:
+    with JsonRpcMcpSession(local_server_base_url) as session:
+        yield session
+
+
+def _run_local_cli(base_url: str, *args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "agentdecompile_cli.cli", "--server-url", base_url, *args],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _cli_json(result: subprocess.CompletedProcess[str]) -> object:
+    payload = (result.stdout or "").strip() or (result.stderr or "").strip()
+    return json.loads(payload)
+
+
+def _assert_cli_ok(result: subprocess.CompletedProcess[str]) -> None:
+    assert result.returncode == 0, (
+        f"CLI failed with rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def _known_endpoint_variants() -> tuple[str, ...]:
+    return ("/", "/mcp", "/mcp/", "/mcp/message", "/mcp/message/")
+
+
+def _known_open_tool_variants() -> tuple[str, ...]:
+    return ("open-project", "open_project", "switch-project")
+
+
+def _known_list_tool_variants() -> tuple[str, ...]:
+    return ("list-project-files", "list_project_files")
+
+
+def _current_program_payload_for(session: JsonRpcMcpSession, *, program_path: str) -> dict[str, object]:
+    return session.call_tool_json("get-current-program", {"programPath": program_path})
 
 
 def _find_free_port() -> int:
@@ -195,3 +238,121 @@ class TestLocalProjectLifecycle:
         assert bidirectional_payload["operation"] == "sync-project"
         assert bidirectional_payload["direction"] == "local-save-only"
         assert "No shared server session" in bidirectional_payload["note"]
+
+
+class TestLocalProjectWorkflowMatrix:
+    @pytest.mark.parametrize("endpoint", _known_endpoint_variants())
+    def test_endpoint_variants_support_open_and_current_program(
+        self,
+        local_server_base_url: str,
+        test_binary: Path,
+        endpoint: str,
+    ):
+        with JsonRpcMcpSession(local_server_base_url, endpoint=endpoint) as session:
+            open_payload = session.call_tool_json("open-project", {"path": str(test_binary)})
+            assert open_payload["operation"] == "import"
+
+            current_payload = _current_program_payload_for(session, program_path=str(test_binary))
+            assert current_payload["loaded"] is True
+            assert current_payload["programPath"].endswith(test_binary.name)
+
+    @pytest.mark.parametrize("open_tool_name", _known_open_tool_variants())
+    @pytest.mark.parametrize("list_tool_name", _known_list_tool_variants())
+    def test_open_and_list_tool_name_variants_resolve_same_project_entry(
+        self,
+        local_server_base_url: str,
+        test_binary: Path,
+        open_tool_name: str,
+        list_tool_name: str,
+    ):
+        with JsonRpcMcpSession(local_server_base_url) as session:
+            open_payload = session.call_tool_json(open_tool_name, {"path": str(test_binary)})
+            assert open_payload["filesImported"] == 1
+
+            listing_payload = session.call_tool_json(list_tool_name, {})
+            assert find_project_file(listing_payload["files"], name=test_binary.name) is not None
+
+    def test_manage_files_list_and_open_modes_match_project_workflow(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
+        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
+
+        manage_list_payload = local_http_session.call_tool_json("manage-files", {"mode": "list", "path": "/"})
+        listed_program = find_project_file(manage_list_payload["files"], name=test_binary.name)
+        assert listed_program is not None
+
+        manage_open_payload = local_http_session.call_tool_json(
+            "manage-files",
+            {"mode": "open", "path": listed_program["path"]},
+        )
+        assert manage_open_payload["action"] == "open"
+        assert manage_open_payload["path"].endswith(test_binary.name)
+
+    def test_resource_payloads_reflect_opened_local_program(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
+        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
+
+        advertised_resources = {str(item["uri"]) for item in local_http_session.list_resources()}
+        assert "ghidra://programs" in advertised_resources
+        assert "ghidra://static-analysis-results" in advertised_resources
+        assert "ghidra://agentdecompile-debug-info" in advertised_resources
+
+        programs_payload = local_http_session.read_resource_json("ghidra://programs")
+        assert any(str(program.get("name", "")).endswith(test_binary.name) for program in programs_payload.get("programs", []))
+
+        static_analysis_payload = local_http_session.read_resource_json("ghidra://static-analysis-results")
+        assert static_analysis_payload["version"] == "2.1.0"
+        assert isinstance(static_analysis_payload.get("runs"), list)
+
+        debug_info_payload = local_http_session.read_resource_json("ghidra://agentdecompile-debug-info")
+        assert debug_info_payload["program"]["status"] != "no_program_loaded"
+        assert str(debug_info_payload["program"].get("name", "")).endswith(test_binary.name)
+
+    def test_sync_project_without_open_is_actionable_error(self, local_http_session: JsonRpcMcpSession):
+        sync_payload = local_http_session.call_tool_json("sync-project", {"mode": "pull"})
+        assert sync_payload["success"] is False
+        assert sync_payload["operation"] == "sync-project"
+        assert sync_payload["context"]["state"] == "no-project-context"
+
+
+class TestLocalCliDocumentedWorkflows:
+    def test_cli_raw_tool_open_project_matches_documented_usage(self, local_server_base_url: str, test_binary: Path):
+        result = _run_local_cli(
+            local_server_base_url,
+            "--format",
+            "json",
+            "tool",
+            "open-project",
+            json.dumps({"path": str(test_binary), "format": "json"}),
+        )
+        _assert_cli_ok(result)
+        payload = _cli_json(result)
+        assert payload["filesImported"] == 1
+        assert payload["importedPrograms"][0]["path"] == str(test_binary)
+
+    def test_cli_tool_seq_keeps_state_for_open_current_and_list(self, local_server_base_url: str, test_binary: Path):
+        steps = json.dumps(
+            [
+                {"name": "open-project", "arguments": {"path": str(test_binary), "format": "json"}},
+                {"name": "get-current-program", "arguments": {"programPath": str(test_binary), "format": "json"}},
+                {"name": "list-project-files", "arguments": {"format": "json"}},
+            ]
+        )
+        result = _run_local_cli(local_server_base_url, "--format", "json", "tool-seq", steps)
+        _assert_cli_ok(result)
+        payload = _cli_json(result)
+        serialized = json.dumps(payload)
+        assert test_binary.name in serialized
+        assert "get-current-program" in serialized or "programPath" in serialized
+
+    @pytest.mark.parametrize(
+        ("resource_name", "expected_key"),
+        (("programs", "programs"), ("static-analysis", "runs"), ("debug-info", "program")),
+    )
+    def test_cli_resource_commands_cover_documented_resources(
+        self,
+        local_server_base_url: str,
+        resource_name: str,
+        expected_key: str,
+    ):
+        result = _run_local_cli(local_server_base_url, "--format", "json", "resource", resource_name)
+        _assert_cli_ok(result)
+        payload = _cli_json(result)
+        assert expected_key in payload
