@@ -25,6 +25,19 @@ def extract_json_content(response: dict[str, Any]) -> dict[str, Any]:
     return json.loads(extract_text_content(response))
 
 
+def extract_resource_json_content(response: dict[str, Any]) -> dict[str, Any]:
+    """Extract text blocks from a resources/read response and parse them as JSON."""
+    result = response.get("result", {})
+    content = result.get("contents", result.get("content", []))
+    texts: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text":
+            texts.append(item.get("text", ""))
+        elif isinstance(item, dict) and "text" in item:
+            texts.append(item.get("text", ""))
+    return json.loads("\n".join(text for text in texts if text))
+
+
 def find_project_file(files: list[dict[str, Any]], *, name: str | None = None, path_suffix: str | None = None) -> dict[str, Any] | None:
     """Return the first project file entry matching a name or path suffix."""
     for item in files:
@@ -143,5 +156,12 @@ class JsonRpcMcpSession:
         response = self.post_jsonrpc("tools/list", {}, request_id=request_id)
         return response["result"]["tools"]
 
+    def list_resources(self, *, request_id: int | None = None) -> list[dict[str, Any]]:
+        response = self.post_jsonrpc("resources/list", {}, request_id=request_id)
+        return response["result"]["resources"]
+
     def read_resource(self, uri: str, *, request_id: int | None = None) -> dict[str, Any]:
         return self.post_jsonrpc("resources/read", {"uri": uri}, request_id=request_id)
+
+    def read_resource_json(self, uri: str, *, request_id: int | None = None) -> dict[str, Any]:
+        return extract_resource_json_content(self.read_resource(uri, request_id=request_id))
