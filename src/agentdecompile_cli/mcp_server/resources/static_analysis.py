@@ -32,7 +32,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the static analysis results resource as SARIF 2.1.0 JSON."""
-        if uri != "ghidra://static-analysis-results":
+        if str(uri) != "ghidra://static-analysis-results":
             raise NotImplementedError(f"Unknown resource: {uri}")
 
         logger.info(f"StaticAnalysisResultsResource: reading resource for URI {uri}")

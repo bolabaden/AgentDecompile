@@ -23,7 +23,14 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
-from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
+from agentdecompile_cli.mcp_server.auth import (
+    CURRENT_AUTH_CONTEXT,
+    AuthConfig,
+    AuthContext,
+    AuthMiddleware,
+    get_current_auth_context,
+    parse_basic_auth,
+)
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
@@ -31,6 +38,80 @@ from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 
 logger = logging.getLogger(__name__)
 _TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
+
+
+def _auth_context_from_scope_headers(
+    scope: dict[str, Any],
+    auth_config: AuthConfig | None,
+) -> AuthContext | None:
+    """Derive best-effort shared-server defaults from MCP HTTP headers.
+
+    This enables direct HTTP MCP clients to send the same accessor-style
+    headers used by editor configs without requiring AuthMiddleware to be
+    explicitly enabled. When AuthMiddleware is active, its context takes
+    precedence and this helper is ignored.
+    """
+    if scope.get("type") != "http":
+        return None
+
+    auth_header = ""
+    target_host = ""
+    target_port_str = ""
+    target_repo = ""
+    agent_username = ""
+    agent_password = ""
+    agent_repo = ""
+
+    for key_b, value_b in scope.get("headers", []):
+        key = key_b.decode("latin1").lower()
+        val = value_b.decode("latin1").strip()
+        if key == "authorization":
+            auth_header = val
+        elif key == "x-ghidra-server-host":
+            target_host = val
+        elif key == "x-ghidra-server-port":
+            target_port_str = val
+        elif key == "x-ghidra-repository":
+            target_repo = val
+        elif key == "x-agent-server-username":
+            agent_username = val
+        elif key == "x-agent-server-password":
+            agent_password = val
+        elif key == "x-agent-server-repository":
+            agent_repo = val
+
+    if not target_repo and agent_repo:
+        target_repo = agent_repo
+
+    username = ""
+    password = ""
+    if auth_header.lower().startswith("basic "):
+        try:
+            username, password = parse_basic_auth(auth_header)
+        except ValueError:
+            logger.debug("Ignoring malformed Basic auth header while deriving request auth context")
+    if not username and agent_username:
+        username = agent_username
+        password = agent_password
+
+    try:
+        server_port = int(target_port_str)
+    except (TypeError, ValueError):
+        server_port = auth_config.default_server_port if auth_config is not None else 13100
+
+    server_host = target_host or ((auth_config.default_server_host or "") if auth_config is not None else "")
+    repository = target_repo or ((auth_config.default_repository or "") if auth_config is not None else "")
+
+    if not any([server_host, username, password, repository]):
+        return None
+
+    return AuthContext(
+        username=username,
+        password=password,
+        server_host=server_host or None,
+        server_port=server_port,
+        repository=repository or None,
+    )
 
 
 class ServerConfig(BaseModel):
@@ -132,7 +213,7 @@ class PythonMcpServer:
                 logger.error(f"MCP read_resource failed for {uri}: {e.__class__.__name__}: {e}", exc_info=True)
                 # Return empty JSON object for failed resources instead of propagating exception
                 # This prevents MCP protocol errors while still indicating failure
-                return json.dumps({"error": f"{e.__class__.__name__}: {e}", "uri": uri, "status": "failed"})
+                return json.dumps({"error": f"{e.__class__.__name__}: {e}", "uri": str(uri), "status": "failed"})
 
         @server.list_prompts()
         async def list_prompts() -> list[types.Prompt]:
@@ -143,7 +224,7 @@ class PythonMcpServer:
         return server
 
     # Paths that the MCP session handler should serve.
-    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+    _MCP_PATHS: frozenset[str] = frozenset({"/", "/mcp", "/mcp/message"})
 
     def _setup_routes(self) -> None:
         """Setup FastAPI routes for MCP communication.
@@ -204,11 +285,19 @@ class PythonMcpServer:
             # Capture which sessions exist before the SDK handles the request.
             pre_sessions = set(session_manager._server_instances.keys())
 
+            auth_token = None
+            if get_current_auth_context() is None:
+                header_auth_ctx = _auth_context_from_scope_headers(scope, self.auth_config)
+                if header_auth_ctx is not None:
+                    auth_token = CURRENT_AUTH_CONTEXT.set(header_auth_ctx)
+
             token = CURRENT_MCP_SESSION_ID.set(session_id)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
+                if auth_token is not None:
+                    CURRENT_AUTH_CONTEXT.reset(auth_token)
 
             # After the SDK processes the request, detect newly created sessions
             # and bind the client fingerprint for reconnection support.

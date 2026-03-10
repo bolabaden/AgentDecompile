@@ -36,7 +36,7 @@ class DebugInfoResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the debug info resource with comprehensive state information."""
-        if uri != "ghidra://agentdecompile-debug-info":
+        if str(uri) != "ghidra://agentdecompile-debug-info":
             raise NotImplementedError(f"Unknown resource: {uri}")
 
         logger.info(f"DebugInfoResource: reading resource for URI {uri}")

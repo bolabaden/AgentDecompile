@@ -60,7 +60,7 @@ class AgentDecompileMcpProxyServer:
 
         self._setup_routes()
 
-    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+    _MCP_PATHS: frozenset[str] = frozenset({"/", "/mcp", "/mcp/message"})
 
     def _setup_routes(self) -> None:
         @self.app.on_event("startup")

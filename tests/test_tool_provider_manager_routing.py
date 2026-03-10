@@ -77,7 +77,7 @@ async def test_manager_prefers_requested_binary_from_session_context() -> None:
         SESSION_CONTEXTS.set_active_program_info(session_id, "/K1/k1_win_gog_swkotor.exe", cast(Any, requested_info))
         SESSION_CONTEXTS.set_active_program_info(session_id, "/Other/other_active_program.exe", cast(Any, active_info))
 
-        response = await manager.call_tool("list-functions", {"binary": "k1_win_gog_swkotor.exe"})
+        response = await manager.call_tool("list-functions", {"binary": "k1_win_gog_swkotor.exe", "format": "json"})
         payload = parse_single_text_content_json(response)
 
         assert payload["programName"] == "k1_win_gog_swkotor.exe"
@@ -97,7 +97,7 @@ async def test_manager_falls_back_to_active_program_when_requested_not_found() -
         active_info = SimpleNamespace(program=_FakeProgram("active_program.exe"))
         SESSION_CONTEXTS.set_active_program_info(session_id, "/Active/active_program.exe", cast(Any, active_info))
 
-        response = await manager.call_tool("list-functions", {"binary": "missing_program.exe"})
+        response = await manager.call_tool("list-functions", {"binary": "missing_program.exe", "format": "json"})
         payload = parse_single_text_content_json(response)
 
         assert payload["programName"] == "active_program.exe"
@@ -111,7 +111,7 @@ async def test_manager_accepts_hidden_alias_tool_name() -> None:
     manager.register_all_providers()
 
     # `gen-callgraph` is intentionally hidden from advertisement but must remain callable.
-    response = await manager.call_tool("gen-callgraph", {"function": "main"})
+    response = await manager.call_tool("gen-callgraph", {"function": "main", "format": "json"})
     payload = parse_single_text_content_json(response)
 
     assert "error" in payload
@@ -124,7 +124,7 @@ async def test_provider_actionable_errors_include_prerequisite_call_outputs() ->
     manager.register_all_providers()
     manager._register(_ActionableRoutingProvider())
 
-    response = await manager.call_tool("explode", {})
+    response = await manager.call_tool("explode", {"format": "json"})
     payload = parse_single_text_content_json(response)
 
     assert payload.get("success") is False
@@ -140,7 +140,7 @@ async def test_unknown_tool_error_includes_list_tools_output() -> None:
     manager = ToolProviderManager()
     manager.register_all_providers()
 
-    response = await manager.call_tool("definitely-not-a-real-tool", {})
+    response = await manager.call_tool("definitely-not-a-real-tool", {"format": "json"})
     payload = parse_single_text_content_json(response)
 
     assert payload.get("success") is False
