@@ -2770,6 +2770,10 @@ Calculate jump address to shellcode
 **Overloads**:
 - `decompile-function()` canonical signature.
 
+### `delete-project-binary`
+**Overloads**:
+- `delete-project-binary()` canonical signature.
+
 ### `sync-project`
 **Overloads**:
 - `sync-project()` canonical signature.
@@ -2778,10 +2782,6 @@ Calculate jump address to shellcode
 **Overloads**:
 - `export()` canonical signature.
 
-### `delete-project-binary`
-**Overloads**:
-- `delete-project-binary()` canonical signature.
-
 ### `gen-callgraph`
 **Overloads**:
 - `gen-callgraph()` canonical signature.
@@ -2789,6 +2789,10 @@ Calculate jump address to shellcode
 ### `get-call-graph`
 **Overloads**:
 - `get-call-graph()` canonical signature.
+
+### `remove-program-binary`
+**Overloads**:
+- `remove-program-binary()` canonical signature.
 
 ### `get-current-address`
 **Overloads**:
@@ -2938,17 +2942,4 @@ Calculate jump address to shellcode
 **Examples**:
 - `checkout-status`
 
-### `remove-program-binary`
 
-**Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.
-
-**Parameters**:
-- None.
-
-**Overloads**:
-- `remove-program-binary()` canonical signature.
-
-**Synonyms**: `remove-program-binary`
-
-**Examples**:
-- `remove-program-binary`

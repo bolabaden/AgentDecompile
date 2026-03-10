@@ -11,6 +11,12 @@ x-common-env: &common-env
   TZ: ${TZ:-America/Chicago}
   UMASK: ${UMASK:-002}
 
+x-common-build-args: &common-build-args
+  ALPINE_BASE_IMAGE: ${ALPINE_BASE_IMAGE:-docker.io/library/alpine:latest}
+  GHIDRA_VERSION: ${GHIDRA_VERSION:-}
+  PUID: ${PUID:-1001}
+  PGID: ${PGID:-999}
+
 
 services:
   biodecompwarehouse:
@@ -19,6 +25,8 @@ services:
       #context: https://github.com/bolabaden/agentdecompile.git#master
       context: .
       dockerfile: Dockerfile.ghidra
+      args:
+        <<: *common-build-args
     image: docker.io/bolabaden/ghidra:latest
     container_name: biodecompwarehouse
     hostname: biodecompwarehouse
@@ -62,6 +70,8 @@ services:
       #context: https://github.com/bolabaden/agentdecompile.git#master
       context: .
       dockerfile: Dockerfile
+      args:
+        <<: *common-build-args
     image: docker.io/bolabaden/agentdecompile-mcp:latest
     container_name: agentdecompile-mcp
     hostname: agentdecompile-mcp
@@ -92,6 +102,8 @@ services:
       #context: https://github.com/bolabaden/agentdecompile.git#master
       context: .
       dockerfile: Dockerfile.ghidra-bsim-server
+      args:
+        <<: *common-build-args
     image: docker.io/bolabaden/ghidra-bsim-server:latest
     container_name: agentdecompile-bsim-server
     hostname: agentdecompile-bsim-server
@@ -132,6 +144,8 @@ services:
       #context: https://github.com/bolabaden/agentdecompile.git#master
       context: .
       dockerfile: Dockerfile.aio
+      args:
+        <<: *common-build-args
     image: docker.io/bolabaden/agentdecompile-aio:latest
     container_name: agentdecompile-aio
     hostname: agentdecompile-aio
@@ -176,3 +190,7 @@ services:
       # Auto-restart on unhealthy state
       deunhealth.restart.on.unhealthy: "true"
     restart: always
+
+networks:
+  publicnet:
+    driver: bridge

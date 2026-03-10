@@ -11,6 +11,14 @@ flowchart TD
 
 This guide keeps only the current command surface. Historical output captures were removed so the examples stay aligned with the live CLI and server help.
 
+Note: If you want to run from a local clone of the repository instead of using `git+https://github.com/bolabaden/agentdecompile`, use:
+
+```bash
+uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-cli ...
+uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-server ...
+uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-proxy ...
+```
+
 ## Shared constants
 
 ```text
@@ -30,19 +38,19 @@ Notes:
 ### Local stdio runtime
 
 ```bash
-uv run mcp-agentdecompile
+uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile
 ```
 
 ### HTTP server
 
 ```bash
-uv run agentdecompile-server -t streamable-http --project-path ./agentdecompile_projects
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http --project-path ./agentdecompile_projects
 ```
 
 ### Proxy mode
 
 ```bash
-uv run agentdecompile-server --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
 ```
 
 ## 2. Shared-server environment variables
@@ -72,13 +80,13 @@ $Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
 ### Open a program
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
 ```
 
 Equivalent raw tool call:
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ tool open-project '{"path":"/K1/k1_win_gog_swkotor.exe"}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool open-project '{"path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 ### List project files
@@ -90,55 +98,106 @@ agentdecompile-cli --server-url http://***:8080/ list project-files
 ### Verify the active program
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 ```
 
 ### Search symbols
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame --limit 20
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame --limit 20
 ```
 
 If you specifically need the legacy alias for parity testing, use raw tool mode:
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ tool search-symbols-by-name '{"programPath":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","limit":20}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool search-symbols-by-name '{"programPath":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","limit":20}'
 ```
 
 ### References to and from a target
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
-agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 100
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 100
 ```
 
 ### List imports and exports
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ list imports --binary /K1/k1_win_gog_swkotor.exe
-agentdecompile-cli --server-url http://***:8080/ list exports --binary /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list imports --binary /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list exports --binary /K1/k1_win_gog_swkotor.exe
 ```
 
 ### Read MCP resources
 
 ```powershell
-agentdecompile-cli --server-url http://***:8080/ resource programs
-agentdecompile-cli --server-url http://***:8080/ resource static-analysis
-agentdecompile-cli --server-url http://***:8080/ resource debug-info
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource programs
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource static-analysis
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource debug-info
 ```
 
 ### Run a sequence of tool calls in one session
 
 ```powershell
 $steps = '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":10}}]'
-agentdecompile-cli --server-url http://***:8080/ tool-seq $steps
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool-seq $steps
 ```
 
 This is the supported way to keep state inside one CLI invocation.
 
+### Shared repository quick sequence with uvx
+
+Use this when you want an install-free command chain against a shared repository clone of the CLI.
+
+```mermaid
+flowchart TD
+  A[Set shared-server env vars] --> B[open PATH]
+  B --> C[list project-files]
+  C --> D[get-current-program]
+  D --> E[search-symbols or references]
+  E --> F[tool or tool-seq for advanced workflows]
+```
+
+Open a program from the shared repository:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
+```
+
+List available project files:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list project-files
+```
+
+Verify the active program:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+```
+
+Search symbols:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
+```
+
+Trace references:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 25
+```
+
+Use raw tool mode when you need exact MCP payload control:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool-seq '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
+```
+
 ## 4. Raw MCP HTTP example
 
-When you need to call the MCP endpoint directly, send requests to `http://host:port/mcp/message` after your client performs the normal MCP `initialize` handshake.
+The server accepts MCP requests on three paths: `/`, `/mcp`, and `/mcp/message` (with optional trailing slash). All are equivalent. Send requests after your client performs the normal MCP `initialize` handshake.
 
 Example `tools/call` payload:
 
@@ -159,6 +218,12 @@ Example `tools/call` payload:
 }
 ```
 
+### Response format
+
+Tool responses are returned as Markdown-formatted text by default. To receive raw JSON instead, include `"format": "json"` in the tool's `arguments`. This is useful for automated pipelines that parse structured data.
+
+Error responses for unresolvable program paths are returned as raw JSON (with `"success": false`) even in Markdown mode.
+
 ## 5. Tool naming guidance
 
 - Prefer canonical tool names from [TOOLS_LIST.md](TOOLS_LIST.md).
@@ -169,7 +234,27 @@ Example `tools/call` payload:
 
 ## 6. Common failure states
 
-Typical tool errors include a `nextSteps` array. Follow those steps before broad retries. Example shape:
+Typical tool errors include a `nextSteps` array. Follow those steps before broad retries.
+
+When a tool cannot resolve the requested program path, the error is returned as raw JSON even in the default Markdown mode:
+
+```json
+{
+  "success": false,
+  "error": "Program path '...' was provided but could not be resolved/opened ...",
+  "context": {
+    "state": "program-resolution-failed",
+    "requestedProgramPath": "...",
+    "prerequisiteCalls": [...]
+  },
+  "nextSteps": [
+    "Call `list-project-files` to discover the exact program path.",
+    "Call `import-binary` to import if the file is not yet in the project."
+  ]
+}
+```
+
+Authentication and server errors follow the same shape:
 
 ```json
 {
@@ -191,4 +276,3 @@ Typical tool errors include a `nextSteps` array. Follow those steps before broad
 - `README.md` for installation and transport overview.
 - `docs/MCP_AGENTDECOMPILE_USAGE.md` for MCP client configuration.
 - `docs/IMPORT_EXPORT_GUIDE.md` for import and export workflows.
-- `usage_structure.md` for the short shared-repository command chain.
