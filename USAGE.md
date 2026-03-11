@@ -22,16 +22,39 @@ uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ age
 ## Shared constants
 
 ```text
-Server URL: http://***:8080/
-MCP endpoint: http://***:8080/mcp
+Base server URL: http://***:8080/
+Preferred MCP endpoint: http://***:8080/mcp
 Program path: /K1/k1_win_gog_swkotor.exe
 ```
 
 Notes:
 
-- The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint, `/mcp/message` as the compatibility endpoint, `/` as the API index, and `/docs` as the Swagger UI.
+- The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
+
+## Commands Exercised In This Session
+
+These are the command shapes actually used while validating the current docs and transport behavior in this conversation.
+
+```powershell
+# Published Docker image in stdio mode
+docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio
+
+# Local-checkout CLI sequence used to verify shared-repository and project lifecycle behavior
+$env:PYTHONPATH='src'
+C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+```
+
+Equivalent CLI entrypoint if you want the same behavior through the published command instead of `python -m`:
+
+```powershell
+uv run agentdecompile-cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+```
 
 ## 1. Start the runtime
 
@@ -220,7 +243,7 @@ See `tests/test_e2e_local_terminal_contracts.py` and `examples/mcp_responses/loc
 
 Use this when you want an install-free command chain against a shared repository MCP server.
 
-The CLI accepts either a base server URL or an MCP endpoint URL. The examples below use `--mcp-server-url http://host:port/mcp/` explicitly.
+The CLI accepts either a base server URL or an MCP endpoint URL. The examples below use `--mcp-server-url http://host:port/mcp/` explicitly so the transport path is visible in copy-pasteable commands.
 
 If you are validating a local code change, replace these `uvx --from ...` commands with `uv run ...` from the local repository, or use `uvx --from /path/to/agentdecompile --with-editable /path/to/agentdecompile ...`, so the terminal run actually exercises your modified code.
 
@@ -255,22 +278,50 @@ List available project files:
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ list project-files
 ```
 
+Observed live result during this session included `/K1` and `/K1/k1_win_gog_swkotor.exe` from a fresh shared-session bootstrap.
+
 Verify the active program:
 
 ```powershell
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 ```
 
-List a small function sample:
+Observed live result during this session:
+
+```text
+loaded: True
+name: swkotor.exe
+language: x86:LE:32:default
+compiler: windows
+functionCount: 24591
+```
+
+Inspect a concrete function after discovery:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier WinMain
+```
+
+Observed live result during this session:
+
+```text
+identifier: WinMain
+address: 004041f0
+name: WinMain
 ```
 
 Search symbols:
 
 ```powershell
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
+```
+
+Observed live result during this session:
+
+```text
+query: main
+totalMatched: 58
+sampleHit: WinMain
 ```
 
 Trace references:
@@ -291,6 +342,7 @@ Notes:
 
 - Fresh CLI invocations create fresh MCP sessions. `get-functions`, `search-symbols`, `references`, and `get-current-program` can reopen the requested program when `--program_path` is provided together with shared-server env vars.
 - `list project-files` on a fresh session requires a backend built from this revision or newer so it can bootstrap the shared repository index from shared-server env vars.
+- The live remote path re-verified in this session was `http://170.9.241.140:8080/mcp`; keep `/mcp` in docs and client configs even though the CLI can also normalize a base URL.
 - If shared-server authentication fails, the CLI now reports both the wrapper exception and the underlying Ghidra adapter error when the backend is running this revision or newer.
 
 Keep state inside one CLI invocation when you need a strict open-then-query flow:
@@ -301,7 +353,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 ## 4. Raw MCP HTTP example
 
-The documented MCP request paths are `/mcp` and `/mcp/message` (with optional trailing slash). `/mcp` is the primary streamable-HTTP endpoint, `/` is the API index, and `/docs` serves the Swagger UI. Send requests after your client performs the normal MCP `initialize` handshake.
+The documented MCP request paths are `/mcp` and `/mcp/message` (with optional trailing slash). `/mcp` is the primary streamable-HTTP endpoint. `/` and `/api` expose the API index metadata, `/docs` serves the Swagger UI, and `/api/mcp` is not a valid MCP route. Send requests after your client performs the normal MCP `initialize` handshake.
 
 Example `tools/call` payload:
 

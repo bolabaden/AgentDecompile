@@ -54,28 +54,75 @@ export GHIDRA_INSTALL_DIR=/path/to/ghidra
 
 - `src/agentdecompile_cli/` — CLI, server, providers, resources, utilities
 - `tests/` — pytest unit/integration/e2e coverage
-- `docs/` — user and workflow documentation
+- `docs/` — user, workflow, and architecture documentation
+- `docs/generated/` — machine-generated static call graph and entrypoint reachability artifacts
 - `vendor/` — upstream reference implementations used for parity checks
 
 ---
 
 ## Architecture
 
-AgentDecompile exposes Ghidra capabilities through a Python MCP server.
+AgentDecompile exposes Ghidra capabilities through a Python MCP server, but the repo actually contains four distinct runtime planes that share the same provider layer.
 
 ```mermaid
 flowchart TD
-  A[MCP Client] --> B[mcp-agentdecompile or agentdecompile-server]
-  B --> C[tool and resource providers]
-  C --> D[PyGhidra + Ghidra APIs]
+  subgraph ConsoleScripts[Console scripts]
+    CLI1[agentdecompile / agentdecompile-cli]
+    CLI2[agentdecompile-mcp / mcp-agentdecompile]
+    CLI3[agentdecompile-server]
+    CLI4[agentdecompile-proxy]
+  end
+
+  CLI1 --> A[HTTP client CLI]
+  CLI2 --> B[stdio MCP launcher]
+  CLI3 --> C[local PyGhidra MCP server]
+  CLI4 --> D[proxy MCP server]
+
+  A --> E[AgentDecompileMcpClient]
+  B --> F[local runtime bootstrap]
+  C --> G[tool and resource providers]
+  D --> H[forward to remote backend]
+  F --> G
+  E --> I[/mcp or /mcp/message]
+  H --> I
+  G --> J[PyGhidra + Ghidra APIs]
 ```
+
+### Entrypoints
+
+| Script | Target | Role |
+| --- | --- | --- |
+| `agentdecompile` / `agentdecompile-cli` | `agentdecompile_cli.cli:cli_entry_point` | Main HTTP client CLI |
+| `agentdecompile-mcp` / `mcp_agentdecompile` / `mcp-agentdecompile` | `agentdecompile_cli.__main__:main` | MCP stdio launcher |
+| `agentdecompile-server` | `agentdecompile_cli.server:main` | Local PyGhidra-backed MCP server |
+| `agentdecompile-proxy` | `agentdecompile_cli.server:proxy_main` | Proxy-only MCP forwarder |
 
 ### Runtime flow
 
-1. `agentdecompile_cli` initializes PyGhidra and project context when running locally.
-2. The runtime serves MCP over stdio or HTTP transports depending on the entrypoint.
-3. In connect or proxy modes, requests are forwarded to an existing MCP backend.
-4. Providers execute operations and return structured results.
+1. `agentdecompile_cli.server:main` initializes PyGhidra, project paths, and the provider managers when running locally.
+2. `agentdecompile_cli.__main__:main` serves the stdio MCP path and can either bootstrap local runtime state or connect to an existing backend.
+3. `agentdecompile_cli.cli:cli_entry_point` stays HTTP-first and dispatches tool calls through `AgentDecompileMcpClient` instead of executing tool logic locally.
+4. `agentdecompile_cli.server:proxy_main` forwards tools, resources, and prompts to an existing MCP backend without starting local PyGhidra.
+5. Tool providers execute the actual operations and return structured responses through the MCP server layer.
+
+### Static call graph artifacts
+
+The repository includes machine-generated source graph artifacts so contributors can reason about the runtime without manually tracing every entrypoint.
+
+- `docs/SRC_ENTRYPOINTS_CALL_GRAPH.md` is the readable overview and links to the generated files.
+- `docs/generated/src_static_call_graph.json` contains the raw static inventory of modules, definitions, imports, decorators, and call sites.
+- `docs/generated/src_static_call_graph_full.mmd` is the exhaustive Mermaid graph.
+- `docs/generated/src_static_call_graph_summary.json` records the top-level hotspot counts.
+- `docs/generated/src_entrypoint_reachability.json` shows reachability slices from each packaged entry function.
+
+Current generated summary:
+
+- `76` Python modules under `src/agentdecompile_cli`
+- `1401` discovered classes, functions, and methods
+- `12016` call sites total
+- `4873` package-internal call sites before deduplication
+- `3150` deduplicated internal caller-to-callee edges in the full Mermaid graph
+- `83` Click command or group functions in `agentdecompile_cli.cli`
 
 ---
 
