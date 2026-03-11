@@ -82,6 +82,32 @@ def test_import_binary_alias_corrections_override_tools_list_alias_pollution() -
     assert parsed["enableVersionControl"] is True
 
 
+def test_shared_open_project_creates_missing_requested_repository() -> None:
+    provider = ProjectToolProvider()
+    created_names: list[str] = []
+
+    class _FakeServerAdapter:
+        def createRepository(self, name: str) -> object:
+            created_names.append(name)
+            return object()
+
+        def getRepository(self, name: str) -> object | None:
+            return object() if name in created_names else None
+
+    repository_names, repository_created = provider._ensure_shared_repository_exists(
+        server_adapter=_FakeServerAdapter(),
+        repository_names=["LocalRepo"],
+        requested_repository="MissingRepo",
+        auth_provided=True,
+        server_host="127.0.0.1",
+        server_port=13100,
+    )
+
+    assert repository_created is True
+    assert created_names == ["MissingRepo"]
+    assert repository_names == ["LocalRepo", "MissingRepo"]
+
+
 @pytest.mark.asyncio
 async def test_import_binary_handler_prefers_path_before_filepath(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     provider = ImportExportToolProvider()
@@ -148,6 +174,32 @@ async def test_list_project_files_bootstraps_shared_listing_from_env(monkeypatch
     assert payload["source"] == "shared-server-session"
     assert payload["count"] == 1
     assert payload["files"][0]["path"] == "/K1/k1_win_gog_swkotor.exe"
+
+
+@pytest.mark.asyncio
+async def test_open_project_shared_flag_forces_shared_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = ProjectToolProvider()
+    existing_local_path = tmp_path / "ExistingProject"
+    existing_local_path.mkdir()
+    monkeypatch.setattr(provider, "_get_shared_server_host", lambda: "127.0.0.1")
+
+    async def _fake_connect(args: dict[str, Any]) -> list[Any]:
+        return project_provider_module.create_success_response(
+            {"route": "shared", "shared": args.get("shared"), "serverhost": args.get("serverhost")}
+        )
+
+    async def _fake_open(args: dict[str, Any]) -> list[Any]:
+        return project_provider_module.create_success_response({"route": "local"})
+
+    monkeypatch.setattr(provider, "_handle_connect_shared_project", _fake_connect)
+    monkeypatch.setattr(provider, "_handle_open", _fake_open)
+
+    response = await provider._handle_open_project({"path": str(existing_local_path), "shared": True})
+    payload = json.loads(response[0].text)
+
+    assert payload["route"] == "shared"
+    assert payload["shared"] is True
+    assert payload["serverhost"] == "127.0.0.1"
 
 
 @pytest.mark.asyncio

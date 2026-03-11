@@ -161,7 +161,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 ### Search symbols
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame --limit 20
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame
 ```
 
 If you specifically need the legacy alias for parity testing, use raw tool mode:
@@ -173,8 +173,8 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 ### References to and from a target
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 25
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 100
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0
 ```
 
 ### List imports and exports
@@ -264,20 +264,20 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 List a small function sample:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe
 ```
 
 Search symbols:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
 ```
 
 Trace references:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 25
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0
 ```
 
 Use raw tool mode when you need exact MCP payload control:

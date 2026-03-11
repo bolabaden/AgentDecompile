@@ -314,7 +314,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "match-function": _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
     "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
     "open-program-in-code-browser": _params("programPath"),
-    "open-project": _params("path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
+    "open-project": _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
     "read-bytes": _params("programPath", "address", "length"),
     "search-code": _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
@@ -698,6 +698,9 @@ def _add_builtin_param_aliases() -> None:
 
     # Open/shared-server argument harmonization.
     for tool_name in ("open-project",):
+        _add(tool_name, "isShared", "shared")
+        _add(tool_name, "sharedMode", "shared")
+        _add(tool_name, "shared_mode", "shared")
         _add(tool_name, "ghidraServerHost", "serverHost")
         _add(tool_name, "ghidra_server_host", "serverHost")
         _add(tool_name, "ghidraServerPort", "serverPort")

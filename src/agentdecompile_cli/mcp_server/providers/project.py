@@ -155,6 +155,7 @@ class ProjectToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": ".gpr path, project directory, or repository name."},
+                        "shared": {"type": "boolean", "default": False, "description": "Force shared Ghidra repository mode for this open request."},
                         "serverHost": {"type": "string", "description": "Ghidra server host (shared project mode)."},
                         "serverPort": {"type": "integer", "description": "Ghidra server port (default: 13100)."},
                         "serverUsername": {"type": "string", "description": "Repository authentication username."},
@@ -485,21 +486,31 @@ class ProjectToolProvider(ToolProvider):
         """Unified open-project dispatcher: handles local binaries, .gpr projects, AND shared servers.
 
         Routing logic:
-        1. If serverHost is explicitly provided → shared server mode
-        2. If no serverHost but shared server is discoverable (env vars OR auth
+        1. If `shared=true` or serverHost is explicitly provided → shared server mode
+        2. If no explicit shared flag/serverHost but shared server is discoverable (env vars OR auth
            context from HTTP headers) and no local path given → shared server mode
         3. Otherwise → local mode (binary import, .gpr project, directory)
         """
         server_host = self._get_str(args, "serverhost")
+        shared_mode_requested = self._get_bool(args, "shared", default=False)
         path = self._get_str(args, "path", "programpath", "filepath")
         logger.info(
-            "[open-project] dispatcher: server_host=%r, path=%r, raw_args_keys=%s",
-            server_host, path, list(args.keys()) if isinstance(args, dict) else "N/A",
+            "[open-project] dispatcher: shared=%s, server_host=%r, path=%r, raw_args_keys=%s",
+            shared_mode_requested, server_host, path, list(args.keys()) if isinstance(args, dict) else "N/A",
         )
 
         # Explicit shared server mode
-        if server_host:
-            logger.info("[open-project] ROUTE: explicit shared server (serverHost in args)")
+        if shared_mode_requested or server_host:
+            if shared_mode_requested and not server_host:
+                env_host = self._get_shared_server_host()
+                if env_host:
+                    logger.info("[open-project] shared=true with implicit env/auth host %r", env_host)
+                    return await self._handle_connect_shared_project(self._build_shared_args(args, env_host))
+            logger.info(
+                "[open-project] ROUTE: explicit shared server (shared=%s, serverHost in args=%s)",
+                shared_mode_requested,
+                bool(server_host),
+            )
             return await self._handle_connect_shared_project(args)
 
         # Auto-detect shared server from environment variables **or** auth context

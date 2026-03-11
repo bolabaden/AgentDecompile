@@ -11,8 +11,8 @@ Usage:
   # Use CLI
   agentdecompile-cli list binaries
   agentdecompile-cli decompile --binary /myapp main
-  agentdecompile-cli search symbols --binary /myapp malloc -l 20
-  agentdecompile-cli search strings --binary /myapp regex "error|warning" -l 50
+    agentdecompile-cli search symbols --binary /myapp malloc
+    agentdecompile-cli search strings --binary /myapp regex "error|warning"
   agentdecompile-cli xref --binary /myapp 0x401000
   agentdecompile-cli read --binary /myapp 0x1000 -s 64
   agentdecompile-cli memory read --binary /myapp 0x1000 --length 32
@@ -923,7 +923,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
     """Dynamically create CLI commands from the tool registry."""
     advertised_set = set(ADVERTISED_TOOLS)
     for tool_name in TOOLS:
-        tool_params = tool_registry.get_tool_params(tool_name)
+        tool_params = _supported_cli_tool_params(tool_name)
         snake_params = [to_snake_case(param) for param in tool_params]
         params_help = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
         command_help = f"Call `{tool_name}`. Parameters: {params_help}"
@@ -992,7 +992,15 @@ def _tool_aliases_for(canonical_tool: str) -> list[str]:
     return sorted(set(aliases))
 
 
-def _tool_signature(tool_name: str) -> str:
+_CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS: frozenset[str] = frozenset({"limit", "maxresults", "maxcount", "topn"})
+
+
+def _is_cli_result_limit_param(param: str) -> bool:
+    normalized = param.replace("_", "").replace("-", "").lower()
+    return normalized in _CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS
+
+
+def _supported_cli_tool_params(tool_name: str) -> list[str]:
     params = TOOL_PARAMS.get(tool_name)
     if params is None:
         resolved = tool_registry.resolve_tool_name(tool_name)
@@ -1000,6 +1008,11 @@ def _tool_signature(tool_name: str) -> str:
             params = TOOL_PARAMS.get(resolved, [])
         else:
             params = []
+    return [param for param in params if not _is_cli_result_limit_param(param)]
+
+
+def _tool_signature(tool_name: str) -> str:
+    params = _supported_cli_tool_params(tool_name)
     params = [to_snake_case(param) for param in params]
     return " ".join(f"--{param}" for param in params) if params else "(none)"
 
@@ -1327,7 +1340,6 @@ def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     required=True,
     help="Program path in project",
 )
-@click.option("--max-results", type=int, default=75)
 @click.option("--start-index", type=int, default=0)
 @click.option("--library-filter", help="Filter by library name")
 @click.option("--no-group-by-library", is_flag=True, help="Do not group by library")
@@ -1335,14 +1347,12 @@ def list_binaries(ctx: click.Context, local_format: str | None) -> None:
 def list_imports(
     ctx: click.Context,
     program_path: str,
-    max_results: int,
     start_index: int,
     library_filter: str | None,
     no_group_by_library: bool,
 ) -> None:
     payload: dict[str, Any] = {
         "programPath": program_path,
-        "maxResults": max_results,
         "startIndex": start_index,
     }
     if library_filter is not None:
@@ -1354,13 +1364,11 @@ def list_imports(
 
 @list_grp.command("exports", help="List exports (list-exports)")
 @click.option("-b", "--binary", "program_path", required=True)
-@click.option("--max-results", type=int, default=75)
 @click.option("--start-index", type=int, default=0)
 @click.pass_context
 def list_exports(
     ctx: click.Context,
     program_path: str,
-    max_results: int,
     start_index: int,
 ) -> None:
     _run_async(
@@ -1368,7 +1376,6 @@ def list_exports(
             ctx,
             "list-exports",
             programPath=program_path,
-            maxResults=max_results,
             startIndex=start_index,
         ),
     )
@@ -1557,7 +1564,6 @@ def functions_grp() -> None:
 @click.option("-b", "--binary", "program_path", required=True)
 @click.argument("identifier")
 @click.option("--offset", type=int, default=1, help="Line offset (1-based)")
-@click.option("--limit", type=int, default=50)
 @click.option("--include-callers", is_flag=True)
 @click.option("--include-callees", is_flag=True)
 @click.option("--include-comments", is_flag=True)
@@ -1573,7 +1579,6 @@ def functions_decompile(
     program_path: str,
     identifier: str,
     offset: int,
-    limit: int,
     include_callers: bool,
     include_callees: bool,
     include_comments: bool,
@@ -1590,7 +1595,6 @@ def functions_decompile(
                     "identifier": identifier,
                     "view": "decompile",
                     "offset": offset,
-                    "limit": limit,
                     "includeCallers": include_callers,
                     "includeCallees": include_callees,
                     "includeComments": include_comments,
@@ -1698,10 +1702,8 @@ def symbols_grp() -> None:
 @click.option("--label-name", "label_name", multiple=True)
 @click.option("--new-name", "new_name", multiple=True)
 @click.option("--library-filter", "library_filter")
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--start-index", "start_index", type=int)
 @click.option("--offset", type=int)
-@click.option("--max-count", "max_count", type=int)
 @click.option(
     "--group-by-library/--no-group-by-library",
     "group_by_library",
@@ -1725,8 +1727,6 @@ def symbols_run(
     library_filter: str | None,
     start_index: int | None,
     offset: int | None,
-    limit: int | None,
-    max_count: int | None,
     group_by_library: bool,
     include_external: bool,
     filter_default_names: bool,
@@ -1747,10 +1747,6 @@ def symbols_run(
         payload["startIndex"] = start_index
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
-    if max_count is not None:
-        payload["maxCount"] = max_count
     payload["groupByLibrary"] = group_by_library
     payload["includeExternal"] = include_external
     payload["filterDefaultNames"] = filter_default_names
@@ -1767,7 +1763,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
 
     @symbols_grp.command(mode_name, help=help_text or f"Run symbols mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--offset", type=int)
     @click.option("--library-filter", "library_filter")
     @click.option("--group-by-library/--no-group-by-library", "group_by_library", default=True)
@@ -1778,7 +1773,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
         ctx: click.Context,
         program_path: str | None,
         offset: int | None,
-        limit: int | None,
         library_filter: str | None,
         group_by_library: bool,
         include_external: bool,
@@ -1789,8 +1783,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
             payload["programPath"] = program_path
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         if library_filter:
             payload["libraryFilter"] = library_filter
         payload["groupByLibrary"] = group_by_library
@@ -1826,9 +1818,7 @@ def strings_grp() -> None:
 @click.option("--search-string", "searchString")
 @click.option("--filter")
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--include-referencing-functions", "includeReferencingFunctions", is_flag=True)
 @click.pass_context
 def strings_run(
@@ -1839,9 +1829,7 @@ def strings_run(
     search_string: str | None,
     filter: str | None,
     start_index: int | None,
-    max_count: int | None,
     offset: int | None,
-    limit: int | None,
     include_referencing_functions: bool,
 ) -> None:
     payload: dict[str, Any] = {"mode": mode}
@@ -1855,12 +1843,8 @@ def strings_run(
         payload["filter"] = filter
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     payload["includeReferencingFunctions"] = include_referencing_functions
     _run_async(_call(ctx, "manage-strings", **payload))
 
@@ -1877,7 +1861,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--search-string", "search_string")
     @click.option("--filter")
     @click.option("--offset", type=int)
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--include-referencing-functions", "include_refs", is_flag=True)
     @click.pass_context
     def _cmd(
@@ -1887,7 +1870,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
         search_string: str | None,
         filter: str | None,
         offset: int | None,
-        limit: int | None,
         include_refs: bool,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
@@ -1901,8 +1883,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
             payload["filter"] = filter
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         payload["includeReferencingFunctions"] = include_refs
         _run_async(_call(ctx, "manage-strings", **payload))
 
@@ -1938,9 +1918,7 @@ def list_functions_grp() -> None:
 @click.option("--min-reference-count", "minReferenceCount", type=int)
 @click.option("--identifiers", multiple=True)
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
 @click.option(
     "--filter-default-names/--no-filter-default-names",
     "filterDefaultNames",
@@ -1960,9 +1938,7 @@ def list_functions_run(
     min_reference_count: int | None,
     identifiers: tuple[str, ...],
     start_index: int | None,
-    max_count: int | None,
     offset: int | None,
-    limit: int | None,
     filter_default_names: bool,
     filter_by_tag: str | None,
     untagged: bool,
@@ -1982,12 +1958,8 @@ def list_functions_run(
         payload["identifiers"] = list(identifiers)
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     payload["filterDefaultNames"] = filter_default_names
     if filter_by_tag is not None and filter_by_tag.strip():
         payload["filterByTag"] = filter_by_tag
@@ -2007,7 +1979,6 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("-b", "--binary", "program_path")
     @click.option("--query")
     @click.option("--offset", type=int)
-    @click.option("--limit", type=int)
     @click.option("--filter-default-names/--no-filter-default-names", "filter_default_names", default=True)
     @click.option("--verbose", is_flag=True)
     @click.pass_context
@@ -2016,7 +1987,6 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
         program_path: str | None,
         query: str | None,
         offset: int | None,
-        limit: int | None,
         filter_default_names: bool,
         verbose: bool,
     ) -> None:
@@ -2027,8 +1997,6 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
             payload["query"] = query
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         payload["filterDefaultNames"] = filter_default_names
         payload["verbose"] = verbose
         _run_async(_call(ctx, "list-functions", **payload))
@@ -2241,7 +2209,6 @@ def memory_grp() -> None:
 @click.option("--address")
 @click.option("--length", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
 @click.pass_context
 def memory_run(
     ctx: click.Context,
@@ -2250,7 +2217,6 @@ def memory_run(
     address: str | None,
     length: int | None,
     offset: int | None,
-    limit: int | None,
 ) -> None:
     payload: dict[str, Any] = {"programPath": program_path, "mode": mode}
     if address is not None and address.strip():
@@ -2259,8 +2225,6 @@ def memory_run(
         payload["length"] = length
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     _run_async(_call(ctx, "inspect-memory", **payload))
 
 
@@ -2271,6 +2235,7 @@ def memory_run(
 
 @main.command("open", help="Open project/shared session (open-project); use import/import-binary for local binaries")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
+@click.option("--shared/--no-shared", "shared", default=False, help="Force shared Ghidra repository mode for open-project")
 @click.option("--open-all-programs", "open_all_programs", is_flag=True, default=False, help="Open all programs in the project")
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
@@ -2284,6 +2249,7 @@ def memory_run(
 def open_cmd(
     ctx: click.Context,
     path: str | None,
+    shared: bool,
     extensions: str | None,
     open_all_programs: bool,
     destination_folder: str,
@@ -2295,7 +2261,7 @@ def open_cmd(
     server_port: int | None,
 ) -> None:
     payload: dict[str, Any] = {}
-    is_shared_server_mode = bool(server_host and server_host.strip())
+    is_shared_server_mode = shared or bool(server_host and server_host.strip())
 
     # When connecting to a remote Ghidra shared-project server, the MCP
     # backend typically runs on the *same* host (Docker exposes the Ghidra
@@ -2315,6 +2281,8 @@ def open_cmd(
             payload["path"] = str(Path(path).resolve()) if path != "/" else path
     if extensions is not None:
         payload["extensions"] = extensions
+    if shared:
+        payload["shared"] = True
     payload["openAllPrograms"] = open_all_programs
     payload["destinationFolder"] = destination_folder
     payload["analyzeAfterImport"] = analyze_after_import
@@ -2346,7 +2314,6 @@ def references_grp() -> None:
 @click.option("--mode", type=click.Choice(["to", "from", "both", "function", "referencers_decomp", "import", "thunk"]), default="both")
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--library-name", "libraryName")
 @click.option("--start-index", "startIndex", type=int)
 @click.option("--max-referencers", "maxReferencers", type=int)
@@ -2360,7 +2327,6 @@ def references_run(
     mode: str,
     direction: str | None,
     offset: int | None,
-    limit: int | None,
     library_name: str | None,
     start_index: int | None,
     max_referencers: int | None,
@@ -2374,8 +2340,6 @@ def references_run(
         payload["direction"] = direction
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     if library_name is not None:
         payload["libraryName"] = library_name
     if start_index is not None:
@@ -2398,7 +2362,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--target", required=True, help="Address, symbol, function, or import name")
     @click.option("--direction", type=click.Choice(["to", "from", "both"]))
     @click.option("--offset", type=int)
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2406,7 +2369,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
         target: str,
         direction: str | None,
         offset: int | None,
-        limit: int | None,
     ) -> None:
         payload: dict[str, Any] = {"target": target, "mode": mode_name}
         if program_path:
@@ -2415,8 +2377,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
             payload["direction"] = direction
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         _run_async(_call(ctx, "get-references", **payload))
 
     return _cmd
@@ -2443,7 +2403,6 @@ def datatypes_grp() -> None:
 @click.option("--category-path", "categoryPath", default="/")
 @click.option("--include-subcategories", "includeSubcategories", is_flag=True)
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--data-type-string", "dataTypeString")
 @click.option("--address-or-symbol", "addressOrSymbol")
 @click.pass_context
@@ -2455,7 +2414,6 @@ def datatypes_run(
     category_path: str,
     include_subcategories: bool,
     start_index: int | None,
-    max_count: int | None,
     data_type_string: str | None,
     address_or_symbol: str | None,
 ) -> None:
@@ -2468,8 +2426,6 @@ def datatypes_run(
     payload["includeSubcategories"] = include_subcategories
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if data_type_string is not None:
         payload["dataTypeString"] = data_type_string
     if address_or_symbol is not None:
@@ -2489,7 +2445,6 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
     @click.option("--category-path", "categoryPath", default="/")
     @click.option("--include-subcategories", "includeSubcategories", is_flag=True)
     @click.option("--start-index", "startIndex", type=int)
-    @click.option("--max-count", "maxCount", type=int)
     @click.option("--data-type-string", "dataTypeString")
     @click.option("--address-or-symbol", "addressOrSymbol")
     @click.pass_context
@@ -2500,7 +2455,6 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
         category_path: str,
         include_subcategories: bool,
         start_index: int | None,
-        max_count: int | None,
         data_type_string: str | None,
         address_or_symbol: str | None,
     ) -> None:
@@ -2513,8 +2467,6 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
         payload["includeSubcategories"] = include_subcategories
         if start_index is not None:
             payload["startIndex"] = start_index
-        if max_count is not None:
-            payload["maxCount"] = max_count
         if data_type_string is not None:
             payload["dataTypeString"] = data_type_string
         if address_or_symbol is not None:
@@ -2715,7 +2667,6 @@ def comments_grp() -> None:
 @click.option("--search-text", "searchText")
 @click.option("--pattern")
 @click.option("--case-sensitive", "caseSensitive", is_flag=True)
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--override-max-functions-limit", "overrideMaxFunctionsLimit", is_flag=True)
 @click.pass_context
 def comments_run(
@@ -2734,7 +2685,6 @@ def comments_run(
     search_text: str | None,
     pattern: str | None,
     case_sensitive: bool,
-    max_results: int | None,
     override_max_functions_limit: bool,
 ) -> None:
     payload: dict[str, Any] = {"action": action}
@@ -2766,8 +2716,6 @@ def comments_run(
     if pattern is not None:
         payload["pattern"] = pattern
     payload["caseSensitive"] = case_sensitive
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["overrideMaxFunctionsLimit"] = override_max_functions_limit
     _run_async(_call(ctx, "manage-comments", **payload))
 
@@ -2785,7 +2733,6 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
     @click.option("--comment")
     @click.option("--comment-type", "commentType", type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]))
     @click.option("--search-text", "searchText")
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2795,7 +2742,6 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
         comment: str | None,
         comment_type: str | None,
         search_text: str | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"action": action_name}
         if program_path:
@@ -2810,8 +2756,6 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
             payload["commentType"] = comment_type
         if search_text is not None:
             payload["searchText"] = search_text
-        if max_results is not None:
-            payload["maxResults"] = max_results
         _run_async(_call(ctx, "manage-comments", **payload))
 
     return _cmd
@@ -2840,7 +2784,6 @@ def bookmarks_grp() -> None:
 @click.option("--comment")
 @click.option("--bookmarks", help="JSON array of bookmark objects")
 @click.option("--search-text", "searchText")
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--remove-all", "removeAll", is_flag=True)
 @click.pass_context
 def bookmarks_run(
@@ -2853,7 +2796,6 @@ def bookmarks_run(
     comment: str | None,
     bookmarks: str | None,
     search_text: str | None,
-    max_results: int | None,
     remove_all: bool,
 ) -> None:
     payload: dict[str, Any] = {"action": action}
@@ -2874,8 +2816,6 @@ def bookmarks_run(
             raise click.BadParameter("--bookmarks must be valid JSON array")
     if search_text is not None:
         payload["searchText"] = search_text
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["removeAll"] = remove_all
     _run_async(_call(ctx, "manage-bookmarks", **payload))
 
@@ -2893,7 +2833,6 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
     @click.option("--category")
     @click.option("--comment")
     @click.option("--search-text", "searchText")
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2903,7 +2842,6 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
         category: str | None,
         comment: str | None,
         search_text: str | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"action": action_name}
         if program_path:
@@ -2918,8 +2856,6 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
             payload["comment"] = comment
         if search_text is not None:
             payload["searchText"] = search_text
-        if max_results is not None:
-            payload["maxResults"] = max_results
         _run_async(_call(ctx, "manage-bookmarks", **payload))
 
     return _cmd
@@ -3071,9 +3007,7 @@ def constants_grp() -> None:
 @click.option("--value")
 @click.option("--min-value", "minValue")
 @click.option("--max-value", "maxValue")
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--include-small-values", "includeSmallValues", is_flag=True)
-@click.option("--top-n", "topN", type=int)
 @click.pass_context
 def constants_run(
     ctx: click.Context,
@@ -3082,9 +3016,7 @@ def constants_run(
     value: str | None,
     min_value: str | None,
     max_value: str | None,
-    max_results: int | None,
     include_small_values: bool,
-    top_n: int | None,
 ) -> None:
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
@@ -3095,11 +3027,7 @@ def constants_run(
         payload["minValue"] = min_value
     if max_value is not None:
         payload["maxValue"] = max_value
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["includeSmallValues"] = include_small_values
-    if top_n is not None:
-        payload["topN"] = top_n
     _run_async(_call(ctx, "search-constants", **payload))
 
 
@@ -3114,8 +3042,6 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--value")
     @click.option("--min-value", "minValue")
     @click.option("--max-value", "maxValue")
-    @click.option("--max-results", "maxResults", type=int)
-    @click.option("--top-n", "topN", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -3123,8 +3049,6 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
         value: str | None,
         min_value: str | None,
         max_value: str | None,
-        max_results: int | None,
-        top_n: int | None,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
         if program_path:
@@ -3135,10 +3059,6 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
             payload["minValue"] = min_value
         if max_value is not None:
             payload["maxValue"] = max_value
-        if max_results is not None:
-            payload["maxResults"] = max_results
-        if top_n is not None:
-            payload["topN"] = top_n
         _run_async(_call(ctx, "search-constants", **payload))
 
     return _cmd
@@ -3164,7 +3084,6 @@ def vtables_grp() -> None:
 @click.option("--vtable-address", "vtableAddress")
 @click.option("--function-address", "functionAddress")
 @click.option("--max-entries", "maxEntries", type=int)
-@click.option("--max-results", "maxResults", type=int)
 @click.pass_context
 def vtables_run(
     ctx: click.Context,
@@ -3173,7 +3092,6 @@ def vtables_run(
     vtable_address: str | None,
     function_address: str | None,
     max_entries: int | None,
-    max_results: int | None,
 ) -> None:
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
@@ -3184,8 +3102,6 @@ def vtables_run(
         payload["functionAddress"] = function_address
     if max_entries is not None:
         payload["maxEntries"] = max_entries
-    if max_results is not None:
-        payload["maxResults"] = max_results
     _run_async(_call(ctx, "analyze-vtables", **payload))
 
 
@@ -3200,7 +3116,6 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--vtable-address", "vtableAddress")
     @click.option("--function-address", "functionAddress")
     @click.option("--max-entries", "maxEntries", type=int)
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -3208,7 +3123,6 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
         vtable_address: str | None,
         function_address: str | None,
         max_entries: int | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
         if program_path:
@@ -3219,8 +3133,6 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
             payload["functionAddress"] = function_address
         if max_entries is not None:
             payload["maxEntries"] = max_entries
-        if max_results is not None:
-            payload["maxResults"] = max_results
         _run_async(_call(ctx, "analyze-vtables", **payload))
 
     return _cmd
@@ -3367,7 +3279,6 @@ def files_grp() -> None:
 @click.option("--create-parents/--no-create-parents", "create_parents", default=True)
 @click.option("--destination-folder", "destination_folder", default="/")
 @click.option("--recursive/--no-recursive", default=True)
-@click.option("--max-results", "max_results", type=int)
 @click.option("--max-depth", "max_depth", type=int)
 @click.option("--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
 @click.option("--strip-leading-path/--no-strip-leading-path", "strip_leading_path", default=True)
@@ -3398,7 +3309,6 @@ def files_run(
     create_parents: bool,
     destination_folder: str,
     recursive: bool,
-    max_results: int | None,
     max_depth: int | None,
     analyze_after_import: bool,
     strip_leading_path: bool,
@@ -3434,8 +3344,6 @@ def files_run(
     payload["createParents"] = create_parents
     payload["destinationFolder"] = destination_folder
     payload["recursive"] = recursive
-    if max_results is not None:
-        payload["maxResults"] = max_results
     if max_depth is not None:
         payload["maxDepth"] = max_depth
     payload["analyzeAfterImport"] = analyze_after_import
@@ -3466,7 +3374,6 @@ def shared_grp() -> None:
 @click.option("--source", "source_path", default="/", show_default=True, help="Shared repository folder/path to download")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination folder in local project")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite existing local project files")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3475,7 +3382,6 @@ def shared_download(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
@@ -3484,7 +3390,6 @@ def shared_download(
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
@@ -3495,7 +3400,6 @@ def shared_download(
 @click.option("--source", "source_path", default="/", show_default=True, help="Local project source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination mapping path")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite destination items")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3504,7 +3408,6 @@ def shared_push(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
@@ -3513,7 +3416,6 @@ def shared_push(
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
@@ -3524,7 +3426,6 @@ def shared_push(
 @click.option("--source", "source_path", default="/", show_default=True, help="Scope source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Scope destination mapping")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite destination items")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3533,7 +3434,6 @@ def shared_sync(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
@@ -3542,7 +3442,6 @@ def shared_sync(
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
