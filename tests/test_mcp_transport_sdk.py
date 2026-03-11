@@ -116,8 +116,8 @@ async def test_stdio_sdk_client_lists_tools_resources_and_calls_tool(backend_ser
     server_params = StdioServerParameters(
         command=sys.executable,
         args=[
-            "-m",
-            "agentdecompile_cli.server",
+            "-c",
+            "from agentdecompile_cli.server import proxy_main; proxy_main()",
             "--backend-url",
             backend_server,
             "-t",
@@ -149,8 +149,8 @@ def test_sse_transport_mode_serves_tools_resources_and_tool_calls(backend_server
     process = subprocess.Popen(
         [
             sys.executable,
-            "-m",
-            "agentdecompile_cli.server",
+            "-c",
+            "from agentdecompile_cli.server import proxy_main; proxy_main()",
             "--backend-url",
             backend_server,
             "-t",
