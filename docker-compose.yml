@@ -1,4 +1,4 @@
-# AgentDecompile AIO: Ghidra server + embedded BSim server + AgentDecompile MCP in one container.
+# AgentDecompile: Ghidra server + BSim server + AgentDecompile MCP.
 # All env vars and volumes below are used by Dockerfile/entrypoint or the app; relpaths point to usage.
 # Ghidra server volume conventions: https://github.com/NationalSecurityAgency/ghidra/blob/main/docker/README.md
 
@@ -19,7 +19,7 @@ x-common-build-args: &common-build-args
 
 
 services:
-  biodecompwarehouse:
+  ghidra:
     build:
       # Build context (remote repo ref); pin to branch/tag/commit as needed.
       #context: https://github.com/bolabaden/agentdecompile.git#master
@@ -28,8 +28,8 @@ services:
       args:
         <<: *common-build-args
     image: docker.io/bolabaden/ghidra:latest
-    container_name: biodecompwarehouse
-    hostname: biodecompwarehouse
+    container_name: ghidra
+    hostname: ghidra
     extra_hosts:
       - host.docker.internal:host-gateway
     networks:
@@ -40,11 +40,15 @@ services:
       - ${GHIDRA_SERVER_PORT2:-13101}:13101        # RMI SSL Port
       - ${GHIDRA_SERVER_PORT3:-13102}:13102        # Block Stream Port
     volumes:
-      # BSim/Postgres data and Ghidra repos/projects/work directories.
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/repos:/ghidra/repositories
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/projects:/projects
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/work:/work
+      # Ghidra core installation (JARs, processors, features, native binaries).
+      # Shared read-write here; agentdecompile-mcp mounts the same volumes read-only.
+      - ghidra-core:/ghidra/Ghidra
+      - ghidra-support:/ghidra/support
+      # Per-service data directories (NOT shared with agentdecompile-mcp).
+      - ${CONFIG_PATH:-./volumes}/ghidra/bsim_datadir:/ghidra/bsim_datadir
+      - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
+      - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
+      - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
     environment:
       <<: *common-env
       # Ghidra server users (space-separated; admins by default).
@@ -53,13 +57,13 @@ services:
     command: server
     labels:
       traefik.enable: true
-      traefik.tcp.routers.biodecompwarehouse.rule: HostSNI(`biodecompwarehouse.$DOMAIN`) || HostSNI(`biodecompwarehouse.$TS_HOSTNAME.$DOMAIN`)
-      traefik.tcp.routers.biodecompwarehouse.service: biodecompwarehouse@docker
-      traefik.tcp.routers.biodecompwarehouse.tls.domains[0].main: $DOMAIN
-      traefik.tcp.routers.biodecompwarehouse.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
-      traefik.tcp.routers.biodecompwarehouse.tls.passthrough: true
-      traefik.tcp.services.biodecompwarehouse.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
-      traefik.tcp.services.biodecompwarehouse.loadbalancer.server.tls: true
+      traefik.tcp.routers.ghidra.rule: HostSNI(`ghidra.$DOMAIN`) || HostSNI(`ghidra.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.routers.ghidra.service: ghidra@docker
+      traefik.tcp.routers.ghidra.tls.domains[0].main: $DOMAIN
+      traefik.tcp.routers.ghidra.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
+      traefik.tcp.routers.ghidra.tls.passthrough: true
+      traefik.tcp.services.ghidra.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
+      traefik.tcp.services.ghidra.loadbalancer.server.tls: true
       # Auto-restart on unhealthy state
       deunhealth.restart.on.unhealthy: "true"
     restart: always
@@ -75,13 +79,20 @@ services:
     image: docker.io/bolabaden/agentdecompile-mcp:latest
     container_name: agentdecompile-mcp
     hostname: agentdecompile-mcp
+    depends_on:
+      - ghidra
     extra_hosts:
       - host.docker.internal:host-gateway
     networks:
       - publicnet
     ports:
       # AgentDecompile MCP HTTP server (binds to container port 8080 by default).
-      - ${BIOMEDWAREHOUSE_MCP_PORT:-8080}:8080  # AgentDecompile MCP HTTP
+      - ${AGENTDECOMPILE_MCP_PORT:-8080}:8080  # AgentDecompile MCP HTTP
+    volumes:
+      # Ghidra core installation shared from ghidra service (read-only).
+      # PyGhidra requires these to initialize the JVM and access Ghidra APIs.
+      - ghidra-core:/ghidra/Ghidra:ro
+      - ghidra-support:/ghidra/support:ro
     command: --transport streamable-http
     labels:
       traefik.enable: true
@@ -90,7 +101,7 @@ services:
       traefik.tcp.routers.agentdecompile-mcp.tls.domains[0].main: $DOMAIN
       traefik.tcp.routers.agentdecompile-mcp.tls.domains[0].sans: "*.$DOMAIN,$TS_HOSTNAME.$DOMAIN"
       traefik.tcp.routers.agentdecompile-mcp.tls.passthrough: true
-      traefik.tcp.services.agentdecompile-mcp.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
+      traefik.tcp.services.agentdecompile-mcp.loadbalancer.server.port: ${AGENTDECOMPILE_MCP_PORT:-8080}
       traefik.tcp.services.agentdecompile-mcp.loadbalancer.server.tls: true
       # Auto-restart on unhealthy state
       deunhealth.restart.on.unhealthy: "true"
@@ -115,8 +126,8 @@ services:
       # BSim server (embedded PostgreSQL)
       - ${GHIDRA_BSIM_SERVER_PORT:-5432}:5432      # BSIM server connection
     volumes:
-      # BSim/Postgres data and Ghidra repos/projects/work directories.
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
+      # BSim/Postgres data.
+      - ${CONFIG_PATH:-./volumes}/ghidra/bsim_datadir:/ghidra/bsim_datadir
     environment:
       <<: *common-env
       # Ghidra server users (space-separated; admins by default).
@@ -176,7 +187,7 @@ services:
     command: server
     labels:
       traefik.enable: true
-      traefik.tcp.routers.agentdecompile-aio.rule: HostSNI(`biodecompwarehouse.$DOMAIN`) || HostSNI(`biodecompwarehouse.$TS_HOSTNAME.$DOMAIN`)
+      traefik.tcp.routers.agentdecompile-aio.rule: HostSNI(`agentdecompile-aio.$DOMAIN`) || HostSNI(`agentdecompile-aio.$TS_HOSTNAME.$DOMAIN`)
       traefik.tcp.services.agentdecompile-aio.loadbalancer.server.port: ${GHIDRA_SERVER_PORT:-13100}
       traefik.tcp.services.agentdecompile-aio.loadbalancer.server.tls: true
       traefik.tcp.routers.agentdecompile-aio.service: agentdecompile-aio@docker
@@ -190,6 +201,10 @@ services:
       # Auto-restart on unhealthy state
       deunhealth.restart.on.unhealthy: "true"
     restart: always
+
+volumes:
+  ghidra-core:      # Ghidra application dir (/ghidra/Ghidra: JARs, features, processors, native binaries)
+  ghidra-support:   # Ghidra support files (/ghidra/support: LaunchSupport.jar)
 
 networks:
   publicnet:
