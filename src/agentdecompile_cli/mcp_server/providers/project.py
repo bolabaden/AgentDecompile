@@ -3212,12 +3212,76 @@ class ProjectToolProvider(ToolProvider):
         except Exception as exc:
             return create_success_response({"success": False, "error": str(exc)})
 
+        removal_mode = "domain-file"
+        session_id: str = get_current_mcp_session_id()
+        requested_l = program_path.strip().lower().lstrip("/")
+        active_name_l = str(domain_file.getName()).strip().lower().lstrip("/")
+        active_path_l = str(domain_file.getPathname()).strip().lower().lstrip("/")
+
+        if not deleted:
+            # Some local/headless flows keep binaries in session catalog only.
+            # If DomainFile deletion reports false, prune session state directly.
+            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id)
+            filtered_binaries = []
+            removed_from_session = False
+            for item in session_binaries:
+                item_path = str(item.get("path") or "").strip().lower().lstrip("/")
+                item_name = str(item.get("name") or Path(item_path).name).strip().lower().lstrip("/")
+                if requested_l in {item_name, item_path, active_name_l, active_path_l}:
+                    removed_from_session = True
+                    continue
+                filtered_binaries.append(item)
+
+            session_ctx = SESSION_CONTEXTS.get_or_create(session_id)
+            stale_keys = []
+            for key, info in list(session_ctx.open_programs.items()):
+                key_l = str(key).strip().lower().lstrip("/")
+                info_program = getattr(info, "program", None)
+                info_name_l = ""
+                info_path_l = ""
+                if info_program is not None:
+                    try:
+                        info_name_l = str(info_program.getName()).strip().lower().lstrip("/")
+                    except Exception:
+                        pass
+                    try:
+                        info_path_l = str(info_program.getDomainFile().getPathname()).strip().lower().lstrip("/")
+                    except Exception:
+                        pass
+                if requested_l in {key_l, info_name_l, info_path_l, active_name_l, active_path_l}:
+                    stale_keys.append(key)
+
+            for key in stale_keys:
+                info = session_ctx.open_programs.pop(key, None)
+                if info is None:
+                    continue
+                decompiler = getattr(info, "decompiler", None)
+                if decompiler is not None:
+                    try:
+                        decompiler.closeProgram()
+                    except Exception:
+                        pass
+                    try:
+                        decompiler.dispose()
+                    except Exception:
+                        pass
+                removed_from_session = True
+
+            if session_ctx.active_program_key in stale_keys:
+                session_ctx.active_program_key = None
+
+            if removed_from_session:
+                SESSION_CONTEXTS.set_project_binaries(session_id, filtered_binaries)
+                deleted = True
+                removal_mode = "session-catalog"
+
         return create_success_response(
             {
                 "success": deleted,
                 "programPath": program_path,
                 "removed": deleted,
                 "storage": "shared-repository" if is_versioned else "local-project",
+                "removalMode": removal_mode,
             },
         )
 
