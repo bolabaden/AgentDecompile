@@ -218,9 +218,11 @@ See `tests/test_e2e_local_terminal_contracts.py` and `examples/mcp_responses/loc
 
 ### Shared repository quick sequence with uvx
 
-Use this when you want an install-free command chain against a shared repository clone of the CLI.
+Use this when you want an install-free command chain against a shared repository MCP server.
 
-If you are validating a local code change, replace these `uvx --from git+https://github.com/bolabaden/agentdecompile ...` commands with `uv run ...` from the local repository so the terminal run actually exercises your modified code.
+The CLI accepts either a base server URL or an MCP endpoint URL. The examples below use `--mcp-server-url http://host:port/mcp/` explicitly.
+
+If you are validating a local code change, replace these `uvx --from ...` commands with `uv run ...` from the local repository, or use `uvx --from /path/to/agentdecompile --with-editable /path/to/agentdecompile ...`, so the terminal run actually exercises your modified code.
 
 ```mermaid
 flowchart TD
@@ -231,42 +233,70 @@ flowchart TD
   E --> F[tool or tool-seq for advanced workflows]
 ```
 
+Set shared repository defaults first:
+
+```powershell
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = "<ghidra-server-host>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "13100"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = "<ghidra-username>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = "<ghidra-password>"
+$Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<repository-name>"
+```
+
 Open a program from the shared repository:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ open --server_host "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 ```
 
 List available project files:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list project-files
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ list project-files
 ```
 
 Verify the active program:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+```
+
+List a small function sample:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
 ```
 
 Search symbols:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
 ```
 
 Trace references:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 25
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0 --limit 25
 ```
 
 Use raw tool mode when you need exact MCP payload control:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool-seq '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+```
+
+Notes:
+
+- Fresh CLI invocations create fresh MCP sessions. `get-functions`, `search-symbols`, `references`, and `get-current-program` can reopen the requested program when `--program_path` is provided together with shared-server env vars.
+- `list project-files` on a fresh session requires a backend built from this revision or newer so it can bootstrap the shared repository index from shared-server env vars.
+- If shared-server authentication fails, the CLI now reports both the wrapper exception and the underlying Ghidra adapter error when the backend is running this revision or newer.
+
+Keep state inside one CLI invocation when you need a strict open-then-query flow:
+
+```powershell
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool-seq '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
 ```
 
 ## 4. Raw MCP HTTP example

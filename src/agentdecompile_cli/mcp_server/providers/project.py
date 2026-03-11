@@ -282,11 +282,11 @@ class ProjectToolProvider(ToolProvider):
             ),
             types.Tool(
                 name="remove-program-binary",
-                description="Remove a program from the Ghidra shared project repository. This operates exclusively through the Ghidra server API and never touches the local filesystem.",
+                description="Remove a program from the current Ghidra project (shared repository or local project). This uses Ghidra's DomainFile API and does not delete source binaries from the host filesystem.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path of the program in the shared repository (e.g. /K1/swkotor.exe)."},
+                        "programPath": {"type": "string", "description": "Path or name of the active program to remove (e.g. /K1/swkotor.exe or test_x86_64)."},
                         "confirm": {"type": "boolean", "default": False, "description": "Must be true to confirm removal."},
                     },
                     "required": ["programPath", "confirm"],
@@ -1185,6 +1185,9 @@ class ProjectToolProvider(ToolProvider):
 
         if self.program_info is None or getattr(self.program_info, "program", None) is None or not hasattr(getattr(self.program_info, "program", None), "getDomainFile"):
             session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            if not session_binaries:
+                await self._ensure_shared_listing_available(args)
+                session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
             if session_binaries:
                 files = []
                 for item in session_binaries[:max_results]:
@@ -1272,6 +1275,20 @@ class ProjectToolProvider(ToolProvider):
                     },
                 )
             return create_success_response({"folder": folder, "files": [], "error": str(e)})
+
+    async def _ensure_shared_listing_available(self, args: dict[str, Any]) -> None:
+        env_host = self._get_str(args, "serverhost", "ghidraserverhost") or self._get_shared_server_host()
+        if not env_host:
+            return
+
+        session_id: str = get_current_mcp_session_id()
+        if SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True):
+            return
+
+        try:
+            await self._handle_connect_shared_project(self._build_shared_args(args, env_host))
+        except Exception as e:
+            logger.debug("Shared listing bootstrap failed: %s", e)
 
     async def _ensure_program_loaded_for_stateless_request(self, args: dict[str, Any]) -> None:
         program = getattr(self.program_info, "program", None) if self.program_info is not None else None
@@ -3141,10 +3158,11 @@ class ProjectToolProvider(ToolProvider):
         return items
 
     async def _handle_remove_program_binary(self, args: dict[str, Any]) -> list[types.TextContent]:
-        """Remove a program from the Ghidra shared project via server API.
+        """Remove a program from the current Ghidra project via DomainFile API.
 
-        This NEVER touches the local filesystem. It operates exclusively
-        through Ghidra's DomainFile API on server-managed (versioned) programs.
+        This NEVER deletes the source binary file from the host filesystem.
+        It removes the program object from the currently open Ghidra project,
+        regardless of whether that project is shared (versioned) or local.
         """
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
@@ -3165,34 +3183,43 @@ class ProjectToolProvider(ToolProvider):
         if domain_file is None:
             return create_success_response({"success": False, "error": "No domain file associated with current program"})
 
-        # Verify this is a server-managed (versioned) program — refuse local-only files
+        # Detect storage type for response metadata.
         is_versioned = False
         try:
             is_versioned = bool(domain_file.isVersioned())
         except Exception:
             pass
-        if not is_versioned:
-            return create_success_response({
-                "success": False,
-                "error": "Cannot remove: program is not managed by a shared Ghidra server repository. "
-                         "This tool only operates on versioned programs in a shared project.",
-            })
 
         # Verify the requested path matches the active program
         if program_path not in (program.getName(), str(domain_file.getPathname()), domain_file.getName()):
             return create_success_response({"success": False, "error": f"Requested program '{program_path}' does not match active program"})
 
+        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        if ghidra_project is not None:
+            try:
+                ghidra_project.close(program)
+            except Exception:
+                pass
         try:
             program.release(None)
         except Exception:
             pass
+
+        self.program_info = None
 
         try:
             deleted = bool(domain_file.delete())
         except Exception as exc:
             return create_success_response({"success": False, "error": str(exc)})
 
-        return create_success_response({"success": deleted, "programPath": program_path, "removed": deleted})
+        return create_success_response(
+            {
+                "success": deleted,
+                "programPath": program_path,
+                "removed": deleted,
+                "storage": "shared-repository" if is_versioned else "local-project",
+            },
+        )
 
     # Legacy alias preserved for backward compatibility
     _handle_delete_project_binary = _handle_remove_program_binary

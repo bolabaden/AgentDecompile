@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, extract_text_content
+from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, extract_json_content, extract_text_content
 from tests.helpers import get_public_sample_binary
 
 
@@ -28,6 +28,11 @@ def _normalize_text(text: str) -> str:
 
 def _tool_text(session: JsonRpcMcpSession, name: str, arguments: dict[str, object]) -> str:
     return _normalize_text(extract_text_content(session.call_tool(name, arguments)))
+
+
+def _tool_json(session: JsonRpcMcpSession, name: str, arguments: dict[str, object]) -> dict[str, object]:
+    merged = {**arguments, "format": "json"}
+    return extract_json_content(session.call_tool(name, merged))
 
 
 def _known_fixture_source() -> Path:
@@ -168,3 +173,32 @@ def test_known_fixture_analysis_outputs_match_observed_contract(
     assert f"Find references to this string: `get-references address={KNOWN_STRING_ADDRESS}`." in strings_text
     assert f"Decompile containing function: `get-functions mode=decompile address={KNOWN_STRING_ADDRESS}`." in strings_text
     assert "Search for keywords: `search-strings query=password` or `search-strings query=error`." in strings_text
+
+
+def test_remove_program_binary_supports_local_projects(
+    local_http_session: JsonRpcMcpSession,
+    isolated_workspace: Path,
+    known_fixture_binary: Path,
+) -> None:
+    removable_binary = isolated_workspace / "test_x86_64_remove_local"
+    shutil.copy2(_known_fixture_source(), removable_binary)
+    removable_binary.chmod(0o755)
+
+    opened = _tool_json(local_http_session, "open-project", {"path": str(removable_binary)})
+    assert opened.get("success") is True
+
+    removed = _tool_json(
+        local_http_session,
+        "remove-program-binary",
+        {"programPath": removable_binary.name, "confirm": True},
+    )
+    assert removed.get("success") is True
+    assert removed.get("removed") is True
+    assert removed.get("storage") == "local-project"
+
+    files = _tool_json(local_http_session, "list-project-files", {})
+    names = [entry["name"] for entry in files.get("files", [])]
+    assert removable_binary.name not in names
+
+    restored = _tool_json(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+    assert restored.get("success") is True

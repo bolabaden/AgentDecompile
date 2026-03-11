@@ -27,6 +27,9 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from agentdecompile_cli.executor import normalize_backend_url
+from agentdecompile_cli.mcp_server.providers import project as project_provider_module
+from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
+from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS
 from agentdecompile_cli.mcp_server.server import PythonMcpServer, ServerConfig
 
 
@@ -45,6 +48,41 @@ HTTP_TIMEOUT = 30.0
 )
 def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
     assert normalize_backend_url(raw_url) == expected_url
+
+
+@pytest.mark.asyncio
+async def test_list_project_files_bootstraps_shared_listing_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_id = "test-shared-list-bootstrap"
+    provider = ProjectToolProvider()
+    SESSION_CONTEXTS.set_project_binaries(session_id, [])
+
+    monkeypatch.setattr(project_provider_module, "get_current_mcp_session_id", lambda: session_id)
+    monkeypatch.setenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "170.9.241.140")
+    monkeypatch.setenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "13100")
+    monkeypatch.setenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "OpenKotOR")
+    monkeypatch.setenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "idekanymore")
+    monkeypatch.setenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "Odyssey")
+
+    async def _fake_connect(args: dict[str, Any]) -> list[Any]:
+        assert args["serverhost"] == "170.9.241.140"
+        assert str(args["serverport"]) == "13100"
+        assert args["serverusername"] == "OpenKotOR"
+        assert args["serverpassword"] == "idekanymore"
+        assert args["path"] == "Odyssey"
+        SESSION_CONTEXTS.set_project_binaries(
+            session_id,
+            [{"name": "k1_win_gog_swkotor.exe", "path": "/K1/k1_win_gog_swkotor.exe", "type": "Program"}],
+        )
+        return []
+
+    monkeypatch.setattr(provider, "_handle_connect_shared_project", _fake_connect)
+
+    response = await provider._handle_list({})
+    payload = json.loads(response[0].text)
+
+    assert payload["source"] == "shared-server-session"
+    assert payload["count"] == 1
+    assert payload["files"][0]["path"] == "/K1/k1_win_gog_swkotor.exe"
 
 
 def _find_free_port() -> int:
