@@ -15,11 +15,9 @@ See [README.md](README.md) for project overview, [CONTRIBUTING.md](CONTRIBUTING.
 
 ### Injected secrets (environment variables)
 
-Several `AGENT_DECOMPILE_*` secrets are injected and will cause the server to enter proxy mode or require auth. When running locally with PyGhidra, **unset** these before starting the server:
+**agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not use proxy URL env vars. For local server runs, **unset** Ghidra server credentials if you do not want HTTP Basic Auth on MCP requests:
 
 ```bash
-unset AGENT_DECOMPILE_BACKEND_URL
-unset AGENT_DECOMPILE_MCP_SERVER_URL
 unset AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME
 unset AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD
 unset AGENT_DECOMPILE_GHIDRA_SERVER_HOST
@@ -27,14 +25,14 @@ unset AGENT_DECOMPILE_GHIDRA_SERVER_PORT
 unset AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY
 ```
 
-Without unsetting `AGENT_DECOMPILE_BACKEND_URL`, the server starts in **proxy mode** (forwarding to a remote backend). Without unsetting the Ghidra server credentials, the server requires HTTP Basic Auth on every MCP request.
+To run in **proxy mode** (forward to a remote MCP backend), use **agentdecompile-proxy** and set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` (or pass `--backend-url`).
 
 ### Running the MCP server locally
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 export GHIDRA_INSTALL_DIR=/opt/ghidra-install/ghidra_12.0.4_PUBLIC
-# Unset secrets that trigger proxy/auth (see above)
+# Unset Ghidra server credentials if you do not want auth (see above)
 uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 \
   --project-path /tmp/agentdecompile-projects /path/to/binary
 ```

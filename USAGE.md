@@ -30,7 +30,7 @@ Program path: /K1/k1_win_gog_swkotor.exe
 Notes:
 
 - The HTTP server accepts `/mcp/message` as the canonical endpoint and also accepts `/` and `/mcp` for compatibility.
-- Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, or `mcp-agentdecompile` when you need transport diagnostics.
+- Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
 
 ## 1. Start the runtime
@@ -47,11 +47,13 @@ uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http --project-path ./agentdecompile_projects
 ```
 
-### Proxy mode
+### Proxy mode (forward to remote MCP; use agentdecompile-proxy only)
 
 ```bash
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-proxy --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
 ```
+
+Or set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` and run `agentdecompile-proxy -t streamable-http`. **agentdecompile-server** is always local (PyGhidra) and does not accept proxy options.
 
 ## 2. Shared-server environment variables
 
