@@ -1,0 +1,322 @@
+{
+  "toolInventory": {
+    "count": 36,
+    "advertisedTools": [
+      "analyze-data-flow",
+      "analyze-program",
+      "analyze-vtables",
+      "apply-data-type",
+      "change-processor",
+      "checkin-program",
+      "checkout-program",
+      "checkout-status",
+      "create-label",
+      "decompile-function",
+      "execute-script",
+      "export",
+      "get-call-graph",
+      "get-current-program",
+      "get-data",
+      "get-references",
+      "import-binary",
+      "inspect-memory",
+      "list-cross-references",
+      "list-exports",
+      "list-functions",
+      "list-imports",
+      "list-processors",
+      "list-project-files",
+      "list-strings",
+      "manage-function-tags",
+      "match-function",
+      "open-project",
+      "read-bytes",
+      "remove-program-binary",
+      "search-code",
+      "search-constants",
+      "search-everything",
+      "search-strings",
+      "search-symbols",
+      "sync-project"
+    ],
+    "hiddenButCallable": [
+      "manage-comments",
+      "switch-project"
+    ]
+  },
+  "localFixture": {
+    "path": "C:\\GitHub\\agentdecompile\\tests\\fixtures\\test_x86_64",
+    "name": "test_x86_64"
+  },
+  "openProject": {
+    "operation": "import",
+    "importedFrom": "C:\\GitHub\\agentdecompile\\tests\\fixtures\\test_x86_64",
+    "filesDiscovered": 1,
+    "filesImported": 1,
+    "importedPrograms": [
+      {
+        "path": "C:\\GitHub\\agentdecompile\\tests\\fixtures\\test_x86_64",
+        "programName": "test_x86_64"
+      }
+    ],
+    "groupsCreated": 0,
+    "maxDepthUsed": 16,
+    "wasRecursive": false,
+    "analysisRequested": false,
+    "errors": []
+  },
+  "importBinary": {
+    "action": "import",
+    "importedFrom": "C:\\GitHub\\agentdecompile\\tests\\fixtures\\test_x86_64",
+    "filesDiscovered": 1,
+    "filesImported": 1,
+    "importedPrograms": [
+      {
+        "sourcePath": "C:\\GitHub\\agentdecompile\\tests\\fixtures\\test_x86_64",
+        "programName": "test_x86_64"
+      }
+    ],
+    "groupsCreated": 0,
+    "maxDepthUsed": 16,
+    "wasRecursive": false,
+    "analysisRequested": false,
+    "language": null,
+    "compiler": null,
+    "success": true,
+    "errors": []
+  },
+  "listProjectFiles": {
+    "folder": "/",
+    "files": [
+      {
+        "name": "test_x86_64",
+        "path": "/test_x86_64",
+        "isDirectory": false,
+        "type": "Program"
+      }
+    ],
+    "count": 1,
+    "source": "session-binaries"
+  },
+  "getCurrentProgram": {
+    "loaded": true,
+    "name": "test_x86_64",
+    "programPath": "/test_x86_64",
+    "language": "x86:LE:64:default",
+    "compiler": "gcc",
+    "functionCount": 3
+  },
+  "listFunctions": {
+    "results": [
+      {
+        "name": "entry",
+        "address": "1000004b0",
+        "size": 1,
+        "isExternal": false,
+        "isThunk": false,
+        "parameterCount": 0
+      },
+      {
+        "name": "_printf",
+        "address": "10000051a",
+        "size": 1,
+        "isExternal": false,
+        "isThunk": true,
+        "parameterCount": 0
+      }
+    ],
+    "count": 2,
+    "total": 2,
+    "hasMore": false,
+    "offset": 0,
+    "limit": 10,
+    "mode": "list"
+  },
+  "searchSymbols": {
+    "query": "main",
+    "results": [
+      {
+        "name": "_main",
+        "address": "1000004b0",
+        "type": "Label",
+        "namespace": "Global",
+        "source": "IMPORTED"
+      },
+      {
+        "name": "s__main_10000212b",
+        "address": "10000212b",
+        "type": "Label",
+        "namespace": "Global",
+        "source": "DEFAULT"
+      }
+    ],
+    "count": 2,
+    "totalMatched": 2,
+    "hasMore": false
+  },
+  "getReferences": {
+    "mode": "to",
+    "target": "1000004b0",
+    "references": [
+      {
+        "fromAddress": "Entry Point",
+        "toAddress": "1000004b0",
+        "type": "EXTERNAL",
+        "function": null
+      },
+      {
+        "fromAddress": "1000020b3",
+        "toAddress": "1000004b0",
+        "type": "DATA",
+        "function": null
+      }
+    ],
+    "count": 2
+  },
+  "listImports": {
+    "results": [
+      {
+        "name": "_printf",
+        "address": "EXTERNAL:00000001",
+        "namespace": "/usr/lib/libSystem.B.dylib",
+        "library": "/usr/lib/libSystem.B.dylib"
+      }
+    ],
+    "count": 1,
+    "total": 1,
+    "hasMore": false,
+    "offset": 0,
+    "limit": 10,
+    "mode": "imports"
+  },
+  "listExports": {
+    "results": [
+      {
+        "name": "__mh_execute_header",
+        "address": "100000000"
+      },
+      {
+        "name": "MACH_HEADER",
+        "address": "100000000"
+      },
+      {
+        "name": "_add",
+        "address": "100000470"
+      },
+      {
+        "name": "_multiply",
+        "address": "100000490"
+      },
+      {
+        "name": "entry",
+        "address": "1000004b0"
+      },
+      {
+        "name": "_main",
+        "address": "1000004b0"
+      }
+    ],
+    "count": 6,
+    "total": 6,
+    "hasMore": false,
+    "offset": 0,
+    "limit": 10,
+    "mode": "exports"
+  },
+  "checkoutStatus": {
+    "action": "checkout_status",
+    "program": "test_x86_64",
+    "is_versioned": false,
+    "is_checked_out": false,
+    "is_exclusive": false,
+    "modified_since_checkout": false,
+    "can_checkout": false,
+    "can_checkin": false,
+    "latest_version": null,
+    "current_version": null,
+    "checkout_status": null,
+    "versionControlEnabled": false,
+    "note": "Program is local-only. Shared checkout/checkin is unavailable until the program exists in a shared Ghidra repository."
+  },
+  "syncProjectPush": {
+    "operation": "sync-project",
+    "mode": "push",
+    "direction": "local-save",
+    "repository": "local-project",
+    "sourceFolder": "/",
+    "recursive": true,
+    "requested": 0,
+    "transferred": 0,
+    "skipped": 0,
+    "errors": [],
+    "items": [],
+    "skippedItems": [],
+    "dryRun": false,
+    "note": "No shared server session. Performed local project save.",
+    "success": true
+  },
+  "syncProjectBidirectional": {
+    "operation": "sync-project",
+    "direction": "local-save-only",
+    "repository": "local-project",
+    "sourceFolder": "/",
+    "recursive": true,
+    "requested": 0,
+    "transferred": 0,
+    "skipped": 0,
+    "errors": [],
+    "items": [],
+    "skippedItems": [],
+    "dryRun": false,
+    "note": "No shared server session. Only local save was performed (pull requires a shared server connection).",
+    "mode": "bidirectional",
+    "success": true
+  },
+  "changeProcessorFailure": {
+    "action": "change_processor",
+    "language": "x86:LE:32:default",
+    "compiler": "windows",
+    "success": false,
+    "errorPrefix": "No matching overloads found for ghidra.program.database.ProgramDB.setLanguage("
+  },
+  "manageCommentsRoundTrip": {
+    "before": {
+      "action": "get",
+      "address": "1000004b0",
+      "comments": {}
+    },
+    "afterSet": {
+      "action": "get",
+      "address": "1000004b0",
+      "comments": {
+        "plate": "terminal plate comment"
+      }
+    },
+    "search": {
+      "results": [
+        {
+          "address": "1000004b0",
+          "type": "plate",
+          "comment": "terminal plate comment"
+        }
+      ],
+      "count": 1,
+      "total": 1,
+      "hasMore": false,
+      "offset": 0,
+      "limit": 100,
+      "query": "terminal plate",
+      "mode": "search"
+    },
+    "scriptVerification": {
+      "afterSet": {
+        "success": true,
+        "result": "terminal plate comment"
+      },
+      "afterRemove": {
+        "success": true,
+        "result": "None"
+      }
+    }
+  }
+}
