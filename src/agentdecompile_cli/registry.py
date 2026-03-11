@@ -12,6 +12,7 @@ import logging
 import os
 import re
 
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -83,78 +84,90 @@ _NL_PHRASE_PATTERNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# MCP tool names (exact strings expected by Java server)
+# MCP tool names (canonical wire names) – enum is single source of truth
 # ---------------------------------------------------------------------------
-TOOLS = [
-    "analyze-data-flow",
-    "analyze-program",
-    "analyze-vtables",
-    "apply-data-type",
-    "change-processor",
-    "checkin-program",
-    "checkout-program",
-    "checkout-status",
-    "create-label",
-    "decompile-function",
-    "delete-project-binary",
-    "dissect-function",
-    "sync-project",
-    "export",
-    "gen-callgraph",
-    "get-call-graph",
-    "remove-program-binary",
-    "get-current-address",
-    "get-current-function",
-    "get-current-program",
-    "get-data",
-    "get-functions",
-    "get-references",
-    "import-binary",
-    "inspect-memory",
-    "list-cross-references",
-    "list-exports",
-    "list-functions",
-    "list-imports",
-    "list-project-files",
-    "list-processors",
-    "list-strings",
-    "manage-bookmarks",
-    "manage-comments",
-    "manage-data-types",
-    "manage-files",
-    "manage-function-tags",
-    "manage-function",
-    "manage-strings",
-    "manage-structures",
-    "manage-symbols",
-    "match-function",
-    "execute-script",
-    "open-all-programs-in-code-browser",
-    "open-program-in-code-browser",
-    "open-project",
-    "read-bytes",
-    "search-code",
-    "search-constants",
-    "search-everything",
-    "search-strings",
-    "search-symbols",
-    "svr-admin",
-    "suggest",
-]
+
+
+class ToolName(str, Enum):
+    """Canonical MCP tool names. Use .value for wire/CLI (kebab-case string)."""
+
+    ANALYZE_DATA_FLOW = "analyze-data-flow"
+    ANALYZE_PROGRAM = "analyze-program"
+    ANALYZE_VTABLES = "analyze-vtables"
+    APPLY_DATA_TYPE = "apply-data-type"
+    CHANGE_PROCESSOR = "change-processor"
+    CHECKIN_PROGRAM = "checkin-program"
+    CHECKOUT_PROGRAM = "checkout-program"
+    CHECKOUT_STATUS = "checkout-status"
+    CREATE_LABEL = "create-label"
+    DECOMPILE_FUNCTION = "decompile-function"
+    DELETE_PROJECT_BINARY = "delete-project-binary"
+    DISSECT_FUNCTION = "dissect-function"
+    SYNC_PROJECT = "sync-project"
+    EXPORT = "export"
+    GEN_CALLGRAPH = "gen-callgraph"
+    GET_CALL_GRAPH = "get-call-graph"
+    REMOVE_PROGRAM_BINARY = "remove-program-binary"
+    GET_CURRENT_ADDRESS = "get-current-address"
+    GET_CURRENT_FUNCTION = "get-current-function"
+    GET_CURRENT_PROGRAM = "get-current-program"
+    GET_DATA = "get-data"
+    GET_FUNCTIONS = "get-functions"
+    GET_REFERENCES = "get-references"
+    IMPORT_BINARY = "import-binary"
+    INSPECT_MEMORY = "inspect-memory"
+    LIST_CROSS_REFERENCES = "list-cross-references"
+    LIST_EXPORTS = "list-exports"
+    LIST_FUNCTIONS = "list-functions"
+    LIST_IMPORTS = "list-imports"
+    LIST_PROJECT_FILES = "list-project-files"
+    LIST_PROCESSORS = "list-processors"
+    LIST_STRINGS = "list-strings"
+    MANAGE_BOOKMARKS = "manage-bookmarks"
+    MANAGE_COMMENTS = "manage-comments"
+    MANAGE_DATA_TYPES = "manage-data-types"
+    MANAGE_FILES = "manage-files"
+    MANAGE_FUNCTION_TAGS = "manage-function-tags"
+    MANAGE_FUNCTION = "manage-function"
+    MANAGE_STRINGS = "manage-strings"
+    MANAGE_STRUCTURES = "manage-structures"
+    MANAGE_SYMBOLS = "manage-symbols"
+    MATCH_FUNCTION = "match-function"
+    EXECUTE_SCRIPT = "execute-script"
+    OPEN_ALL_PROGRAMS_IN_CODE_BROWSER = "open-all-programs-in-code-browser"
+    OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
+    OPEN_PROJECT = "open-project"
+    READ_BYTES = "read-bytes"
+    SEARCH_CODE = "search-code"
+    SEARCH_CONSTANTS = "search-constants"
+    SEARCH_EVERYTHING = "search-everything"
+    SEARCH_STRINGS = "search-strings"
+    SEARCH_SYMBOLS = "search-symbols"
+    SVR_ADMIN = "svr-admin"
+    SUGGEST = "suggest"
+
+
+TOOLS: list[str] = [t.value for t in ToolName]
+
 
 # ---------------------------------------------------------------------------
 # Resource URIs (exact strings for read_resource)
 # ---------------------------------------------------------------------------
 
-RESOURCE_URI_PROGRAMS = "ghidra://programs"
-RESOURCE_URI_STATIC_ANALYSIS = "ghidra://static-analysis-results"
-RESOURCE_URI_DEBUG_INFO = "ghidra://agentdecompile-debug-info"
 
-RESOURCE_URIS: list[str] = [
-    RESOURCE_URI_PROGRAMS,
-    RESOURCE_URI_STATIC_ANALYSIS,
-    RESOURCE_URI_DEBUG_INFO,
-]
+class ResourceUri(str, Enum):
+    """Canonical resource URIs for read_resource."""
+
+    PROGRAMS = "ghidra://programs"
+    STATIC_ANALYSIS = "ghidra://static-analysis-results"
+    DEBUG_INFO = "ghidra://agentdecompile-debug-info"
+
+
+RESOURCE_URI_PROGRAMS = ResourceUri.PROGRAMS.value
+RESOURCE_URI_STATIC_ANALYSIS = ResourceUri.STATIC_ANALYSIS.value
+RESOURCE_URI_DEBUG_INFO = ResourceUri.DEBUG_INFO.value
+
+RESOURCE_URIS: list[str] = [u.value for u in ResourceUri]
 
 # ---------------------------------------------------------------------------
 # Parameter names (camelCase) per tool – for building payloads from CLI
@@ -209,7 +222,8 @@ def _canonical_param_name(param: str) -> str:
 
 
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
-TOOL_PARAMS: dict[str, list[str]] = {
+# Built as str keys for _merge_tools_list_params; then converted to dict[ToolName, list[str]] below.
+_TOOL_PARAMS_STR: dict[str, list[str]] = {
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
     "analyze-program": _params("programPath", "analyzers", "force"),
     "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
@@ -452,12 +466,12 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
 # GUI-only tools disabled for headless MCP/CLI usage.
 # These tools require a graphical interface and are not available in server/headless mode.
 # They remain defined for completeness but are filtered out of advertised tool lists.
-DISABLED_GUI_ONLY_TOOLS: frozenset[str] = frozenset(
+DISABLED_GUI_ONLY_TOOLS: frozenset[ToolName] = frozenset(
     {
-        "get-current-address",
-        "get-current-function",
-        "open-program-in-code-browser",
-        "open-all-programs-in-code-browser",
+        ToolName.GET_CURRENT_ADDRESS,
+        ToolName.GET_CURRENT_FUNCTION,
+        ToolName.OPEN_PROGRAM_IN_CODE_BROWSER,
+        ToolName.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER,
     },
 )
 
@@ -478,9 +492,25 @@ def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def get_tool_params(tool_name: str) -> list[str]:
+def resolve_tool_name_enum(tool_name: str) -> ToolName | None:
+    """Resolve arbitrary tool name/alias to canonical ToolName enum, or None if unknown."""
+    resolved = resolve_tool_name(tool_name)
+    if resolved is None:
+        return None
+    try:
+        return ToolName(resolved)
+    except ValueError:
+        return None
+
+
+def get_tool_params(tool_name: ToolName | str) -> list[str]:
     """Return the list of parameter names (camelCase) for a tool, or empty if unknown."""
-    return list(TOOL_PARAMS.get(tool_name, []))
+    if isinstance(tool_name, ToolName):
+        return list(TOOL_PARAMS.get(tool_name, []))
+    resolved = resolve_tool_name_enum(tool_name)
+    if resolved is None:
+        return []
+    return list(TOOL_PARAMS.get(resolved, []))
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +695,8 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
 
 
 _tools_list_params, _tools_list_param_aliases, _tools_list_tool_aliases = _extract_tools_list_sync_data()
-TOOL_PARAMS = _merge_tools_list_params(TOOL_PARAMS, _tools_list_params)
+_merged_params_str: dict[str, list[str]] = _merge_tools_list_params(_TOOL_PARAMS_STR, _tools_list_params)
+TOOL_PARAMS: dict[ToolName, list[str]] = {ToolName(k): v for k, v in _merged_params_str.items()}
 TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
 TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
@@ -698,10 +729,10 @@ def _add_builtin_param_aliases() -> None:
         ("versioning", "enableVersionControl"),
         ("depth", "maxDepth"),
     ):
-        _add("import-binary", alias_name, canonical_param, replace=True)
+        _add(ToolName.IMPORT_BINARY.value, alias_name, canonical_param, replace=True)
 
     # Open/shared-server argument harmonization.
-    for tool_name in ("open-project",):
+    for tool_name in (ToolName.OPEN_PROJECT.value,):
         _add(tool_name, "isShared", "shared")
         _add(tool_name, "sharedMode", "shared")
         _add(tool_name, "shared_mode", "shared")
@@ -726,20 +757,20 @@ _add_builtin_param_aliases()
 # Default advertised surface (MCP + CLI) is blacklist-driven.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
 # New tools are auto-advertised unless added to this hidden set.
-_DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
+_DEFAULT_HIDDEN_TOOLS: frozenset[ToolName] = frozenset(
     {
-        "delete-project-binary",
-        "gen-callgraph",
-        "get-functions",
-        "manage-bookmarks",
-        "manage-comments",
-        "manage-data-types",
-        "manage-files",
-        "manage-function",
-        "manage-strings",
-        "manage-structures",
-        "manage-symbols",
-        "suggest",
+        ToolName.DELETE_PROJECT_BINARY,
+        ToolName.GEN_CALLGRAPH,
+        ToolName.GET_FUNCTIONS,
+        ToolName.MANAGE_BOOKMARKS,
+        ToolName.MANAGE_COMMENTS,
+        ToolName.MANAGE_DATA_TYPES,
+        ToolName.MANAGE_FILES,
+        ToolName.MANAGE_FUNCTION,
+        ToolName.MANAGE_STRINGS,
+        ToolName.MANAGE_STRUCTURES,
+        ToolName.MANAGE_SYMBOLS,
+        ToolName.SUGGEST,
     },
 )
 
@@ -792,8 +823,8 @@ def _get_explicit_enabled_tools() -> set[str] | None:
 
 
 def _build_advertised_tools() -> list[str]:
-    canonical_visible = [tool for tool in TOOLS if tool not in DISABLED_GUI_ONLY_TOOLS]
-    hidden_set = {normalize_identifier(tool) for tool in _DEFAULT_HIDDEN_TOOLS}
+    canonical_visible = [t.value for t in ToolName if t not in DISABLED_GUI_ONLY_TOOLS]
+    hidden_set = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
     disabled_set = _get_disabled_tools()
     explicit_set = _get_explicit_enabled_tools()
 
@@ -833,10 +864,10 @@ def _build_advertised_tool_params() -> dict[str, list[str]]:
     advertised: dict[str, list[str]] = {}
     advertised_set = set(ADVERTISED_TOOLS)
     for tool, params in TOOL_PARAMS.items():
-        if tool not in advertised_set:
+        if tool.value not in advertised_set:
             continue
         expanded: list[str] = list(params)
-        advertised[tool] = expanded
+        advertised[tool.value] = expanded
     return advertised
 
 
@@ -933,7 +964,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
                 stripped = stripped[len(prefix) :]
                 changed = True
                 break
-    changed: bool = True
+    changed = True
     while changed and stripped:
         changed = False
         for suffix in _TOOL_SUFFIXES:
@@ -946,7 +977,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
         direct = _TOOLS_BY_NORMALIZED.get(stripped)
         if direct is not None:
             return direct
-        aliased: str | None = TOOL_ALIASES.get(stripped)
+        aliased = TOOL_ALIASES.get(stripped)
         if aliased is not None:
             return aliased
 
@@ -978,14 +1009,18 @@ class ToolRegistry:
     """Unified tool registry and argument parsing system."""
 
     def __init__(self):
-        self._tool_params: dict[str, list[str]] = TOOL_PARAMS.copy()
-        self._tools: list[str] = ADVERTISED_TOOLS.copy()
+        self._tool_params: dict[str, list[str]] = {t.value: list(p) for t, p in TOOL_PARAMS.items()}
+        self._tools: list[str] = list(ADVERTISED_TOOLS)
         self._tool_aliases: dict[str, str] = TOOL_ALIASES.copy()
         # Pre-computed normalized (alpha-only, lowercase) lookups so that
         # callers using alpha-only keys (e.g. "getdata") resolve correctly
         # alongside the kebab-case storage keys (e.g. "get-data").
-        self._params_by_norm: dict[str, list[str]] = {normalize_identifier(k): v for k, v in TOOL_PARAMS.items()}
-        self._display_name_by_norm: dict[str, str] = {normalize_identifier(k): k for k in TOOL_PARAMS}
+        self._params_by_norm: dict[str, list[str]] = {
+            normalize_identifier(t.value): p for t, p in TOOL_PARAMS.items()
+        }
+        self._display_name_by_norm: dict[str, str] = {
+            normalize_identifier(t.value): t.value for t in TOOL_PARAMS
+        }
         self._tool_by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in self._tools}
 
     def get_tools(self) -> list[str]:

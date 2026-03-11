@@ -4,7 +4,7 @@ import re
 
 from pathlib import Path
 
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS, TOOL_ALIASES, NON_ADVERTISED_TOOL_ALIASES, ToolRegistry, normalize_identifier, resolve_tool_name
+from agentdecompile_cli.registry import TOOLS, TOOL_ALIASES, NON_ADVERTISED_TOOL_ALIASES, ToolRegistry, get_tool_params, normalize_identifier, resolve_tool_name
 
 
 def _repo_root() -> Path:
@@ -79,7 +79,7 @@ def test_tools_list_tools_and_params_are_supported_by_registry() -> None:
         if tool_name in NON_ADVERTISED_TOOL_ALIASES or tool_name in TOOL_ALIASES:
             continue
 
-        canonical_params: list[str] = TOOL_PARAMS.get(tool_name, [])
+        canonical_params: list[str] = get_tool_params(tool_name)
         by_norm: dict[str, str] = {normalize_identifier(param): param for param in canonical_params}
 
         for param_name, aliases in params.items():

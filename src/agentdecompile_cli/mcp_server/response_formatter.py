@@ -24,7 +24,7 @@ import re
 from collections.abc import Callable
 from typing import Any, cast
 
-from agentdecompile_cli.registry import is_tool_advertised, normalize_identifier
+from agentdecompile_cli.registry import ToolName, is_tool_advertised, normalize_identifier
 
 # ---------------------------------------------------------------------------
 # Markdown building helpers
@@ -81,16 +81,16 @@ def _pagination_footer(data: dict[str, Any]) -> str:
 
 _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
     normalize_identifier("annotate-function"),
-    normalize_identifier("get-functions"),
-    normalize_identifier("list-strings"),
-    normalize_identifier("manage-bookmarks"),
-    normalize_identifier("manage-comments"),
-    normalize_identifier("manage-data-types"),
-    normalize_identifier("manage-files"),
-    normalize_identifier("manage-function"),
-    normalize_identifier("manage-structures"),
-    normalize_identifier("manage-symbols"),
-    normalize_identifier("search-strings"),
+    normalize_identifier(ToolName.GET_FUNCTIONS.value),
+    normalize_identifier(ToolName.LIST_STRINGS.value),
+    normalize_identifier(ToolName.MANAGE_BOOKMARKS.value),
+    normalize_identifier(ToolName.MANAGE_COMMENTS.value),
+    normalize_identifier(ToolName.MANAGE_DATA_TYPES.value),
+    normalize_identifier(ToolName.MANAGE_FILES.value),
+    normalize_identifier(ToolName.MANAGE_FUNCTION.value),
+    normalize_identifier(ToolName.MANAGE_STRUCTURES.value),
+    normalize_identifier(ToolName.MANAGE_SYMBOLS.value),
+    normalize_identifier(ToolName.SEARCH_STRINGS.value),
 }
 
 

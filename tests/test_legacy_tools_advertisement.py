@@ -101,12 +101,11 @@ class TestLegacyToolsEnvironmentVariables:
     """Validate environment variable control of legacy tool advertisement."""
     
     def test_default_advertises_minimal_tool_set(self, clean_env):
-        """With no env vars set, only DEFAULT_ADVERTISED_TOOLS should be advertised."""
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, DEFAULT_ADVERTISED_TOOLS, TOOLS
-        
-        # Should advertise default set (minus GUI-only tools)
+        """With no env vars set, a minimal default set should be advertised (not all tools)."""
+        from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS
+
         assert len(ADVERTISED_TOOLS) < len(TOOLS), "Default should advertise fewer tools than total"
-        assert len(ADVERTISED_TOOLS) >= len(DEFAULT_ADVERTISED_TOOLS) - 5, "Should advertise approximately default count"
+        assert len(ADVERTISED_TOOLS) >= 10, "Should advertise at least a minimal default set"
     
     def test_enable_legacy_tools_advertises_all(self, clean_env):
         """AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1 should advertise all tools."""
@@ -118,7 +117,7 @@ class TestLegacyToolsEnvironmentVariables:
         from agentdecompile_cli.registry import ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOLS
         
         # Should advertise all tools except GUI-only
-        expected_count = len([t for t in TOOLS if t not in DISABLED_GUI_ONLY_TOOLS])
+        expected_count = len([t for t in TOOLS if t not in {x.value for x in DISABLED_GUI_ONLY_TOOLS}])
         assert len(ADVERTISED_TOOLS) == expected_count, "Should advertise all non-GUI tools"
     
     def test_show_legacy_tools_advertises_all(self, clean_env):
@@ -131,7 +130,7 @@ class TestLegacyToolsEnvironmentVariables:
         from agentdecompile_cli.registry import ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOLS
         
         # Should advertise all tools except GUI-only
-        expected_count = len([t for t in TOOLS if t not in DISABLED_GUI_ONLY_TOOLS])
+        expected_count = len([t for t in TOOLS if t not in {x.value for x in DISABLED_GUI_ONLY_TOOLS}])
         assert len(ADVERTISED_TOOLS) == expected_count, "SHOW_LEGACY should behave identically to ENABLE_LEGACY"
     
     @pytest.mark.parametrize("truthy_value", ["1", "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON"])
@@ -144,7 +143,7 @@ class TestLegacyToolsEnvironmentVariables:
         
         from agentdecompile_cli.registry import ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, TOOLS
         
-        expected_count = len([t for t in TOOLS if t not in DISABLED_GUI_ONLY_TOOLS])
+        expected_count = len([t for t in TOOLS if t not in {x.value for x in DISABLED_GUI_ONLY_TOOLS}])
         assert len(ADVERTISED_TOOLS) == expected_count, f"Value '{truthy_value}' should enable legacy tools"
     
     @pytest.mark.parametrize("falsy_value", ["0", "false", "False", "no", "off", "", " "])
@@ -190,7 +189,7 @@ class TestLegacyToolsEnvironmentVariables:
         
         advertised_set = set(ADVERTISED_TOOLS)
         for gui_tool in DISABLED_GUI_ONLY_TOOLS:
-            assert gui_tool not in advertised_set, f"GUI-only tool '{gui_tool}' should never be advertised"
+            assert gui_tool.value not in advertised_set, f"GUI-only tool '{gui_tool.value}' should never be advertised"
 
 
 class TestLegacyToolsProviderIntegration:
@@ -227,7 +226,7 @@ class TestLegacyToolsProviderIntegration:
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
         
-        expected_count = len([t for t in TOOLS if t not in DISABLED_GUI_ONLY_TOOLS])
+        expected_count = len([t for t in TOOLS if t not in {x.value for x in DISABLED_GUI_ONLY_TOOLS}])
         assert len(advertised_tools) == expected_count, "Provider should advertise all non-GUI tools"
 
 

@@ -23,7 +23,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOL_PARAMS, TOOLS
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOLS, get_tool_params
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
     AuthConfig,
@@ -61,7 +61,7 @@ def _build_tool_reference_payload() -> dict[str, Any]:
     alias_index = _build_tool_alias_index()
     canonical_tools: list[dict[str, Any]] = []
     for canonical_name in sorted(TOOLS):
-        params = [str(param) for param in _safe_list(TOOL_PARAMS.get(canonical_name, []))]
+        params = [str(param) for param in get_tool_params(canonical_name)]
         canonical_tools.append(
             {
                 "name": canonical_name,

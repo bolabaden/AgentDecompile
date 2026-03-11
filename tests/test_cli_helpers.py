@@ -7,7 +7,7 @@ import pytest
 from agentdecompile_cli.cli import _build_svr_admin_payload, _get_error_result_message
 from agentdecompile_cli.registry import (
     TOOLS,
-    TOOL_PARAMS,
+    ToolName,
     build_tool_payload,
     get_tool_params,
     to_camel_case_key,
@@ -108,16 +108,15 @@ class TestToolsSchema:
         assert all(isinstance(tool, str) for tool in TOOLS)
 
     def test_tool_params_has_get_data_params(self):
-        assert "get-data" in TOOL_PARAMS
-        assert "programPath" in TOOL_PARAMS["get-data"]
-        assert "addressOrSymbol" in TOOL_PARAMS["get-data"]
-        assert isinstance(TOOL_PARAMS, dict)
-        assert_mapping_invariants(TOOL_PARAMS)
+        assert "programPath" in get_tool_params("get-data")
+        assert "addressOrSymbol" in get_tool_params("get-data")
+        tool_params_str = {t.value: get_tool_params(t) for t in ToolName}
+        assert isinstance(tool_params_str, dict)
+        assert_mapping_invariants(tool_params_str)
 
     def test_tool_params_has_open_params(self):
-        assert "open-project" in TOOL_PARAMS
-        assert "path" in TOOL_PARAMS["open-project"]
-        assert isinstance(TOOL_PARAMS["open-project"], list)
+        assert "path" in get_tool_params("open-project")
+        assert isinstance(get_tool_params("open-project"), list)
 
     def test_get_tool_params_returns_list(self):
         assert "programPath" in get_tool_params("get-data")

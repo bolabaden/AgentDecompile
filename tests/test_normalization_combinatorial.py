@@ -13,8 +13,11 @@ import pytest
 
 from agentdecompile_cli.executor import DynamicToolExecutor
 from agentdecompile_cli.registry import ToolRegistry
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS
+from agentdecompile_cli.registry import TOOLS, ToolName, get_tool_params
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
+
+# Tools that have params (for parametrized tests that need tool_name string + params).
+_TOOLS_WITH_PARAMS: list[str] = [t.value for t in ToolName if get_tool_params(t)]
 
 pytestmark = pytest.mark.unit
 
@@ -86,10 +89,10 @@ class TestCombinatorialToolNameResolution:
 
 
 class TestCombinatorialArgumentParsing:
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_registry_parses_mixed_noisy_argument_variants(self, tool_name: str):
         registry = ToolRegistry()
-        params: list[str] = TOOL_PARAMS[tool_name]
+        params: list[str] = get_tool_params(tool_name)
         selected: list[str] = _pick_param_subset(params, seed=len(tool_name), max_items=3)
 
         raw_arguments: dict[str, str] = {}
@@ -106,10 +109,10 @@ class TestCombinatorialArgumentParsing:
             )
         assert_mapping_invariants(parsed)
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_dynamic_executor_parses_mixed_noisy_argument_variants(self, tool_name: str):
         executor = DynamicToolExecutor()
-        params: list[str] = TOOL_PARAMS[tool_name]
+        params: list[str] = get_tool_params(tool_name)
         selected: list[str] = _pick_param_subset(params, seed=len(tool_name) * 17, max_items=3)
 
         raw_arguments: dict[str, str] = {}
@@ -128,10 +131,10 @@ class TestCombinatorialArgumentParsing:
 
 # Full cross-product: every tool with every noisy tool name and every noisy argument variant
 class TestFullCrossProductNormalization:
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_registry_cross_product_tool_and_argument_variants(self, tool_name: str):
         registry = ToolRegistry()
-        params: list[str] = TOOL_PARAMS[tool_name]
+        params: list[str] = get_tool_params(tool_name)
         # For each noisy tool name variant
         for tool_variant in _noisy_tool_variants(tool_name):
             # For each argument, try all noisy variants
@@ -145,10 +148,10 @@ class TestFullCrossProductNormalization:
                     )
                     assert_mapping_invariants(parsed)
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_dynamic_executor_cross_product_tool_and_argument_variants(self, tool_name: str):
         executor = DynamicToolExecutor()
-        params: list[str] = TOOL_PARAMS[tool_name]
+        params: list[str] = get_tool_params(tool_name)
         for tool_variant in _noisy_tool_variants(tool_name):
             for param in params:
                 for arg_variant in _noisy_param_variants(param):

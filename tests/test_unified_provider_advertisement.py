@@ -123,7 +123,8 @@ class TestUnifiedProviderAdvertisement:
         provider = UnifiedToolProvider()
         advertised_names = {tool.name for tool in provider.list_tools()}
 
-        for gui_tool_name in DISABLED_GUI_ONLY_TOOLS:
+        for gui_tool in DISABLED_GUI_ONLY_TOOLS:
+            gui_tool_name = gui_tool.value
             assert to_snake_case(gui_tool_name) not in advertised_names
 
 

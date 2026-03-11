@@ -12,11 +12,19 @@ import itertools
 import pytest
 
 from agentdecompile_cli.executor import DynamicToolExecutor
-from agentdecompile_cli.registry import ToolRegistry, normalize_identifier
-from agentdecompile_cli.registry import TOOLS, TOOL_PARAMS
+from agentdecompile_cli.registry import (
+    TOOLS,
+    ToolName,
+    ToolRegistry,
+    get_tool_params,
+    normalize_identifier,
+    resolve_tool_name_enum,
+)
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
 pytestmark = pytest.mark.unit
+
+_TOOLS_WITH_PARAMS: list[str] = [t.value for t in ToolName if get_tool_params(t)]
 
 
 def _tool_variants(name: str) -> list[str]:
@@ -103,10 +111,10 @@ class TestToolRegistryNameMatching:
 class TestToolRegistryArgumentParsing:
     """Test argument parsing accepts noisy/non-accurate key formats."""
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_parse_arguments_accepts_variant_for_each_parameter(self, tool_name: str):
         registry = ToolRegistry()
-        canonical_params = TOOL_PARAMS[tool_name]
+        canonical_params = get_tool_params(tool_name)
 
         for param_name in canonical_params:
             for variant in _param_variants(param_name):
@@ -116,10 +124,10 @@ class TestToolRegistryArgumentParsing:
                 assert parsed[param_name] == "value"
                 assert_mapping_invariants(parsed)
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_parse_arguments_handles_mixed_argument_styles_in_single_call(self, tool_name: str):
         registry = ToolRegistry()
-        params = TOOL_PARAMS[tool_name]
+        params = get_tool_params(tool_name)
 
         selected = list(itertools.islice(params, 0, min(3, len(params))))
         raw_arguments: dict[str, str] = {}
@@ -145,10 +153,10 @@ class TestDynamicExecutorResolution:
             assert resolved == tool_name
             assert_string_invariants(normalize_identifier(resolved), expected=normalize_identifier(tool_name))
 
-    @pytest.mark.parametrize("tool_name", [name for name, params in TOOL_PARAMS.items() if params])
+    @pytest.mark.parametrize("tool_name", _TOOLS_WITH_PARAMS)
     def test_parse_arguments_dynamically_accepts_non_alphabet_noise(self, tool_name: str):
         executor = DynamicToolExecutor()
-        canonical_params = TOOL_PARAMS[tool_name]
+        canonical_params = get_tool_params(tool_name)
 
         param_name = canonical_params[0]
         noisy_key = f"__{param_name}__".replace("Path", "-Path").replace("Or", "_Or_")
@@ -170,3 +178,40 @@ class TestDynamicExecutorRequiredValidation:
 
         with pytest.raises(ValueError, match="Required parameter 'programpath' is missing"):
             executor._validate_arguments_dynamically("get-data", {"addressOrSymbol": "0x401000"})
+
+
+class TestToolNameEnum:
+    """Test ToolName enum and resolve_tool_name_enum."""
+
+    def test_tools_derived_from_enum(self):
+        """TOOLS list should match ToolName enum values."""
+        assert TOOLS == [t.value for t in ToolName]
+        assert len(TOOLS) == len(list(ToolName))
+
+    def test_resolve_tool_name_enum_canonical(self):
+        """resolve_tool_name_enum returns enum for canonical kebab-case names."""
+        assert resolve_tool_name_enum("open-project") == ToolName.OPEN_PROJECT
+        assert resolve_tool_name_enum("get-functions") == ToolName.GET_FUNCTIONS
+        assert resolve_tool_name_enum("manage-bookmarks") == ToolName.MANAGE_BOOKMARKS
+
+    def test_resolve_tool_name_enum_aliases(self):
+        """resolve_tool_name_enum returns enum for known aliases (alias -> canonical)."""
+        assert resolve_tool_name_enum("get-symbols") == ToolName.MANAGE_SYMBOLS
+        assert resolve_tool_name_enum("get-bookmarks") == ToolName.MANAGE_BOOKMARKS
+        # get-call-tree is an alias for get-call-graph (not a canonical tool name)
+        assert resolve_tool_name_enum("get-call-tree") == ToolName.GET_CALL_GRAPH
+
+    def test_resolve_tool_name_enum_variants(self):
+        """resolve_tool_name_enum accepts case/separator variants."""
+        assert resolve_tool_name_enum("Open_Project") == ToolName.OPEN_PROJECT
+        assert resolve_tool_name_enum("GETFUNCTIONS") == ToolName.GET_FUNCTIONS
+
+    def test_resolve_tool_name_enum_unknown_returns_none(self):
+        """resolve_tool_name_enum returns None for unknown tool names."""
+        assert resolve_tool_name_enum("unknown-tool") is None
+        assert resolve_tool_name_enum("") is None
+
+    def test_get_tool_params_accepts_enum(self):
+        """get_tool_params accepts ToolName enum."""
+        assert "programPath" in get_tool_params(ToolName.GET_DATA)
+        assert "path" in get_tool_params(ToolName.OPEN_PROJECT)
