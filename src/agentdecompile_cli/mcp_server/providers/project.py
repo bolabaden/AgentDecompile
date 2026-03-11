@@ -62,6 +62,69 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _shared_connection_context(
+    *,
+    stage: str,
+    server_host: str,
+    server_port: int,
+    auth_provided: bool,
+    server_username: str | None = None,
+    repository_name: str | None = None,
+    server_reachable: bool | None = None,
+    wrapper_error: str | None = None,
+    adapter_error: str | None = None,
+    adapter_error_type: str | None = None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "mode": "shared-server",
+        "connectionStage": stage,
+        "serverHost": server_host,
+        "serverPort": server_port,
+        "authProvided": auth_provided,
+    }
+    if server_username:
+        context["serverUsername"] = server_username
+    if repository_name:
+        context["repository"] = repository_name
+    if server_reachable is not None:
+        context["serverReachable"] = server_reachable
+    if wrapper_error:
+        context["wrapperError"] = wrapper_error
+    if adapter_error:
+        context["adapterError"] = adapter_error
+    if adapter_error_type:
+        context["adapterErrorType"] = adapter_error_type
+    return context
+
+
+def _shared_adapter_error(server_adapter: Any) -> tuple[str | None, str | None]:
+    getter = getattr(server_adapter, "getLastConnectError", None)
+    if getter is None:
+        return None, None
+    try:
+        last_error = getter()
+    except Exception:
+        return None, None
+    if last_error is None:
+        return None, None
+    return type(last_error).__name__, str(last_error)
+
+
+def _shared_auth_failed(adapter_error_type: str | None, adapter_error: str | None) -> bool:
+    combined = " ".join(part for part in (adapter_error_type, adapter_error) if part).lower()
+    return any(
+        token in combined
+        for token in (
+            "failedloginexception",
+            "authentication failed",
+            "login failed",
+            "invalid credentials",
+            "not authorized",
+            "permission denied",
+        )
+    )
+
+
 class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
         "openproject": "_handle_open_project",
@@ -540,18 +603,48 @@ class ProjectToolProvider(ToolProvider):
                 server_adapter.connect()
             except Exception as exc:
                 exc_text = str(exc)
-                if auth_provided:
+                adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
+                if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
-                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
+                        (
+                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting "
+                            f"to the repository server. Wrapper exception: {exc_text}. "
+                            f"Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
+                        ),
+                        context=_shared_connection_context(
+                            stage="server-adapter-connect",
+                            server_host=server_host,
+                            server_port=server_port,
+                            server_username=server_username,
+                            auth_provided=auth_provided,
+                            server_reachable=server_reachable,
+                            wrapper_error=exc_text,
+                            adapter_error=adapter_error,
+                            adapter_error_type=adapter_error_type,
+                        ),
                         next_steps=[
                             "Verify `serverUsername` and `serverPassword` for the Ghidra repository server.",
+                            "If the credentials should be valid, verify the same account can log in with a native Ghidra client against this server.",
                             "Retry after confirming the user has access.",
                         ],
                     ) from exc
                 raise ActionableError(
-                    f"Repository connection failed for {server_host}:{server_port}: {exc_text}",
-                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                    (
+                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. "
+                        f"Wrapper exception: {exc_text}."
+                        + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
+                    ),
+                    context=_shared_connection_context(
+                        stage="server-adapter-connect",
+                        server_host=server_host,
+                        server_port=server_port,
+                        server_username=server_username or None,
+                        auth_provided=auth_provided,
+                        server_reachable=server_reachable,
+                        wrapper_error=exc_text,
+                        adapter_error=adapter_error,
+                        adapter_error_type=adapter_error_type,
+                    ),
                     next_steps=[
                         "Verify server availability and repository service status.",
                         "Retry after server-side issues are resolved.",
@@ -559,20 +652,45 @@ class ProjectToolProvider(ToolProvider):
                 ) from exc
 
             if not server_adapter.isConnected():
-                last_error: Any = getattr(server_adapter, "getLastConnectError", lambda: None)()
-                message = str(last_error) if last_error else "unknown authentication/connection failure"
-                if auth_provided:
+                adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
+                message = adapter_error or "unknown authentication/connection failure"
+                if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        f"Authentication failed for {server_username}@{server_host}:{server_port}: {message}",
-                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
+                        (
+                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting "
+                            f"to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."
+                        ),
+                        context=_shared_connection_context(
+                            stage="server-adapter-connect",
+                            server_host=server_host,
+                            server_port=server_port,
+                            server_username=server_username,
+                            auth_provided=auth_provided,
+                            server_reachable=server_reachable,
+                            adapter_error=adapter_error,
+                            adapter_error_type=adapter_error_type,
+                        ),
                         next_steps=[
                             "Verify server credentials and account permissions.",
+                            "If the credentials should be valid, verify the same account can log in with a native Ghidra client against this server.",
                             "Retry once credentials are corrected.",
                         ],
                     )
                 raise ActionableError(
-                    f"Repository connection failed for {server_host}:{server_port}: {message}",
-                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                    (
+                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. "
+                        f"Adapter reported {adapter_error_type or 'unknown'}: {message}."
+                    ),
+                    context=_shared_connection_context(
+                        stage="server-adapter-connect",
+                        server_host=server_host,
+                        server_port=server_port,
+                        server_username=server_username or None,
+                        auth_provided=auth_provided,
+                        server_reachable=server_reachable,
+                        adapter_error=adapter_error,
+                        adapter_error_type=adapter_error_type,
+                    ),
                     next_steps=[
                         "Check repository server health/logs and network routing.",
                         "Retry after connectivity is restored.",
@@ -585,18 +703,46 @@ class ProjectToolProvider(ToolProvider):
             logger.info("[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else [])
         except Exception as exc:
             exc_text = str(exc)
-            if auth_provided:
+            adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
+            if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                 raise ActionableError(
-                    f"Authentication failed for {server_username}@{server_host}:{server_port}: {exc_text}",
-                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "serverUsername": server_username},
+                    (
+                        f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. "
+                        f"Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
+                    ),
+                    context=_shared_connection_context(
+                        stage="repository-list",
+                        server_host=server_host,
+                        server_port=server_port,
+                        server_username=server_username,
+                        auth_provided=auth_provided,
+                        server_reachable=server_reachable,
+                        wrapper_error=exc_text,
+                        adapter_error=adapter_error,
+                        adapter_error_type=adapter_error_type,
+                    ),
                     next_steps=[
                         "Verify credentials and repository visibility permissions.",
                         "Retry with a repository name in `path.`",
                     ],
                 ) from exc
             raise ActionableError(
-                f"Repository server connection failed for {server_host}:{server_port}: {exc_text}",
-                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                (
+                    f"Repository server connection failed for {server_host}:{server_port} while listing repositories. "
+                    f"Wrapper exception: {exc_text}."
+                    + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
+                ),
+                context=_shared_connection_context(
+                    stage="repository-list",
+                    server_host=server_host,
+                    server_port=server_port,
+                    server_username=server_username or None,
+                    auth_provided=auth_provided,
+                    server_reachable=server_reachable,
+                    wrapper_error=exc_text,
+                    adapter_error=adapter_error,
+                    adapter_error_type=adapter_error_type,
+                ),
                 next_steps=[
                     "Verify shared repository service status on the server.",
                     "Retry once repository listing is available.",
@@ -650,7 +796,15 @@ class ProjectToolProvider(ToolProvider):
         if repository_adapter is None:
             raise ActionableError(
                 f"Failed to get repository handle for '{repository_name}'",
-                context={"mode": "shared-server", "repository": repository_name},
+                context=_shared_connection_context(
+                    stage="repository-open",
+                    server_host=server_host,
+                    server_port=server_port,
+                    server_username=server_username or None,
+                    repository_name=repository_name,
+                    auth_provided=auth_provided,
+                    server_reachable=server_reachable,
+                ),
                 next_steps=[
                     "Call with a valid repository name in `path`.",
                     "Call without `path` to list `availableRepositories`, then retry with one of them.",
@@ -664,8 +818,20 @@ class ProjectToolProvider(ToolProvider):
                 exc_text = str(exc)
                 if auth_provided:
                     raise ActionableError(
-                        f"Authentication failed while opening repository '{repository_name}': {exc_text}",
-                        context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                        (
+                            f"Authentication failed while opening repository '{repository_name}'. "
+                            f"Wrapper exception: {exc_text}."
+                        ),
+                        context=_shared_connection_context(
+                            stage="repository-open",
+                            server_host=server_host,
+                            server_port=server_port,
+                            server_username=server_username or None,
+                            repository_name=repository_name,
+                            auth_provided=auth_provided,
+                            server_reachable=server_reachable,
+                            wrapper_error=exc_text,
+                        ),
                         next_steps=[
                             "Verify credentials and repository-level permissions.",
                             "Retry after confirming access to this repository.",
@@ -673,7 +839,16 @@ class ProjectToolProvider(ToolProvider):
                     ) from exc
                 raise ActionableError(
                     f"Failed to connect repository '{repository_name}': {exc_text}",
-                    context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                    context=_shared_connection_context(
+                        stage="repository-open",
+                        server_host=server_host,
+                        server_port=server_port,
+                        server_username=server_username or None,
+                        repository_name=repository_name,
+                        auth_provided=auth_provided,
+                        server_reachable=server_reachable,
+                        wrapper_error=exc_text,
+                    ),
                     next_steps=[
                         "Verify repository service health and access controls.",
                         "Retry with a known-good repository.",
@@ -684,7 +859,15 @@ class ProjectToolProvider(ToolProvider):
                 if auth_provided:
                     raise ActionableError(
                         f"Authentication failed while opening repository '{repository_name}'",
-                        context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                        context=_shared_connection_context(
+                            stage="repository-open",
+                            server_host=server_host,
+                            server_port=server_port,
+                            server_username=server_username or None,
+                            repository_name=repository_name,
+                            auth_provided=auth_provided,
+                            server_reachable=server_reachable,
+                        ),
                         next_steps=[
                             "Verify credentials and repository membership.",
                             "Retry after credentials are corrected.",
@@ -692,7 +875,15 @@ class ProjectToolProvider(ToolProvider):
                     )
                 raise ActionableError(
                     f"Failed to connect repository '{repository_name}'",
-                    context={"mode": "shared-server", "repository": repository_name, "serverHost": server_host, "serverPort": server_port},
+                    context=_shared_connection_context(
+                        stage="repository-open",
+                        server_host=server_host,
+                        server_port=server_port,
+                        server_username=server_username or None,
+                        repository_name=repository_name,
+                        auth_provided=auth_provided,
+                        server_reachable=server_reachable,
+                    ),
                     next_steps=[
                         "Check repository server status and endpoint routing.",
                         "Retry after connectivity is restored.",

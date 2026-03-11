@@ -399,9 +399,7 @@ async def _try_retry_tool_call(client: Any, tool_name: str, payload: dict[str, A
 def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Resolve CLI-invoked tool name to a server-advertised canonical call target.
 
-    Handles tool name normalization and alias forwarding. For example:
-    - "list-exports" → "manage-symbols" with mode="exports"
-    - "list-imports" → "manage-symbols" with mode="imports"
+    Handles tool name normalization and alias forwarding.
 
     This ensures CLI commands map correctly to the server's advertised tool API,
     even when using legacy or aliased command names.
@@ -422,10 +420,6 @@ def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, 
 
     if call_tool_name in NON_ADVERTISED_TOOL_ALIASES:
         forwarded_tool = NON_ADVERTISED_TOOL_ALIASES[call_tool_name]
-        if call_tool_name == "list-exports":
-            resolved_payload.setdefault("mode", "exports")
-        elif call_tool_name == "list-imports":
-            resolved_payload.setdefault("mode", "imports")
         call_tool_name = forwarded_tool
 
     return call_tool_name, resolved_payload
@@ -1204,7 +1198,7 @@ def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     _run_async(_run())
 
 
-@list_grp.command("imports", help="List imports (manage-symbols mode=imports)")
+@list_grp.command("imports", help="List imports (list-imports)")
 @click.option(
     "-b",
     "--binary",
@@ -1227,7 +1221,6 @@ def list_imports(
 ) -> None:
     payload: dict[str, Any] = {
         "programPath": program_path,
-        "mode": "imports",
         "maxResults": max_results,
         "startIndex": start_index,
     }
@@ -1235,10 +1228,10 @@ def list_imports(
         payload["libraryFilter"] = library_filter
     if no_group_by_library:
         payload["groupByLibrary"] = False
-    _run_async(_call(ctx, "manage-symbols", **payload))
+    _run_async(_call(ctx, "list-imports", **payload))
 
 
-@list_grp.command("exports", help="List exports (manage-symbols mode=exports)")
+@list_grp.command("exports", help="List exports (list-exports)")
 @click.option("-b", "--binary", "program_path", required=True)
 @click.option("--max-results", type=int, default=75)
 @click.option("--start-index", type=int, default=0)
@@ -1252,9 +1245,8 @@ def list_exports(
     _run_async(
         _call(
             ctx,
-            "manage-symbols",
+            "list-exports",
             programPath=program_path,
-            mode="exports",
             maxResults=max_results,
             startIndex=start_index,
         ),
@@ -1652,7 +1644,7 @@ def symbols_run(
 def _symbols_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``symbols <mode>`` shorthand subcommands."""
 
-    @symbols_grp.command(mode_name, help=help_text or f"manage-symbols mode={mode_name}")
+    @symbols_grp.command(mode_name, help=help_text or f"Run symbols mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
     @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--offset", type=int)

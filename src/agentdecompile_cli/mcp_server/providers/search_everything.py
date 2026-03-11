@@ -1034,10 +1034,10 @@ class SearchEverythingToolProvider(ToolProvider):
         elif result_type == "import":
             next_tools = [
                 {"tool": "get-references", "args": {"mode": "import", "importName": row.get("name", "")}},
-                {"tool": "manage-symbols", "args": {"mode": "imports", "query": row.get("name", "")}},
+                {"tool": "list-imports", "args": {"query": row.get("name", "")}},
             ]
         elif result_type in {"namespace", "class"}:
-            next_tools = [{"tool": "manage-symbols", "args": {"mode": "symbols", "query": row.get("name", "")}}]
+            next_tools = [{"tool": "search-symbols", "args": {"query": row.get("name", "")}}]
         elif result_type == "data_type":
             next_tools = [{"tool": "manage-data-types", "args": {"mode": "info", "dataTypeString": row.get("name", "")}}]
         elif result_type == "data_type_archive":
