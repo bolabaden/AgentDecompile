@@ -1373,7 +1373,6 @@ class ToolProviderManager:
             DataTypeToolProvider,
             DecompilerToolProvider,
             DissectFunctionToolProvider,
-            DissectFunctionToolProvider,
             FunctionToolProvider,
             GetFunctionToolProvider,
             ImportExportToolProvider,
