@@ -1,6 +1,6 @@
 """E2E tests for shared-project usage via docker-compose.
 
-These tests spawn the full docker-compose stack (biodecompwarehouse Ghidra server
+These tests spawn the full docker-compose stack (ghidra Ghidra server
 + agentdecompile-mcp MCP server) and exercise the complete shared-project workflow
 through real HTTP MCP requests and CLI subprocess calls.
 
@@ -39,14 +39,14 @@ CLI_TIMEOUT = 60  # seconds for CLI subprocess calls
 HTTP_TIMEOUT = 30.0  # seconds for HTTP requests
 COMPOSE_START_TIMEOUT = int(os.environ.get("AGENTDECOMPILE_TEST_COMPOSE_START_TIMEOUT", "900"))
 COMPOSE_HEALTH_TIMEOUT = float(os.environ.get("AGENTDECOMPILE_TEST_COMPOSE_HEALTH_TIMEOUT", "240"))
-SHARED_GHIDRA_HOST = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_HOST", "biodecompwarehouse")
+SHARED_GHIDRA_HOST = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_HOST", "ghidra")
 SHARED_GHIDRA_PORT = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_PORT", "13100")
 SHARED_GHIDRA_USERNAME = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_USERNAME", "")
 SHARED_GHIDRA_PASSWORD = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_PASSWORD", "")
 SHARED_GHIDRA_REPOSITORY = os.environ.get("AGENTDECOMPILE_TEST_GHIDRA_REPOSITORY", "")
 LOCAL_CONTAINER_BINARY = os.environ.get("AGENTDECOMPILE_TEST_LOCAL_BINARY_PATH", "/bin/busybox")
 LOCAL_CONTAINER_PROGRAM_NAME = Path(LOCAL_CONTAINER_BINARY).name
-COMPOSE_REQUIRED_SERVICES = ("biodecompwarehouse", "agentdecompile-mcp")
+COMPOSE_REQUIRED_SERVICES = ("ghidra", "agentdecompile-mcp")
 COMPOSE_REQUIRED_IMAGES = (
     "docker.io/bolabaden/ghidra:latest",
     "docker.io/bolabaden/agentdecompile-mcp:latest",
@@ -181,7 +181,7 @@ def _ensure_compose_bind_paths(env: dict[str, str]) -> None:
     if not config_root.is_absolute():
         config_root = (COMPOSE_FILE.parent / config_root).resolve()
 
-    biodecomp_root = config_root / "biodecompwarehouse"
+    biodecomp_root = config_root / "ghidra"
     for relative_path in ("bsim_datadir", "repos", "projects", "work"):
         (biodecomp_root / relative_path).mkdir(parents=True, exist_ok=True)
 
@@ -461,7 +461,7 @@ def docker_stack():
     """Start the container compose stack for the test module, tear down after.
 
     This fixture builds and starts the full stack:
-    - biodecompwarehouse (Ghidra server)
+    - ghidra (Ghidra server)
     - agentdecompile-mcp (MCP server)
 
     It waits for the MCP health endpoint before yielding.

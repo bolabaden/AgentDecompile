@@ -26,6 +26,73 @@ from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID
 logger = logging.getLogger(__name__)
 
 
+def _proxy_mcp_post_openapi_extra() -> dict[str, Any]:
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["jsonrpc", "id", "method"],
+                        "properties": {
+                            "jsonrpc": {"type": "string", "example": "2.0"},
+                            "id": {
+                                "oneOf": [
+                                    {"type": "integer", "example": 1},
+                                    {"type": "string", "example": "req-1"},
+                                ],
+                            },
+                            "method": {
+                                "type": "string",
+                                "enum": [
+                                    "initialize",
+                                    "tools/list",
+                                    "tools/call",
+                                    "resources/list",
+                                    "resources/read",
+                                ],
+                            },
+                            "params": {"type": "object", "additionalProperties": True},
+                        },
+                        "additionalProperties": True,
+                    },
+                    "examples": {
+                        "initialize": {
+                            "summary": "Initialize a proxied MCP session",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "initialize",
+                                "params": {
+                                    "protocolVersion": "2025-11-25",
+                                    "capabilities": {},
+                                    "clientInfo": {"name": "proxy-docs-client", "version": "1.0"},
+                                },
+                            },
+                        },
+                        "tools_call": {
+                            "summary": "Forward tool invocation to backend",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "open-project",
+                                    "arguments": {
+                                        "path": "/K1/k1_win_gog_swkotor.exe",
+                                        "format": "json",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 class ProxyServerConfig(BaseModel):
     """Configuration for a local MCP proxy server."""
 
@@ -125,6 +192,36 @@ class AgentDecompileMcpProxyServer:
                 "health": "/health",
             }
 
+        @self.app.get("/api/reference", tags=["reference"])
+        async def api_reference() -> dict[str, Any]:
+            """Proxy-specific MCP docs and forwarded auth headers."""
+            return {
+                "documentation": {
+                    "openapi": "/openapi.json",
+                    "swagger_ui": "/docs",
+                    "redoc": "/redoc",
+                },
+                "transport": {
+                    "canonical": "/mcp",
+                    "compatibility": "/mcp/message",
+                    "backend": self.config.backend_url,
+                },
+                "forwarded_headers": [
+                    "authorization",
+                    "x-ghidra-server-host",
+                    "x-ghidra-server-port",
+                    "x-ghidra-repository",
+                    "x-agent-server-username",
+                    "x-agent-server-password",
+                    "x-agent-server-repository",
+                ],
+                "notes": [
+                    "Proxy mode does not run local PyGhidra analysis.",
+                    "MCP sessions are local to the proxy and bridged to backend sessions.",
+                    "Prefer /mcp for new clients; /mcp/message remains compatibility-only.",
+                ],
+            }
+
         @self.app.get("/api", tags=["meta"], include_in_schema=False)
         async def legacy_api_info() -> dict[str, Any]:
             """Backward-compatible alias for the API index."""
@@ -138,10 +235,12 @@ class AgentDecompileMcpProxyServer:
                 tags=["mcp"],
                 summary="MCP Streamable HTTP proxy endpoint",
                 description=(
-                    "Canonical MCP streamable-HTTP proxy endpoint. Runtime traffic is intercepted "
-                    "by the outer MCP middleware before FastAPI routing."
+                    "Canonical MCP streamable-HTTP proxy endpoint. "
+                    "Use POST for JSON-RPC methods and forward all calls to the configured backend URL. "
+                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
                 ),
                 operation_id=f"proxy_mcp_streamable_{method.lower()}",
+                openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
             )
             self.app.add_api_route(
@@ -151,10 +250,12 @@ class AgentDecompileMcpProxyServer:
                 tags=["mcp"],
                 summary="MCP message compatibility proxy endpoint",
                 description=(
-                    "Compatibility MCP proxy endpoint for clients that target `/mcp/message`. "
-                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                    "Compatibility MCP proxy endpoint for clients that target /mcp/message. "
+                    "Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware "
+                    "before FastAPI routing."
                 ),
                 operation_id=f"proxy_mcp_message_{method.lower()}",
+                openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
             )
 
