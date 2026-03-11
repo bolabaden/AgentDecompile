@@ -154,7 +154,7 @@ def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
     if total > len(results):
         steps.append(f"Use `offset` + `limit` to paginate through all {total} functions.")
     steps.append("Use `namePattern` regex to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals).")
-    steps.append("Call `manage-symbols mode=count` for a quick symbol count overview without listing.")
+    steps.append("Call `get-current-program` for a quick symbol/function count overview without listing.")
     return steps
 
 
@@ -210,12 +210,12 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
         steps.append("Exports are the binary's public API — start analysis from these entry points.")
     elif mode == "classes":
         if results:
-            steps.append(f"Explore class symbols: `manage-symbols mode=symbols query={results[0].get('name', '')}`.")
+            steps.append(f"Explore class symbols: `search-symbols query={results[0].get('name', '')}`.")
         steps.append("Look for vtable addresses with `analyze-vtables` to map virtual method tables.")
     elif mode == "create_label":
         steps.append("Labels improve readability. Continue annotating with `manage-comments` and `manage-bookmarks`.")
     elif mode == "count":
-        steps.append("For a full listing, use `manage-symbols mode=symbols` or `list-functions`.")
+        steps.append("For a full listing, use `search-symbols query=.*` or `list-functions`.")
     return steps
 
 
@@ -356,7 +356,7 @@ def _next_steps_structures(data: dict[str, Any]) -> list[str]:
         name = data.get("name", "")
         steps.append(f"Apply to memory: `manage-structures mode=apply structure={name} address=0x...`.")
         steps.append(f"Add fields: `manage-structures mode=add_field structure={name} field=newField type=int offset=0`.")
-        steps.append("Use `manage-symbols mode=symbols query=<name>` to find where this struct type is used.")
+        steps.append("Use `search-symbols query=<name>` to find where this struct type is used.")
     elif action == "create":
         name = data.get("name", "")
         steps.append(f"Add fields: `manage-structures mode=add_field structure={name} field=firstField type=int offset=0`.")
@@ -475,7 +475,7 @@ def _next_steps_import_export(data: dict[str, Any]) -> list[str]:
     elif action == "export":
         steps.append("Export complete. The file is saved to the specified output path.")
     elif action == "analyze":
-        steps.append("Analysis complete. Use `list-functions` and `manage-symbols` to explore results.")
+        steps.append("Analysis complete. Use `list-functions`, `search-symbols`, `list-imports`, and `list-exports` to explore results.")
     elif action == "checkin":
         steps.append("Program checked in to shared repository. Other users can now access it.")
     return steps
@@ -1865,6 +1865,25 @@ def _render_error(data: dict[str, Any]) -> str:
     tool = data.get("tool", context.get("tool", ""))
     if tool:
         lines.append(_md_bold_kv("Tool", _md_code_inline(tool)))
+
+    detail_keys = [
+        ("Provider", "provider"),
+        ("Connection Stage", "connectionStage"),
+        ("Server Host", "serverHost"),
+        ("Server Port", "serverPort"),
+        ("Server Reachable", "serverReachable"),
+        ("Auth Provided", "authProvided"),
+        ("Server Username", "serverUsername"),
+        ("Repository", "repository"),
+        ("Adapter Error Type", "adapterErrorType"),
+        ("Adapter Error", "adapterError"),
+        ("Wrapper Error", "wrapperError"),
+    ]
+    for label, key in detail_keys:
+        value = data.get(key, context.get(key, ""))
+        if value in ("", None, []):
+            continue
+        lines.append(_md_bold_kv(label, value))
 
     next_steps = data.get("nextSteps", [])
     if next_steps:

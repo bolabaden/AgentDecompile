@@ -476,7 +476,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - **PyGhidra**: `with pyghidra.open_project(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 ### `create-label`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="create_label"`.
+**Description**: Legacy compatibility forward. Use `create-label`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -876,7 +876,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 **Examples**: `list-cross-references programPath="/bin.exe" target="0x401000"`.
 ### `list-exports`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="exports"`.
+**Description**: Legacy compatibility forward. Use `list-exports`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -936,7 +936,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 ### `list-imports`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="imports"`.
+**Description**: Legacy compatibility forward. Use `list-imports`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -2136,7 +2136,7 @@ Follow this workflow using AgentDecompile MCP tools:
   - **Suspicious Keywords**: admin, password, credential, token, crypto, encrypt, decrypt, download, execute, inject, shellcode, payload
 
 #### 4. Survey Symbols and Imports
-- Use `manage-symbols` with `mode='imports'` to list external symbols
+- Use `list-imports` to list external symbols
 - Use `list-imports` for library-specific imports
 - Focus on external symbols (imports from libraries)
 - Flag interesting/suspicious imports by category:

@@ -339,7 +339,6 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
     "open": "open-project",
     "switch-project": "open-project",  # folded into open-project
-    "create-label": "manage-symbols",
     "download-shared-repository": "sync-project",
     "sync-shared-repository": "sync-project",
     "sync-shared-project": "sync-project",
@@ -349,12 +348,8 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "delete-project-binary": "remove-program-binary",
     "gen-callgraph": "get-call-graph",
     "list-cross-references": "get-references",
-    "list-exports": "manage-symbols",
-    "list-imports": "manage-symbols",
     "list-strings": "manage-strings",
     "search-strings": "manage-strings",
-    "search-symbols": "manage-symbols",
-    "search-symbols-by-name": "manage-symbols",
     # analyze-data-flow overloads
     "find-variable-accesses": "analyze-data-flow",
     "trace-data-flow-backward": "analyze-data-flow",
