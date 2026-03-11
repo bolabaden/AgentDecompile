@@ -315,7 +315,6 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
         or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
-        or _backend_host_for_recovery(ctx)
     )
     port_raw = (
         str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
