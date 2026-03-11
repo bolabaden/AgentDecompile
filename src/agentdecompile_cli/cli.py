@@ -485,6 +485,31 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
     return None
 
 
+async def _maybe_preopen_requested_program(
+    ctx: click.Context,
+    client: Any,
+    tool_name: str,
+    payload: dict[str, Any],
+) -> Any | None:
+    if tool_name != "get_current_program":
+        return None
+
+    requested_program = _extract_program_argument(payload)
+    if not requested_program:
+        return None
+
+    last_open_error: Any | None = None
+    for open_payload in _build_open_attempts(ctx, requested_program):
+        clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
+        opened, open_result = await _try_open_program(ctx, client, clean_open_payload)
+        if opened:
+            return None
+        if open_result is not None:
+            last_open_error = open_result
+
+    return last_open_error
+
+
 async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> tuple[bool, Any | None]:
     """Try to open a program with the given payload."""
     try:
@@ -633,6 +658,9 @@ async def _execute_tool_call(
             bootstrap = await _maybe_bootstrap_shared_listing(ctx, client_override, call_tool_name, payload)
             if bootstrap is not None:
                 return bootstrap
+            preopen_error = await _maybe_preopen_requested_program(ctx, client_override, call_tool_name, payload)
+            if preopen_error is not None:
+                return preopen_error
             first = await client_override.call_tool(call_tool_name, payload)
             return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
 
@@ -641,6 +669,9 @@ async def _execute_tool_call(
             bootstrap = await _maybe_bootstrap_shared_listing(ctx, client, call_tool_name, payload)
             if bootstrap is not None:
                 return bootstrap
+            preopen_error = await _maybe_preopen_requested_program(ctx, client, call_tool_name, payload)
+            if preopen_error is not None:
+                return preopen_error
             first = await client.call_tool(call_tool_name, payload)
             return await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
     except ServerNotRunningError as exc:

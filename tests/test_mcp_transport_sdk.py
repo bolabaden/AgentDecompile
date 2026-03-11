@@ -20,12 +20,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+import click
 import httpx
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from agentdecompile_cli import cli as cli_module
 import agentdecompile_cli.launcher as launcher_module
 from agentdecompile_cli import bridge as bridge_module
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
@@ -205,6 +207,45 @@ async def test_open_project_shared_flag_forces_shared_route(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+async def test_svr_admin_runs_with_passthrough_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = ProjectToolProvider()
+
+    install_dir = tmp_path / "ghidra"
+    server_dir = install_dir / "server"
+    server_dir.mkdir(parents=True)
+    (server_dir / "svrAdmin.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setenv("GHIDRA_INSTALL_DIR", str(install_dir))
+
+    observed: dict[str, Any] = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def _fake_run(cmd: list[str], capture_output: bool, text: bool, timeout: int, check: bool) -> _Completed:
+        observed["cmd"] = cmd
+        observed["capture_output"] = capture_output
+        observed["text"] = text
+        observed["timeout"] = timeout
+        observed["check"] = check
+        return _Completed()
+
+    monkeypatch.setattr(project_provider_module.subprocess, "run", _fake_run)
+
+    response = await provider._handle_svr_admin({"args": ["-list", "-all"], "timeoutseconds": 45})
+    payload = json.loads(response[0].text)
+
+    assert payload["success"] is True
+    assert payload["action"] == "svr-admin"
+    assert payload["argv"] == ["-list", "-all"]
+    assert payload["exitCode"] == 0
+    assert observed["cmd"][0].endswith("svrAdmin.bat")
+    assert observed["cmd"][1:] == ["-list", "-all"]
+    assert observed["timeout"] == 45
+
+
+@pytest.mark.asyncio
 async def test_get_current_program_surfaces_stateless_open_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ProjectToolProvider()
 
@@ -251,12 +292,59 @@ async def test_stdio_bridge_forwards_proxy_shared_headers_to_backend(monkeypatch
 
     await bridge._ensure_backend("frontend-session")
 
-    assert captured["url"] == "http://127.0.0.1:8080/mcp"
+    assert captured["url"] == normalize_backend_url("http://127.0.0.1:8080/mcp")
     assert captured["extra_headers"]["X-Ghidra-Server-Host"] == "170.9.241.140"
     assert captured["extra_headers"]["X-Ghidra-Server-Port"] == "13100"
     assert captured["extra_headers"]["X-Ghidra-Repository"] == "Odyssey"
     assert captured["extra_headers"]["X-Agent-Server-Username"] == "OpenKotOR"
     assert captured["extra_headers"]["X-Agent-Server-Password"] == "idekanymore"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_preopens_requested_program_for_get_current_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class _FakeClient:
+        async def __aenter__(self) -> "_FakeClient":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+        async def call_tool(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append((name, dict(payload)))
+            if name == "open-project":
+                return {"content": [{"type": "text", "text": json.dumps({"success": True})}], "isError": False}
+            if name == "manage_files":
+                return {"content": [], "isError": False}
+            return {"loaded": True, "name": "swkotor.exe"}
+
+    monkeypatch.setattr(cli_module, "_client", lambda ctx: _FakeClient())
+    monkeypatch.setattr(
+        cli_module,
+        "_shared_server_defaults",
+        lambda ctx: {
+            "host": "170.9.241.140",
+            "port": 13100,
+            "username": "OpenKotOR",
+            "password": "idekanymore",
+            "repository": "Odyssey",
+        },
+    )
+
+    ctx = click.Context(click.Command("test"), obj={"format": "json", "server_url": "http://170.9.241.140:8080/mcp/"})
+
+    result = await cli_module._execute_tool_call(
+        ctx,
+        "get_current_program",
+        {"programPath": "/K1/k1_win_gog_swkotor.exe", "format": "json"},
+    )
+
+    assert result["loaded"] is True
+    assert calls[0][0] == "open-project"
+    assert calls[0][1]["path"] == "/K1/k1_win_gog_swkotor.exe"
+    assert calls[1][0] == "manage_files"
+    assert calls[2][0] == "get_current_program"
 
 
 def _find_free_port() -> int:
