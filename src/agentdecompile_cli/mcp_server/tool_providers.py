@@ -285,7 +285,7 @@ class ActionableError(Exception):
     response, along with auto-inferred guidance from error message patterns.
 
     **When to use ActionableError:**
-    - No program loaded (user needs to call `open` first)
+    - No program loaded (user needs to call `open-project` first)
     - Authentication failed (user should verify credentials)
     - Invalid path (user should check if file exists)
     - Required parameter missing (user should include the param)
@@ -298,7 +298,7 @@ class ActionableError(Exception):
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
                     "Then retry the current tool.",
                 ],
             )
@@ -311,7 +311,7 @@ class ActionableError(Exception):
             "success": false,
             "error": "No program loaded",
             "context": {"state": "no-active-program"},
-            "nextSteps": ["Call `open`...", "Then retry..."],
+            "nextSteps": ["Call `open-project`...", "Then retry..."],
             "state": "no-active-program"  (context keys flattened into response)
         }
         ```
@@ -1035,7 +1035,7 @@ class ToolProvider:
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
                     "Call `get-current-program` to confirm `loaded=true`.",
                 ],
             )
@@ -1046,7 +1046,7 @@ class ToolProvider:
                 "No program loaded (Ghidra tools unavailable)",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
                     "Then retry the current analysis tool.",
                 ],
             )
@@ -1813,7 +1813,7 @@ class ToolProviderManager:
                     },
                     next_steps=[
                         "Call `list-project-files` to discover the exact program path available in this session.",
-                        "Call `open` with that program path (or with shared-server credentials and repository) before retrying this tool.",
+                        "Call `open-project` with that program path (or with shared-server credentials and repository) before retrying this tool.",
                     ],
                 ),
             )
