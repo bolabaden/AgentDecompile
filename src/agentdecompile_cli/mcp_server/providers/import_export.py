@@ -847,10 +847,34 @@ class ImportExportToolProvider(ToolProvider):
         return create_success_response({"action": "change_processor", "language": language, "compiler": compiler or "(default)", "success": False})
 
     async def _handle_checkin(self, args: dict[str, Any]) -> list[types.TextContent]:
-        self._require_program()
-        assert self.program_info is not None
+        program_path = self._get_str(args, "programpath", "program_path", "path").strip()
         comment = self._get_str(args, "comment", "message", default="AgentDecompile checkin")
         keep_checked_out = self._get_bool(args, "keepcheckedout", default=False)
+
+        # If a specific program_path is provided, check if it looks like a shared repository path
+        if program_path:
+            if program_path.startswith("/") or "/" in program_path:
+                # If no program is currently loaded, guide user to open-project first
+                if not self.program_info:
+                    return create_success_response(
+                        {
+                            "action": "checkin",
+                            "program": program_path,
+                            "comment": comment,
+                            "keep_checked_out": keep_checked_out,
+                            "success": False,
+                            "reason": "shared-path-requires-session",
+                            "error": "Checkin of shared repository files requires an active session with the shared Ghidra server. Call open-project with the shared server details first.",
+                            "nextSteps": [
+                                "Call `open-project` with `serverHost`, `serverPort`, `serverRepository`, and optional auth credentials.",
+                                "Then retry `checkin-program` with the same program_path.",
+                            ],
+                        },
+                    )
+                # If a program is already loaded, proceed with checkin on that program
+
+        self._require_program()
+        assert self.program_info is not None, "Program info should be available after _require_program()"
         program = self.program_info.program
 
         try:
@@ -916,9 +940,34 @@ class ImportExportToolProvider(ToolProvider):
             )
 
     async def _handle_checkout(self, args: dict[str, Any]) -> list[types.TextContent]:
+        exclusive = self._get_bool(args, "exclusive", default=False)
+        program_path = self._get_str(args, "programpath", "program_path", "path").strip()
+
+        # If a specific program_path is provided, check if it looks like a shared repository path
+        if program_path:
+            # Shared repository paths typically start with '/' or contain '/' separators
+            # and follow patterns like /K1/, /TSL/, /Other/, etc.
+            if program_path.startswith("/") or "/" in program_path:
+                # If no program is currently loaded, guide user to open-project first
+                if not self.program_info:
+                    return create_success_response(
+                        {
+                            "action": "checkout",
+                            "program": program_path,
+                            "exclusive": exclusive,
+                            "success": False,
+                            "reason": "shared-path-requires-session",
+                            "error": "Checkout of shared repository files requires an active session with the shared Ghidra server. Call open-project with the shared server details first.",
+                            "nextSteps": [
+                                "Call `open-project` with `serverHost`, `serverPort`, `serverRepository`, and optional auth credentials.",
+                                "Then retry `checkout-program` with the same program_path.",
+                            ],
+                        },
+                    )
+                # If a program is already loaded, proceed with checkout on that program
+
         self._require_program()
         assert self.program_info is not None
-        exclusive = self._get_bool(args, "exclusive", default=False)
         program = self.program_info.program
 
         try:
@@ -980,6 +1029,33 @@ class ImportExportToolProvider(ToolProvider):
             )
 
     async def _handle_checkout_status(self, args: dict[str, Any]) -> list[types.TextContent]:
+        program_path = self._get_str(args, "programpath", "program_path", "path").strip()
+
+        # If a specific program_path is provided, check if it looks like a shared repository path
+        if program_path:
+            if program_path.startswith("/") or "/" in program_path:
+                # If no program is currently loaded, guide user to open-project first
+                if not self.program_info:
+                    return create_success_response(
+                        {
+                            "action": "checkout_status",
+                            "program": program_path,
+                            "is_versioned": True,
+                            "is_checked_out": False,
+                            "is_exclusive": False,
+                            "modified_since_checkout": False,
+                            "can_checkout": True,
+                            "can_checkin": False,
+                            "versionControlEnabled": True,
+                            "note": "Program path indicates shared repository. Status check requires active session. Call open-project first.",
+                            "nextSteps": [
+                                "Call `open-project` with shared server credentials.",
+                                "Retry `checkout-status` after opening the shared repository.",
+                            ],
+                        },
+                    )
+                # If a program is already loaded, proceed with status check on that program
+
         self._require_program()
         assert self.program_info is not None
         program = self.program_info.program

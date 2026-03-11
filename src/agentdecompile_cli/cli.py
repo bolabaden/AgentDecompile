@@ -3648,7 +3648,7 @@ main.add_command(main.commands["svr-admin"], "svrAdmin")
     "-b",
     "--binary",
     "program_path",
-    help="Program path in the project (optional in GUI mode)",
+    help="Program path in the project",
 )
 @click.option(
     "--timeout",

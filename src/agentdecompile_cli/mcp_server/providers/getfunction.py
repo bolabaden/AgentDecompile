@@ -41,10 +41,10 @@ class _FunctionMatchFeature:
 class _FunctionMatchIndex:
     function_count: int
     features: list[_FunctionMatchFeature]
-    by_identity: dict[int, _FunctionMatchFeature]
+    by_identity: dict[str, _FunctionMatchFeature]
     by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]]
-    by_caller: dict[str, set[int]]
-    by_callee: dict[str, set[int]]
+    by_caller: dict[str, set[str]]
+    by_callee: dict[str, set[str]]
 
 
 class GetFunctionToolProvider(ToolProvider):
@@ -346,18 +346,19 @@ class GetFunctionToolProvider(ToolProvider):
             metadata={"functionCount": function_count},
         ) as capture:
             features: list[_FunctionMatchFeature] = []
-            by_identity: dict[int, _FunctionMatchFeature] = {}
+            by_identity: dict[str, _FunctionMatchFeature] = {}
             by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]] = defaultdict(list)
-            by_caller: dict[str, set[int]] = defaultdict(set)
-            by_callee: dict[str, set[int]] = defaultdict(set)
+            by_caller: dict[str, set[str]] = defaultdict(set)
+            by_callee: dict[str, set[str]] = defaultdict(set)
 
             for func in fm.getFunctions(True):
                 callers = frozenset(c.getName() for c in func.getCallingFunctions(None))
                 callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
+                addr_str = str(func.getEntryPoint())
                 feature = _FunctionMatchFeature(
                     function=func,
                     name=func.getName(),
-                    address=str(func.getEntryPoint()),
+                    address=addr_str,
                     signature=str(func.getSignature()),
                     param_count=func.getParameterCount(),
                     return_type=str(func.getReturnType()),
@@ -365,13 +366,12 @@ class GetFunctionToolProvider(ToolProvider):
                     callees=callees,
                 )
                 features.append(feature)
-                feature_id = id(func)
-                by_identity[feature_id] = feature
+                by_identity[addr_str] = feature
                 by_signature[(feature.param_count, feature.return_type)].append(feature)
                 for caller in callers:
-                    by_caller[caller].add(feature_id)
+                    by_caller[caller].add(addr_str)
                 for callee in callees:
-                    by_callee[callee].add(feature_id)
+                    by_callee[callee].add(addr_str)
 
             capture.add_metadata(indexedFunctions=len(features))
 
@@ -380,14 +380,26 @@ class GetFunctionToolProvider(ToolProvider):
             features=features,
             by_identity=by_identity,
             by_signature=dict(by_signature),
-            by_caller={name: set(ids) for name, ids in by_caller.items()},
-            by_callee={name: set(ids) for name, ids in by_callee.items()},
+            by_caller={name: set(addrs) for name, addrs in by_caller.items()},
+            by_callee={name: set(addrs) for name, addrs in by_callee.items()},
         )
         self._MATCH_INDEX_CACHE[cache_key] = index
         return index, False
 
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
+        raw_targets = args.get(n("targetprogrampaths"))
+        if raw_targets is not None:
+            if isinstance(raw_targets, list):
+                has_paths = any(x and str(x).strip() for x in raw_targets)
+            else:
+                has_paths = bool(str(raw_targets).strip())
+            if has_paths:
+                raise ValueError(
+                    "Cross-program matching (targetProgramPaths) is not yet implemented. "
+                    "Use match-function without targetProgramPaths for single-program modes: "
+                    "similar, callers, callees, or signature."
+                )
         func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")
         max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)
@@ -432,8 +444,9 @@ class GetFunctionToolProvider(ToolProvider):
             sig = str(func.getSignature())
             param_count = func.getParameterCount()
             ret = str(func.getReturnType())
+            func_addr = str(func.getEntryPoint())
             assert match_index is not None
-            candidates = [feature for feature in match_index.by_signature.get((param_count, ret), []) if feature.function != func]
+            candidates = [feature for feature in match_index.by_signature.get((param_count, ret), []) if feature.address != func_addr]
             similar = [
                 {"name": feature.name, "address": feature.address, "signature": feature.signature}
                 for feature in candidates[:max_results]
@@ -451,25 +464,26 @@ class GetFunctionToolProvider(ToolProvider):
             )
 
         assert match_index is not None
-        target_feature = match_index.by_identity.get(id(func))
+        func_addr = str(func.getEntryPoint())
+        target_feature = match_index.by_identity.get(func_addr)
         if target_feature is None:
             raise ValueError(f"Function not indexed for matching: {func_id}")
 
-        candidate_ids: set[int] = set()
+        candidate_addrs: set[str] = set()
         for caller in target_feature.callers:
-            candidate_ids.update(match_index.by_caller.get(caller, set()))
+            candidate_addrs.update(match_index.by_caller.get(caller, set()))
         for callee in target_feature.callees:
-            candidate_ids.update(match_index.by_callee.get(callee, set()))
+            candidate_addrs.update(match_index.by_callee.get(callee, set()))
 
-        candidate_ids.discard(id(func))
-        if not candidate_ids:
+        candidate_addrs.discard(func_addr)
+        if not candidate_addrs:
             signature_candidates = match_index.by_signature.get((target_feature.param_count, target_feature.return_type), [])
-            candidate_ids.update(id(feature.function) for feature in signature_candidates if feature.function != func)
+            candidate_addrs.update(feature.address for feature in signature_candidates if feature.address != func_addr)
 
         scores: list[tuple[int, _FunctionMatchFeature]] = []
         top_k = max(max_results, 1)
-        for feature_id in candidate_ids:
-            feature = match_index.by_identity.get(feature_id)
+        for addr in candidate_addrs:
+            feature = match_index.by_identity.get(addr)
             if feature is None:
                 continue
             overlap = len(target_feature.callees & feature.callees) + len(target_feature.callers & feature.callers)
@@ -483,7 +497,7 @@ class GetFunctionToolProvider(ToolProvider):
                 "mode": "similar",
                 "cacheHit": cache_hit,
                 "indexedFunctionCount": match_index.function_count,
-                "candidateCount": len(candidate_ids),
+                "candidateCount": len(candidate_addrs),
             },
         ):
             top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
@@ -494,7 +508,7 @@ class GetFunctionToolProvider(ToolProvider):
                 "function": func.getName(),
                 "mode": "similar",
                 "indexedFunctionCount": match_index.function_count,
-                "candidateCount": len(candidate_ids),
+                "candidateCount": len(candidate_addrs),
                 "cacheHit": cache_hit,
                 "results": similar,
                 "count": len(similar),

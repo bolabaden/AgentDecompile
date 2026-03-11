@@ -80,15 +80,17 @@ def _pagination_footer(data: dict[str, Any]) -> str:
 
 
 _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
+    normalize_identifier("annotate-function"),
     normalize_identifier("get-functions"),
+    normalize_identifier("list-strings"),
     normalize_identifier("manage-bookmarks"),
     normalize_identifier("manage-comments"),
     normalize_identifier("manage-data-types"),
     normalize_identifier("manage-files"),
     normalize_identifier("manage-function"),
-    normalize_identifier("manage-strings"),
     normalize_identifier("manage-structures"),
     normalize_identifier("manage-symbols"),
+    normalize_identifier("search-strings"),
 }
 
 
@@ -137,7 +139,7 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
         steps.append(f'Call `manage-comments address={addr} mode=set comment="..."` to annotate your findings.')
         steps.append(f"Call `get-references address={addr}` to find all cross-references to/from this function.")
     steps.append("If the function calls suspicious subroutines, use `get-functions mode=decompile` on those next.")
-    steps.append("Use `manage-function mode=rename` to give this function a meaningful name if auto-named.")
+    steps.append("Use `annotate-function mode=rename` to give this function a meaningful name if auto-named.")
     return steps
 
 

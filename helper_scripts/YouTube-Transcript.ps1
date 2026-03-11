@@ -170,15 +170,25 @@ $FfprobeLocalPath = Join-Path $FfmpegLocalDir $FfprobeExeName
 
 # --- Find or install yt-dlp ---
 function Find-YtDlp {
+    Write-Log -Level 'DEBUG' -Message 'Find-YtDlp: resolving yt-dlp (PATH, then local bin, then auto-install).'
     # 1) On PATH
     $ytdlp = Get-Command yt-dlp -ErrorAction SilentlyContinue
-    if ($ytdlp) { return $ytdlp.Source }
+    if ($ytdlp) {
+        Write-Log -Level 'DEBUG' -Message ("Find-YtDlp: using yt-dlp on PATH: {0}" -f $ytdlp.Source)
+        return $ytdlp.Source
+    }
     $env:PATH -split [System.IO.Path]::PathSeparator | ForEach-Object {
         $exe = Join-Path $_ $YtDlpExeName
-        if (Test-Path -LiteralPath $exe) { return $exe }
+        if (Test-Path -LiteralPath $exe) {
+            Write-Log -Level 'DEBUG' -Message ("Find-YtDlp: using yt-dlp on PATH: {0}" -f $exe)
+            return $exe
+        }
     }
     # 2) Our local bin
-    if (Test-Path -LiteralPath $YtDlpLocalPath) { return $YtDlpLocalPath }
+    if (Test-Path -LiteralPath $YtDlpLocalPath) {
+        Write-Log -Level 'DEBUG' -Message ("Find-YtDlp: using local yt-dlp: {0}" -f $YtDlpLocalPath)
+        return $YtDlpLocalPath
+    }
     # 3) Auto-install from GitHub
     Write-Log -Level 'STEP' -Message 'yt-dlp not found on PATH; attempting auto-install.'
     return Install-YtDlp
@@ -213,15 +223,25 @@ function Install-YtDlp {
 
 # --- Find or install ffmpeg ---
 function Find-Ffmpeg {
+    Write-Log -Level 'DEBUG' -Message 'Find-Ffmpeg: resolving ffmpeg (PATH, then local bin, then auto-install).'
     # 1) On PATH
     $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    if ($ffmpeg) { return $ffmpeg.Source }
+    if ($ffmpeg) {
+        Write-Log -Level 'DEBUG' -Message ("Find-Ffmpeg: using ffmpeg on PATH: {0}" -f $ffmpeg.Source)
+        return $ffmpeg.Source
+    }
     $env:PATH -split [System.IO.Path]::PathSeparator | ForEach-Object {
         $exe = Join-Path $_ $FfmpegExeName
-        if (Test-Path -LiteralPath $exe) { return $exe }
+        if (Test-Path -LiteralPath $exe) {
+            Write-Log -Level 'DEBUG' -Message ("Find-Ffmpeg: using ffmpeg on PATH: {0}" -f $exe)
+            return $exe
+        }
     }
     # 2) Our local bin
-    if (Test-Path -LiteralPath $FfmpegLocalPath) { return $FfmpegLocalPath }
+    if (Test-Path -LiteralPath $FfmpegLocalPath) {
+        Write-Log -Level 'DEBUG' -Message ("Find-Ffmpeg: using local ffmpeg: {0}" -f $FfmpegLocalPath)
+        return $FfmpegLocalPath
+    }
     # 3) Auto-install from GitHub
     Write-Log -Level 'STEP' -Message 'ffmpeg not found on PATH; attempting auto-install.'
     return Install-Ffmpeg
@@ -301,7 +321,10 @@ function Get-SafeBaseName {
     $Name.Trim().TrimEnd('.')
 }
 
-# --- Download video (MP4) ---
+# --- Download video (MP4): native resolution, best bitrate ---
+# Format: best video + best audio (any container), sorted by resolution then bitrate.
+# Merge to MP4; when re-encoding (e.g. VP9->H264) use high quality (CRF 18).
+# Resolution/bitrate mapping for re-encode: CRF 18 approximates high quality across resolutions.
 function Invoke-DownloadVideo {
     param([string]$YtDlp, [string]$Url, [string]$OutDir)
     Write-Log -Level 'STEP' -Message 'Fetching video metadata (dump-json)...'
@@ -319,11 +342,23 @@ function Invoke-DownloadVideo {
     if (-not $info -or -not $info.title) { Fail 'Could not get video title from URL after retries. Check URL and network, then try again.' }
     $title = Get-SafeBaseName $info.title
     $outPath = Join-Path $OutDir "$title.mp4"
-    Write-Log -Level 'INFO' -Message ("Downloading video -> {0}" -f $outPath)
+    if (Test-Path -LiteralPath $outPath) {
+        Write-Log -Level 'INFO' -Message ("Output file already exists; will overwrite (default): {0}" -f $outPath)
+    }
+    Write-Log -Level 'INFO' -Message ("Downloading video (native resolution, best bitrate) -> {0}" -f $outPath)
     $tmpl = Join-Path $OutDir '%(title)s.%(ext)s'
+    # Best video + best audio by resolution then bitrate; merge to MP4. Re-encode to H264 at high quality when needed (e.g. VP9).
+    $format = 'bestvideo+bestaudio'
+    $sortArgs = @('-S', 'res,br')
+    $mergeArgs = @('--merge-output-format', 'mp4')
+    $ppaArgs = @('--postprocessor-args', 'ffmpeg:-c:v libx264 -crf 18 -preset medium -c:a aac -b:a 192k')
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & $YtDlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' --merge-output-format mp4 -o $tmpl $Url 2>&1 | Out-Null } finally { $ErrorActionPreference = $prev }
+    try {
+        & $YtDlp -f $format @sortArgs @mergeArgs @ppaArgs -o $tmpl $Url 2>&1 | Out-Null
+    } finally {
+        $ErrorActionPreference = $prev
+    }
     Write-Log -Level 'SUCCESS' -Message ("Video saved: {0}" -f $outPath)
     $outPath
 }
@@ -333,6 +368,7 @@ function Invoke-DownloadSubs {
     param([string]$YtDlp, [string]$Url, [string]$OutDir, [string]$Lang = 'en')
     Write-Log -Level 'STEP' -Message ("Downloading captions (lang={0})..." -f $Lang)
     $tmpl = Join-Path $OutDir '%(title)s'
+    Write-Log -Level 'DEBUG' -Message ("Invoke-DownloadSubs: output template {0}; existing VTT in dir will be overwritten by default." -f $tmpl)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { & $YtDlp --write-subs --write-auto-subs --sub-langs $Lang --skip-download -o $tmpl $Url 2>&1 | Out-Null } finally { $ErrorActionPreference = $prev }
@@ -348,7 +384,10 @@ function Invoke-DownloadSubs {
     $vttPath = Join-Path $OutDir "$title.$Lang.vtt"
     if (-not (Test-Path $vttPath)) {
         $fallbackVtt = Get-ChildItem -Path $OutDir -Filter "*.vtt" | Where-Object { $_.Name -like "*$Lang*" } | Select-Object -First 1
-        if ($fallbackVtt) { $vttPath = $fallbackVtt.FullName }
+        if ($fallbackVtt) {
+            $vttPath = $fallbackVtt.FullName
+            Write-Log -Level 'DEBUG' -Message ("Invoke-DownloadSubs: using fallback VTT path: {0}" -f $vttPath)
+        }
     }
     Write-Log -Level 'SUCCESS' -Message ("Captions saved: {0}" -f $vttPath)
     $vttPath
@@ -397,6 +436,9 @@ function Get-VttCues {
 function Export-PlainTranscript {
     param([string]$VttPath, [string]$OutPath)
     Write-Log -Level 'STEP' -Message ("Generating plain transcript from {0}" -f $VttPath)
+    if (Test-Path -LiteralPath $OutPath) {
+        Write-Log -Level 'INFO' -Message ("Export-PlainTranscript: output already exists; overwriting (default): {0}" -f $OutPath)
+    }
     $cues = Get-VttCues -VttPath $VttPath
     $prev = ''
     $lines = @()
@@ -412,6 +454,9 @@ function Export-PlainTranscript {
 function Export-TimestampedTranscript {
     param([string]$VttPath, [string]$OutPath, [int]$IntervalSec = 3)
     Write-Log -Level 'STEP' -Message ("Generating timestamped transcript every {0}s from {1}" -f $IntervalSec, $VttPath)
+    if (Test-Path -LiteralPath $OutPath) {
+        Write-Log -Level 'INFO' -Message ("Export-TimestampedTranscript: output already exists; overwriting (default): {0}" -f $OutPath)
+    }
     $cues = Get-VttCues -VttPath $VttPath
     $buckets = @{}
     $maxSec = 0
@@ -482,38 +527,46 @@ function Resolve-FrameVideoPath {
         [string]$OutDir,
         [string]$BaseName
     )
+    Write-Log -Level 'DEBUG' -Message 'Resolve-FrameVideoPath: resolving source video for frame extraction.'
+
     if ($PreferredPath) {
         $candidate = $PreferredPath.Trim().Trim('"')
+        Write-Log -Level 'DEBUG' -Message ("Resolve-FrameVideoPath: -FrameVideoPath supplied: {0}" -f $candidate)
         if (-not (Test-Path -LiteralPath $candidate)) {
+            Write-Log -Level 'DEBUG' -Message ("Resolve-FrameVideoPath: path does not exist; failing." -f $candidate)
             Fail ("Frame video not found: {0}. Use -Video to download the video, or -FrameVideoPath with the path to your video file (e.g. -FrameVideoPath 'C:\path\to\video.mp4')." -f $candidate)
         }
         $resolved = (Resolve-Path -LiteralPath $candidate).Path
         $item = Get-Item -LiteralPath $resolved
         if ($item -is [System.IO.DirectoryInfo]) {
+            Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: path is a directory; looking for video file inside (base name or first video)." -f $resolved)
             $exts = @('mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v')
             if ($BaseName) {
                 foreach ($ext in $exts) {
                     $p = Join-Path $resolved "$BaseName.$ext"
                     if (Test-Path -LiteralPath $p) {
-                        Write-Log -Level 'DEBUG' -Message ("Frame video: using -FrameVideoPath dir, matched by base name: {0}" -f $p)
+                        Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: using video by base name (existing file): {0}" -f $p)
                         return (Resolve-Path -LiteralPath $p).Path
                     }
                 }
+                Write-Log -Level 'DEBUG' -Message ("Resolve-FrameVideoPath: no file matching base name '{0}' in directory; trying first video." -f $BaseName)
             }
             $firstVideo = Get-ChildItem -Path $resolved -File -ErrorAction SilentlyContinue |
                 Where-Object { $VideoExtensions -contains $_.Extension.ToLowerInvariant() } |
                 Select-Object -First 1
             if ($firstVideo) {
-                Write-Log -Level 'DEBUG' -Message ("Frame video: using -FrameVideoPath dir, first video: {0}" -f $firstVideo.FullName)
+                Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: using first video in directory (existing file): {0}" -f $firstVideo.FullName)
                 return $firstVideo.FullName
             }
+            Write-Log -Level 'DEBUG' -Message ("Resolve-FrameVideoPath: no video file in directory; failing." -f $resolved)
             Fail ("No video file found in directory: {0}. Use -FrameVideoPath with a path to a .mp4/.mkv file, or use -Video to download the video." -f $resolved)
         }
-        Write-Log -Level 'DEBUG' -Message ("Frame video: using -FrameVideoPath: {0}" -f $resolved)
+        Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: using -FrameVideoPath as file (existing): {0}" -f $resolved)
         return $resolved
     }
+
     if ($DownloadedVideoPath -and (Test-Path -LiteralPath $DownloadedVideoPath)) {
-        Write-Log -Level 'DEBUG' -Message ("Frame video: using downloaded file: {0}" -f $DownloadedVideoPath)
+        Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: using downloaded video from this run (no -FrameVideoPath): {0}" -f $DownloadedVideoPath)
         return (Resolve-Path -LiteralPath $DownloadedVideoPath).Path
     }
 
@@ -522,6 +575,7 @@ function Resolve-FrameVideoPath {
     if ($OutDir) { $dirs += $OutDir }
     $dirs += (Get-Location).Path
     $dirs = $dirs | Where-Object { $_ } | Select-Object -Unique
+    Write-Log -Level 'DEBUG' -Message ("Resolve-FrameVideoPath: auto-detect: searching {0} dir(s) for video by base name or first video." -f $dirs.Count)
 
     $exts = @('mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v')
     foreach ($d in $dirs) {
@@ -529,7 +583,7 @@ function Resolve-FrameVideoPath {
             if ($BaseName) {
                 $p = Join-Path $d "$BaseName.$ext"
                 if (Test-Path -LiteralPath $p) {
-                    Write-Log -Level 'DEBUG' -Message ("Frame video: auto-detected by base name: {0}" -f $p)
+                    Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: auto-detected video by base name (existing file): {0}" -f $p)
                     return (Resolve-Path -LiteralPath $p).Path
                 }
             }
@@ -541,11 +595,12 @@ function Resolve-FrameVideoPath {
             Where-Object { $VideoExtensions -contains $_.Extension.ToLowerInvariant() } |
             Select-Object -First 1
         if ($firstVideo) {
-            Write-Log -Level 'DEBUG' -Message ("Frame video: auto-detected first video in dir: {0}" -f $firstVideo.FullName)
+            Write-Log -Level 'INFO' -Message ("Resolve-FrameVideoPath: auto-detected first video in dir (existing file): {0}" -f $firstVideo.FullName)
             return $firstVideo.FullName
         }
     }
 
+    Write-Log -Level 'DEBUG' -Message 'Resolve-FrameVideoPath: no video source found; caller must require -Video or -FrameVideoPath.'
     return $null
 }
 
@@ -554,6 +609,7 @@ function Get-VideoDurationSec {
         [string]$FfmpegPath,
         [string]$VideoPath
     )
+    Write-Log -Level 'DEBUG' -Message ("Get-VideoDurationSec: probing duration for: {0}" -f $VideoPath)
     $ffprobePath = Find-Ffprobe
     if ($ffprobePath) {
         $durRaw = & $ffprobePath -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $VideoPath
@@ -591,14 +647,16 @@ function Get-FrameScaleFilter {
         $w = if ($Width -gt 0) { $Width } else { -1 }
         $h = if ($Height -gt 0) { $Height } else { -1 }
         $base = 'scale={0}:{1}:force_original_aspect_ratio=decrease' -f $w, $h
+        Write-Log -Level 'DEBUG' -Message ("Get-FrameScaleFilter: using explicit size (width={0}, height={1}); scale then lanczos." -f $w, $h)
     } else {
         switch ($FrameSizePreset) {
             '720p'  { $base = 'scale=1280:720:force_original_aspect_ratio=decrease'; break }
             '1080p' { $base = 'scale=1920:1080:force_original_aspect_ratio=decrease'; break }
             '4k'    { $base = 'scale=3840:2160:force_original_aspect_ratio=decrease'; break }
-            'source'{ return '' }
+            'source'{ Write-Log -Level 'DEBUG' -Message 'Get-FrameScaleFilter: FrameSize=source; no scaling (native resolution).'; return '' }
             default { $base = 'scale=1920:1080:force_original_aspect_ratio=decrease'; break }
         }
+        Write-Log -Level 'DEBUG' -Message ("Get-FrameScaleFilter: using preset '{0}'; scale then lanczos." -f $FrameSizePreset)
     }
     return $base + $ScaleFilterLanczosSuffix
 }
@@ -622,13 +680,24 @@ function Export-FramesAtInterval {
     $framesDir = if ($FramesOutDirOverride -and $FramesOutDirOverride.Trim()) {
         $override = $FramesOutDirOverride.Trim().Trim('"')
         if (-not [System.IO.Path]::IsPathRooted($override)) { $override = Join-Path (Get-Location) $override }
+        Write-Log -Level 'DEBUG' -Message ("Export-FramesAtInterval: using -FramesOutDir override: {0}" -f $override)
         $override
     } else {
-        Join-Path (Split-Path -Parent $VttPath) 'frames'
+        $defaultDir = Join-Path (Split-Path -Parent $VttPath) 'frames'
+        Write-Log -Level 'DEBUG' -Message ("Export-FramesAtInterval: using default frames dir (beside VTT): {0}" -f $defaultDir)
+        $defaultDir
     }
-    if (-not (Test-Path -LiteralPath $framesDir)) { New-Item -ItemType Directory -Path $framesDir -Force | Out-Null }
-    Get-ChildItem -Path $framesDir -Filter 'frame_*.png' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    Get-ChildItem -Path $framesDir -Filter 'frame_tmp_*.png' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $framesDir)) {
+        Write-Log -Level 'DEBUG' -Message ("Export-FramesAtInterval: creating frames directory: {0}" -f $framesDir)
+        New-Item -ItemType Directory -Path $framesDir -Force | Out-Null
+    }
+    $existingFrames = @(Get-ChildItem -Path $framesDir -Filter 'frame_*.png' -File -ErrorAction SilentlyContinue)
+    $existingTmp = @(Get-ChildItem -Path $framesDir -Filter 'frame_tmp_*.png' -File -ErrorAction SilentlyContinue)
+    if ($existingFrames.Count -gt 0 -or $existingTmp.Count -gt 0) {
+        Write-Log -Level 'INFO' -Message ("Export-FramesAtInterval: removing {0} existing frame(s) and {1} tmp frame(s); will overwrite with fresh extraction (default)." -f $existingFrames.Count, $existingTmp.Count)
+    }
+    $existingFrames | Remove-Item -Force -ErrorAction SilentlyContinue
+    $existingTmp | Remove-Item -Force -ErrorAction SilentlyContinue
 
     $durationSec = Get-VideoDurationSec -FfmpegPath $FfmpegPath -VideoPath $VideoPath
     if ($durationSec -le 0) {
@@ -873,6 +942,8 @@ function Invoke-NonInteractive {
     if (-not (Test-Path $outDir)) {
         Write-Log -Level 'STEP' -Message ("Creating output directory: {0}" -f $outDir)
         New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    } else {
+        Write-Log -Level 'DEBUG' -Message ("Output directory already exists; will use it (overwrite by default): {0}" -f $outDir)
     }
     Write-Log -Level 'INFO' -Message ("Output directory: {0}" -f $outDir)
 
@@ -915,12 +986,14 @@ function Invoke-NonInteractive {
         if (-not (Test-Path -LiteralPath $Vtt)) { Fail ("VTT file not found: {0}. Use a valid path to a .vtt file." -f $Vtt) }
         $vttPath = $Vtt
         $baseName = [System.IO.Path]::GetFileNameWithoutExtension($Vtt) -replace '\.(en|[\w-]+)$', ''
-        Write-Log -Level 'INFO' -Message ("Using input VTT: {0}" -f $vttPath)
+        Write-Log -Level 'INFO' -Message ("Using input VTT (existing file): {0}" -f $vttPath)
     } elseif ($vttPath) {
         $baseName = [System.IO.Path]::GetFileNameWithoutExtension($vttPath) -replace '\.(en|[\w-]+)$', ''
+        Write-Log -Level 'DEBUG' -Message ("Base name for outputs: {0}" -f $baseName)
     }
 
     if ($Transcript -and $vttPath) {
+        Write-Log -Level 'DEBUG' -Message ("Transcript requested: {0}; generating from VTT." -f $Transcript)
         if ($Transcript -eq 'plain' -or $Transcript -eq 'both') {
             Write-Log -Level 'STEP' -Message 'Writing plain transcript...'
             $plainPath = Join-Path $outDir "${baseName}_transcript.txt"
@@ -934,6 +1007,7 @@ function Invoke-NonInteractive {
     }
 
     if ($ExtractFrames) {
+        Write-Log -Level 'DEBUG' -Message 'ExtractFrames requested; resolving video source and output dir.'
         if (-not $vttPath -or -not (Test-Path -LiteralPath $vttPath)) {
             Fail 'No VTT timing source available for frame extraction. Provide -Vtt (path to .vtt file), or use -Url with -Subs to download captions.'
         }
