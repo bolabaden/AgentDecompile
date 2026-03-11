@@ -16,6 +16,35 @@ flowchart TD
   D --> F[52 canonical tools and 3 resources]
 ```
 
+## Session-Validated Commands
+
+The commands below were exercised during the current documentation and validation session. They are intentionally listed separately from the generic examples so readers can see the exact command shapes that were actually used.
+
+```powershell
+# Published Docker image, stdio transport, explicit server entrypoint
+docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio
+
+# Local-checkout CLI validation through the module entrypoint used in this session
+$env:PYTHONPATH='src'
+C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+```
+
+Equivalent user-facing local-checkout form:
+
+```powershell
+uv run agentdecompile-cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+```
+
+Validated behaviors from these commands:
+
+- The published Docker image responds correctly in stdio mode.
+- `tool-seq` preserves state inside one CLI invocation.
+- Shared-repository open, project listing, import, and removal flows were exercised from a local checkout.
+
 ## Why AgentDecompile?
 
 Reverse engineering is hard. There are thousands of functions, cryptic variable names, and complex logic flows. AgentDecompile helps you make sense of it all by letting you ask plain English questions about your target code.
@@ -37,6 +66,50 @@ You can ask AgentDecompile to perform complex tasks:
 - **"Write a Python script to solve this CTF challenge."**
 
 It works by giving the AI specific "tools" to interact with Ghidra—reading memory, listing functions, checking references—so it gets real, ground-truth data from your project.
+
+## Runtime Surfaces
+
+AgentDecompile ships several entrypoints so you can run it as a local stdio MCP server, an HTTP MCP server, a proxy, or a CLI client against an already-running backend.
+
+```mermaid
+flowchart TD
+  subgraph ConsoleScripts[Console scripts]
+    A1[agentdecompile / agentdecompile-cli]
+    A2[agentdecompile-mcp / mcp-agentdecompile]
+    A3[agentdecompile-server]
+    A4[agentdecompile-proxy]
+  end
+
+  A1 --> B1[HTTP client CLI]
+  A2 --> B2[stdio MCP launcher]
+  A3 --> B3[local PyGhidra MCP server]
+  A4 --> B4[proxy-only MCP forwarder]
+
+  B1 --> C1[connect to existing /mcp backend]
+  B2 --> C2[spawn stdio runtime]
+  B3 --> C3[tool providers and resources]
+  B4 --> C4[forward tools resources prompts]
+  C2 --> C3
+  C3 --> D[PyGhidra and Ghidra APIs]
+```
+
+Current source-graph inventory from `src/agentdecompile_cli`:
+
+- `76` Python modules
+- `1401` discovered classes, functions, and methods
+- `83` Click command or group functions in the CLI surface
+- `3150` deduplicated internal caller-to-callee edges in the generated Mermaid graph
+
+Primary runtime entrypoints:
+
+| Script | Target | Role |
+| --- | --- | --- |
+| `agentdecompile` / `agentdecompile-cli` | `agentdecompile_cli.cli:cli_entry_point` | Main HTTP client CLI |
+| `agentdecompile-mcp` / `mcp_agentdecompile` / `mcp-agentdecompile` | `agentdecompile_cli.__main__:main` | MCP stdio launcher |
+| `agentdecompile-server` | `agentdecompile_cli.server:main` | Local PyGhidra-backed MCP server |
+| `agentdecompile-proxy` | `agentdecompile_cli.server:proxy_main` | Proxy-only MCP forwarder |
+
+If you want the deeper static map instead of the quick overview, see [docs/SRC_ENTRYPOINTS_CALL_GRAPH.md](docs/SRC_ENTRYPOINTS_CALL_GRAPH.md), [docs/generated/src_static_call_graph_summary.json](docs/generated/src_static_call_graph_summary.json), and [docs/generated/src_entrypoint_reachability.json](docs/generated/src_entrypoint_reachability.json).
 
 ## Installation
 
@@ -72,6 +145,8 @@ docker run --rm \
 ```
 
 The MCP server starts on port 8080 with the canonical streamable-HTTP endpoint at `http://localhost:8080/mcp`, the compatibility endpoint at `http://localhost:8080/mcp/message`, the API index at `http://localhost:8080/`, and Swagger UI at `http://localhost:8080/docs`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
+
+Prefer pointing MCP clients and examples at `http://localhost:8080/mcp`. The CLI also accepts the base server URL and normalizes it for you. `http://localhost:8080/` and `http://localhost:8080/api` are metadata/index routes, not alternate MCP transport paths, and `/api/mcp` is not supported.
 
 ```bash
 # Build from source and run with docker-compose
@@ -121,9 +196,10 @@ Use `-p 8080:8080` and omit `--entrypoint`/`-t stdio` for HTTP server mode (`str
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
 The Python MCP server accepts MCP HTTP requests at `http://<host>:<port>/mcp` and `http://<host>:<port>/mcp/message`.
-`/mcp` is the canonical streamable-HTTP endpoint, `/mcp/message` remains the compatibility path, `http://<host>:<port>/` is the API index, and the interactive docs live at `http://<host>:<port>/docs`.
-Trailing-slash variants of the MCP paths also work because the server strips the trailing slash before matching.
-The bare root URL `http://<host>:<port>/` is not part of the documented endpoint surface; client helpers may still normalize a base URL to `/mcp` before connecting.
+`/mcp` is the canonical streamable-HTTP endpoint and should be the default in docs, scripts, and MCP client configs.
+`/mcp/message` remains the compatibility path for clients that still target the legacy message endpoint.
+`http://<host>:<port>/` and `http://<host>:<port>/api` both return the API index metadata, while the interactive docs live at `http://<host>:<port>/docs`.
+Trailing-slash variants of the MCP paths also work because the server strips the trailing slash before matching, but `/api/mcp` is not part of the supported surface.
 The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
 Proxy mode (forward to a remote MCP backend; no local Ghidra/JVM). Use the **agentdecompile-proxy** command only:
@@ -166,11 +242,11 @@ Shared Ghidra connection flags are accepted with or without the `ghidra-` prefix
 
 #### Shared server quick usage (concise)
 
-The examples below use the published Git source install form and redact sensitive values.
+The examples below use the published Git source install form and redact sensitive values. They prefer the explicit `/mcp` endpoint even though the CLI also accepts a base URL such as `http://***:8080/`.
 
 ```powershell
 # 1) Open a program from a Ghidra shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 
 # concise output
 mode: shared-server
@@ -180,40 +256,19 @@ programCount: 26
 checkedOutProgram: /K1/k1_win_gog_swkotor.exe
 
 # 2) List files in the shared repository
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list project-files
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp list project-files
 
 # concise output
 folder: /
 count: 26
 source: shared-server-session
 
-# 3) List a small function sample
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe
+# sample entries
+/K1
+/K1/k1_win_gog_swkotor.exe
 
-# concise output
-count: 5
-totalMatched: 24242
-hasMore: True
-
-# 4) Search symbols by name
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
-
-# concise output
-query: main
-count: 5
-totalMatched: 58
-hasMore: True
-
-# 5) Find references to a symbol
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
-
-# concise output
-mode: to
-target: 004041f0
-count: 1
-
-# 6) Get current program metadata
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
+# 3) Get current program metadata without depending on a prior CLI session
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 
 # concise output
 loaded: True
@@ -222,9 +277,34 @@ language: x86:LE:32:default
 compiler: windows
 functionCount: 24591
 
+# 4) Search symbols by name
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
+
+# concise output
+query: main
+count: 5
+totalMatched: 58
+hasMore: True
+
+# 5) Inspect a concrete function discovered from the symbol search
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier WinMain
+
+# concise output
+identifier: WinMain
+address: 004041f0
+name: WinMain
+
+# 6) Find references to a symbol
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
+
+# concise output
+mode: to
+target: 004041f0
+count: 1
+
 # 7) Raw tool mode examples
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 
 # concise output
 mode: imports
@@ -234,6 +314,8 @@ mode: exports
 count: 1
 totalExports: 1
 ```
+
+Those commands were re-verified against a live remote deployment during shared-server debugging. The important behavioral points were that `/mcp` is the stable transport path, `list project-files` can bootstrap a fresh shared session from the shared-server env vars, `search-symbols --query main` returns `WinMain` in this sample, and `get-current-program --program_path ...` can reopen the requested shared program in a fresh CLI session.
 
 Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
 
@@ -247,7 +329,7 @@ export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
 
-Then `agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe` will automatically use those shared-server values.
+Then `agentdecompile-cli --server-url http://***:8080/mcp open /K1/k1_win_gog_swkotor.exe` will automatically use those shared-server values.
 
 ### Docker and volume mapping
 

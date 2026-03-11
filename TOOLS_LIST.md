@@ -41,6 +41,23 @@ agentdecompile-server -t streamable-http \
 AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 ```
 
+### Commands exercised in the current validation session
+
+This reference is primarily tool-centric, but the following command shapes were exercised during the session that refreshed the surrounding docs. They are included here so the tool reference stays tied to real invocation paths.
+
+```powershell
+docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio
+
+$env:PYTHONPATH='src'
+C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+```
+
+The `tool-seq` run above exercised these canonical tools in one MCP session: `open-project`, `list-project-files`, `import-binary`, and `remove-program-binary`.
+
 ## Table of Contents
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
