@@ -399,6 +399,88 @@ class ProjectToolProvider(ToolProvider):
         )
         return shared_args
 
+    def _infer_requested_shared_repository_name(self, args: dict[str, Any], path: str) -> str | None:
+        """Infer the shared repository name from explicit args or a repository-like path."""
+        requested_repository = self._get_str(args, "repositoryname")
+        if requested_repository and requested_repository.strip():
+            return requested_repository.strip().strip("/")
+
+        if not path or not path.strip():
+            return None
+
+        normalized_path = path.strip().rstrip("/")
+        if not normalized_path or "/" in normalized_path:
+            return None
+
+        return normalized_path
+
+    def _ensure_shared_repository_exists(
+        self,
+        *,
+        server_adapter: Any,
+        repository_names: list[str],
+        requested_repository: str | None,
+        auth_provided: bool,
+        server_host: str,
+        server_port: int,
+    ) -> tuple[list[str], bool]:
+        """Ensure the requested shared repository exists, creating it when needed."""
+        if requested_repository and requested_repository in repository_names:
+            return repository_names, False
+
+        if requested_repository is None:
+            if repository_names:
+                return repository_names, False
+            raise ActionableError(
+                f"No repositories found on {server_host}:{server_port}",
+                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                next_steps=[
+                    "Confirm the account has at least one visible repository on the server.",
+                    "Retry with a repository name in `path` or `repositoryName` once access is granted.",
+                ],
+            )
+
+        if not auth_provided:
+            raise ActionableError(
+                f"Shared repository '{requested_repository}' was not found on {server_host}:{server_port}",
+                context={
+                    "mode": "shared-server",
+                    "serverHost": server_host,
+                    "serverPort": server_port,
+                    "repository": requested_repository,
+                    "authProvided": auth_provided,
+                },
+                next_steps=[
+                    "Provide `serverUsername` and `serverPassword` so the backend can create the repository.",
+                    "Or create the repository manually, then retry `open-project`.",
+                ],
+            )
+
+        try:
+            logger.info("[connect-shared-project] Creating missing repository %r", requested_repository)
+            created_repository = server_adapter.createRepository(requested_repository)
+            if created_repository is None and server_adapter.getRepository(requested_repository) is None:
+                raise RuntimeError(f"Repository server returned None for '{requested_repository}'")
+        except Exception as exc:
+            if server_adapter.getRepository(requested_repository) is None:
+                raise ActionableError(
+                    f"Shared repository '{requested_repository}' was not found on {server_host}:{server_port}, and automatic creation failed: {exc}",
+                    context={
+                        "mode": "shared-server",
+                        "serverHost": server_host,
+                        "serverPort": server_port,
+                        "repository": requested_repository,
+                    },
+                    next_steps=[
+                        "Verify the user is allowed to create shared repositories on this Ghidra server.",
+                        "Create the repository manually or retry with a user that has repository creation rights.",
+                    ],
+                ) from exc
+
+        if requested_repository not in repository_names:
+            repository_names = [*repository_names, requested_repository]
+        return repository_names, True
+
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Unified open-project dispatcher: handles local binaries, .gpr projects, AND shared servers.
 
@@ -767,44 +849,31 @@ class ProjectToolProvider(ToolProvider):
                     pass
 
         repository_names: list[str] = [str(name) for name in repository_names_raw]
-        if not repository_names:
-            create_repo_name: str | None = None
-            requested_repository = self._get_str(args, "repositoryname")
-            if requested_repository and requested_repository.strip():
-                create_repo_name = requested_repository.strip()
-            elif path and path.strip() and "/" not in path.strip().rstrip("/"):
-                create_repo_name = path.strip().rstrip("/")
-
-            if create_repo_name and auth_provided:
-                try:
-                    logger.info("[connect-shared-project] No repositories found; creating repository %r", create_repo_name)
-                    created_repository = server_adapter.createRepository(create_repo_name)
-                    if created_repository is None:
-                        raise RuntimeError(f"Repository server returned None for '{create_repo_name}'")
-                    repository_names = [create_repo_name]
-                except Exception as exc:
-                    raise ActionableError(
-                        f"No repositories found on {server_host}:{server_port}, and automatic creation of '{create_repo_name}' failed: {exc}",
-                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "repository": create_repo_name},
-                        next_steps=[
-                            "Verify the user is allowed to create shared projects on this Ghidra server.",
-                            "Create the repository manually or retry with a user that has repository creation rights.",
-                        ],
-                    ) from exc
-            else:
-                raise ActionableError(
-                    f"No repositories found on {server_host}:{server_port}",
-                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
-                    next_steps=[
-                        "Confirm the account has at least one visible repository on the server.",
-                        "Retry with a repository name in `path` once access is granted.",
-                    ],
-                )
+        requested_repository_name = self._infer_requested_shared_repository_name(args, path)
+        repository_names, repository_created = self._ensure_shared_repository_exists(
+            server_adapter=server_adapter,
+            repository_names=repository_names,
+            requested_repository=requested_repository_name,
+            auth_provided=auth_provided,
+            server_host=server_host,
+            server_port=server_port,
+        )
 
         repository_name: str | None = None
         checkout_program_path: str | None = None
 
-        if path and path.strip():
+        if requested_repository_name:
+            repository_name = requested_repository_name
+            if path and path.strip():
+                normalized_path = path.strip().rstrip("/")
+                if normalized_path and normalized_path != requested_repository_name:
+                    checkout_program_path = normalized_path
+            logger.info(
+                "[connect-shared-project] using requested repository=%r checkout_target=%r",
+                repository_name,
+                checkout_program_path,
+            )
+        elif path and path.strip():
             if path in repository_names:
                 repository_name = path
                 logger.info("[connect-shared-project] path=%r matched a repository name", path)
@@ -972,12 +1041,13 @@ class ProjectToolProvider(ToolProvider):
                 "authProvided": auth_provided,
                 "serverUsername": server_username if server_username else None,
                 "repository": repository_name,
+                "repositoryCreated": repository_created,
                 "availableRepositories": repository_names,
                 "programCount": len(binaries),
                 "programs": binaries,
                 "checkedOutProgram": checked_out_program,
                 "checkoutError": checkout_error,
-                "message": (f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items." + (f" Checked out: {checked_out_program}" if checked_out_program else "")),
+                "message": ((f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")),
             },
         )
 
