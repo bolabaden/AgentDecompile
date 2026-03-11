@@ -22,6 +22,7 @@ _apply_mcp_session_fix()
 import os
 import subprocess
 import importlib.util
+import sys
 
 from collections.abc import AsyncGenerator, Generator, Mapping
 from pathlib import Path
@@ -36,6 +37,7 @@ from tests.helpers import (
     assert_mapping_invariants,
     assert_text_block_invariants,
 )
+from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, LocalServerPool, get_local_ghidra_runtime
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import AgentDecompileLauncher
@@ -142,51 +144,6 @@ def _assert_node_invariants(node: pytest.Item) -> None:
     assert all(name == name.strip() for name in node.fixturenames)
     assert all(name.isascii() for name in node.fixturenames)
     assert_bool_invariants(node.get_closest_marker("slow") is not None or node.get_closest_marker("slow") is None)
-
-
-@pytest.fixture(autouse=True)
-def force_json_tool_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force direct provider/unit test calls to request JSON payloads.
-
-    Runtime default for MCP tools is markdown. Unit tests primarily validate
-    structured payload semantics, so this fixture injects format=json when
-    tests call ToolProvider.call_tool() without an explicit format.
-    """
-    from agentdecompile_cli.mcp_server.tool_providers import ToolProvider
-
-    original_call_tool = ToolProvider.call_tool
-
-    async def _call_tool_with_json_default(self, name: str, arguments: dict[str, Any] | None):
-        args = dict(arguments or {})
-        args.setdefault("format", "json")
-        return await original_call_tool(self, name, args)
-
-    monkeypatch.setattr(ToolProvider, "call_tool", _call_tool_with_json_default)
-
-
-@pytest.fixture(autouse=True)
-def strict_assertions(request: pytest.FixtureRequest) -> None:
-    """Apply strict generic invariants for every test to ensure high assertion count."""
-    _assert_node_invariants(request.node)
-
-    for name, value in request.node.funcargs.items():
-        if isinstance(value, bool):
-            assert_bool_invariants(value)
-        if isinstance(value, int):
-            assert_int_invariants(value)
-        if isinstance(value, str):
-            if value == "":
-                assert value == ""
-            else:
-                assert_text_block_invariants(value)
-        if isinstance(value, dict):
-            assert_mapping_invariants(value)
-        if isinstance(value, list):
-            assert isinstance(value, list)
-            assert len(value) >= 0
-            assert all(item == item for item in value)
-            assert all(item is not None for item in value)
-            assert all(isinstance(item, type(item)) for item in value)
 
 
 @pytest.fixture(scope="session")
@@ -413,6 +370,69 @@ def test_binary(isolated_workspace: Path) -> Path:
     print(f"[Fixture] Created test binary: {binary_path} ({binary_path.stat().st_size} bytes)")
 
     return binary_path
+
+
+@pytest.fixture
+def public_sample_binary(isolated_workspace: Path) -> Path:
+    """Create the vendored public-domain sample binary in the isolated workspace.
+
+    This fixture is intended for strict end-to-end tests that need a binary with
+    auditable provenance and deterministic contents rather than the tiny fallback
+    ELF used by generic import smoke tests.
+    """
+    from tests.helpers import create_public_sample_binary, get_public_sample_binary
+
+    sample = get_public_sample_binary()
+    binary_path = isolated_workspace / sample.output_name
+    create_public_sample_binary(binary_path)
+
+    print(f"[Fixture] Created public sample binary: {binary_path} ({binary_path.stat().st_size} bytes)")
+
+    return binary_path
+
+
+@pytest.fixture(scope="session")
+def local_live_server_pool(tmp_path_factory: pytest.TempPathFactory) -> Generator[LocalServerPool, None, None]:
+    """Create a reusable pool of subprocess MCP servers for live local E2E suites."""
+    if get_local_ghidra_runtime() is None:
+        pytest.skip("GHIDRA_INSTALL_DIR is not set to a valid local installation; skipping live local MCP server fixtures.")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pool = LocalServerPool(repo_root)
+    tmp_path_factory.mktemp("live-server-pool")
+    yield pool
+    pool.close_all()
+
+
+@pytest.fixture(scope="module")
+def local_group_server(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    local_live_server_pool: LocalServerPool,
+) -> Generator[str, None, None]:
+    """Start or reuse one local MCP server per test module/group."""
+    module_name = request.module.__name__.rsplit(".", 1)[-1].replace("_", "-")
+    workspace = tmp_path_factory.mktemp(f"{module_name}-workspace")
+    project_path = workspace / "runtime_project"
+    handle = local_live_server_pool.get_or_start(
+        module_name,
+        project_path=project_path,
+        project_name=module_name,
+    )
+    yield handle.base_url
+
+
+@pytest.fixture
+def local_server_base_url(local_group_server: str) -> str:
+    """Expose the grouped local live-server base URL to function-scoped tests."""
+    return local_group_server
+
+
+@pytest.fixture
+def local_http_session(local_server_base_url: str) -> Generator[JsonRpcMcpSession, None, None]:
+    """Create a synchronous JSON-RPC MCP session against the grouped live server."""
+    with JsonRpcMcpSession(local_server_base_url, timeout=120.0) as session:
+        yield session
 
 
 @pytest.fixture

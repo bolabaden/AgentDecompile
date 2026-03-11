@@ -399,3 +399,5 @@ TOOLS_LIST_GENERATED.md
 uv.lock
 vendor/
 .github/prompts/plan-*.prompt.md
+tests/tmp_test_project/
+volumes/
