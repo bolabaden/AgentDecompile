@@ -753,9 +753,9 @@ class AgentDecompileStdioBridge:
         ``AGENT_DECOMPILE_GHIDRA_SERVER_PORT``,
         ``AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME``,
         ``AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD``, and optionally
-        ``AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY``). This method reads them and calls ``open`` on the remote
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY``). This method reads them and calls ``open-project`` on the remote
         backend so that tools like ``list-project-files`` work immediately
-        without requiring a manual ``open`` call.
+        without requiring a manual ``open-project`` call.
         """
         server_host = (
             os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()

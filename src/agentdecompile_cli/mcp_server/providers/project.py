@@ -1580,7 +1580,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             },
             next_steps=[
-                "Call `open` for the target program path so a project-backed domain file is active.",
+                "Call `open-project` for the target program path so a project-backed domain file is active.",
                 "Call `list-project-files` to confirm the program exists in the current project/session.",
             ],
         )
@@ -2783,7 +2783,7 @@ class ProjectToolProvider(ToolProvider):
                         "repository": repository_name,
                     },
                     "nextSteps": [
-                        "Re-run `open` against the shared server to re-establish repository adapter state.",
+                        "Re-run `open-project` against the shared server to re-establish repository adapter state.",
                         "Then retry the same sync command.",
                     ],
                 },
@@ -2805,7 +2805,7 @@ class ProjectToolProvider(ToolProvider):
                         "repository": repository_name,
                     },
                     "nextSteps": [
-                        "Call `open` with a local project (`.gpr`) or import a program to initialize local project context.",
+                        "Call `open-project` with a local project (`.gpr`) or import a program to initialize local project context.",
                         "Retry `sync-project` after local project context is available.",
                     ],
                 },

@@ -1548,13 +1548,13 @@ def functions_calls(ctx: click.Context, program_path: str, identifier: str) -> N
 
 @main.group(
     "symbols",
-    help="Manage symbols (manage-symbols): classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle",
+    help="Symbol operations: classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle",
 )
 def symbols_grp() -> None:
     pass
 
 
-@symbols_grp.command("run", help="Run manage-symbols with --mode and optional params")
+@symbols_grp.command("run", help="Run symbol operations with --mode and optional params")
 @click.option("-b", "--binary", "program_path")
 @click.option(
     "--mode",
@@ -1689,12 +1689,12 @@ for _mode in ("classes", "namespaces", "imports", "exports", "symbols", "count",
 # ---------------------------------------------------------------------------
 
 
-@main.group("strings", help="Manage strings (manage-strings): list, regex, count, similarity")
+@main.group("strings", help="String operations: list, regex, count, similarity")
 def strings_grp() -> None:
     pass
 
 
-@strings_grp.command("run", help="Run manage-strings with --mode and optional params")
+@strings_grp.command("run", help="Run string operations with --mode and optional params")
 @click.option("-b", "--binary", "program_path")
 @click.option(
     "--mode",
@@ -1750,7 +1750,7 @@ def strings_run(
 def _strings_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``strings <mode>`` shorthand subcommands."""
 
-    @strings_grp.command(mode_name, help=help_text or f"manage-strings mode={mode_name}")
+    @strings_grp.command(mode_name, help=help_text or f"Run strings mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
     @click.option("--pattern")
     @click.option("--search-string", "search_string")

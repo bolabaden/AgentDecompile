@@ -259,7 +259,7 @@ def _next_steps_memory(data: dict[str, Any]) -> list[str]:
         addr: str = data.get("address", "")
         steps.append(f"Interpret this data: `inspect-memory mode=data_at address={addr}` to see if Ghidra has typed it.")
         steps.append("Look for ASCII strings in the hex dump — they often reveal string literals or format strings.")
-        steps.append("Use `manage-strings` to find all defined strings, or `search-strings query=...` for specific ones.")
+        steps.append("Use `list-strings` to find all defined strings, or `search-strings query=...` for specific ones.")
     elif mode == "data_at":
         steps.append("If the data type is a pointer, follow it with another `inspect-memory mode=data_at`.")
         steps.append("Apply a different type with `apply-data-type` if the current interpretation is wrong.")
@@ -450,7 +450,7 @@ def _next_steps_strings(data: dict[str, Any]) -> list[str]:
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
     if mode == "count":
-        steps.append("Use `manage-strings mode=list` to see actual string values.")
+        steps.append("Use `list-strings` to see actual string values.")
     elif results:
         first: dict[str, Any] = results[0]
         addr = first.get("address", "")
