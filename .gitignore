@@ -401,3 +401,4 @@ vendor/
 .github/prompts/plan-*.prompt.md
 tests/tmp_test_project/
 volumes/
+docs/generated/
