@@ -279,6 +279,20 @@ gradle/wrapper/
 .history/
 .env
 vendor/
+agentdecompile_projects/
+volumes/
+tmp/
+examples/
+docs/
+.venv/
+.pytest_cache/
+.pytest_ghidra/
+.ruff_cache/
+.roo/
+.kilocode/
+.cursor/
+.vscode/
+tests/
 
 
 # Git (reduces context; not in .gitignore but standard for Docker)

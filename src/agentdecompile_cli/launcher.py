@@ -225,6 +225,10 @@ class PyGhidraContext:
             symbols_path: Path to local symbol store.
             sym_file_path: Path to a specific PDB file.
         """
+        sys.stderr.write(
+            f"[PyGhidraContext] Initializing: project_name={project_name!r},"
+            f" project_path={project_path!r}\n"
+        )
         self._init_basic_attributes(project_name, project_path)
         self._init_project_and_programs()
         self._init_agentdecompile_directory(agentdecompile_dir)
@@ -232,11 +236,20 @@ class PyGhidraContext:
         self._init_analysis_options(force_analysis, verbose_analysis, no_symbols, gdts, program_options)
         self._init_symbol_configuration(symbols_path, sym_file_path, gzfs_path)
         self._init_threading_and_executors(threaded, max_workers, wait_for_analysis)
+        sys.stderr.write(
+            f"[PyGhidraContext] Ready: {len(self.programs)} program(s) loaded,"
+            f" chromadb={'yes' if self.chroma_client else 'no'},"
+            f" max_workers={self.max_workers}\n"
+        )
 
     def _init_basic_attributes(self, project_name: str, project_path: str | Path) -> None:
         """Initialize basic project attributes."""
         self.project_name: str = project_name
         self.project_path: Path = Path(project_path)
+        sys.stderr.write(
+            f"[PyGhidraContext] project_name={self.project_name!r},"
+            f" project_path={self.project_path!r} (exists={self.project_path.exists()})\n"
+        )
 
     def _init_project_and_programs(self) -> None:
         """Initialize the Ghidra project and existing programs."""
@@ -334,11 +347,19 @@ class PyGhidraContext:
         project_dir_str: str = str(project_dir.absolute())
 
         locator = ProjectLocator(project_dir_str, self.project_name)
+        marker_exists = locator.getMarkerFile().exists()
+        proj_dir_exists = locator.getProjectDir().exists()
+        sys.stderr.write(
+            f"[_get_or_create_project] dir={project_dir_str!r}, name={self.project_name!r},"
+            f" marker_exists={marker_exists}, proj_dir_exists={proj_dir_exists}\n"
+        )
 
-        if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
+        if proj_dir_exists and marker_exists:
             logger.info(f"Opening existing project: {self.project_name}")
+            sys.stderr.write(f"[_get_or_create_project] Opening existing LOCAL project: {self.project_name}\n")
             return GhidraProject.openProject(project_dir_str, self.project_name, False)
         logger.info(f"Creating new project: {self.project_name}")
+        sys.stderr.write(f"[_get_or_create_project] Creating new LOCAL project: {self.project_name}\n")
         return GhidraProject.createProject(
             project_dir_str,
             self.project_name,
@@ -1463,28 +1484,123 @@ class ProjectManager:
 # ---------------------------------------------------------------------------
 
 
+def _has_shared_server_credentials() -> bool:
+    """Return True if shared Ghidra server connection env vars are set.
+
+    When a shared server host (and optionally port/repo/credentials) is
+    configured, multiple instances must not share the same local project
+    directory because Ghidra's file-based locking prevents concurrent access.
+    """
+    host = (
+        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
+        or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        or os.getenv("AGENTDECOMPILE_SERVER_HOST", "").strip()
+    )
+    result = bool(host)
+    sys.stderr.write(
+        f"[_has_shared_server_credentials] AGENT_DECOMPILE_GHIDRA_SERVER_HOST={host!r}"
+        f" -> result={result}\n"
+    )
+    return result
+
+
 def _log_config_block(projects_dir: Path, project_name: str) -> None:
     """Write a single readable configuration block to stderr (no password value)."""
     lines = [
         "AgentDecompile configuration:",
         f"  project: {projects_dir / project_name}",
+        f"  project_dir: {projects_dir} (exists={projects_dir.exists()})",
+        f"  project_name: {project_name}",
     ]
     project_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
     if project_path:
         lines.append(f"  AGENT_DECOMPILE_PROJECT_PATH: {project_path}")
-    host = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or os.getenv("AGENT_DECOMPILE_SERVER_HOST") or os.getenv("AGENTDECOMPILE_SERVER_HOST")
-    port = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT") or os.getenv("AGENT_DECOMPILE_SERVER_PORT") or os.getenv("AGENTDECOMPILE_SERVER_PORT")
-    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.getenv("AGENT_DECOMPILE_REPOSITORY") or os.getenv("AGENTDECOMPILE_REPOSITORY")
-    if host or port or repo:
-        lines.append(f"  server: host={host or '(not set)'}, port={port or '(not set)'}, repository={repo or '(not set)'}")
-    if os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.getenv("AGENT_DECOMPILE_SERVER_USERNAME") or os.getenv("AGENTDECOMPILE_SERVER_USERNAME"):
-        lines.append("  AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME: (set)")
-    if os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD") or os.getenv("AGENTDECOMPILE_SERVER_PASSWORD"):
-        lines.append("  AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD: (set)")
+    else:
+        lines.append("  AGENT_DECOMPILE_PROJECT_PATH: (not set)")
+    host = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+    port = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+    username = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+    password = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+    lines.append(f"  AGENT_DECOMPILE_GHIDRA_SERVER_HOST: {host or '(not set)'}")
+    lines.append(f"  AGENT_DECOMPILE_GHIDRA_SERVER_PORT: {port or '(not set)'}")
+    lines.append(f"  AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: {repo or '(not set)'}")
+    lines.append(f"  AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME: {'(set)' if username else '(not set)'}")
+    lines.append(f"  AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD: {'(set)' if password else '(not set)'}")
+    # Also show the HTTP variants to debug alias resolution
+    http_host = os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
+    http_port = os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT", "").strip()
+    http_repo = os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
+    if http_host or http_port or http_repo:
+        lines.append(f"  AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST: {http_host or '(not set)'}")
+        lines.append(f"  AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT: {http_port or '(not set)'}")
+        lines.append(f"  AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY: {http_repo or '(not set)'}")
+    # Show bridge legacy variants
+    legacy_host = os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+    legacy_port = os.getenv("AGENT_DECOMPILE_SERVER_PORT", "").strip()
+    if legacy_host or legacy_port:
+        lines.append(f"  AGENT_DECOMPILE_SERVER_HOST: {legacy_host or '(not set)'}")
+        lines.append(f"  AGENT_DECOMPILE_SERVER_PORT: {legacy_port or '(not set)'}")
+    lines.append(f"  _has_shared_server_credentials(): {_has_shared_server_credentials()}")
     ghidra_dir = os.getenv("GHIDRA_INSTALL_DIR")
     if ghidra_dir:
         lines.append(f"  GHIDRA_INSTALL_DIR: {ghidra_dir}")
+    # Show all AGENT*DECOMPILE* env vars for exhaustive debugging
+    lines.append("  [all AGENT*DECOMPILE* env vars]:")
+    for k, v in sorted(os.environ.items()):
+        if "DECOMPILE" in k.upper() or "GHIDRA" in k.upper():
+            _is_sensitive = any(s in k.upper() for s in ("PASSWORD", "SECRET", "TOKEN", "KEY"))
+            lines.append(f"    {k}={'***' if _is_sensitive else v}")
     sys.stderr.write("\n".join(lines) + "\n")
+
+
+def _default_project_name_for_env() -> str:
+    """Return the default project name for env-based directory-backed projects."""
+    explicit = (os.getenv("AGENT_DECOMPILE_PROJECT_NAME") or os.getenv("AGENTDECOMPILE_PROJECT_NAME") or "").strip()
+    if explicit:
+        return explicit
+
+    cwd_name = Path.cwd().name.strip()
+    sanitized = "".join(c if c.isalnum() or c in "._-" else "_" for c in cwd_name)
+    if not sanitized or sanitized.startswith("."):
+        return "default_project"
+    return sanitized
+
+
+def _resolve_project_path_setting(
+    project_path_value: str | Path,
+    *,
+    project_name: str | None,
+    source_name: str,
+) -> tuple[Path, str, Path | None]:
+    """Resolve a project setting into project directory, name, and optional .gpr path.
+
+    A `.gpr` path refers to an existing standard Ghidra project marker file.
+    A directory path refers to the project location used with a separate project
+    name for directory-backed project creation/opening.
+    """
+    raw_path = Path(project_path_value).expanduser()
+
+    if raw_path.suffix.lower() == ".gpr":
+        project_gpr = raw_path.resolve()
+        if not project_gpr.exists():
+            raise FileNotFoundError(f"Project file specified in {source_name} does not exist: {project_path_value}")
+        if not project_gpr.is_file():
+            raise ValueError(f"{source_name} must point to a .gpr file, got: {project_path_value}")
+
+        resolved_project_name = project_gpr.stem
+        if not resolved_project_name:
+            raise ValueError(f"Invalid project name extracted from path: {project_path_value}")
+        return project_gpr.parent, resolved_project_name, project_gpr
+
+    if raw_path.exists() and not raw_path.is_dir():
+        raise ValueError(f"{source_name} must point to a .gpr file or a project directory, got: {project_path_value}")
+
+    resolved_directory = raw_path.resolve(strict=False)
+    resolved_project_name = (project_name or "").strip() or _default_project_name_for_env()
+    return resolved_directory, resolved_project_name, None
 
 
 class AgentDecompileLauncher:
@@ -1562,37 +1678,55 @@ class AgentDecompileLauncher:
             if selected_port is not None:
                 os.environ["AGENT_DECOMPILE_PORT"] = str(selected_port)
 
-            # Check for AGENT_DECOMPILE_PROJECT_PATH environment variable
-            project_gpr_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
+            project_path_setting = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
+            sys.stderr.write(
+                f"[launcher.start] project_directory={project_directory!r},"
+                f" project_name={project_name!r},"
+                f" project_path_setting={project_path_setting!r},"
+                f" selected_host={selected_host!r}, selected_port={selected_port}\n"
+            )
 
-            if project_gpr_path:
-                # Use user-specified project from environment variable
-                project_gpr = Path(project_gpr_path)
-
-                # Validate it's a .gpr file
-                if not project_gpr.suffix.lower() == ".gpr":
-                    raise ValueError(f"AGENT_DECOMPILE_PROJECT_PATH must point to a .gpr file, got: {project_gpr_path}")
-
-                # Validate the file exists
-                if not project_gpr.exists():
-                    raise FileNotFoundError(f"Project file specified in AGENT_DECOMPILE_PROJECT_PATH does not exist: {project_gpr_path}")
-
-                # Extract project directory and name (same logic as open tool for projects)
-                project_dir = project_gpr.parent
-                project_name = project_gpr.stem  # Gets filename without extension
-
-                if not project_name:
-                    raise ValueError(f"Invalid project name extracted from path: {project_gpr_path}")
-
-                # Store the user project path (so we don't clean it up)
-                self.user_project_path = project_gpr
-
-                # Use the project directory
-                projects_dir = project_dir
+            if project_path_setting:
+                sys.stderr.write(f"[launcher.start] BRANCH: project_path_setting from env -> resolving...\n")
+                projects_dir, resolved_project_name, resolved_project_gpr = _resolve_project_path_setting(
+                    project_path_setting,
+                    project_name=project_name,
+                    source_name="AGENT_DECOMPILE_PROJECT_PATH",
+                )
+                project_name = resolved_project_name
+                self.user_project_path = resolved_project_gpr or projects_dir
+                sys.stderr.write(
+                    f"[launcher.start] Resolved: projects_dir={projects_dir!r},"
+                    f" project_name={project_name!r},"
+                    f" user_project_path={self.user_project_path!r}\n"
+                )
             elif project_directory is not None and project_name:
-                # Explicit project directory and name (e.g. from server --project-path/--project-name)
-                projects_dir = Path(project_directory)
-                projects_dir.mkdir(parents=True, exist_ok=True)
+                # When shared Ghidra server credentials are configured, each
+                # instance needs its own local workspace to avoid lock conflicts.
+                # If the caller only passed the built-in default directory
+                # ("agentdecompile_projects"), use an ephemeral temp directory
+                # instead so multiple stdio sessions can coexist.
+                _default_dirs = {"agentdecompile_projects", "./agentdecompile_projects"}
+                _is_default_dir = Path(project_directory).name in _default_dirs or str(Path(project_directory)).replace("\\", "/").endswith("agentdecompile_projects")
+                _has_shared = _has_shared_server_credentials()
+                sys.stderr.write(
+                    f"[launcher.start] BRANCH: project_directory={project_directory!r},"
+                    f" _is_default_dir={_is_default_dir},"
+                    f" _has_shared_server_credentials={_has_shared},"
+                    f" Path.name={Path(project_directory).name!r}\n"
+                )
+                if _is_default_dir and _has_shared:
+                    self.temp_project_dir = Path(tempfile.mkdtemp(prefix="agentdecompile_shared_"))
+                    projects_dir = self.temp_project_dir
+                    sys.stderr.write(
+                        f"[launcher.start] Using EPHEMERAL workspace for shared server: {projects_dir}\n"
+                    )
+                else:
+                    projects_dir = Path(project_directory)
+                    projects_dir.mkdir(parents=True, exist_ok=True)
+                    sys.stderr.write(
+                        f"[launcher.start] Using PERSISTENT project dir: {projects_dir}\n"
+                    )
             else:
                 # Stdio mode: ephemeral projects in temp directory (session-scoped, auto-cleanup)
                 # Keeps working directory clean - no .agentdecompile creation in cwd
@@ -1602,6 +1736,10 @@ class AgentDecompileLauncher:
 
                 # Use temp directory for the project (not .agentdecompile/projects)
                 projects_dir = self.temp_project_dir
+                sys.stderr.write(
+                    f"[launcher.start] BRANCH: stdio ephemeral -> {projects_dir},"
+                    f" project_name={project_name!r}\n"
+                )
 
             # Log configuration once in a readable block (no password value)
             _log_config_block(projects_dir, project_name)

@@ -282,7 +282,10 @@ class ProjectToolProvider(ToolProvider):
         """Return a shared Ghidra server host from env vars or the current auth context."""
         env_host = os.getenv(
             "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
-            os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")),
+            os.getenv(
+                "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST",
+                os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")),
+            ),
         ).strip()
         if env_host:
             return env_host
@@ -304,7 +307,13 @@ class ProjectToolProvider(ToolProvider):
         shared_args["serverhost"] = env_host
         shared_args.setdefault(
             "serverport",
-            os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
+            os.getenv(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+                os.getenv(
+                    "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT",
+                    os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")),
+                ),
+            ).strip() or "13100",
         )
         shared_args.setdefault(
             "serverusername",
@@ -313,6 +322,16 @@ class ProjectToolProvider(ToolProvider):
         shared_args.setdefault(
             "serverpassword",
             os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip(),
+        )
+        shared_args.setdefault(
+            "path",
+            os.getenv(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                os.getenv(
+                    "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY",
+                    os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", ""))),
+                ),
+            ).strip(),
         )
         return shared_args
 
@@ -327,9 +346,14 @@ class ProjectToolProvider(ToolProvider):
         """
         server_host = self._get_str(args, "serverhost")
         path = self._get_str(args, "path", "programpath", "filepath")
+        logger.info(
+            "[open-project] dispatcher: server_host=%r, path=%r, raw_args_keys=%s",
+            server_host, path, list(args.keys()) if isinstance(args, dict) else "N/A",
+        )
 
         # Explicit shared server mode
         if server_host:
+            logger.info("[open-project] ROUTE: explicit shared server (serverHost in args)")
             return await self._handle_connect_shared_project(args)
 
         # Auto-detect shared server from environment variables **or** auth context
@@ -337,14 +361,23 @@ class ProjectToolProvider(ToolProvider):
         # related HTTP headers sent by remote MCP clients).
         if not server_host:
             env_host = self._get_shared_server_host()
+            logger.info("[open-project] env_host=%r (from _get_shared_server_host)", env_host)
             if env_host:
                 # If no path or path doesn't exist locally, try shared mode
                 if not path:
                     # No path at all — connect to shared server and list programs
+                    logger.info("[open-project] ROUTE: shared server (no path, env_host set)")
                     shared_args = self._build_shared_args(args, env_host)
-                    repo = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
+                    repo = os.getenv(
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                        os.getenv(
+                            "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY",
+                            os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", ""),
+                        ),
+                    ).strip()
                     if repo and "path" not in args:
                         shared_args["path"] = repo
+                        logger.info("[open-project] Injecting repo=%r from env", repo)
                     return await self._handle_connect_shared_project(shared_args)
 
                 # Path is given — check if it's a local file/dir that exists.
@@ -354,6 +387,7 @@ class ProjectToolProvider(ToolProvider):
                     # Certainly not a local path — route to shared mode.
                     # Drop the foreign path; let _handle_connect_shared_project
                     # pick up the repository from auth context instead.
+                    logger.info("[open-project] ROUTE: shared server (foreign OS path detected)")
                     shared_args = self._build_shared_args(args, env_host)
                     shared_args.pop("path", None)
                     shared_args.pop("programpath", None)
@@ -363,14 +397,19 @@ class ProjectToolProvider(ToolProvider):
                 resolved_path = Path(path).expanduser().resolve()
                 if not resolved_path.exists():
                     # Path doesn't exist locally → try shared mode with this as the program path
+                    logger.info("[open-project] ROUTE: shared server (path %r doesn't exist locally)", resolved_path)
                     shared_args = self._build_shared_args(args, env_host)
                     return await self._handle_connect_shared_project(shared_args)
 
+        logger.info("[open-project] ROUTE: local mode (fallthrough)")
         return await self._handle_open(args)
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Connect to shared Ghidra repository server and list available binaries."""
         session_id: str = get_current_mcp_session_id()
+        # Log incoming args (redact password)
+        _safe_args = {k: ("***" if "password" in k.lower() else v) for k, v in (args if isinstance(args, dict) else {}).items()}
+        logger.info("[connect-shared-project] session=%s, incoming args=%s", session_id, _safe_args)
 
         # Populate defaults from HTTP auth context (set by AuthMiddleware when the
         # client authenticates via Authorization + optional X-Ghidra-* headers).
@@ -403,11 +442,18 @@ class ProjectToolProvider(ToolProvider):
 
         auth_provided = bool(server_username and server_password)
         server_reachable = False
+        logger.info(
+            "[connect-shared-project] resolved: host=%s, port=%d, username=%s, path=%r, auth=%s",
+            server_host, server_port, server_username or "(none)", path, auth_provided,
+        )
 
         try:
+            logger.info("[connect-shared-project] TCP connect check %s:%d ...", server_host, server_port)
             with socket.create_connection((server_host, server_port), timeout=5):
                 server_reachable = True
+            logger.info("[connect-shared-project] TCP connect OK")
         except OSError as exc:
+            logger.warning("[connect-shared-project] TCP connect FAILED: %s", exc)
             raise ActionableError(
                 f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
                 context={
@@ -445,11 +491,13 @@ class ProjectToolProvider(ToolProvider):
 
         original_user_name: str | None = None
         if server_username:
+            logger.info("[connect-shared-project] Setting Java user.name = %s", server_username)
             try:
                 from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
 
                 original_user_name = JavaSystem.getProperty("user.name")
                 JavaSystem.setProperty("user.name", server_username)
+                logger.info("[connect-shared-project] Java user.name set (was %s)", original_user_name)
             except Exception:
                 original_user_name = None
 
@@ -459,19 +507,24 @@ class ProjectToolProvider(ToolProvider):
                 field: Any = SystemUtilities.class_.getDeclaredField("userName")
                 field.setAccessible(True)
                 field.set(None, server_username)
+                logger.info("[connect-shared-project] SystemUtilities.userName patched")
             except Exception:
                 pass
 
         if server_username and server_password:
+            logger.info("[connect-shared-project] Setting PasswordClientAuthenticator")
             ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
 
         try:
+            logger.info("[connect-shared-project] Clearing existing adapter for %s:%d", server_host, server_port)
             ClientUtil.clearRepositoryAdapter(server_host, server_port)
         except Exception:
             pass
 
+        logger.info("[connect-shared-project] Getting repository server adapter for %s:%d", server_host, server_port)
         server_adapter = ClientUtil.getRepositoryServer(server_host, server_port, True)
         if server_adapter is None:
+            logger.warning("[connect-shared-project] getRepositoryServer returned None")
             raise ActionableError(
                 f"Failed to connect to repository server: {server_host}:{server_port}",
                 context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
@@ -480,6 +533,7 @@ class ProjectToolProvider(ToolProvider):
                     "Retry with valid server credentials.",
                 ],
             )
+        logger.info("[connect-shared-project] adapter obtained, isConnected=%s", server_adapter.isConnected())
 
         if not server_adapter.isConnected():
             try:
@@ -526,7 +580,9 @@ class ProjectToolProvider(ToolProvider):
                 )
 
         try:
+            logger.info("[connect-shared-project] Listing repository names...")
             repository_names_raw = server_adapter.getRepositoryNames() or []
+            logger.info("[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else [])
         except Exception as exc:
             exc_text = str(exc)
             if auth_provided:
@@ -580,12 +636,16 @@ class ProjectToolProvider(ToolProvider):
         if path and path.strip():
             if path in repository_names:
                 repository_name = path
+                logger.info("[connect-shared-project] path=%r matched a repository name", path)
             else:
                 checkout_program_path = path
                 repository_name = repository_names[0]
+                logger.info("[connect-shared-project] path=%r is a checkout target, using repo=%r", path, repository_name)
         else:
             repository_name = repository_names[0]
+            logger.info("[connect-shared-project] No path specified, using first repo=%r", repository_name)
 
+        logger.info("[connect-shared-project] Opening repository %r ...", repository_name)
         repository_adapter: Any = server_adapter.getRepository(repository_name)
         if repository_adapter is None:
             raise ActionableError(
@@ -639,7 +699,9 @@ class ProjectToolProvider(ToolProvider):
                     ],
                 )
 
+        logger.info("[connect-shared-project] Listing repository items...")
         binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
+        logger.info("[connect-shared-project] Found %d item(s) in repository %r", len(binaries), repository_name)
 
         SESSION_CONTEXTS.set_project_handle(
             session_id,
@@ -969,6 +1031,29 @@ class ProjectToolProvider(ToolProvider):
                     return create_success_response({"folder": normalized_folder, "files": [], "count": 0})
 
             files = self._list_domain_files(target_folder, max_results)
+            if not files:
+                session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id)
+                if session_binaries:
+                    fallback_files = []
+                    for item in session_binaries[:max_results]:
+                        path = str(item.get("path") or "")
+                        name = str(item.get("name") or Path(path).name)
+                        fallback_files.append(
+                            {
+                                "name": name,
+                                "path": path,
+                                "isDirectory": False,
+                                "type": item.get("type", "Program"),
+                            },
+                        )
+                    return create_success_response(
+                        {
+                            "folder": folder,
+                            "files": fallback_files,
+                            "count": len(fallback_files),
+                            "source": "session-binaries",
+                        },
+                    )
             return create_success_response({"folder": folder, "files": files, "count": len(files)})
         except Exception as e:
             session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
@@ -1811,6 +1896,7 @@ class ProjectToolProvider(ToolProvider):
         imported: list[dict[str, Any]] = []
         imported_count: int = 0
         errors: list[dict[str, Any]] = []
+        imported_session_binaries: list[dict[str, Any]] = []
 
         project_handle: Any = None
         ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
@@ -1862,8 +1948,27 @@ class ProjectToolProvider(ToolProvider):
 
                 imported_count += 1
                 imported.append({"path": str(entry), "programName": program.getName() if hasattr(program, "getName") else entry.name})
+                imported_session_binaries.append(
+                    {
+                        "path": program_path,
+                        "name": program.getName() if hasattr(program, "getName") else entry.name,
+                        "type": "Program",
+                        "sourcePath": str(entry),
+                    }
+                )
             except Exception as exc:
                 errors.append({"path": str(entry), "error": str(exc)})
+
+        if imported_session_binaries:
+            existing_binaries = SESSION_CONTEXTS.get_project_binaries(session_id)
+            merged_by_path: dict[str, dict[str, Any]] = {}
+            for item in existing_binaries:
+                item_path = str(item.get("path") or "")
+                if item_path:
+                    merged_by_path[item_path] = dict(item)
+            for item in imported_session_binaries:
+                merged_by_path[str(item["path"])] = item
+            SESSION_CONTEXTS.set_project_binaries(session_id, list(merged_by_path.values()))
 
         return create_success_response(
             {
@@ -2431,9 +2536,9 @@ class ProjectToolProvider(ToolProvider):
                     {
                         "operation": "sync-project",
                         "mode": mode,
+                        **push_result,
                         "direction": "local-save",
                         "success": len(push_result["errors"]) == 0,
-                        **push_result,
                         "note": "No shared server session. Performed local project save.",
                     },
                 )
@@ -2445,10 +2550,10 @@ class ProjectToolProvider(ToolProvider):
                 return create_success_response(
                     {
                         "operation": "sync-project",
+                        **push_result,
                         "mode": "bidirectional",
                         "direction": "local-save-only",
                         "success": len(push_result["errors"]) == 0,
-                        **push_result,
                         "note": "No shared server session. Only local save was performed (pull requires a shared server connection).",
                     },
                 )

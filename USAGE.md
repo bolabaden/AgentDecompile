@@ -75,6 +75,61 @@ $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = "<set-in-user-env>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
 ```
 
+Shared-server note:
+
+- Do not set `AGENT_DECOMPILE_PROJECT_PATH` or `AGENT_DECOMPILE_PROJECT_NAME` in the same stdio/server entry when the goal is to connect directly to a shared Ghidra repository on launch.
+- If both the local-project env vars and the shared-server env vars are present, the runtime may treat the launch as an explicit local project request first.
+- For editor configs, prefer separate entries such as `agentdecompile-local` and `agentdecompile-shared` instead of one mixed env block.
+- If you are testing workspace edits, do not use `uvx --from git+https://github.com/bolabaden/agentdecompile ...` because that launches the packaged GitHub build, not your local checkout.
+- To exercise the local checkout, use `uv run agentdecompile-server ...`, `uv run agentdecompile-cli ...`, or `uvx --from /path/to/agentdecompile --with-editable /path/to/agentdecompile ...`.
+
+## 2a. Local project configuration
+
+Set the local Ghidra project directory and project name via environment variable or CLI argument. Neither is required for basic use — the server defaults to an `agentdecompile_projects` subdirectory with project name `my_project`.
+
+| What | Env var | CLI arg | Notes |
+|------|---------|---------|-------|
+| Project directory or `.gpr` file | `AGENT_DECOMPILE_PROJECT_PATH` (alias: `AGENTDECOMPILE_PROJECT_PATH`) | `--project-path <path>` | Pass a `.gpr` file to open an existing Ghidra project; pass a directory to create/use a directory-backed project. |
+| Project name | `AGENT_DECOMPILE_PROJECT_NAME` (alias: `AGENTDECOMPILE_PROJECT_NAME`) | `--project-name <name>` | Ignored when `--project-path` / `AGENT_DECOMPILE_PROJECT_PATH` points to a `.gpr` file. Defaults to the working directory name. |
+
+### Linux
+
+```bash
+# Use a specific project directory
+export AGENT_DECOMPILE_PROJECT_PATH="/home/user/ghidra-projects/my-analysis"
+export AGENT_DECOMPILE_PROJECT_NAME="my-analysis"
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
+
+# Or use an existing .gpr file (project name is inferred from the file)
+export AGENT_DECOMPILE_PROJECT_PATH="/home/user/ghidra-projects/my-analysis.gpr"
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
+```
+
+### PowerShell
+
+```powershell
+# Use a specific project directory
+$Env:AGENT_DECOMPILE_PROJECT_PATH = "C:\GhidraProjects\my-analysis"
+$Env:AGENT_DECOMPILE_PROJECT_NAME = "my-analysis"
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
+
+# Or use an existing .gpr file (project name is inferred from the file)
+$Env:AGENT_DECOMPILE_PROJECT_PATH = "C:\GhidraProjects\my-analysis.gpr"
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
+```
+
+### CLI args (inline)
+
+```bash
+agentdecompile-server -t streamable-http \
+  --project-path /home/user/ghidra-projects/my-analysis \
+  --project-name my-analysis
+
+# Existing .gpr file — --project-name is ignored
+agentdecompile-server -t streamable-http \
+  --project-path /home/user/ghidra-projects/my-analysis.gpr
+```
+
 ## 3. Current CLI workflows
 
 ### Open a program
@@ -144,9 +199,26 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 This is the supported way to keep state inside one CLI invocation.
 
+## 3a. Terminal-validated local JSON contracts
+
+The contracts below were re-validated against a real `agentdecompile-server -t streamable-http` process using `tests/fixtures/test_x86_64` before the strict E2E assertions were written.
+
+- Default live MCP advertisement is **36 tools**.
+- Hidden-but-callable legacy tools still work through raw MCP and curated CLI commands; for example `manage-comments` is callable even though it is not in the default `tools/list` output.
+- `switch-project` remains accepted as a compatibility alias and currently routes to `open-project`, but it is intentionally not advertised.
+- Local JSON `list-functions` returns a `results` array, not `functions`.
+- Local JSON `open-project` and `import-binary` are similar but not identical: `open-project` returns `operation`, while `import-binary` returns `action` plus `success`, `language`, and `compiler` fields.
+- On the current local sample fixture, `change-processor` fails with a `ProgramDB.setLanguage(...)` overload error and leaves the active program unchanged in terminal validation. That observed failure is captured in `examples/mcp_responses/local_live_contract_test_x86_64.json`.
+
+The repository now includes an **experimental** grouped local terminal-contract suite at `tests/test_e2e_local_terminal_contracts.py`. It is based on terminal-validated observations and is intended for opt-in harness work (`AGENTDECOMPILE_ENABLE_EXPERIMENTAL_LOCAL_CONTRACTS=1`) while the Windows pytest subprocess path is still being hardened. The existing `tests/test_e2e_project_lifecycle.py` suite continues to cover the exact read-only markdown contracts for function/reference/import/export inspection.
+
+See `tests/test_e2e_local_terminal_contracts.py` and `examples/mcp_responses/local_live_contract_test_x86_64.json` for the captured contract reference used by the suite.
+
 ### Shared repository quick sequence with uvx
 
 Use this when you want an install-free command chain against a shared repository clone of the CLI.
+
+If you are validating a local code change, replace these `uvx --from git+https://github.com/bolabaden/agentdecompile ...` commands with `uv run ...` from the local repository so the terminal run actually exercises your modified code.
 
 ```mermaid
 flowchart TD

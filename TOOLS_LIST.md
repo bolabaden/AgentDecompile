@@ -6,6 +6,31 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
+## Server Configuration
+
+### Local project
+
+Control which Ghidra project the server uses via environment variable or CLI argument:
+
+| What | Env var | CLI arg | Notes |
+|------|---------|---------|-------|
+| Project directory or `.gpr` file | `AGENT_DECOMPILE_PROJECT_PATH` (alias: `AGENTDECOMPILE_PROJECT_PATH`) | `--project-path <path>` | Directory for a new/existing directory-backed project, or path to a `.gpr` file for an existing project. Default: `agentdecompile_projects/` in cwd. |
+| Project name | `AGENT_DECOMPILE_PROJECT_NAME` (alias: `AGENTDECOMPILE_PROJECT_NAME`) | `--project-name <name>` | Ignored when pointing to a `.gpr` file. Default: current working directory name. |
+
+```bash
+# Directory-backed project (creates if absent)
+agentdecompile-server -t streamable-http \
+  --project-path /my/projects/analysis \
+  --project-name analysis
+
+# Existing Ghidra .gpr file (name inferred from filename)
+agentdecompile-server -t streamable-http \
+  --project-path /my/projects/analysis.gpr
+
+# Via environment variable (stdio, e.g. Claude Desktop / VS Code MCP)
+AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
+```
+
 ## Table of Contents
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)

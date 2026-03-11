@@ -8,7 +8,7 @@ Provides init_agentdecompile_context() and a main() that supports:
 - Import binaries (input_paths) before serving
 
 Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
-- AGENT_DECOMPILE_PROJECT_PATH: Path to .gpr file (persistent project)
+- AGENT_DECOMPILE_PROJECT_PATH: Path to a .gpr file or to a project directory location
 - AGENT_DECOMPILE_HOST: Server bind host (applied when no config file)
 - AGENT_DECOMPILE_PORT: Server port (applied when no config file)
 - AGENT_DECOMPILE_SERVER_USERNAME, AGENT_DECOMPILE_SERVER_PASSWORD: Shared project auth
@@ -292,10 +292,18 @@ def _first_non_empty_env(*keys: str) -> str | None:
 def _set_env_if_missing(target: str, *sources: str) -> None:
     current = os.environ.get(target)
     if current is not None and current.strip():
+        logger.debug("env-alias: %s already set (value length=%d), skipping sources %s", target, len(current.strip()), sources)
         return
     resolved = _first_non_empty_env(*sources)
     if resolved is not None:
+        matched_source = next((k for k in sources if (os.environ.get(k) or "").strip() == resolved), "?")
+        # Redact credential values in log output
+        _is_sensitive = any(kw in target.upper() for kw in ("PASSWORD", "SECRET", "TOKEN", "KEY"))
+        display_val = "***" if _is_sensitive else repr(resolved)
+        logger.debug("env-alias: %s ← %s = %s", target, matched_source, display_val)
         os.environ[target] = resolved
+    else:
+        logger.debug("env-alias: %s not resolved from %s (none set)", target, sources)
 
 
 def _normalize_shared_server_env_aliases() -> None:
@@ -305,8 +313,11 @@ def _normalize_shared_server_env_aliases() -> None:
     AGENTDECOMPILE_* variants so external MCP launchers can supply either form.
     """
     # Canonical Ghidra-prefixed env vars used by server/launcher/auth logic.
+    # Includes AGENTDECOMPILE_HTTP_GHIDRA_SERVER_* variants used by MCP
+    # launcher configs (e.g. VS Code mcp.json).
     _set_env_if_missing(
         "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+        "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST",
         "AGENTDECOMPILE_GHIDRA_SERVER_HOST",
         "AGENTDECOMPILE_GHIDRA_HOST",
         "AGENT_DECOMPILE_SERVER_HOST",
@@ -314,6 +325,7 @@ def _normalize_shared_server_env_aliases() -> None:
     )
     _set_env_if_missing(
         "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+        "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT",
         "AGENTDECOMPILE_GHIDRA_SERVER_PORT",
         "AGENTDECOMPILE_GHIDRA_PORT",
         "AGENT_DECOMPILE_SERVER_PORT",
@@ -335,11 +347,14 @@ def _normalize_shared_server_env_aliases() -> None:
     )
     _set_env_if_missing(
         "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+        "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY",
         "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
         "AGENTDECOMPILE_GHIDRA_REPOSITORY",
         "AGENT_DECOMPILE_REPOSITORY",
         "AGENTDECOMPILE_REPOSITORY",
     )
+
+    logger.debug("env-alias: canonical Ghidra-prefixed env vars resolved")
 
     # Mirror canonical values into legacy/non-ghidra names used by bridge paths.
     _set_env_if_missing("AGENT_DECOMPILE_SERVER_HOST", "AGENT_DECOMPILE_GHIDRA_SERVER_HOST")
@@ -354,12 +369,26 @@ def _normalize_shared_server_env_aliases() -> None:
     _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "AGENT_DECOMPILE_GHIDRA_SERVER_PORT")
     _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME")
     _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD")
-    _set_env_if_missing(
-        "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
-    )
+    _set_env_if_missing("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
     _set_env_if_missing("AGENT_DECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
     _set_env_if_missing("AGENTDECOMPILE_REPOSITORY", "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY")
+
+    # Log summary of resolved shared-server env vars for diagnostics
+    _resolved_host = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+    _resolved_port = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+    _resolved_repo = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+    _resolved_user = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+    _resolved_pass = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+    if _resolved_host or _resolved_port or _resolved_repo or _resolved_user:
+        sys.stderr.write(
+            f"[env-normalize] shared server: host={_resolved_host or '(not set)'}"
+            f", port={_resolved_port or '(not set)'}"
+            f", repo={_resolved_repo or '(not set)'}"
+            f", username={'(set)' if _resolved_user else '(not set)'}"
+            f", password={'(set)' if _resolved_pass else '(not set)'}\n"
+        )
+    else:
+        sys.stderr.write("[env-normalize] No shared Ghidra server env vars detected.\n")
 
 
 def _set_env_from_args(args: Any) -> None:
@@ -384,8 +413,10 @@ def _set_env_from_args(args: Any) -> None:
         if isinstance(value, str) and not value.strip():
             continue
         os.environ[env_name] = str(value)
+        _is_cred = arg_name in _SENSITIVE_ARGS
+        sys.stderr.write(f"[cli-args] {env_name} \u2190 --{arg_name.replace('_', '-')} = {'***' if _is_cred else str(value)}\n")
         # Register with sanitizer before clearing from args
-        if arg_name in _SENSITIVE_ARGS:
+        if _is_cred:
             _credential_sanitizer.register(str(value))
         # Overwrite on the namespace so exception dumps don't expose it
         setattr(args, arg_name, None)
@@ -443,10 +474,16 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
 def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
     """Resolve and validate project path inputs into directory/name/.gpr tuple."""
     project_path = _resolve_default_project_path(args.project_path).resolve()
+    sys.stderr.write(
+        f"[project-paths] raw='{args.project_path}' \u2192 resolved='{project_path}'"
+        f" (suffix='{project_path.suffix}', project_name='{args.project_name}')\n"
+    )
     if project_path.suffix.lower() == ".gpr":
         if args.project_name != "my_project":
             parser.error("Cannot use --project-name with a .gpr file")
+        sys.stderr.write(f"[project-paths] .gpr mode: dir='{project_path.parent}', name='{project_path.stem}'\n")
         return str(project_path.parent), project_path.stem, project_path
+    sys.stderr.write(f"[project-paths] directory mode: dir='{project_path}', name='{args.project_name}'\n")
     return str(project_path), args.project_name, None
 
 
@@ -702,13 +739,17 @@ def main() -> None:
 
     # Normalize compact and legacy shared-server env aliases before consuming
     # defaults from the process environment.
+    sys.stderr.write("[main] Normalizing shared-server env aliases (pass 1 - env vars)...\n")
     _normalize_shared_server_env_aliases()
 
     # Set environment variables from args
     _set_env_from_args(args)
     # Re-run normalization so CLI-provided values are mirrored to compatibility
     # aliases used by older bridge/bootstrap code paths.
+    sys.stderr.write("[main] Normalizing shared-server env aliases (pass 2 - after CLI args)...\n")
     _normalize_shared_server_env_aliases()
+
+    sys.stderr.write(f"[main] transport={args.transport}, verbose={args.verbose}\n")
 
     # Resolve TLS paths (CLI > env)
     tls_certfile: str | None = args.tls_certfile or os.environ.get("AGENT_DECOMPILE_TLS_CERT") or None
@@ -809,8 +850,14 @@ def main() -> None:
     # Local mode: full PyGhidra / JVM startup
     # ---------------------------------------------------------------
 
+    sys.stderr.write("[main] Local mode: starting full PyGhidra / JVM\n")
+
     # Setup project paths
     project_directory, project_name, project_path_gpr = _setup_project_paths(parser, args)
+    sys.stderr.write(
+        f"[main] project_directory={project_directory!r}, project_name={project_name!r},"
+        f" project_path_gpr={project_path_gpr!r}\n"
+    )
 
     # Initialize PyGhidra
     _initialize_pyghidra(args.verbose_analysis)

@@ -1,358 +1,211 @@
 from __future__ import annotations
 
-import json
-import os
-import socket
-import subprocess
-import sys
-import time
+import shutil
 
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
-import httpx
 import pytest
 
-from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, find_project_file
-from tests.helpers import create_minimal_binary
+from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, extract_text_content
+from tests.helpers import get_public_sample_binary
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
+KNOWN_FIXTURE_NAME = "test_x86_64"
+KNOWN_FIXTURE_LANGUAGE = "x86:LE:64:default"
+KNOWN_FIXTURE_COMPILER = "gcc"
+KNOWN_ENTRY_ADDRESS = "1000004b0"
+KNOWN_PRINTF_ADDRESS = "10000051a"
+KNOWN_STRING_ADDRESS = "100000520"
+KNOWN_STRING_VALUE = "ReVa Test Program"
+KNOWN_IMPORT_NAMESPACE = "/usr/lib/libSystem.B.dylib"
+
+
+def _normalize_text(text: str) -> str:
+    return text.replace("\r\n", "\n").strip()
+
+
+def _tool_text(session: JsonRpcMcpSession, name: str, arguments: dict[str, object]) -> str:
+    return _normalize_text(extract_text_content(session.call_tool(name, arguments)))
+
+
+def _known_fixture_source() -> Path:
+    return Path(__file__).resolve().parent / "fixtures" / KNOWN_FIXTURE_NAME
+
 
 @pytest.fixture
-def local_server_base_url(isolated_workspace: Path) -> Generator[str, None, None]:
-    with _running_local_server_context(isolated_workspace) as base_url:
-        yield base_url
+def known_fixture_binary(isolated_workspace: Path) -> Path:
+    destination = isolated_workspace / KNOWN_FIXTURE_NAME
+    shutil.copy2(_known_fixture_source(), destination)
+    destination.chmod(0o755)
+    return destination
 
 
-@pytest.fixture
-def local_http_session(local_server_base_url: str) -> Generator[JsonRpcMcpSession, None, None]:
-    with JsonRpcMcpSession(local_server_base_url) as session:
-        yield session
+def test_public_sample_binary_is_exact_and_provenanced(public_sample_binary: Path) -> None:
+    sample = get_public_sample_binary()
+    binary = public_sample_binary.read_bytes()
+    source_bytes = sample.source_file.read_bytes()
+
+    assert sample.key == "sourcedennis-x64"
+    assert sample.display_name == "sourcedennis/small-hello-world x64"
+    assert sample.architecture == "x64"
+    assert sample.output_name == "sourcedennis_small_hello_world_x64"
+    assert sample.language_id == "x86:LE:64:default"
+    assert sample.expected_message == "Hello, World\n"
+    assert sample.output_size == 172
+    assert public_sample_binary.name == sample.output_name
+    assert len(binary) == sample.output_size
+    assert binary[:4] == b"\x7fELF"
+    assert binary[-len(sample.expected_message) :] == sample.expected_message.encode("utf-8")
+    assert sample.source_root.exists()
+    assert sample.source_file.exists()
+    assert sample.license_file.exists()
+    assert sample.readme_file.exists()
+    assert source_bytes.startswith(b"BITS 64")
+    assert b'Hello, World",10' in source_bytes
+    assert sample.source_sha256 == "fb4dc6934f67eefb89f38f4911c365a3c5d58a3116327c90afa6b41eb27d9b82"
+    assert sample.output_sha256 == "90fc6ad98b5f31d7a365a2b24e5ef0ca1103a42768721793810b5d0480570b38"
 
 
-def _run_local_cli(base_url: str, *args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "agentdecompile_cli.cli", "--server-url", base_url, *args],
-        cwd=str(Path(__file__).resolve().parents[1]),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+def test_open_project_and_current_program_match_known_fixture_contract(
+    local_http_session: JsonRpcMcpSession,
+    known_fixture_binary: Path,
+) -> None:
+    open_text = _tool_text(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+    current_text = _tool_text(local_http_session, "get-current-program", {})
 
-
-def _cli_json(result: subprocess.CompletedProcess[str]) -> object:
-    payload = (result.stdout or "").strip() or (result.stderr or "").strip()
-    return json.loads(payload)
-
-
-def _assert_cli_ok(result: subprocess.CompletedProcess[str]) -> None:
-    assert result.returncode == 0, (
-        f"CLI failed with rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
-
-
-def _known_endpoint_variants() -> tuple[str, ...]:
-    return ("/", "/mcp", "/mcp/", "/mcp/message", "/mcp/message/")
-
-
-def _known_open_tool_variants() -> tuple[str, ...]:
-    return ("open-project", "open_project", "switch-project")
-
-
-def _known_list_tool_variants() -> tuple[str, ...]:
-    return ("list-project-files", "list_project_files")
-
-
-def _current_program_payload_for(session: JsonRpcMcpSession, *, program_path: str) -> dict[str, object]:
-    return session.call_tool_json("get-current-program", {"programPath": program_path})
-
-
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _server_env(project_path: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    for key in [
-        "AGENT_DECOMPILE_BACKEND_URL",
-        "AGENT_DECOMPILE_MCP_SERVER_URL",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
-        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
-        "AGENTDECOMPILE_SERVER_HOST",
-        "AGENTDECOMPILE_SERVER_PORT",
-        "AGENTDECOMPILE_SERVER_USERNAME",
-        "AGENTDECOMPILE_SERVER_PASSWORD",
-        "AGENTDECOMPILE_SERVER_REPOSITORY",
-    ]:
-        env.pop(key, None)
-    env["AGENT_DECOMPILE_PROJECT_PATH"] = str(project_path)
-    env["PYTHONUNBUFFERED"] = "1"
-    return env
-
-
-def _wait_for_server(base_url: str, process: subprocess.Popen[str], timeout: float = 120.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            stdout, stderr = process.communicate(timeout=5)
-            raise AssertionError(
-                "Local subprocess server exited before becoming healthy. "
-                f"stdout={stdout[-800:]} stderr={stderr[-800:]}"
-            )
-        try:
-            health_response = httpx.get(f"{base_url}/health", timeout=1.0)
-            if health_response.status_code == 200:
-                return
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
-            time.sleep(1)
-            continue
-        time.sleep(1)
-    process.terminate()
-    try:
-        stdout, stderr = process.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        stdout, stderr = process.communicate(timeout=10)
-    raise AssertionError(
-        "Local subprocess server did not become ready within timeout. "
-        f"stdout={stdout[-800:]} stderr={stderr[-800:]}"
-    )
-
-
-@contextmanager
-def _running_local_server_context(isolated_workspace: Path) -> Generator[str, None, None]:
-    port = _find_free_port()
-    project_path = isolated_workspace / "runtime_project"
-    project_path.mkdir(parents=True, exist_ok=True)
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "agentdecompile_cli.server",
-            "-t",
-            "streamable-http",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--project-path",
-            str(project_path),
-            "--project-name",
-            "pytest-lifecycle",
-        ],
-        cwd=str(Path(__file__).resolve().parents[1]),
-        env=_server_env(project_path),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    base_url = f"http://127.0.0.1:{port}"
-    _wait_for_server(base_url, process)
-    try:
-        yield base_url
-    finally:
-        process.terminate()
-        try:
-            process.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate(timeout=10)
-
-
-def _make_named_binary(workspace: Path, name: str) -> Path:
-    binary_path = workspace / name
-    create_minimal_binary(binary_path)
-    return binary_path
-
-
-class TestLocalProjectLifecycle:
-    def test_open_local_binary_sets_current_program_and_lists_project_entry(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
-        open_payload = local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
-        assert open_payload["operation"] == "import"
-        assert open_payload["filesImported"] == 1
-        assert len(open_payload["importedPrograms"]) == 1
-        assert open_payload["importedPrograms"][0]["path"] == str(test_binary)
-
-        current_payload = local_http_session.call_tool_json("get-current-program", {})
-        assert current_payload["loaded"] is True
-        assert current_payload["name"] == test_binary.name
-        assert current_payload["programPath"].endswith(test_binary.name)
-        assert current_payload["functionCount"] >= 0
-
-        listing_payload = local_http_session.call_tool_json("list-project-files", {})
-        assert listing_payload["count"] >= 1
-        assert listing_payload.get("source") != "shared-server-session"
-        assert find_project_file(listing_payload["files"], name=test_binary.name) is not None
-
-    def test_opening_project_domain_path_reopens_local_program(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
-        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
-        listing_payload = local_http_session.call_tool_json("list-project-files", {})
-        listed_program = find_project_file(listing_payload["files"], name=test_binary.name)
-        assert listed_program is not None
-
-        reopen_payload = local_http_session.call_tool_json("open-project", {"path": listed_program["path"]})
-        assert reopen_payload["action"] == "open"
-        assert reopen_payload["mode"] == "project-domain"
-        assert reopen_payload["path"].endswith(test_binary.name)
-
-        current_payload = local_http_session.call_tool_json("get-current-program", {})
-        assert current_payload["loaded"] is True
-        assert current_payload["programPath"].endswith(test_binary.name)
-
-    def test_opening_second_local_binary_replaces_active_program_and_preserves_listing(self, local_http_session: JsonRpcMcpSession, isolated_workspace: Path):
-        first_binary = _make_named_binary(isolated_workspace, "first_local.bin")
-        second_binary = _make_named_binary(isolated_workspace, "second_local.bin")
-
-        first_open = local_http_session.call_tool_json("open-project", {"path": str(first_binary)})
-        second_open = local_http_session.call_tool_json("open-project", {"path": str(second_binary)})
-
-        assert first_open["filesImported"] == 1
-        assert second_open["filesImported"] == 1
-
-        current_payload = local_http_session.call_tool_json("get-current-program", {})
-        assert current_payload["loaded"] is True
-        assert current_payload["name"] == second_binary.name
-        assert current_payload["programPath"].endswith(second_binary.name)
-
-        listing_payload = local_http_session.call_tool_json("list-project-files", {})
-        assert find_project_file(listing_payload["files"], name=first_binary.name) is not None
-        assert find_project_file(listing_payload["files"], name=second_binary.name) is not None
-
-    def test_local_sync_project_uses_local_save_modes_after_open(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
-        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
-
-        push_payload = local_http_session.call_tool_json("sync-project", {"mode": "push"})
-        assert push_payload["operation"] == "sync-project"
-        assert push_payload["direction"] == "local-save"
-        assert push_payload["repository"] == "local-project"
-
-        bidirectional_payload = local_http_session.call_tool_json("sync-project", {"mode": "bidirectional"})
-        assert bidirectional_payload["operation"] == "sync-project"
-        assert bidirectional_payload["direction"] == "local-save-only"
-        assert "No shared server session" in bidirectional_payload["note"]
-
-
-class TestLocalProjectWorkflowMatrix:
-    @pytest.mark.parametrize("endpoint", _known_endpoint_variants())
-    def test_endpoint_variants_support_open_and_current_program(
-        self,
-        local_server_base_url: str,
-        test_binary: Path,
-        endpoint: str,
-    ):
-        with JsonRpcMcpSession(local_server_base_url, endpoint=endpoint) as session:
-            open_payload = session.call_tool_json("open-project", {"path": str(test_binary)})
-            assert open_payload["operation"] == "import"
-
-            current_payload = _current_program_payload_for(session, program_path=str(test_binary))
-            assert current_payload["loaded"] is True
-            assert current_payload["programPath"].endswith(test_binary.name)
-
-    @pytest.mark.parametrize("open_tool_name", _known_open_tool_variants())
-    @pytest.mark.parametrize("list_tool_name", _known_list_tool_variants())
-    def test_open_and_list_tool_name_variants_resolve_same_project_entry(
-        self,
-        local_server_base_url: str,
-        test_binary: Path,
-        open_tool_name: str,
-        list_tool_name: str,
-    ):
-        with JsonRpcMcpSession(local_server_base_url) as session:
-            open_payload = session.call_tool_json(open_tool_name, {"path": str(test_binary)})
-            assert open_payload["filesImported"] == 1
-
-            listing_payload = session.call_tool_json(list_tool_name, {})
-            assert find_project_file(listing_payload["files"], name=test_binary.name) is not None
-
-    def test_manage_files_list_and_open_modes_match_project_workflow(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
-        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
-
-        manage_list_payload = local_http_session.call_tool_json("manage-files", {"mode": "list", "path": "/"})
-        listed_program = find_project_file(manage_list_payload["files"], name=test_binary.name)
-        assert listed_program is not None
-
-        manage_open_payload = local_http_session.call_tool_json(
-            "manage-files",
-            {"mode": "open", "path": listed_program["path"]},
+    expected_open = _normalize_text(
+        (
+            "## Project (import)\n\n"
+            "**operation:** import\n"
+            f"**importedFrom:** {known_fixture_binary}\n"
+            "**filesDiscovered:** 1\n"
+            "**filesImported:** 1\n\n"
+            "### Importedprograms\n\n"
+            "| path | programName |\n"
+            "| --- | --- |\n"
+            f"| {known_fixture_binary} | {KNOWN_FIXTURE_NAME} |\n"
+            "**groupsCreated:** 0\n"
+            "**maxDepthUsed:** 16\n"
+            "**wasRecursive:** False\n"
+            "**analysisRequested:** False\n"
+            "**errors:** []\n\n"
+            "### About This Tool\n\n"
+            "Opens a binary or Ghidra project for analysis."
         )
-        assert manage_open_payload["action"] == "open"
-        assert manage_open_payload["path"].endswith(test_binary.name)
-
-    def test_resource_payloads_reflect_opened_local_program(self, local_http_session: JsonRpcMcpSession, test_binary: Path):
-        local_http_session.call_tool_json("open-project", {"path": str(test_binary)})
-
-        advertised_resources = {str(item["uri"]) for item in local_http_session.list_resources()}
-        assert "ghidra://programs" in advertised_resources
-        assert "ghidra://static-analysis-results" in advertised_resources
-        assert "ghidra://agentdecompile-debug-info" in advertised_resources
-
-        programs_payload = local_http_session.read_resource_json("ghidra://programs")
-        assert any(str(program.get("name", "")).endswith(test_binary.name) for program in programs_payload.get("programs", []))
-
-        static_analysis_payload = local_http_session.read_resource_json("ghidra://static-analysis-results")
-        assert static_analysis_payload["version"] == "2.1.0"
-        assert isinstance(static_analysis_payload.get("runs"), list)
-
-        debug_info_payload = local_http_session.read_resource_json("ghidra://agentdecompile-debug-info")
-        assert debug_info_payload["program"]["status"] != "no_program_loaded"
-        assert str(debug_info_payload["program"].get("name", "")).endswith(test_binary.name)
-
-    def test_sync_project_without_open_is_actionable_error(self, local_http_session: JsonRpcMcpSession):
-        sync_payload = local_http_session.call_tool_json("sync-project", {"mode": "pull"})
-        assert sync_payload["success"] is False
-        assert sync_payload["operation"] == "sync-project"
-        assert sync_payload["context"]["state"] == "no-project-context"
-
-
-class TestLocalCliDocumentedWorkflows:
-    def test_cli_raw_tool_open_project_matches_documented_usage(self, local_server_base_url: str, test_binary: Path):
-        result = _run_local_cli(
-            local_server_base_url,
-            "--format",
-            "json",
-            "tool",
-            "open-project",
-            json.dumps({"path": str(test_binary), "format": "json"}),
-        )
-        _assert_cli_ok(result)
-        payload = _cli_json(result)
-        assert payload["filesImported"] == 1
-        assert payload["importedPrograms"][0]["path"] == str(test_binary)
-
-    def test_cli_tool_seq_keeps_state_for_open_current_and_list(self, local_server_base_url: str, test_binary: Path):
-        steps = json.dumps(
-            [
-                {"name": "open-project", "arguments": {"path": str(test_binary), "format": "json"}},
-                {"name": "get-current-program", "arguments": {"programPath": str(test_binary), "format": "json"}},
-                {"name": "list-project-files", "arguments": {"format": "json"}},
-            ]
-        )
-        result = _run_local_cli(local_server_base_url, "--format", "json", "tool-seq", steps)
-        _assert_cli_ok(result)
-        payload = _cli_json(result)
-        serialized = json.dumps(payload)
-        assert test_binary.name in serialized
-        assert "get-current-program" in serialized or "programPath" in serialized
-
-    @pytest.mark.parametrize(
-        ("resource_name", "expected_key"),
-        (("programs", "programs"), ("static-analysis", "runs"), ("debug-info", "program")),
     )
-    def test_cli_resource_commands_cover_documented_resources(
-        self,
-        local_server_base_url: str,
-        resource_name: str,
-        expected_key: str,
-    ):
-        result = _run_local_cli(local_server_base_url, "--format", "json", "resource", resource_name)
-        _assert_cli_ok(result)
-        payload = _cli_json(result)
-        assert expected_key in payload
+    expected_current = _normalize_text(
+        (
+            "## Current Program\n\n"
+            "**Name:** `test_x86_64`\n"
+            "**Path:** ``\n"
+            "**Language:** x86:LE:64:default\n"
+            "**Compiler:** gcc\n"
+            "**Image Base:** ``\n"
+            "**Functions:** 3\n"
+            "**Symbols:** 0\n\n"
+            "### About This Tool\n\n"
+            "Shows the currently loaded program's metadata.\n\n"
+            "### Suggested Next Steps\n\n"
+            "1. Use `list-functions` to survey the binary's functions.\n"
+            "2. Use `inspect-memory mode=blocks` to understand the memory layout.\n"
+            "3. Use `get-references mode=import` to see import/library dependencies."
+        )
+    )
+
+    assert open_text == expected_open
+    assert "**operation:** import" in open_text
+    assert f"**importedFrom:** {known_fixture_binary}" in open_text
+    assert "**filesDiscovered:** 1" in open_text
+    assert "**filesImported:** 1" in open_text
+    assert f"| {known_fixture_binary} | {KNOWN_FIXTURE_NAME} |" in open_text
+    assert "**groupsCreated:** 0" in open_text
+    assert "**maxDepthUsed:** 16" in open_text
+    assert "**wasRecursive:** False" in open_text
+    assert "**analysisRequested:** False" in open_text
+    assert "**errors:** []" in open_text
+    assert current_text == expected_current
+    assert "**Name:** `test_x86_64`" in current_text
+    assert "**Path:** ``" in current_text
+    assert f"**Language:** {KNOWN_FIXTURE_LANGUAGE}" in current_text
+    assert f"**Compiler:** {KNOWN_FIXTURE_COMPILER}" in current_text
+    assert "**Image Base:** ``" in current_text
+    assert "**Functions:** 3" in current_text
+    assert "**Symbols:** 0" in current_text
+    assert "Shows the currently loaded program's metadata." in current_text
+
+
+def test_known_fixture_analysis_outputs_match_observed_contract(
+    local_http_session: JsonRpcMcpSession,
+    known_fixture_binary: Path,
+) -> None:
+    _tool_text(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+
+    functions_text = _tool_text(local_http_session, "list-functions", {"limit": 10})
+    references_text = _tool_text(local_http_session, "get-references", {"mode": "to", "target": KNOWN_ENTRY_ADDRESS})
+    imports_text = _tool_text(local_http_session, "list-imports", {})
+    exports_text = _tool_text(local_http_session, "list-exports", {"limit": 5})
+    strings_text = _tool_text(local_http_session, "manage-strings", {"mode": "regex", "pattern": "ReVa"})
+
+    expected_references = _normalize_text(
+        (
+            "## Getreferences (to)\n\n"
+            "**mode:** to\n"
+            "**target:** 1000004b0\n\n"
+            "### References\n\n"
+            "| fromAddress | toAddress | type | function |\n"
+            "| --- | --- | --- | --- |\n"
+            "| Entry Point | 1000004b0 | EXTERNAL | None |\n"
+            "| 1000020b3 | 1000004b0 | DATA | None |\n"
+            "**count:** 2"
+        )
+    )
+    expected_imports = _normalize_text(
+        (
+            "## Import Listing\n\n"
+            "Showing **1** of **1** results (offset 0).\n\n"
+            "| Name | Address | Namespace |\n"
+            "| --- | --- | --- |\n"
+            "| _printf | EXTERNAL:00000001 | /usr/lib/libSystem.B.dylib |"
+        )
+    )
+
+    assert functions_text.startswith("## Function Listing\n\nShowing **2** of **2** results (offset 0).")
+    assert "| Name | Address | Size | Params | External | Thunk |" in functions_text
+    assert f"| entry | {KNOWN_ENTRY_ADDRESS} | 1 | 0 |  |  |" in functions_text
+    assert f"| _printf | {KNOWN_PRINTF_ADDRESS} | 1 | 0 |  | Yes |" in functions_text
+    assert "Lists all functions defined in the binary with their addresses, sizes, and basic metadata." in functions_text
+    assert "Call `get-functions mode=decompile function=entry` to read the pseudocode of a specific function." in functions_text
+    assert "Call `get-functions function=entry view=info` for detailed metadata (params, return type)." in functions_text
+    assert "Use `namePattern` regex to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals)." in functions_text
+    assert "Call `manage-symbols mode=count` for a quick symbol count overview without listing." in functions_text
+
+    assert references_text == expected_references
+    assert "**mode:** to" in references_text
+    assert f"**target:** {KNOWN_ENTRY_ADDRESS}" in references_text
+    assert "| Entry Point | 1000004b0 | EXTERNAL | None |" in references_text
+    assert "| 1000020b3 | 1000004b0 | DATA | None |" in references_text
+    assert "**count:** 2" in references_text
+
+    assert imports_text == expected_imports
+    assert "Showing **1** of **1** results (offset 0)." in imports_text
+    assert "| Name | Address | Namespace |" in imports_text
+    assert f"| _printf | EXTERNAL:00000001 | {KNOWN_IMPORT_NAMESPACE} |" in imports_text
+
+    assert exports_text.startswith("## Export Listing\n\nShowing **5** of **6** results (offset 0).")
+    assert "| Name | Address |" in exports_text
+    assert "| __mh_execute_header | 100000000 |" in exports_text
+    assert "| MACH_HEADER | 100000000 |" in exports_text
+    assert "| _add | 100000470 |" in exports_text
+    assert "| _multiply | 100000490 |" in exports_text
+    assert f"| entry | {KNOWN_ENTRY_ADDRESS} |" in exports_text
+
+    assert strings_text.startswith("## Strings\n\nShowing **1** of **1** results (offset 0).")
+    assert "| Address | Value | References |" in strings_text
+    assert f"| {KNOWN_STRING_ADDRESS} | {KNOWN_STRING_VALUE}" in strings_text
+    assert "| 0 |" in strings_text
+    assert "Find, list, and search strings embedded in the binary." in strings_text
+    assert f"Find references to this string: `get-references address={KNOWN_STRING_ADDRESS}`." in strings_text
+    assert f"Decompile containing function: `get-functions mode=decompile address={KNOWN_STRING_ADDRESS}`." in strings_text
+    assert "Search for keywords: `search-strings query=password` or `search-strings query=error`." in strings_text

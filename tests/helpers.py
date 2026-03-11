@@ -9,11 +9,177 @@ Provides common functionality used across multiple test modules:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+
+@dataclass(frozen=True)
+class PublicSampleBinary:
+    key: str
+    display_name: str
+    source_root: Path
+    source_file: Path
+    license_file: Path
+    readme_file: Path
+    source_url: str
+    source_sha256: str
+    architecture: str
+    output_name: str
+    output_sha256: str
+    output_size: int
+    language_id: str
+    expected_message: str
+
+
+PUBLIC_SAMPLE_ROOT = Path(__file__).resolve().parent / "fixtures" / "public_samples" / "sourcedennis_small_hello_world"
+
+PUBLIC_SAMPLE_BINARIES: dict[str, PublicSampleBinary] = {
+    "sourcedennis-x64": PublicSampleBinary(
+        key="sourcedennis-x64",
+        display_name="sourcedennis/small-hello-world x64",
+        source_root=PUBLIC_SAMPLE_ROOT,
+        source_file=PUBLIC_SAMPLE_ROOT / "program.elf.x64.asm",
+        license_file=PUBLIC_SAMPLE_ROOT / "LICENSE.upstream.txt",
+        readme_file=PUBLIC_SAMPLE_ROOT / "README.upstream.md",
+        source_url="https://raw.githubusercontent.com/sourcedennis/small-hello-world/master/program.elf.x64.asm",
+        source_sha256="fb4dc6934f67eefb89f38f4911c365a3c5d58a3116327c90afa6b41eb27d9b82",
+        architecture="x64",
+        output_name="sourcedennis_small_hello_world_x64",
+        output_sha256="90fc6ad98b5f31d7a365a2b24e5ef0ca1103a42768721793810b5d0480570b38",
+        output_size=172,
+        language_id="x86:LE:64:default",
+        expected_message="Hello, World\n",
+    ),
+}
+
+
+def get_public_sample_binary(key: str = "sourcedennis-x64") -> PublicSampleBinary:
+    try:
+        return PUBLIC_SAMPLE_BINARIES[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(PUBLIC_SAMPLE_BINARIES))
+        raise KeyError(f"Unknown public sample binary {key!r}. Available: {available}") from exc
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def assert_exact_keys(actual: dict[str, Any], expected_keys: set[str]) -> None:
+    actual_keys = set(actual)
+    assert actual_keys == expected_keys, f"Expected keys {sorted(expected_keys)}, got {sorted(actual_keys)}"
+
+
+def assert_exact_mapping(actual: dict[str, Any], expected: dict[str, Any]) -> None:
+    assert actual == expected, f"Expected exact mapping {expected!r}, got {actual!r}"
+
+
+def assert_exact_list(actual: list[Any], expected: list[Any]) -> None:
+    assert actual == expected, f"Expected exact list {expected!r}, got {actual!r}"
+
+
+def assert_no_extra_items(actual: list[Any], expected_count: int) -> None:
+    assert len(actual) == expected_count, f"Expected exactly {expected_count} items, got {len(actual)}"
+
+
+def _build_sourcedennis_x64_binary() -> bytes:
+    """Build the exact x64 ELF binary described by program.elf.x64.asm.
+
+    The upstream source is public-domain assembly with a single `_start`
+    routine that writes `Hello, World\n` and exits. The bytes are generated
+    directly so tests do not depend on NASM being installed.
+    """
+    entry = 0x400078
+    message = b"Hello, World\n"
+    message_addr = entry + 39
+
+    elf_header = bytes(
+        [
+            0x7F,
+            0x45,
+            0x4C,
+            0x46,
+            0x02,
+            0x01,
+            0x01,
+            0x03,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x02,
+            0x00,
+            0x3E,
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+        ]
+    )
+    elf_header += entry.to_bytes(8, "little")
+    elf_header += (64).to_bytes(8, "little")
+    elf_header += (0).to_bytes(8, "little")
+    elf_header += (0).to_bytes(4, "little")
+    elf_header += (64).to_bytes(2, "little")
+    elf_header += (56).to_bytes(2, "little")
+    elf_header += (1).to_bytes(2, "little")
+    elf_header += (0).to_bytes(2, "little")
+    elf_header += (0).to_bytes(2, "little")
+    elf_header += (0).to_bytes(2, "little")
+
+    code = b""
+    code += bytes([0xB8, 0x01, 0x00, 0x00, 0x00])
+    code += bytes([0xBF, 0x01, 0x00, 0x00, 0x00])
+    code += bytes([0x48, 0xBE]) + message_addr.to_bytes(8, "little")
+    code += bytes([0xBA, len(message), 0x00, 0x00, 0x00])
+    code += bytes([0x0F, 0x05])
+    code += bytes([0xB8, 0x3C, 0x00, 0x00, 0x00])
+    code += bytes([0xBF, 0x00, 0x00, 0x00, 0x00])
+    code += bytes([0x0F, 0x05])
+
+    code_segment = code + message
+    program_header = (1).to_bytes(4, "little")
+    program_header += (5).to_bytes(4, "little")
+    program_header += (120).to_bytes(8, "little")
+    program_header += entry.to_bytes(8, "little")
+    program_header += entry.to_bytes(8, "little")
+    program_header += len(code_segment).to_bytes(8, "little")
+    program_header += len(code_segment).to_bytes(8, "little")
+    program_header += (0x1000).to_bytes(8, "little")
+
+    binary = elf_header + program_header + code_segment
+    sample = get_public_sample_binary()
+    assert len(binary) == sample.output_size
+    assert _sha256_bytes(binary) == sample.output_sha256
+    return binary
+
+
+def create_public_sample_binary(path: Path, key: str = "sourcedennis-x64") -> Path:
+    sample = get_public_sample_binary(key)
+    assert sample.source_root.exists(), f"Missing vendored public sample root: {sample.source_root}"
+    assert sample.source_file.exists(), f"Missing vendored public sample source: {sample.source_file}"
+    assert sample.license_file.exists(), f"Missing vendored public sample license: {sample.license_file}"
+    assert sample.readme_file.exists(), f"Missing vendored public sample readme: {sample.readme_file}"
+    source_hash = _sha256_bytes(sample.source_file.read_bytes())
+    assert source_hash == sample.source_sha256, f"Vendored source hash mismatch for {sample.source_file}: {source_hash}"
+
+    if key != "sourcedennis-x64":
+        raise NotImplementedError(f"Binary generator not implemented for {key}")
+
+    binary = _build_sourcedennis_x64_binary()
+    path.write_bytes(binary)
+    path.chmod(0o755)
+    return path
 
 
 def make_mcp_request(port: int, tool_name: str, arguments: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any] | None:

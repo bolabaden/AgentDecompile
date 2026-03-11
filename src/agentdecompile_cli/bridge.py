@@ -757,14 +757,45 @@ class AgentDecompileStdioBridge:
         backend so that tools like ``list-project-files`` work immediately
         without requiring a manual ``open`` call.
         """
-        server_host = os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        server_host = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        )
         if not server_host:
+            sys.stderr.write(
+                "[auto-open] No shared server host found in env. Checked:"
+                " AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST,"
+                " AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n"
+            )
             return  # No shared server configured – nothing to auto-open.
 
-        server_port = os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip() or "13100"
+        server_port = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or "13100"
+        )
         server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
         server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-        repository = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip() or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip() or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+        repository = (
+            os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+        )
+        sys.stderr.write(
+            f"[auto-open] Resolved env: host={server_host!r},"
+            f" port={server_port!r},"
+            f" username={'(set)' if server_username else '(not set)'},"
+            f" password={'(set)' if server_password else '(not set)'},"
+            f" repository={repository!r}\n"
+        )
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
@@ -777,6 +808,9 @@ class AgentDecompileStdioBridge:
         if repository:
             open_args["path"] = repository
 
+        # Log the exact args being sent (redact password)
+        _log_args = {k: ("***" if "password" in k.lower() else v) for k, v in open_args.items()}
+        sys.stderr.write(f"[auto-open] Calling connect-shared-project with args: {_log_args}\n")
         sys.stderr.write(f"Auto-opening shared server {server_host}:{open_args['server_port']}{(' repo=' + repository) if repository else ''} ...\n")
 
         try:
