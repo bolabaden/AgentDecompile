@@ -198,7 +198,9 @@ def _compose_up(compose_cmd: list[str]) -> subprocess.CompletedProcess[str]:
     _ensure_compose_bind_paths(env)
     compose_args = [*compose_cmd, "-f", str(COMPOSE_FILE), "up", "-d"]
     force_build = env.get("AGENTDECOMPILE_TEST_FORCE_BUILD", "").strip().lower() in {"1", "true", "yes", "on"}
-    if force_build or not _compose_images_ready(compose_cmd[0], env):
+    # Default to pulling tagged images; local source builds are opt-in because
+    # some developer environments do not support the full Dockerfile feature set.
+    if force_build:
         compose_args.append("--build")
     compose_args.extend(["--wait", "--wait-timeout", "180", *COMPOSE_REQUIRED_SERVICES])
     return subprocess.run(

@@ -1,6 +1,6 @@
 > Snapshot note: this file is a captured MCP tools response example. It is not the authoritative source of truth for the current tool set.
 >
-> Live local validation note: the current default `agentdecompile-server` advertisement is 36 tools. Hidden compatibility tools such as `manage-comments` still remain callable, and `switch-project` is still accepted as an alias to `open-project` even though it is not advertised.
+> Live local validation note: the current default `agentdecompile-server` advertisement is 37 tools. Hidden compatibility tools such as `manage-comments` still remain callable, and `switch-project` is still accepted as an alias to `open-project` even though it is not advertised.
 
 {
   "id": 4,
