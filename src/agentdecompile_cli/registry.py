@@ -668,14 +668,33 @@ TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NO
 
 
 def _add_builtin_param_aliases() -> None:
-    def _add(tool: str, alias: str, canonical_param: str) -> None:
+    def _add(tool: str, alias: str, canonical_param: str, *, replace: bool = False) -> None:
         tool_norm = normalize_identifier(tool)
         alias_norm = normalize_identifier(alias)
         canonical_norm = normalize_identifier(canonical_param)
         if not tool_norm or not alias_norm or not canonical_norm:
             return
         per_tool = TOOL_PARAM_ALIASES.setdefault(tool_norm, {})
+        if replace:
+            per_tool[alias_norm] = {canonical_norm}
+            return
         per_tool.setdefault(alias_norm, set()).add(canonical_norm)
+
+    # Correct import-binary aliases even if TOOLS_LIST-derived aliases were polluted.
+    for alias_name, canonical_param in (
+        ("filePath", "path"),
+        ("binaryPath", "path"),
+        ("binary_path", "path"),
+        ("destFolder", "destinationFolder"),
+        ("recurse", "recursive"),
+        ("autoAnalyze", "analyzeAfterImport"),
+        ("stripPath", "stripLeadingPath"),
+        ("stripContainer", "stripAllContainerPath"),
+        ("mirror", "mirrorFs"),
+        ("versioning", "enableVersionControl"),
+        ("depth", "maxDepth"),
+    ):
+        _add("import-binary", alias_name, canonical_param, replace=True)
 
     # Open/shared-server argument harmonization.
     for tool_name in ("open-project",):

@@ -808,23 +808,23 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Parameters**:
 - `path` (string, required): File or directory path to import.
-  - Synonyms: `path`, `binary_path`
+  - Synonyms: `path`, `filePath`, `binaryPath`, `binary_path`
 - `destinationFolder` (string, optional): Project folder destination (default: root).
-  - Synonyms: `destinationFolder`, `destinationf`.
+  - Synonyms: `destinationFolder`, `destFolder`.
 - `recursive` (boolean, optional): Import subdirectories (default: false).
-  - Synonyms: `recursive`
+  - Synonyms: `recursive`, `recurse`.
 - `maxDepth` (integer, optional): Recursion depth (default: unlimited).
-  - Synonyms: `maxDepth`, `maxd`, `depth`, `level`, `treeDepth`, `maxLevel`, `depthLimit`.
+  - Synonyms: `maxDepth`, `depth`.
 - `analyzeAfterImport` (boolean, optional): Run analysis post-import (default: true).
-  - Synonyms: `analyzeAfterImport`, `analyzeai`.
+  - Synonyms: `analyzeAfterImport`, `autoAnalyze`.
 - `stripLeadingPath` (boolean, optional): Strip leading paths (default: false).
-  - Synonyms: `stripLeadingPath`, `striplp`.
+  - Synonyms: `stripLeadingPath`, `stripPath`.
 - `stripAllContainerPath` (boolean, optional): Strip all container paths (default: false).
-  - Synonyms: `stripAllContainerPath`, `stripacp`.
+  - Synonyms: `stripAllContainerPath`, `stripContainer`.
 - `mirrorFs` (boolean, optional): Mirror filesystem structure (default: false).
-  - Synonyms: `mirrorFs`, `mirrorf`.
+  - Synonyms: `mirrorFs`, `mirror`.
 - `enableVersionControl` (boolean, optional): Request import into shared-project version control (default: false). Local-only imports cannot satisfy this request and fail explicitly.
-  - Synonyms: `filePath`, `destFolder`, `recurse`, `depth`, `autoAnalyze`, `stripPath`, `stripContainer`, `mirror`, `versioning`, `enableVersionControl`
+  - Synonyms: `enableVersionControl`, `versioning`.
 **Overloads**:
 - `import_binary(binary_path)` → forwards to `import-binary`.
 - `import-file(path, destinationFolder, recursive, maxDepth, analyzeAfterImport, stripLeadingPath, stripAllContainerPath, mirrorFs, enableVersionControl)` → forwards to `import-binary`.
