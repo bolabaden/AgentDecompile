@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
+import sys
 
 from itertools import islice
 from pathlib import Path
@@ -14,9 +17,14 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.session_context import (
+    SESSION_CONTEXTS,
+    get_current_mcp_session_id,
+)
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
+    n,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,6 +181,158 @@ class ImportExportToolProvider(ToolProvider):
                 continue
             yield entry
 
+    @staticmethod
+    def _list_repository_items(repository_adapter: Any) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+
+        def _walk(folder_path: str) -> None:
+            subfolders: list[Any] = repository_adapter.getSubfolderList(folder_path) or []
+            for subfolder in subfolders:
+                subfolder_name = str(subfolder)
+                next_path = f"{folder_path.rstrip('/')}/{subfolder_name}" if folder_path != "/" else f"/{subfolder_name}"
+                _walk(next_path)
+
+            repo_items: list[Any] = repository_adapter.getItemList(folder_path) or []
+            for repo_item in repo_items:
+                name = str(repo_item.getName()) if hasattr(repo_item, "getName") else str(repo_item)
+                path = f"{folder_path.rstrip('/')}/{name}" if folder_path != "/" else f"/{name}"
+                item_type = str(repo_item.getContentType()) if hasattr(repo_item, "getContentType") else "Program"
+                items.append({"name": name, "path": path, "type": item_type})
+
+        _walk("/")
+        return items
+
+    def _handle_shared_import(
+        self,
+        source: Path,
+        recursive: bool,
+        analyze_after_import: bool,
+    ) -> dict[str, Any]:
+        session_id = get_current_mcp_session_id()
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": "Shared version-control import requires an active shared-server session. Call open-project against the shared server first.",
+            }
+
+        server_host = str(handle.get("server_host") or "").strip()
+        server_port = int(handle.get("server_port") or 13100)
+        repository_name = str(handle.get("repository_name") or "").strip()
+        server_username = str(handle.get("server_username") or "").strip()
+        server_password = str(handle.get("server_password") or "")
+        repository_adapter = handle.get("repository_adapter")
+
+        if not server_host or not repository_name or repository_adapter is None:
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": "Shared version-control import requires repository session state. Re-run open-project against the shared server and retry.",
+            }
+
+        ghidra_install_dir = os.environ.get("GHIDRA_INSTALL_DIR", "").strip()
+        if not ghidra_install_dir:
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": "GHIDRA_INSTALL_DIR is required for shared version-control import.",
+            }
+
+        script_name = "analyzeHeadless.bat" if sys.platform == "win32" else "analyzeHeadless"
+        analyze_headless = Path(ghidra_install_dir) / "support" / script_name
+        if not analyze_headless.exists():
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": f"analyzeHeadless script not found: {analyze_headless}",
+            }
+
+        repository_url = f"ghidra://{server_host}:{server_port}/{repository_name}"
+        command = [str(analyze_headless), repository_url, "-import", str(source)]
+        if recursive and source.is_dir():
+            command.append("-recursive")
+        if not analyze_after_import:
+            command.append("-noanalysis")
+        if server_username:
+            command.extend(["-connect", server_username, "-p"])
+        command.append("-commit")
+
+        try:
+            completed = subprocess.run(
+                command,
+                input=(server_password + "\n") if server_username else None,
+                text=True,
+                capture_output=True,
+                timeout=600,
+                check=False,
+            )
+        except Exception as exc:
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": str(exc),
+            }
+
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+        if completed.returncode != 0:
+            return {
+                "action": "import",
+                "importedFrom": str(source),
+                "analysisRequested": analyze_after_import,
+                "versionControlRequested": True,
+                "versionControlEnabled": False,
+                "success": False,
+                "error": stderr or stdout or f"analyzeHeadless exited with {completed.returncode}",
+                "exitCode": completed.returncode,
+            }
+
+        try:
+            if not repository_adapter.isConnected():
+                repository_adapter.connect()
+        except Exception:
+            pass
+
+        binaries = self._list_repository_items(repository_adapter)
+        SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
+
+        return {
+            "action": "import",
+            "importedFrom": str(source),
+            "filesDiscovered": 1 if source.is_file() else len(list(self._iter_files_to_import(source, recursive, 16))),
+            "filesImported": 1,
+            "importedPrograms": [{"sourcePath": str(source), "programName": source.name}],
+            "analysisRequested": analyze_after_import,
+            "versionControlRequested": True,
+            "versionControlEnabled": True,
+            "success": True,
+            "repository": repository_name,
+            "programs": binaries,
+            "stdout": stdout or None,
+        }
+
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path = self._require_str(args, "filepath", "path", "file", "binarypath", "binary", name="filePath")
         prog_name = self._get_str(args, "programname", "name")
@@ -183,22 +343,12 @@ class ImportExportToolProvider(ToolProvider):
         analyze_after_import = self._get_bool(args, "analyzeafterimport", default=False)
         enable_version_control = self._get_bool(args, "enableversioncontrol", default=False)
 
-        if enable_version_control:
-            return create_success_response(
-                {
-                    "action": "import",
-                    "importedFrom": file_path,
-                    "analysisRequested": analyze_after_import,
-                    "versionControlRequested": True,
-                    "versionControlEnabled": False,
-                    "success": False,
-                    "error": "Automatic promotion of a local import into shared-project version control is not implemented here. Open a shared-server project first, then import through a shared-backed workflow.",
-                },
-            )
-
         source = Path(file_path).expanduser().resolve()
         if not source.exists():
             raise ValueError(f"File not found: {source}")
+
+        if enable_version_control:
+            return create_success_response(self._handle_shared_import(source, recursive, analyze_after_import))
 
         imported_programs: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []

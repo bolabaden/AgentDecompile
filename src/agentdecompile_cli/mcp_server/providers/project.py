@@ -11,6 +11,7 @@ import re
 import socket
 import sys
 import time
+import json
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -767,14 +768,38 @@ class ProjectToolProvider(ToolProvider):
 
         repository_names: list[str] = [str(name) for name in repository_names_raw]
         if not repository_names:
-            raise ActionableError(
-                f"No repositories found on {server_host}:{server_port}",
-                context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
-                next_steps=[
-                    "Confirm the account has at least one visible repository on the server.",
-                    "Retry with a repository name in `path` once access is granted.",
-                ],
-            )
+            create_repo_name: str | None = None
+            requested_repository = self._get_str(args, "repositoryname")
+            if requested_repository and requested_repository.strip():
+                create_repo_name = requested_repository.strip()
+            elif path and path.strip() and "/" not in path.strip().rstrip("/"):
+                create_repo_name = path.strip().rstrip("/")
+
+            if create_repo_name and auth_provided:
+                try:
+                    logger.info("[connect-shared-project] No repositories found; creating repository %r", create_repo_name)
+                    created_repository = server_adapter.createRepository(create_repo_name)
+                    if created_repository is None:
+                        raise RuntimeError(f"Repository server returned None for '{create_repo_name}'")
+                    repository_names = [create_repo_name]
+                except Exception as exc:
+                    raise ActionableError(
+                        f"No repositories found on {server_host}:{server_port}, and automatic creation of '{create_repo_name}' failed: {exc}",
+                        context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port, "repository": create_repo_name},
+                        next_steps=[
+                            "Verify the user is allowed to create shared projects on this Ghidra server.",
+                            "Create the repository manually or retry with a user that has repository creation rights.",
+                        ],
+                    ) from exc
+            else:
+                raise ActionableError(
+                    f"No repositories found on {server_host}:{server_port}",
+                    context={"mode": "shared-server", "serverHost": server_host, "serverPort": server_port},
+                    next_steps=[
+                        "Confirm the account has at least one visible repository on the server.",
+                        "Retry with a repository name in `path` once access is granted.",
+                    ],
+                )
 
         repository_name: str | None = None
         checkout_program_path: str | None = None
@@ -900,6 +925,8 @@ class ProjectToolProvider(ToolProvider):
                 "mode": "shared-server",
                 "server_host": server_host,
                 "server_port": server_port,
+                "server_username": server_username,
+                "server_password": server_password,
                 "server_adapter": server_adapter,
                 "repository_name": repository_name,
                 "repository_adapter": repository_adapter,
@@ -1316,9 +1343,35 @@ class ProjectToolProvider(ToolProvider):
                 open_args["repositoryname"] = repository_name
 
         try:
-            await self._handle_open(open_args)
+            open_result = await self._handle_open_project(open_args)
         except Exception as e:
             logger.debug(f"Auto-open failed for stateless request ({requested_program}): {e}")
+            raise
+
+        program = getattr(self.program_info, "program", None) if self.program_info is not None else None
+        if program is not None:
+            return
+
+        open_error: str | None = None
+        for item in open_result or []:
+            text = getattr(item, "text", None)
+            if not isinstance(text, str):
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            if isinstance(payload, dict) and payload.get("success") is False and payload.get("error"):
+                open_error = str(payload["error"])
+                break
+
+        if open_error:
+            raise ActionableError(open_error)
+
+        raise ActionableError(
+            f"Failed to load requested program '{requested_program}' for this stateless request",
+            context={"programPath": requested_program, "openArgs": open_args},
+        )
 
     async def _ensure_program_loaded_for_args(self, args: dict[str, Any]) -> None:
         await self._ensure_program_loaded_for_stateless_request(args)
@@ -3157,6 +3210,117 @@ class ProjectToolProvider(ToolProvider):
         logger.info("shared-sync repository listing complete total_items=%s elapsed_sec=%.2f", len(items), time.time() - start_time)
         return items
 
+    def _remove_shared_session_item(self, session_id: str, program_path: str) -> None:
+        requested_l = program_path.strip().lower().lstrip("/")
+        session_ctx = SESSION_CONTEXTS.get_or_create(session_id)
+        stale_keys: list[str] = []
+        for key, info in list(session_ctx.open_programs.items()):
+            key_l = str(key).strip().lower().lstrip("/")
+            info_program = getattr(info, "program", None)
+            info_name_l = ""
+            info_path_l = ""
+            if info_program is not None:
+                try:
+                    info_name_l = str(info_program.getName()).strip().lower().lstrip("/")
+                except Exception:
+                    pass
+                try:
+                    info_path_l = str(info_program.getDomainFile().getPathname()).strip().lower().lstrip("/")
+                except Exception:
+                    pass
+                try:
+                    ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                    if ghidra_project is not None and requested_l in {key_l, info_name_l, info_path_l}:
+                        ghidra_project.close(info_program)
+                except Exception:
+                    pass
+                try:
+                    info_program.release(None)
+                except Exception:
+                    pass
+            if requested_l in {key_l, info_name_l, info_path_l}:
+                stale_keys.append(key)
+
+        for key in stale_keys:
+            info = session_ctx.open_programs.pop(key, None)
+            if info is None:
+                continue
+            decompiler = getattr(info, "decompiler", None)
+            if decompiler is not None:
+                try:
+                    decompiler.closeProgram()
+                except Exception:
+                    pass
+                try:
+                    decompiler.dispose()
+                except Exception:
+                    pass
+
+        if session_ctx.active_program_key in stale_keys:
+            session_ctx.active_program_key = None
+
+        filtered_binaries: list[dict[str, Any]] = []
+        for item in SESSION_CONTEXTS.get_project_binaries(session_id):
+            item_path = str(item.get("path") or "").strip().lower().lstrip("/")
+            item_name = str(item.get("name") or Path(item_path).name).strip().lower().lstrip("/")
+            if requested_l in {item_name, item_path}:
+                continue
+            filtered_binaries.append(item)
+        SESSION_CONTEXTS.set_project_binaries(session_id, filtered_binaries)
+
+    def _remove_shared_repository_item(self, program_path: str) -> dict[str, Any] | None:
+        session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
+        if not handle or n(str(handle.get("mode", ""))) != "sharedserver" or repository_adapter is None:
+            return None
+
+        requested = self._normalize_repo_path(program_path)
+        requested_l = requested.strip().lower().lstrip("/")
+        items = SESSION_CONTEXTS.get_project_binaries(session_id) or self._list_repository_items(repository_adapter)
+
+        matched_path: str | None = None
+        for item in items:
+            item_path = self._normalize_repo_path(str(item.get("path") or ""))
+            item_name = str(item.get("name") or Path(item_path).name)
+            if requested_l in {item_path.strip().lower().lstrip("/"), item_name.strip().lower().lstrip("/")}:
+                matched_path = item_path
+                break
+
+        if matched_path is None:
+            return None
+
+        folder_path, _, item_name = matched_path.rpartition("/")
+        folder_path = folder_path or "/"
+
+        try:
+            repo_item = repository_adapter.getItem(folder_path, item_name)
+            if repo_item is None:
+                return {
+                    "success": False,
+                    "error": f"Program '{program_path}' was not found in shared repository '{repository_name}'",
+                }
+            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+            self._remove_shared_session_item(session_id, matched_path)
+            repository_adapter.deleteItem(folder_path, item_name, version)
+            refreshed_items = self._list_repository_items(repository_adapter)
+            SESSION_CONTEXTS.set_project_binaries(session_id, refreshed_items)
+            return {
+                "success": True,
+                "programPath": matched_path,
+                "removed": True,
+                "storage": "shared-repository",
+                "removalMode": "repository-item",
+                "repository": repository_name,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "programPath": matched_path,
+                "storage": "shared-repository",
+                "removalMode": "repository-item",
+                "repository": repository_name,
+            }
+
     async def _handle_remove_program_binary(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Remove a program from the current Ghidra project via DomainFile API.
 
@@ -3164,9 +3328,6 @@ class ProjectToolProvider(ToolProvider):
         It removes the program object from the currently open Ghidra project,
         regardless of whether that project is shared (versioned) or local.
         """
-        if self.program_info is None:
-            return create_success_response({"success": False, "error": "No program loaded"})
-
         program_path: str = self._require_str(args, "programpath", "binaryname", "binary", name="programPath")
         confirm = self._get_bool(args, "confirm", default=False)
         if not confirm:
@@ -3174,6 +3335,13 @@ class ProjectToolProvider(ToolProvider):
                 "success": False,
                 "error": "Confirmation required: set confirm=true to remove the program from the repository.",
             })
+
+        shared_result = self._remove_shared_repository_item(program_path)
+        if shared_result is not None:
+            return create_success_response(shared_result)
+
+        if self.program_info is None:
+            return create_success_response({"success": False, "error": "No program loaded"})
 
         program: Any = self.program_info.program
         if program is None:
@@ -3232,43 +3400,8 @@ class ProjectToolProvider(ToolProvider):
                     continue
                 filtered_binaries.append(item)
 
-            session_ctx = SESSION_CONTEXTS.get_or_create(session_id)
-            stale_keys = []
-            for key, info in list(session_ctx.open_programs.items()):
-                key_l = str(key).strip().lower().lstrip("/")
-                info_program = getattr(info, "program", None)
-                info_name_l = ""
-                info_path_l = ""
-                if info_program is not None:
-                    try:
-                        info_name_l = str(info_program.getName()).strip().lower().lstrip("/")
-                    except Exception:
-                        pass
-                    try:
-                        info_path_l = str(info_program.getDomainFile().getPathname()).strip().lower().lstrip("/")
-                    except Exception:
-                        pass
-                if requested_l in {key_l, info_name_l, info_path_l, active_name_l, active_path_l}:
-                    stale_keys.append(key)
-
-            for key in stale_keys:
-                info = session_ctx.open_programs.pop(key, None)
-                if info is None:
-                    continue
-                decompiler = getattr(info, "decompiler", None)
-                if decompiler is not None:
-                    try:
-                        decompiler.closeProgram()
-                    except Exception:
-                        pass
-                    try:
-                        decompiler.dispose()
-                    except Exception:
-                        pass
-                removed_from_session = True
-
-            if session_ctx.active_program_key in stale_keys:
-                session_ctx.active_program_key = None
+            self._remove_shared_session_item(session_id, program_path)
+            removed_from_session = removed_from_session or requested_l in {active_name_l, active_path_l}
 
             if removed_from_session:
                 SESSION_CONTEXTS.set_project_binaries(session_id, filtered_binaries)

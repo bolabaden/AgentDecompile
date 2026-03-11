@@ -148,11 +148,13 @@ def _client(ctx: click.Context) -> Any:
         opts.get("host"),
         opts.get("port"),
     )
+    extra_headers = _shared_request_headers(ctx)
     if url:
-        return get_client(url=url)
+        return get_client(url=url, extra_headers=extra_headers)
     return get_client(
         host=opts.get("host", "127.0.0.1"),
         port=opts.get("port", 8080),
+        extra_headers=extra_headers,
     )
 
 
@@ -340,6 +342,28 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
     }
 
 
+def _shared_request_headers(ctx: click.Context) -> dict[str, str]:
+    shared_defaults = _shared_server_defaults(ctx)
+    host = str(shared_defaults["host"] or "").strip()
+    if not host:
+        return {}
+
+    headers: dict[str, str] = {
+        "X-Ghidra-Server-Host": host,
+        "X-Ghidra-Server-Port": str(shared_defaults["port"]),
+    }
+    repository = str(shared_defaults["repository"] or "").strip()
+    if repository:
+        headers["X-Ghidra-Repository"] = repository
+        headers["X-Agent-Server-Repository"] = repository
+    username = str(shared_defaults["username"] or "").strip()
+    password = str(shared_defaults["password"] or "")
+    if username:
+        headers["X-Agent-Server-Username"] = username
+        headers["X-Agent-Server-Password"] = password
+    return headers
+
+
 async def _recover_and_retry_with_program(
     ctx: click.Context,
     client: Any,
@@ -376,14 +400,23 @@ async def _recover_and_retry_with_program(
         return result
 
     open_attempts = _build_open_attempts(ctx, requested_program)
+    last_open_error: Any | None = None
 
     for open_payload in open_attempts:
         clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
-        if await _try_open_program(ctx, client, clean_open_payload):
+        opened, open_result = await _try_open_program(ctx, client, clean_open_payload)
+        if not opened:
+            if open_result is not None:
+                last_open_error = open_result
+            continue
+        if opened:
             retried = await _try_retry_tool_call(client, tool_name, payload)
             if retried and not _is_no_program_loaded_error(retried):
                 return retried
             result = retried or result
+
+    if last_open_error is not None:
+        return last_open_error
 
     return result
 
@@ -437,6 +470,7 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
     open_payload: dict[str, Any] = {
         "serverHost": shared_host,
         "serverPort": int(shared_defaults["port"]),
+        "format": "json",
     }
     if str(shared_defaults["username"] or "").strip():
         open_payload["serverUsername"] = str(shared_defaults["username"])
@@ -451,14 +485,14 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
     return None
 
 
-async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> bool:
+async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> tuple[bool, Any | None]:
     """Try to open a program with the given payload."""
     try:
-        open_result = await client.call_tool("open-project", open_payload)
+        open_result = await client.call_tool("open-project", {**open_payload, "format": "json"})
         if _get_error_result_message(open_result):
-            return False
+            return False, open_result
     except Exception:
-        return False
+        return False, None
 
     # Best-effort explicit checkout when shared open connected at repo scope.
     try:
@@ -466,7 +500,7 @@ async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[
     except Exception:
         pass
 
-    return True
+    return True, open_result
 
 
 async def _try_retry_tool_call(client: Any, tool_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
