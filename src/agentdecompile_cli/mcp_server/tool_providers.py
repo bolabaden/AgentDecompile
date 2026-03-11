@@ -285,7 +285,7 @@ class ActionableError(Exception):
     response, along with auto-inferred guidance from error message patterns.
 
     **When to use ActionableError:**
-    - No program loaded (user needs to call `open-project` first)
+    - No program loaded (user needs to call `import-binary` for local binaries, or `open-project` for project/shared contexts)
     - Authentication failed (user should verify credentials)
     - Invalid path (user should check if file exists)
     - Required parameter missing (user should include the param)
@@ -298,7 +298,7 @@ class ActionableError(Exception):
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
                     "Then retry the current tool.",
                 ],
             )
@@ -311,7 +311,7 @@ class ActionableError(Exception):
             "success": false,
             "error": "No program loaded",
             "context": {"state": "no-active-program"},
-            "nextSteps": ["Call `open-project`...", "Then retry..."],
+            "nextSteps": ["Call `import-binary` for binaries or `open-project` for project/shared contexts...", "Then retry..."],
             "state": "no-active-program"  (context keys flattened into response)
         }
         ```
@@ -396,7 +396,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             {"state": "no-active-program"},
             filter_recommendations(
                 [
-                    "Call `open-project` with `path` (local binary/.gpr) or shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
+                    "Call `import-binary` with `path` for a local binary, or `open-project` with a `.gpr` path/shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
                     "Then call `get-current-program` to verify an active program is loaded.",
                 ],
             ),
@@ -467,7 +467,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             filter_recommendations(
                 [
                     "Call `list-project-files` to locate the exact program path in the active project/session.",
-                    "Call `open-project` with that exact path (or with shared server args and repository) before retrying analysis tools.",
+                    "If this is a local binary, call `import-binary` first. Otherwise, ensure `open-project` is already connected to the correct project/repository session, then retry analysis tools.",
                 ],
             ),
         )
@@ -1035,7 +1035,7 @@ class ToolProvider:
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
                     "Call `get-current-program` to confirm `loaded=true`.",
                 ],
             )
@@ -1046,7 +1046,7 @@ class ToolProvider:
                 "No program loaded (Ghidra tools unavailable)",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `open-project` with `path` (local binary/.gpr) or shared server args.",
+                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
                     "Then retry the current analysis tool.",
                 ],
             )
@@ -1813,7 +1813,7 @@ class ToolProviderManager:
                     },
                     next_steps=[
                         "Call `list-project-files` to discover the exact program path available in this session.",
-                        "Call `open-project` with that program path (or with shared-server credentials and repository) before retrying this tool.",
+                        "If this is a local binary path, call `import-binary` first. If this is a project/repository path, ensure `open-project` has already established that project/session before retrying this tool.",
                     ],
                 ),
             )

@@ -149,11 +149,11 @@ class ProjectToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="open-project",
-                description="Open a local binary/project or connect to a shared Ghidra repository server.",
+                description="Open a local .gpr project or connect to a shared Ghidra repository server. Use import-binary for local binaries.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Local file path, .gpr path, or repository name."},
+                        "path": {"type": "string", "description": ".gpr path, project directory, or repository name."},
                         "serverHost": {"type": "string", "description": "Ghidra server host (shared project mode)."},
                         "serverPort": {"type": "integer", "description": "Ghidra server port (default: 13100)."},
                         "serverUsername": {"type": "string", "description": "Repository authentication username."},
@@ -963,7 +963,8 @@ class ProjectToolProvider(ToolProvider):
                 "programPath or filePath required",
                 context={"action": "open", "mode": "local-or-project"},
                 next_steps=[
-                    "Call with `path` pointing to a local binary, project file (`.gpr`), or directory.",
+                    "For local binaries, call `import-binary` with `path`.",
+                    "For project/repository contexts, call `open-project` with a `.gpr` path, project directory, or shared-server settings.",
                     "For shared server usage, use `connect-shared-project` tool instead.",
                 ],
             )
@@ -1580,7 +1581,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             },
             next_steps=[
-                "Call `open-project` for the target program path so a project-backed domain file is active.",
+                "If this target is a local binary, call `import-binary` first. If it is a project/repository path, call `open-project` to establish the project-backed session.",
                 "Call `list-project-files` to confirm the program exists in the current project/session.",
             ],
         )

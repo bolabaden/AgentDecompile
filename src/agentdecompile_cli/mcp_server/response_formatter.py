@@ -497,7 +497,8 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
     elif action == "list":
         files: list[dict[str, Any]] = data.get("files", data.get("entries", []))
         if files:
-            steps.append(f"Open a file: `open-project path={files[0].get('path', files[0].get('name', ''))}`.")
+            steps.append(f"Open a project/repository entry: `open-project path={files[0].get('path', files[0].get('name', ''))}`.")
+            steps.append("If the target is a local binary outside a project, use `import-binary path=<binary>` instead.")
     return steps
 
 
