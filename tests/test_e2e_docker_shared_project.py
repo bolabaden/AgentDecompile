@@ -169,9 +169,15 @@ def _compose_env() -> dict[str, str]:
     env.setdefault("PGID", "1001")
     env.setdefault("DOCKER_BUILDKIT", "1")
     env.setdefault("COMPOSE_DOCKER_CLI_BUILD", "1")
-    alpine_base_image = env.get("AGENTDECOMPILE_TEST_ALPINE_BASE_IMAGE", "").strip()
-    if alpine_base_image and "ALPINE_BASE_IMAGE" not in env:
-        env["ALPINE_BASE_IMAGE"] = alpine_base_image
+    # Ensure compose always receives a valid base image arg even when a malformed
+    # ALPINE_BASE_IMAGE is inherited from the outer environment.
+    override_base_image = env.get("AGENTDECOMPILE_TEST_ALPINE_BASE_IMAGE", "").strip()
+    if override_base_image:
+        env["ALPINE_BASE_IMAGE"] = override_base_image
+    else:
+        inherited_base_image = env.get("ALPINE_BASE_IMAGE", "").strip()
+        if not inherited_base_image or ":" not in inherited_base_image:
+            env["ALPINE_BASE_IMAGE"] = "docker.io/library/alpine:latest"
     return env
 
 
