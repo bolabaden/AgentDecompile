@@ -8,6 +8,16 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 ## Server Configuration
 
+### HTTP endpoints
+
+- Canonical MCP streamable-HTTP endpoint: `/mcp`
+- Compatibility MCP endpoint: `/mcp/message`
+- API index surface: `/`
+- Swagger UI: `/docs`
+- ReDoc: `/redoc`
+- OpenAPI JSON: `/openapi.json`
+- `/api/mcp` is not part of the supported endpoint surface
+
 ### Local project
 
 Control which Ghidra project the server uses via environment variable or CLI argument:
@@ -88,6 +98,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`search-everything`](#search-everything)
     - [`search-strings`](#search-strings)
     - [`search-symbols`](#search-symbols)
+    - [`svr-admin`](#svr-admin)
     - [`search-symbols-by-name`](#search-symbols-by-name)
     - [`suggest`](#suggest)
   - [Legacy Tool Name Forwards](#legacy-tool-name-forwards)
@@ -589,6 +600,27 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - **`ghidra.app.util.exporter.Exporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/Exporter)
 - **`ghidra.app.util.exporter.GzfExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/GzfExporter)
 - **`ghidra.app.util.exporter.CppExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/CppExporter)
+
+### `svr-admin`
+
+**Description**: Runs the bundled Ghidra server administration script (`svrAdmin`) with full argument passthrough. This keeps the entire svrAdmin feature surface available through one canonical MCP tool instead of splitting it into many wrappers.
+
+**Parameters**:
+- `args` (array, optional): Raw argument tokens forwarded directly to `svrAdmin`.
+  - Synonyms: `args`, `arguments`.
+- `command` (string, optional): Optional command string split into argv and appended to `args`.
+  - Synonyms: `command`.
+- `timeoutSeconds` (integer, optional): Command timeout in seconds (default: 120).
+  - Synonyms: `timeoutSeconds`, `timeout`.
+
+**Overloads**:
+- `svr-admin(args, command, timeoutSeconds)` canonical signature.
+
+**Synonyms**: `svr-admin`, `svrAdmin`
+
+**Examples**:
+- List entities using passthrough args: `svr-admin args=["-list"]`.
+- Execute a full command string: `svr-admin command="-list -all" timeoutSeconds=180`.
 
 ### `delete-project-binary`
 

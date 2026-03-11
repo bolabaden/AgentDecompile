@@ -68,3 +68,23 @@ def test_list_imports_rejects_max_results_flag() -> None:
 
     assert result.exit_code != 0
     assert "No such option: --max-results" in result.output
+
+
+def test_svr_admin_help_exposes_passthrough_options() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["svr-admin", "--help"])
+
+    assert result.exit_code == 0
+    assert "--arg" in result.output
+    assert "--command" in result.output
+    assert "--timeout-seconds" in result.output
+
+
+def test_svr_admin_compatibility_alias_is_registered() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["svrAdmin", "--help"])
+
+    assert result.exit_code == 0
+    assert "--arg" in result.output

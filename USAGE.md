@@ -23,13 +23,13 @@ uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ age
 
 ```text
 Server URL: http://***:8080/
-MCP endpoint: http://***:8080/mcp/message
+MCP endpoint: http://***:8080/mcp
 Program path: /K1/k1_win_gog_swkotor.exe
 ```
 
 Notes:
 
-- The HTTP server accepts `/mcp/message` as the canonical endpoint and also accepts `/` and `/mcp` for compatibility.
+- The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint, `/mcp/message` as the compatibility endpoint, `/` as the API index, and `/docs` as the Swagger UI.
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
 
@@ -301,7 +301,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 
 ## 4. Raw MCP HTTP example
 
-The server accepts MCP requests on three paths: `/`, `/mcp`, and `/mcp/message` (with optional trailing slash). All are equivalent. Send requests after your client performs the normal MCP `initialize` handshake.
+The documented MCP request paths are `/mcp` and `/mcp/message` (with optional trailing slash). `/mcp` is the primary streamable-HTTP endpoint, `/` is the API index, and `/docs` serves the Swagger UI. Send requests after your client performs the normal MCP `initialize` handshake.
 
 Example `tools/call` payload:
 

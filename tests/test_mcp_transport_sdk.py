@@ -47,10 +47,11 @@ HTTP_TIMEOUT = 30.0
 @pytest.mark.parametrize(
     ("raw_url", "expected_url"),
     [
-        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp/message"),
+        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp"),
         ("http://127.0.0.1:8080/mcp", "http://127.0.0.1:8080/mcp"),
         ("http://127.0.0.1:8080/mcp/", "http://127.0.0.1:8080/mcp"),
         ("http://127.0.0.1:8080/mcp/message", "http://127.0.0.1:8080/mcp/message"),
+        ("http://127.0.0.1:8080/api", "http://127.0.0.1:8080/api"),
     ],
 )
 def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
