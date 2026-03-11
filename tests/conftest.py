@@ -393,8 +393,14 @@ def public_sample_binary(isolated_workspace: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def local_live_server_pool(tmp_path_factory: pytest.TempPathFactory) -> Generator[LocalServerPool, None, None]:
-    """Create a reusable pool of subprocess MCP servers for live local E2E suites."""
-    if get_local_ghidra_runtime() is None:
+    """Create a reusable pool of subprocess MCP servers for live local E2E suites.
+
+    When ``AGENTDECOMPILE_TEST_SERVER_URL`` is set the pool is still created
+    but no subprocess will be spawned — ``local_group_server`` short-circuits
+    before calling ``get_or_start``.
+    """
+    external = os.environ.get("AGENTDECOMPILE_TEST_SERVER_URL", "").strip()
+    if not external and get_local_ghidra_runtime() is None:
         pytest.skip("GHIDRA_INSTALL_DIR is not set to a valid local installation; skipping live local MCP server fixtures.")
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -410,7 +416,15 @@ def local_group_server(
     tmp_path_factory: pytest.TempPathFactory,
     local_live_server_pool: LocalServerPool,
 ) -> Generator[str, None, None]:
-    """Start or reuse one local MCP server per test module/group."""
+    """Start or reuse one local MCP server per test module/group.
+
+    If AGENTDECOMPILE_TEST_SERVER_URL is set, use the pre-existing server
+    instead of spawning a new subprocess (avoids JVM conflicts on Windows).
+    """
+    external = os.environ.get("AGENTDECOMPILE_TEST_SERVER_URL", "").strip()
+    if external:
+        yield external
+        return
     module_name = request.module.__name__.rsplit(".", 1)[-1].replace("_", "-")
     workspace = tmp_path_factory.mktemp(f"{module_name}-workspace")
     project_path = workspace / "runtime_project"

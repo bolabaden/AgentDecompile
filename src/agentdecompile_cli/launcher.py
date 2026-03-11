@@ -2017,14 +2017,24 @@ def _resolve_proxy_backend_url(
 ) -> str | None:
     """Resolve proxy backend URL from CLI/env and normalize to /mcp/message.
 
-    Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_BACKEND_URL env
-              > AGENT_DECOMPILE_MCP_SERVER_URL env > AGENT_DECOMPILE_SERVER_URL env.
+    Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_* env
+              > AGENTDECOMPILE_* env (compact form, e.g. AGENTDECOMPILE_MCP_SERVER_URL).
     """
     raw = explicit_backend_url
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
+        raw = (
+            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
+            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
+            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
+        )
+    if not raw or not raw.strip():
+        raw = (
+            os.environ.get("AGENTDECOMPILE_BACKEND_URL")
+            or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL")
+            or os.environ.get("AGENTDECOMPILE_SERVER_URL")
+        )
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())

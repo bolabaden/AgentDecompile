@@ -2158,6 +2158,7 @@ def memory_run(
 
 @main.command("open", help="Open project or program (open-project)")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
+@click.option("--open-all-programs", "open_all_programs", is_flag=True, default=False, help="Open all programs in the project")
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
 @click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)

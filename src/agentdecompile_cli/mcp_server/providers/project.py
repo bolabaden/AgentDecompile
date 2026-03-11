@@ -96,7 +96,7 @@ class ProjectToolProvider(ToolProvider):
                         "serverUsername": {"type": "string", "description": "Repository authentication username."},
                         "serverPassword": {"type": "string", "description": "Repository authentication password."},
                         "repositoryName": {"type": "string", "description": "Shared repository name (optional, auto-detected from server)."},
-                        "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
+                        "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import (optional, defaults to true)."},
                         "openAllPrograms": {"type": "boolean", "default": False, "description": "Open all programs in project."},
                     },
                     "required": [],
@@ -212,7 +212,7 @@ class ProjectToolProvider(ToolProvider):
                         "dryRun": {"type": "boolean", "default": False, "description": "Simulate only."},
                         "maxResults": {"type": "integer", "default": 200, "description": "Number of results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                         "maxDepth": {"type": "integer", "default": 16, "description": "Max depth."},
-                        "analyzeAfterImport": {"type": "boolean", "default": False, "description": "Run analysis after import."},
+                        "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import (optional, defaults to true)."},
                     },
                     "required": [],
                 },
@@ -927,7 +927,7 @@ class ProjectToolProvider(ToolProvider):
         )
 
         # Auto-open first program if available, or a specific requested program
-        analyze = self._get_bool(args, "analyzeafterimport", default=False)
+        analyze = self._get_bool(args, "analyzeafterimport", default=True)
         open_all = self._get_bool(args, "openallprograms", default=False)
         opened_program: str | None = None
         requested_program = self._get_str(args, "programpath", "binary", "binaryname")
@@ -1877,7 +1877,7 @@ class ProjectToolProvider(ToolProvider):
 
         recursive: bool = self._get_bool(args, "recursive", default=source.is_dir())
         max_depth: int = self._get_int(args, "maxdepth", default=16)
-        analyze: bool = self._get_bool(args, "analyzeafterimport", default=False)
+        analyze: bool = self._get_bool(args, "analyzeafterimport", default=True)
 
         discovered: list[Path] = []
         if source.is_file():

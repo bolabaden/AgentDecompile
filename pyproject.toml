@@ -70,8 +70,10 @@ agentdecompile-cli    = "agentdecompile_cli.cli:cli_entry_point"
 agentdecompile-mcp    = "agentdecompile_cli.__main__:main"
 mcp_agentdecompile    = "agentdecompile_cli.__main__:main"
 mcp-agentdecompile    = "agentdecompile_cli.__main__:main"
-# STDIO/Streamable-http/sse server entry point.
+# STDIO/Streamable-http/sse server entry point (local PyGhidra only).
 agentdecompile-server = "agentdecompile_cli.server:main"
+# Proxy entry point: forward MCP to a remote backend (no local PyGhidra).
+agentdecompile-proxy = "agentdecompile_cli.server:proxy_main"
 
 [project.optional-dependencies]
 semantic = [

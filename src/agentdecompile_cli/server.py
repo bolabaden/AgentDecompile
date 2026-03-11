@@ -1,20 +1,21 @@
-"""Server entry point with project initialization and transport selection.
+"""Server and proxy entry points with project initialization and transport selection.
 
-Provides init_agentdecompile_context() and a main() that supports:
-- Project path (.gpr file or directory) and project name
-- Transport: stdio (bridge to Python MCP server) or streamable-http (Python MCP server on host:port)
-- Proxy mode: --backend-url forwards all MCP requests to a remote backend (no local PyGhidra/JVM)
-- List/delete project binaries (then exit)
-- Import binaries (input_paths) before serving
+agentdecompile-server (main()): Local MCP server only. Always starts PyGhidra/JVM and serves
+from a local project. Supports project path (.gpr or directory), transport (stdio or
+streamable-http/sse/http), list/delete project binaries, and import binaries before serving.
+For forwarding to a remote MCP backend without local Ghidra, use agentdecompile-proxy instead.
 
-Environment (1:1 with Python AgentDecompileLauncher / ConfigManager):
+agentdecompile-proxy (proxy_main()): Forward MCP to a remote backend. No local PyGhidra/JVM.
+Requires backend URL via --backend-url, --mcp-server-url, or env AGENT_DECOMPILE_MCP_SERVER_URL
+/ AGENTDECOMPILE_MCP_SERVER_URL.
+
+Environment (1:1 with Python AgentDecompileLauncher / ConfigManager) for agentdecompile-server:
 - AGENT_DECOMPILE_PROJECT_PATH: Path to a .gpr file or to a project directory location
 - AGENT_DECOMPILE_HOST: Server bind host (applied when no config file)
 - AGENT_DECOMPILE_PORT: Server port (applied when no config file)
 - AGENT_DECOMPILE_SERVER_USERNAME, AGENT_DECOMPILE_SERVER_PASSWORD: Shared project auth
 - AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_SERVER_PORT: Ghidra server for shared projects
-- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENT_DECOMPILE_REPOSITORY / AGENTDECOMPILE_REPOSITORY, AGENT_DECOMPILE_GHIDRA_SERVER_KEYSTORE_PATH
-- AGENT_DECOMPILE_BACKEND_URL / AGENT_DECOMPILE_MCP_SERVER_URL: Remote MCP backend for proxy mode
+- AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY / AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY, etc.
 """
 
 from __future__ import annotations
@@ -191,14 +192,24 @@ def _resolve_proxy_backend_url(
 ) -> str | None:
     """Resolve proxy backend URL from CLI/env and normalize to /mcp/message.
 
-    Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_BACKEND_URL env
-              > AGENT_DECOMPILE_MCP_SERVER_URL env > AGENT_DECOMPILE_SERVER_URL env.
+    Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_* env
+              > AGENTDECOMPILE_* env (compact form, e.g. AGENTDECOMPILE_MCP_SERVER_URL).
     """
     raw = explicit_backend_url
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
+        raw = (
+            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
+            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
+            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
+        )
+    if not raw or not raw.strip():
+        raw = (
+            os.environ.get("AGENTDECOMPILE_BACKEND_URL")
+            or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL")
+            or os.environ.get("AGENTDECOMPILE_SERVER_URL")
+        )
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())
@@ -614,21 +625,6 @@ def main() -> None:
         help="Enable verbose logs (including HTTP request diagnostics)",
     )
     g_server.add_argument(
-        "--backend-url",
-        "--server-url",
-        dest="backend_url",
-        type=str,
-        default=None,
-        help=("Run in proxy mode: forward all MCP requests to an existing MCP server (http(s)://host:port[/mcp/message]); skips local PyGhidra/JVM startup"),
-    )
-    g_server.add_argument(
-        "--mcp-server-url",
-        dest="mcp_server_url",
-        type=str,
-        default=None,
-        help=("Fallback backend URL if --backend-url is not provided (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)"),
-    )
-    g_server.add_argument(
         "--ghidra-server-host",
         type=str,
         default=None,
@@ -734,7 +730,10 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=None, help="AgentDecompile config file")
     args = parser.parse_args()
 
-    # Configure logging
+    # ---------------------------------------------------------------
+    # Local mode only: agentdecompile-server always runs PyGhidra locally.
+    # For forwarding to a remote MCP backend, use agentdecompile-proxy instead.
+    # ---------------------------------------------------------------
     _configure_logging(args.verbose)
 
     # Normalize compact and legacy shared-server env aliases before consuming
@@ -787,69 +786,8 @@ def main() -> None:
     host = args.host if args.host is not None else _env_host()
 
     # ---------------------------------------------------------------
-    # Proxy mode: forward to a remote backend (no local PyGhidra/JVM)
-    # ---------------------------------------------------------------
-    backend_url = _resolve_proxy_backend_url(
-        getattr(args, "backend_url", None),
-        getattr(args, "mcp_server_url", None),
-    )
-    if backend_url is not None:
-        # Validate: proxy mode is incompatible with local-only options
-        if args.list_project_binaries:
-            parser.error("--list-project-binaries is not supported in proxy mode (--backend-url)")
-        if args.delete_project_binary:
-            parser.error("--delete-project-binary is not supported in proxy mode (--backend-url)")
-        if args.input_paths:
-            parser.error("Importing binaries is not supported in proxy mode (--backend-url)")
-
-        from agentdecompile_cli.mcp_server.proxy_server import (
-            AgentDecompileMcpProxyServer,
-            ProxyServerConfig,
-        )
-
-        sys.stderr.write(f"Proxy mode: forwarding to {backend_url}\n")
-
-        if args.transport == "stdio":
-            # stdio proxy: run bridge directly
-            from agentdecompile_cli.bridge import AgentDecompileStdioBridge
-
-            bridge = AgentDecompileStdioBridge(backend_url)
-            try:
-                run_async(bridge.run())
-            except KeyboardInterrupt:
-                sys.stderr.write("\nShutdown complete\n")
-            return
-
-        # HTTP proxy mode
-        proxy_server = AgentDecompileMcpProxyServer(
-            ProxyServerConfig(
-                host=host,
-                port=port,
-                backend_url=backend_url,
-                tls_certfile=tls_certfile,
-                tls_keyfile=tls_keyfile,
-            ),
-            auth_config=auth_config,
-        )
-        try:
-            started_port = proxy_server.start()
-            sys.stderr.write(
-                f"AgentDecompile proxy server running at http://{host}:{started_port}/mcp/message\n",
-            )
-            sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
-            sys.stderr.write("Press Ctrl+C to stop.\n")
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            sys.stderr.write("\nShutdown complete\n")
-        finally:
-            proxy_server.stop()
-        return
-
-    # ---------------------------------------------------------------
     # Local mode: full PyGhidra / JVM startup
     # ---------------------------------------------------------------
-
     sys.stderr.write("[main] Local mode: starting full PyGhidra / JVM\n")
 
     # Setup project paths
@@ -905,6 +843,133 @@ def main() -> None:
         sys.stderr.write("\nShutdown complete\n")
     finally:
         _cleanup_resources(launcher, project_manager)
+
+
+def proxy_main() -> None:
+    """Entry point for agentdecompile-proxy: forward MCP to a remote backend (no local PyGhidra).
+
+    Use this command when you want to expose a remote AgentDecompile MCP server over stdio
+    or HTTP without running a local Ghidra instance. Backend URL is required via
+    --backend-url, --mcp-server-url, or env AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="AgentDecompile MCP proxy: forward MCP requests to a remote backend (no local PyGhidra/JVM)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--backend-url",
+        "--server-url",
+        dest="backend_url",
+        type=str,
+        default=None,
+        help="Remote MCP backend URL (http(s)://host:port[/mcp/message]); env: AGENT_DECOMPILE_BACKEND_URL",
+    )
+    parser.add_argument(
+        "--mcp-server-url",
+        dest="mcp_server_url",
+        type=str,
+        default=None,
+        help="Fallback backend URL; env: AGENT_DECOMPILE_MCP_SERVER_URL or AGENTDECOMPILE_MCP_SERVER_URL",
+    )
+    parser.add_argument(
+        "-t",
+        "--transport",
+        choices=["stdio", "streamable-http", "sse", "http"],
+        default="stdio",
+        help="Transport: stdio (forward over stdio) or HTTP (expose proxy on host:port)",
+    )
+    parser.add_argument("-p", "--port", type=int, default=None, help="Port for HTTP proxy (default: 8080)")
+    parser.add_argument("-o", "--host", type=str, default=None, help="Host for HTTP proxy (default: 127.0.0.1)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logs")
+    parser.add_argument("--tls-cert", dest="tls_certfile", type=str, default=None, help="TLS cert (PEM) for HTTPS proxy")
+    parser.add_argument("--tls-key", dest="tls_keyfile", type=str, default=None, help="TLS key (PEM) for HTTPS proxy")
+    parser.add_argument("--require-auth", dest="require_auth", action="store_true", help="Require HTTP Basic auth on proxy")
+    parser.add_argument("--no-require-auth", dest="require_auth", action="store_false", help="Do not require auth")
+    parser.set_defaults(require_auth=None)
+    parser.add_argument("--ghidra-server-host", type=str, default=None, help="Auth: Ghidra server host")
+    parser.add_argument("--ghidra-server-port", type=int, default=None, help="Auth: Ghidra server port")
+    parser.add_argument("--ghidra-server-username", type=str, default=None, help="Auth: Ghidra server username")
+    parser.add_argument("--ghidra-server-password", type=str, default=None, help="Auth: Ghidra server password")
+    parser.add_argument("--ghidra-server-repository", type=str, default=None, help="Auth: Ghidra server repository")
+    args = parser.parse_args()
+
+    backend_url = _resolve_proxy_backend_url(
+        getattr(args, "backend_url", None),
+        getattr(args, "mcp_server_url", None),
+    )
+    if not backend_url or not backend_url.strip():
+        sys.stderr.write(
+            "agentdecompile-proxy requires a backend URL. Set --backend-url or --mcp-server-url, "
+            "or env AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL.\n"
+        )
+        sys.exit(1)
+    backend_url = normalize_backend_url(backend_url.strip())
+
+    _configure_logging(getattr(args, "verbose", False))
+    tls_certfile = args.tls_certfile or os.environ.get("AGENT_DECOMPILE_TLS_CERT") or None
+    tls_keyfile = args.tls_keyfile or os.environ.get("AGENT_DECOMPILE_TLS_KEY") or None
+    if bool(tls_certfile) != bool(tls_keyfile):
+        parser.error("--tls-cert and --tls-key must be provided together")
+    _require_auth_flag = getattr(args, "require_auth", None)
+    _auth_env = os.environ.get("AGENT_DECOMPILE_AUTH_ENABLED", "").lower() in ("true", "1", "yes", "on")
+    _is_http = args.transport in _HTTP_TRANSPORTS
+    auth_config = None
+    if _is_http and (_require_auth_flag or _auth_env):
+        auth_config = AuthConfig(
+            require_auth=bool(_require_auth_flag),
+            default_server_host=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or os.environ.get("AGENT_DECOMPILE_SERVER_HOST") or getattr(args, "ghidra_server_host", None)),
+            default_server_port=int(
+                os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT") or os.environ.get("AGENT_DECOMPILE_SERVER_PORT") or getattr(args, "ghidra_server_port", None) or 13100,
+            ),
+            default_username=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME") or getattr(args, "ghidra_server_username", None)),
+            default_password=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD") or getattr(args, "ghidra_server_password", None)),
+            default_repository=(os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENT_DECOMPILE_REPOSITORY") or getattr(args, "ghidra_server_repository", None)),
+        )
+    port = args.port if args.port is not None else _env_port()
+    host = args.host if args.host is not None else _env_host()
+
+    from agentdecompile_cli.mcp_server.proxy_server import (
+        AgentDecompileMcpProxyServer,
+        ProxyServerConfig,
+    )
+
+    sys.stderr.write(f"Proxy mode: forwarding to {backend_url}\n")
+
+    if args.transport == "stdio":
+        from agentdecompile_cli.bridge import AgentDecompileStdioBridge
+
+        bridge = AgentDecompileStdioBridge(backend_url)
+        try:
+            run_async(bridge.run())
+        except KeyboardInterrupt:
+            sys.stderr.write("\nShutdown complete\n")
+        return
+
+    proxy_server = AgentDecompileMcpProxyServer(
+        ProxyServerConfig(
+            host=host,
+            port=port,
+            backend_url=backend_url,
+            tls_certfile=tls_certfile,
+            tls_keyfile=tls_keyfile,
+        ),
+        auth_config=auth_config,
+    )
+    try:
+        started_port = proxy_server.start()
+        sys.stderr.write(
+            f"AgentDecompile proxy running at http://{host}:{started_port}/mcp/message\n",
+        )
+        sys.stderr.write(f"Forwarding requests to backend {backend_url}\n")
+        sys.stderr.write("Press Ctrl+C to stop.\n")
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        sys.stderr.write("\nShutdown complete\n")
+    finally:
+        proxy_server.stop()
 
 
 if __name__ == "__main__":
