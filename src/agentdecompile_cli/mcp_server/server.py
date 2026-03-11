@@ -142,7 +142,18 @@ class PythonMcpServer:
     ) -> None:
         self.config: ServerConfig = ServerConfig() if config is None else config
         self.auth_config: AuthConfig | None = auth_config
-        self.app: FastAPI = FastAPI(title=self.config.name, version=self.config.version)
+        self.app: FastAPI = FastAPI(
+            title=self.config.name,
+            version=self.config.version,
+            description=(
+                "AgentDecompile MCP server — exposes Ghidra reverse-engineering capabilities "
+                "as Model Context Protocol tools for AI agents. "
+                "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
+            ),
+            docs_url="/api/docs",
+            redoc_url="/api/redoc",
+            openapi_url="/api/openapi.json",
+        )
 
         # Core components
         self.project_manager: ProjectManager | None = None
@@ -250,7 +261,7 @@ class PythonMcpServer:
                 await self._session_manager_cm.__aexit__(None, None, None)  # pyright: ignore[reportGeneralTypeIssues]
                 self._session_manager_cm = None
 
-        @self.app.get("/health")
+        @self.app.get("/health", tags=["meta"])
         async def health_check() -> dict[str, Any]:
             """Health check endpoint."""
             return {
@@ -259,6 +270,25 @@ class PythonMcpServer:
                 "version": self.config.version,
                 "programs": (1 if self.program_info and self.program_info.program else 0),
                 "sessions": SESSION_CONTEXTS.stats(),
+            }
+
+        @self.app.get("/api", tags=["meta"])
+        async def api_info() -> dict[str, Any]:
+            """API index — links to interactive documentation and transport endpoints."""
+            return {
+                "server": self.config.name,
+                "version": self.config.version,
+                "docs": {
+                    "swagger_ui": "/api/docs",
+                    "redoc": "/api/redoc",
+                    "openapi_json": "/api/openapi.json",
+                },
+                "mcp": {
+                    "streamable_http": "/mcp",
+                    "sse_message": "/mcp/message",
+                    "protocol": "Model Context Protocol (MCP) — JSON-RPC 2.0 over HTTP",
+                },
+                "health": "/health",
             }
 
         # Build the innermost ASGI handler: session-context → MCP SDK
