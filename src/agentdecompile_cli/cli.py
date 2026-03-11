@@ -252,6 +252,16 @@ def _is_no_program_loaded_error(data: Any) -> bool:
         if "no program loaded" in err_l or "no active program" in err_l:
             return True
 
+    if isinstance(data, dict):
+        content = data.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text", "")).strip().lower()
+                if "no program loaded" in text or "no active program" in text or "state:** `no-active-program`" in text:
+                    return True
+
     for payload in _iter_tool_result_dicts(data):
         note = str(payload.get("note", "")).strip().lower()
         if note in {"no program currently loaded", "no project loaded"}:
@@ -273,6 +283,61 @@ def _backend_host_for_recovery(ctx: click.Context) -> str:
         except Exception:
             pass
     return str(opts.get("host", "127.0.0.1"))
+
+
+def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
+    opts = _get_opts(ctx)
+
+    host = (
+        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
+        or _backend_host_for_recovery(ctx)
+    )
+    port_raw = (
+        str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "13100").strip()
+        or "13100"
+    )
+    try:
+        port = int(port_raw)
+    except ValueError:
+        port = 13100
+
+    username = (
+        str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+    )
+    password = (
+        str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+    )
+    repository = (
+        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+    )
+
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "repository": repository,
+    }
 
 
 async def _recover_and_retry_with_program(
@@ -325,24 +390,12 @@ async def _recover_and_retry_with_program(
 
 def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dict[str, Any]]:
     """Build a list of open attempts for the requested program."""
-    opts = _get_opts(ctx)
-    shared_host = str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip() or _backend_host_for_recovery(ctx)
-    shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
-
-    try:
-        shared_port = int(shared_port_raw)
-    except ValueError:
-        shared_port = 13100
-
-    shared_user = str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    shared_pass = str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-    shared_repo = (
-        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-        or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
-        or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
-    )
+    shared_defaults = _shared_server_defaults(ctx)
+    shared_host = str(shared_defaults["host"])
+    shared_port = int(shared_defaults["port"])
+    shared_user = str(shared_defaults["username"])
+    shared_pass = str(shared_defaults["password"])
+    shared_repo = str(shared_defaults["repository"])
 
     open_attempts: list[dict[str, Any]] = []
     if shared_host:
@@ -368,6 +421,34 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
     open_attempts.append({"path": requested_program})
 
     return open_attempts
+
+
+async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_name: str, payload: dict[str, Any]) -> Any | None:
+    if tool_name != "list_project_files":
+        return None
+    if any(key in payload for key in ("path", "folder", "programPath", "program_path", "binary", "binaryName", "binary_name")):
+        return None
+
+    shared_defaults = _shared_server_defaults(ctx)
+    shared_host = str(shared_defaults["host"] or "").strip()
+    if not shared_host:
+        return None
+
+    open_payload: dict[str, Any] = {
+        "serverHost": shared_host,
+        "serverPort": int(shared_defaults["port"]),
+    }
+    if str(shared_defaults["username"] or "").strip():
+        open_payload["serverUsername"] = str(shared_defaults["username"])
+    if str(shared_defaults["password"] or "").strip():
+        open_payload["serverPassword"] = str(shared_defaults["password"])
+    if str(shared_defaults["repository"] or "").strip():
+        open_payload["path"] = str(shared_defaults["repository"])
+
+    open_result = await client.call_tool("open-project", open_payload)
+    if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
+        return open_result
+    return None
 
 
 async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> bool:
@@ -515,11 +596,17 @@ async def _execute_tool_call(
 
     try:
         if client_override is not None:
+            bootstrap = await _maybe_bootstrap_shared_listing(ctx, client_override, call_tool_name, payload)
+            if bootstrap is not None:
+                return bootstrap
             first = await client_override.call_tool(call_tool_name, payload)
             return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
 
         client = _client(ctx)
         async with client:
+            bootstrap = await _maybe_bootstrap_shared_listing(ctx, client, call_tool_name, payload)
+            if bootstrap is not None:
+                return bootstrap
             first = await client.call_tool(call_tool_name, payload)
             return await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
     except ServerNotRunningError as exc:
