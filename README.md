@@ -187,7 +187,7 @@ count: 26
 source: shared-server-session
 
 # 3) List a small function sample
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-functions --program_path /K1/k1_win_gog_swkotor.exe
 
 # concise output
 count: 5
@@ -195,7 +195,7 @@ totalMatched: 24242
 hasMore: True
 
 # 4) Search symbols by name
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
 
 # concise output
 query: main
@@ -204,7 +204,7 @@ totalMatched: 58
 hasMore: True
 
 # 5) Find references to a symbol
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain --limit 5
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
 
 # concise output
 mode: to
