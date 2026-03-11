@@ -45,6 +45,46 @@ Validated behaviors from these commands:
 - `tool-seq` preserves state inside one CLI invocation.
 - Shared-repository open, project listing, import, and removal flows were exercised from a local checkout.
 
+## Field-Proven Operational Patterns
+
+The validation logs and notebook runs show stable patterns that are useful when diagnosing issues quickly.
+
+### 1) MCP URL normalization is intentional
+
+- Prefer `http://host:port/mcp` in docs and tooling.
+- The CLI accepts base URLs and normalizes to MCP endpoints, but `/mcp` keeps intent explicit.
+- `/mcp/message` remains a compatibility path; `/api/mcp` is not supported.
+
+### 2) CLI invocations are stateless unless you use `tool-seq`
+
+- Fresh `agentdecompile-cli` commands start fresh MCP sessions.
+- If a command needs loaded-program state, either:
+  - include `program_path`/`programPath` so the backend can reopen the target, or
+  - use `tool-seq` to preserve open-then-query state in one invocation.
+
+### 3) Shared-server auth failures have a recognizable signature
+
+- Typical failure text includes both wrapper and adapter exceptions.
+- Most common fingerprint: `NotConnectedException` plus nested `FailedLoginException`.
+- Treat this as credentials/repository access mismatch first, not an MCP transport failure.
+
+### 4) Tool-level failures can still arrive as successful MCP envelopes
+
+- Some tools return guidance markdown (for example `No program loaded`) with `isError: False`.
+- For automation, prefer tool `format: json` where supported and inspect payload fields directly.
+- Local version-control probes (`checkout-status`, `checkout-program`, `checkin-program`) may report domain errors in content while the outer call itself succeeds.
+
+### 5) Local workflows can be pulled into shared-server resolution
+
+- Terminal validation showed local import succeeded, then follow-up resolution attempted shared-server connect (`127.0.0.1:13100`) for later steps.
+- If this appears, inspect effective shared-server env vars and explicit tool arguments before assuming import/open failed.
+
+### 6) Option shape can differ between convenience commands and raw tool mode
+
+- Convenience commands may not expose every raw argument (for example dashed variants such as `--max-results` on some commands).
+- Use `agentdecompile-cli <command> -h` for that command surface.
+- Use `agentdecompile-cli tool <name> '{...}'` when you need exact MCP payload control.
+
 ## Why AgentDecompile?
 
 Reverse engineering is hard. There are thousands of functions, cryptic variable names, and complex logic flows. AgentDecompile helps you make sense of it all by letting you ask plain English questions about your target code.
