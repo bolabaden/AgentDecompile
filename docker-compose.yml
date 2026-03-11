@@ -175,10 +175,10 @@ services:
       - ${GHIDRA_SERVER_PORT3:-13102}:13102        # Block Stream Port
     volumes:
       # BSim/Postgres data and Ghidra repos/projects/work directories.
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/bsim_datadir:/ghidra/bsim_datadir
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/repos:/ghidra/repositories
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/projects:/projects
-      - ${CONFIG_PATH:-./volumes}/biodecompwarehouse/work:/work
+      - ${CONFIG_PATH:-./volumes}/ghidra/bsim_datadir:/ghidra/bsim_datadir
+      - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
+      - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
+      - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
     environment:
       <<: *common-env
       # Ghidra server users (space-separated; admins by default).
