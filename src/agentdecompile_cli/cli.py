@@ -120,6 +120,7 @@ _TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
         "manage-symbols",
         "match-function",
         "search-constants",
+        "svr-admin",
         "sync-project",
         "sync-shared-project",
     },
@@ -272,6 +273,24 @@ def _is_no_program_loaded_error(data: Any) -> bool:
             return True
 
     return False
+
+
+def _build_svr_admin_payload(
+    args: tuple[str, ...],
+    passthrough_args: list[str],
+    command: str | None,
+    timeout_seconds: int | None,
+) -> dict[str, Any]:
+    """Build MCP payload for svr-admin while preserving raw argument ordering."""
+    payload: dict[str, Any] = {}
+    argv = [*args, *passthrough_args]
+    if argv:
+        payload["args"] = argv
+    if command:
+        payload["command"] = command
+    if timeout_seconds is not None:
+        payload["timeoutSeconds"] = timeout_seconds
+    return payload
 
 
 def _backend_host_for_recovery(ctx: click.Context) -> str:
@@ -3585,6 +3604,32 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
             length=length,
         ),
     )
+
+
+@main.command(
+    "svr-admin",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    help=(
+        "Run bundled Ghidra svrAdmin with full passthrough. "
+        "Use --arg repeatedly or pass raw trailing tokens after '--'."
+    ),
+)
+@click.option("--arg", "args", multiple=True, help="Raw token forwarded to svrAdmin (repeatable).")
+@click.option("--command", help="Optional command string tokenized server-side and appended.")
+@click.option("--timeout-seconds", type=int, default=None, help="Timeout for svrAdmin execution in seconds.")
+@click.pass_context
+def svr_admin_cmd(
+    ctx: click.Context,
+    args: tuple[str, ...],
+    command: str | None,
+    timeout_seconds: int | None,
+) -> None:
+    payload = _build_svr_admin_payload(args, list(ctx.args), command, timeout_seconds)
+    _run_async(_call(ctx, "svr-admin", **payload))
+
+
+# Compatibility alias for canonical `svr-admin`.
+main.add_command(main.commands["svr-admin"], "svrAdmin")
 
 
 # ---------------------------------------------------------------------------

@@ -53,9 +53,9 @@ class AgentDecompileMcpProxyServer:
                 "AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. "
                 "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
             ),
-            docs_url="/api/docs",
-            redoc_url="/api/redoc",
-            openapi_url="/api/openapi.json",
+            docs_url="/docs",
+            redoc_url="/redoc",
+            openapi_url="/openapi.json",
         )
         self._bridge: AgentDecompileStdioBridge = AgentDecompileStdioBridge(self.config.backend_url)
         self._session_manager: StreamableHTTPSessionManager = StreamableHTTPSessionManager(
@@ -70,7 +70,14 @@ class AgentDecompileMcpProxyServer:
 
         self._setup_routes()
 
-    _MCP_PATHS: frozenset[str] = frozenset({"/", "/mcp", "/mcp/message"})
+    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+
+    @staticmethod
+    async def _mcp_openapi_stub() -> dict[str, Any]:
+        """Schema-only MCP route stub for OpenAPI visibility."""
+        return {
+            "detail": "MCP proxy requests are handled by the outer transport middleware before FastAPI routing.",
+        }
 
     def _setup_routes(self) -> None:
         @self.app.on_event("startup")
@@ -97,7 +104,7 @@ class AgentDecompileMcpProxyServer:
                 "backend": self.config.backend_url,
             }
 
-        @self.app.get("/api", tags=["meta"])
+        @self.app.get("/", tags=["meta"])
         async def api_info() -> dict[str, Any]:
             """API index — links to interactive documentation and transport endpoints."""
             return {
@@ -106,9 +113,9 @@ class AgentDecompileMcpProxyServer:
                 "mode": "proxy",
                 "backend": self.config.backend_url,
                 "docs": {
-                    "swagger_ui": "/api/docs",
-                    "redoc": "/api/redoc",
-                    "openapi_json": "/api/openapi.json",
+                    "swagger_ui": "/docs",
+                    "redoc": "/redoc",
+                    "openapi_json": "/openapi.json",
                 },
                 "mcp": {
                     "streamable_http": "/mcp",
@@ -117,6 +124,39 @@ class AgentDecompileMcpProxyServer:
                 },
                 "health": "/health",
             }
+
+        @self.app.get("/api", tags=["meta"], include_in_schema=False)
+        async def legacy_api_info() -> dict[str, Any]:
+            """Backward-compatible alias for the API index."""
+            return await api_info()
+
+        for method in ("GET", "POST", "DELETE"):
+            self.app.add_api_route(
+                "/mcp",
+                self._mcp_openapi_stub,
+                methods=[method],
+                tags=["mcp"],
+                summary="MCP Streamable HTTP proxy endpoint",
+                description=(
+                    "Canonical MCP streamable-HTTP proxy endpoint. Runtime traffic is intercepted "
+                    "by the outer MCP middleware before FastAPI routing."
+                ),
+                operation_id=f"proxy_mcp_streamable_{method.lower()}",
+                include_in_schema=True,
+            )
+            self.app.add_api_route(
+                "/mcp/message",
+                self._mcp_openapi_stub,
+                methods=[method],
+                tags=["mcp"],
+                summary="MCP message compatibility proxy endpoint",
+                description=(
+                    "Compatibility MCP proxy endpoint for clients that target `/mcp/message`. "
+                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                ),
+                operation_id=f"proxy_mcp_message_{method.lower()}",
+                include_in_schema=True,
+            )
 
         mcp_handle = self._session_manager.handle_request
 

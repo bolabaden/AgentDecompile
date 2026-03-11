@@ -42,7 +42,9 @@ def _assert_initialize_ok(client: TestClient, path: str) -> None:
 def test_python_server_accepts_root_and_mcp_compat_paths() -> None:
     server = PythonMcpServer()
     with TestClient(server.app) as client:
-        _assert_initialize_ok(client, "/")
+        root = client.get("/")
+        assert root.status_code == 200
+        assert root.json()["docs"]["swagger_ui"] == "/docs"
         _assert_initialize_ok(client, "/mcp")
         _assert_initialize_ok(client, "/mcp/message")
         _assert_initialize_ok(client, "/mcp/message/")
@@ -61,7 +63,9 @@ def test_proxy_server_accepts_root_and_mcp_compat_paths() -> None:
         )
     )
     with TestClient(proxy.app) as client:
-        _assert_initialize_ok(client, "/")
+        root = client.get("/")
+        assert root.status_code == 200
+        assert root.json()["docs"]["swagger_ui"] == "/docs"
         _assert_initialize_ok(client, "/mcp")
         _assert_initialize_ok(client, "/mcp/message")
         _assert_initialize_ok(client, "/mcp/message/")
@@ -69,3 +73,31 @@ def test_proxy_server_accepts_root_and_mcp_compat_paths() -> None:
         health = client.get("/health")
         assert health.status_code == 200
         assert health.json()["mode"] == "proxy"
+
+
+def test_python_server_openapi_advertises_mcp_routes() -> None:
+    server = PythonMcpServer()
+    with TestClient(server.app) as client:
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        paths = response.json()["paths"]
+        assert "/" in paths
+        assert "/mcp" in paths
+        assert "/mcp/message" in paths
+
+
+def test_proxy_server_openapi_advertises_mcp_routes() -> None:
+    proxy = AgentDecompileMcpProxyServer(
+        ProxyServerConfig(
+            host="127.0.0.1",
+            port=18080,
+            backend_url="http://127.0.0.1:8080/mcp/message",
+        )
+    )
+    with TestClient(proxy.app) as client:
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        paths = response.json()["paths"]
+        assert "/" in paths
+        assert "/mcp" in paths
+        assert "/mcp/message" in paths

@@ -8,7 +8,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import socket
+import subprocess
 import sys
 import time
 import json
@@ -144,6 +146,7 @@ class ProjectToolProvider(ToolProvider):
         "openprogramincodebrowser": "_handle_gui_unsupported",
         "openallprogramsincodebrowser": "_handle_gui_unsupported",
         "importfile": "_handle_import_file_alias",
+        "svradmin": "_handle_svr_admin",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -163,6 +166,30 @@ class ProjectToolProvider(ToolProvider):
                         "repositoryName": {"type": "string", "description": "Shared repository name (optional, auto-detected from server)."},
                         "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import (optional, defaults to true)."},
                         "openAllPrograms": {"type": "boolean", "default": False, "description": "Open all programs in project."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="svr-admin",
+                description="Run Ghidra server administration commands via the bundled svrAdmin script with full argument passthrough.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "args": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Raw argv tokens forwarded directly to svrAdmin.",
+                        },
+                        "command": {
+                            "type": "string",
+                            "description": "Optional command string split into argv and forwarded to svrAdmin.",
+                        },
+                        "timeoutSeconds": {
+                            "type": "integer",
+                            "default": 120,
+                            "description": "Timeout in seconds for the svrAdmin subprocess.",
+                        },
                     },
                     "required": [],
                 },
@@ -560,6 +587,98 @@ class ProjectToolProvider(ToolProvider):
 
         logger.info("[open-project] ROUTE: local mode (fallthrough)")
         return await self._handle_open(args)
+
+    async def _handle_svr_admin(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Execute Ghidra repository server administration commands via svrAdmin."""
+        ghidra_install_dir = os.getenv("GHIDRA_INSTALL_DIR", "").strip()
+        if not ghidra_install_dir:
+            raise ActionableError(
+                "GHIDRA_INSTALL_DIR is required for svr-admin.",
+                context={"action": "svr-admin", "state": "missing-ghidra-install-dir"},
+                next_steps=[
+                    "Set GHIDRA_INSTALL_DIR to a valid Ghidra installation root.",
+                    "Retry svr-admin with the desired arguments.",
+                ],
+            )
+
+        server_dir = Path(ghidra_install_dir) / "server"
+        script_path = next(
+            (
+                candidate
+                for candidate in (
+                    server_dir / "svrAdmin.bat",
+                    server_dir / "svrAdmin.cmd",
+                    server_dir / "svrAdmin.sh",
+                    server_dir / "svrAdmin",
+                )
+                if candidate.exists()
+            ),
+            None,
+        )
+        if script_path is None:
+            raise ActionableError(
+                f"svrAdmin script not found under '{server_dir}'.",
+                context={"action": "svr-admin", "state": "missing-svradmin", "serverDir": str(server_dir)},
+                next_steps=[
+                    "Verify GHIDRA_INSTALL_DIR points to a full Ghidra install containing server tools.",
+                    "Install or mount Ghidra server components, then retry.",
+                ],
+            )
+
+        argv: list[str] = [str(item) for item in (self._get_list(args, "args", "arguments") or []) if str(item).strip()]
+        command = self._get_str(args, "command")
+        if command:
+            argv.extend(shlex.split(command, posix=(os.name != "nt")))
+        if not argv:
+            raise ActionableError(
+                "svr-admin requires `args` (array) or `command` (string).",
+                context={"action": "svr-admin", "state": "missing-arguments"},
+                next_steps=[
+                    "Provide raw argument tokens, for example args=['-list'].",
+                    "Use command='...' when tokenized args are not convenient.",
+                ],
+            )
+
+        timeout_seconds = self._get_int(args, "timeoutseconds", "timeout", default=120)
+        command_line = [str(script_path), *argv]
+
+        try:
+            result = subprocess.run(
+                command_line,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ActionableError(
+                f"svr-admin timed out after {timeout_seconds} seconds.",
+                context={
+                    "action": "svr-admin",
+                    "state": "timeout",
+                    "timeoutSeconds": timeout_seconds,
+                    "argv": argv,
+                    "stdout": exc.stdout or "",
+                    "stderr": exc.stderr or "",
+                },
+                next_steps=[
+                    "Retry with a higher timeoutSeconds value.",
+                    "Verify server reachability and credentials for the requested operation.",
+                ],
+            ) from exc
+
+        return create_success_response(
+            {
+                "action": "svr-admin",
+                "scriptPath": str(script_path),
+                "argv": argv,
+                "timeoutSeconds": timeout_seconds,
+                "exitCode": int(result.returncode),
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "success": result.returncode == 0,
+            }
+        )
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Connect to shared Ghidra repository server and list available binaries."""

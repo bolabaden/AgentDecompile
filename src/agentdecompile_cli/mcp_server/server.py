@@ -150,9 +150,9 @@ class PythonMcpServer:
                 "as Model Context Protocol tools for AI agents. "
                 "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
             ),
-            docs_url="/api/docs",
-            redoc_url="/api/redoc",
-            openapi_url="/api/openapi.json",
+            docs_url="/docs",
+            redoc_url="/redoc",
+            openapi_url="/openapi.json",
         )
 
         # Core components
@@ -235,7 +235,19 @@ class PythonMcpServer:
         return server
 
     # Paths that the MCP session handler should serve.
-    _MCP_PATHS: frozenset[str] = frozenset({"/", "/mcp", "/mcp/message"})
+    _MCP_PATHS: frozenset[str] = frozenset({"/mcp", "/mcp/message"})
+
+    @staticmethod
+    async def _mcp_openapi_stub() -> dict[str, Any]:
+        """Schema-only MCP route stub.
+
+        Runtime requests are intercepted by the outer ASGI middleware before
+        FastAPI routing, but these explicit route registrations keep `/mcp`
+        and `/mcp/message` visible in the generated OpenAPI schema.
+        """
+        return {
+            "detail": "MCP requests are handled by the outer transport middleware before FastAPI routing.",
+        }
 
     def _setup_routes(self) -> None:
         """Setup FastAPI routes for MCP communication.
@@ -272,16 +284,16 @@ class PythonMcpServer:
                 "sessions": SESSION_CONTEXTS.stats(),
             }
 
-        @self.app.get("/api", tags=["meta"])
+        @self.app.get("/", tags=["meta"])
         async def api_info() -> dict[str, Any]:
             """API index — links to interactive documentation and transport endpoints."""
             return {
                 "server": self.config.name,
                 "version": self.config.version,
                 "docs": {
-                    "swagger_ui": "/api/docs",
-                    "redoc": "/api/redoc",
-                    "openapi_json": "/api/openapi.json",
+                    "swagger_ui": "/docs",
+                    "redoc": "/redoc",
+                    "openapi_json": "/openapi.json",
                 },
                 "mcp": {
                     "streamable_http": "/mcp",
@@ -290,6 +302,39 @@ class PythonMcpServer:
                 },
                 "health": "/health",
             }
+
+        @self.app.get("/api", tags=["meta"], include_in_schema=False)
+        async def legacy_api_info() -> dict[str, Any]:
+            """Backward-compatible alias for the API index."""
+            return await api_info()
+
+        for method in ("GET", "POST", "DELETE"):
+            self.app.add_api_route(
+                "/mcp",
+                self._mcp_openapi_stub,
+                methods=[method],
+                tags=["mcp"],
+                summary="MCP Streamable HTTP endpoint",
+                description=(
+                    "Canonical MCP streamable-HTTP endpoint. Runtime traffic is intercepted "
+                    "by the outer MCP middleware before FastAPI routing."
+                ),
+                operation_id=f"mcp_streamable_{method.lower()}",
+                include_in_schema=True,
+            )
+            self.app.add_api_route(
+                "/mcp/message",
+                self._mcp_openapi_stub,
+                methods=[method],
+                tags=["mcp"],
+                summary="MCP message compatibility endpoint",
+                description=(
+                    "Compatibility MCP endpoint for clients that target `/mcp/message`. "
+                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                ),
+                operation_id=f"mcp_message_{method.lower()}",
+                include_in_schema=True,
+            )
 
         # Build the innermost ASGI handler: session-context → MCP SDK
         mcp_handle = self._session_manager.handle_request

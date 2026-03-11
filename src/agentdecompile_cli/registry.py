@@ -137,6 +137,7 @@ TOOLS = [
     "search-everything",
     "search-strings",
     "search-symbols",
+    "svr-admin",
     "suggest",
 ]
 
@@ -321,6 +322,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "search-everything": _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
     "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
     "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
+    "svr-admin": _params("args", "command", "timeoutSeconds"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     "sync-project": _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
 }
@@ -759,6 +761,7 @@ DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
     "search-everything",
     "search-strings",
     "search-symbols",
+    "svr-admin",
     "sync-project",
 )
 

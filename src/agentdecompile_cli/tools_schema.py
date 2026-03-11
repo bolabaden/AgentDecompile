@@ -58,6 +58,7 @@ TOOLS = [
     "search-constants",
     "search-strings",
     "search-symbols",
+    "svr-admin",
     "suggest",
 ]
 
@@ -210,6 +211,7 @@ TOOL_PARAMS: dict[str, list[str]] = {
     "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
     "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
+    "svr-admin": _params("args", "command", "timeoutSeconds"),
     "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     "list-functions": _params(
         "programPath",

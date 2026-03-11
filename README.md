@@ -71,7 +71,7 @@ docker run --rm \
   docker.io/bolabaden/agentdecompile-mcp:latest
 ```
 
-The MCP server starts on port 8080 at `http://localhost:8080/mcp/message`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
+The MCP server starts on port 8080 with the canonical streamable-HTTP endpoint at `http://localhost:8080/mcp`, the compatibility endpoint at `http://localhost:8080/mcp/message`, the API index at `http://localhost:8080/`, and Swagger UI at `http://localhost:8080/docs`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
 
 ```bash
 # Build from source and run with docker-compose
@@ -120,9 +120,10 @@ Use `-p 8080:8080` and omit `--entrypoint`/`-t stdio` for HTTP server mode (`str
 | **streamable-http** | `agentdecompile-server -t streamable-http` (and optional `-p` / `-o` for port/host). | Browser-based or HTTP clients; CLI client in another terminal. |
 | **sse** | `agentdecompile-server -t sse`. | SSE-capable MCP clients. |
 
-The Python MCP server accepts MCP HTTP requests at `http://<host>:<port>/mcp/message` and `http://<host>:<port>/mcp`.
-Trailing-slash variants of those two paths also work because the server strips the trailing slash before matching.
-The bare root URL `http://<host>:<port>/` is not an MCP endpoint on the server; it only works in AgentDecompile's own client helpers because they normalize a base URL to `/mcp/message` before connecting.
+The Python MCP server accepts MCP HTTP requests at `http://<host>:<port>/mcp` and `http://<host>:<port>/mcp/message`.
+`/mcp` is the canonical streamable-HTTP endpoint, `/mcp/message` remains the compatibility path, `http://<host>:<port>/` is the API index, and the interactive docs live at `http://<host>:<port>/docs`.
+Trailing-slash variants of the MCP paths also work because the server strips the trailing slash before matching.
+The bare root URL `http://<host>:<port>/` is not part of the documented endpoint surface; client helpers may still normalize a base URL to `/mcp` before connecting.
 The Python CLI either runs the MCP server directly (default) or connects to an existing server via `--server-url` (connect mode).
 
 Proxy mode (forward to a remote MCP backend; no local Ghidra/JVM). Use the **agentdecompile-proxy** command only:
@@ -132,7 +133,7 @@ agentdecompile-proxy --backend-url http://***:8080 --transport streamable-http -
 # or set AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL and run: agentdecompile-proxy -t streamable-http
 ```
 
-This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp/message` and forwards all tools/resources/prompts to the remote backend. **agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not accept proxy options.
+This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp` with compatibility at `http://127.0.0.1:8081/mcp/message`, and forwards all tools/resources/prompts to the remote backend. **agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not accept proxy options.
 
 ### CLI client
 
@@ -302,7 +303,7 @@ Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets.
     },
     "agentdecompile-http": {
       "type": "http",
-      "url": "http://127.0.0.1:8080/mcp/message"
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }
@@ -314,7 +315,7 @@ Typical entries:
 |-------|-------------|
 | `agentdecompile-local` | Local binary analysis — no shared Ghidra server, no credentials needed. |
 | `agentdecompile-shared` | Shared Ghidra project — add environment variables or client prompts for your Ghidra username and password. |
-| `agentdecompile-http` | Connect to an **already-running** HTTP server at `http://127.0.0.1:8080/mcp/message`. Start it first with `agentdecompile-server -t streamable-http`. |
+| `agentdecompile-http` | Connect to an **already-running** HTTP server at `http://127.0.0.1:8080/mcp`. Start it first with `agentdecompile-server -t streamable-http`. |
 | `agentdecompile-proxy` | Forward to a **remote** MCP backend (no local Ghidra). Configure with `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` and run the `agentdecompile-proxy` command (stdio or `-t streamable-http`). |
 
 If you add an `inputs` block for `agentdecompile-shared`, VS Code or Cursor can prompt for `${input:ghidra-username}` and `${input:ghidra-password}` at launch time instead of storing credentials in the repo.
@@ -388,7 +389,7 @@ Use `agentdecompile-cli tool --list-tools` to view the live advertised set from 
 | Mode | How to connect | Endpoint / transport |
 |------|-----------------|----------------------|
 | **stdio** | MCP client spawns `mcp-agentdecompile` or `agentdecompile-mcp` | stdio JSON-RPC |
-| **streamable-http** | Client connects to `agentdecompile-server -t streamable-http` | `http://localhost:8080/mcp/message` |
+| **streamable-http** | Client connects to `agentdecompile-server -t streamable-http` | `http://localhost:8080/mcp` |
 | **proxy mode** | Run `agentdecompile-proxy` (with `--backend-url` or env) to forward to a remote backend | Local stdio or HTTP endpoint forwarding to remote MCP |
 
 **CLI (stdio):** Configure your MCP client to use `mcp-agentdecompile` (e.g. `claude mcp add AgentDecompile -- mcp-agentdecompile`).
@@ -399,7 +400,7 @@ Use `agentdecompile-cli tool --list-tools` to view the live advertised set from 
 
 ### Remote access
 
-AgentDecompile does not include SSH or WebSocket transport. To allow remote MCP access: (1) run a Python-hosted MCP server bound to `0.0.0.0` (env `AGENT_DECOMPILE_HOST=0.0.0.0`); (2) open the chosen port on the firewall; (3) point clients at `http://{remote_ip}:{port}/mcp/message` or use `--server-url http://{remote_ip}:{port}` in CLI connect mode.
+AgentDecompile does not include SSH or WebSocket transport. To allow remote MCP access: (1) run a Python-hosted MCP server bound to `0.0.0.0` (env `AGENT_DECOMPILE_HOST=0.0.0.0`); (2) open the chosen port on the firewall; (3) point clients at `http://{remote_ip}:{port}/mcp` or use `--server-url http://{remote_ip}:{port}` in CLI connect mode.
 
 **Note:** `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` and `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` are for **Ghidra Server** (shared project repositories), not for authenticating to the MCP server itself.
 
@@ -413,7 +414,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 |----------|---------|-------------------------|
 | `AGENT_DECOMPILE_BACKEND_URL` | Remote MCP backend URL for **agentdecompile-proxy** only. | `agentdecompile-proxy --backend-url` |
 | `GHIDRA_INSTALL_DIR` | Path to Ghidra installation (required for CLI/build). | None (environment/config only) |
-| `AGENT_DECOMPILE_MCP_SERVER_URL` | Connect/proxy target (`http(s)://host:port[/mcp/message]`). For **agentdecompile-proxy**: backend URL (env or `--mcp-server-url`). For **agentdecompile-cli** connect mode: server to connect to. | `agentdecompile-proxy --mcp-server-url`; `agentdecompile-cli --server-url` |
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | Connect/proxy target (`http(s)://host:port[/mcp]` or `[/mcp/message]`). For **agentdecompile-proxy**: backend URL (env or `--mcp-server-url`). For **agentdecompile-cli** connect mode: server to connect to. | `agentdecompile-proxy --mcp-server-url`; `agentdecompile-cli --server-url` |
 | `AGENT_DECOMPILE_PROJECT_PATH` | Path to a `.gpr` project file or a directory to use as the local Ghidra project location. Accepts `AGENTDECOMPILE_PROJECT_PATH` as an alias. | `agentdecompile-server --project-path` |
 | `AGENT_DECOMPILE_PROJECT_NAME` | Name for the local Ghidra project when using a directory-backed project (ignored when `PROJECT_PATH` points to a `.gpr` file). Defaults to the current working directory name. Accepts `AGENTDECOMPILE_PROJECT_NAME` as an alias. | `agentdecompile-server --project-name` |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |

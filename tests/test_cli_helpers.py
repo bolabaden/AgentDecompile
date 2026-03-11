@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentdecompile_cli.cli import _get_error_result_message
+from agentdecompile_cli.cli import _build_svr_admin_payload, _get_error_result_message
 from agentdecompile_cli.registry import (
     TOOLS,
     TOOL_PARAMS,
@@ -140,3 +140,28 @@ class TestToolsSchema:
         assert get_tool_params("unknown-tool") == []
         assert isinstance(get_tool_params("get-data"), list)
         assert all(isinstance(item, str) for item in get_tool_params("open-project"))
+
+
+class TestBuildSvrAdminPayload:
+    """Test payload construction for the curated svr-admin CLI command."""
+
+    def test_combines_explicit_and_passthrough_args(self):
+        out = _build_svr_admin_payload(
+            args=("-list",),
+            passthrough_args=["-all", "repo"],
+            command=None,
+            timeout_seconds=45,
+        )
+        assert out == {
+            "args": ["-list", "-all", "repo"],
+            "timeoutSeconds": 45,
+        }
+
+    def test_includes_command_and_omits_empty_args(self):
+        out = _build_svr_admin_payload(
+            args=(),
+            passthrough_args=[],
+            command="-users",
+            timeout_seconds=None,
+        )
+        assert out == {"command": "-users"}
