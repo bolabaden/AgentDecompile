@@ -33,6 +33,28 @@ Notes:
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
 
+## Unique Patterns From Live Validation
+
+These patterns were repeatedly observed in terminal and notebook validation and are useful for fast diagnosis.
+
+- Prefer `--mcp-server-url http://host:port/mcp` in examples, even though base URLs are normalized.
+- Treat each standalone CLI command as a fresh session unless using `tool-seq`.
+- If a command prints `No program loaded`, first check whether open/import happened in the same session.
+- Shared-server auth failures commonly include both `NotConnectedException` and `FailedLoginException` in one message; this usually indicates credential or repository access issues.
+- Some failures are delivered as normal MCP tool content, not transport errors; inspect payload text/JSON, not only process exit status.
+- Convenience command options and raw-tool JSON keys are not always 1:1; validate command flags with `-h` and use raw `tool` mode for exact contracts.
+- Local version-control probes may return explanatory markdown errors (`checkout-program`, `checkin-program`) while the outer call still reports success; treat payload semantics as authoritative.
+- Local import can be followed by shared-server connection attempts in subsequent steps if shared resolution paths are triggered; look for `127.0.0.1:13100` in error context.
+
+### Fast triage sequence
+
+1. Run `agentdecompile-cli --mcp-server-url http://host:port/mcp tool --list-tools`.
+2. Run `list project-files`.
+3. Run `get-current-program --program_path <path>`.
+4. If state-dependent steps are needed, switch to `tool-seq`.
+5. If shared-server auth fails, verify `AGENT_DECOMPILE_GHIDRA_SERVER_*` and repository permissions before retry loops.
+6. If local import succeeded but later calls mention shared-server reachability, check explicit `programPath` and effective shared-server env vars.
+
 ## Commands Exercised In This Session
 
 These are the command shapes actually used while validating the current docs and transport behavior in this conversation.
@@ -47,13 +69,13 @@ docker run --rm -i \
 
 # Local-checkout CLI sequence used to verify shared-repository and project lifecycle behavior
 $env:PYTHONPATH='src'
-C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
 Equivalent CLI entrypoint if you want the same behavior through the published command instead of `python -m`:
 
 ```powershell
-uv run agentdecompile-cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
 ## 1. Start the runtime

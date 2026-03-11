@@ -901,6 +901,7 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
     cmd = click.option("--port", type=int, default=8080, help="Server port")(cmd)
     cmd = click.option(
         "--server-url",
+        "--mcp-server-url",
         help="Full server URL (overrides --host/--port)",
     )(cmd)
     cmd = click.option(
@@ -1078,9 +1079,10 @@ def _ensure_dynamic_commands_registered() -> None:
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--host", default="127.0.0.1", help="Server host")
 @click.option("--port", type=int, default=8080, help="Server port")
-@click.option("--server-url", help="Full server URL (overrides --host/--port)")
-@click.option("--mcp-server-url", help="Alias of --server-url (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
+@click.option("--server-url", help="Full server URL (overrides --host/--port) (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
+@click.option("--mcp-server-url", help="Alias of --server-url for proxy/backend style configuration")
 @click.option("--backend-url", help="Alias of --server-url for proxy/backend style configuration")
+@click.option("--mcp-backend-url", help="Alias of --server-url for proxy/backend style configuration")
 @click.option(
     "--ghidra-server-host",
     "--server-host",
@@ -1129,6 +1131,7 @@ def main(
     server_url: str | None,
     mcp_server_url: str | None,
     backend_url: str | None,
+    mcp_backend_url: str | None,
     ghidra_server_host: str | None,
     ghidra_server_port: int | None,
     ghidra_server_username: str | None,
@@ -1141,7 +1144,7 @@ def main(
     _configure_runtime_logging(verbose)
 
     existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-    effective_server_url = server_url or mcp_server_url or backend_url
+    effective_server_url = server_url or mcp_server_url or backend_url or mcp_backend_url
     ctx.obj = {
         "host": host,
         "port": port,
@@ -1218,6 +1221,7 @@ def main(
     "--mdd",
     "--max-display-depth",
     "max_display_depth",
+    "max-display-depth",
     type=int,
     default=None,
     help="Max Depth for graph generation",
@@ -1353,6 +1357,7 @@ def list_grp() -> None:
     "-f",
     "--format",
     "local_format",
+    "local-format",
     type=str,
     default=None,
     help=("Output format override (default: inherited text output). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
@@ -1387,6 +1392,7 @@ def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     "-b",
     "--binary",
     "program_path",
+    "program-path",
     required=True,
     help="Program path in project",
 )
@@ -3725,13 +3731,13 @@ def alias_cmd(name: str) -> None:
 
 
 @main.command("tool", help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'')
-@click.argument("name", required=True)
+@click.argument("name", required=False, default=None)
 @click.argument("arguments", required=False, default="{}")
 @click.option("--list-tools", is_flag=True, help="List valid tool names and exit")
 @click.pass_context
 def tool_cmd(
     ctx: click.Context,
-    name: str,
+    name: str | None,
     arguments: str,
     list_tools: bool,
 ) -> None:
@@ -3742,6 +3748,9 @@ def tool_cmd(
         for t in sorted(available_tools):
             click.echo(f"  {t}")
         return
+
+    if not name:
+        raise click.UsageError("Missing argument 'NAME'. Use --list-tools to see valid tool names.")
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)

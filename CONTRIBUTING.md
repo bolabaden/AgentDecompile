@@ -4,15 +4,25 @@ Thanks for helping improve AgentDecompile.
 
 ## Contents
 
-- [How to Contribute](#how-to-contribute)
-- [Development Setup](#development-setup)
-- [Project Layout](#project-layout)
-- [Architecture](#architecture)
-- [Adding a Tool](#adding-a-tool)
-- [Testing](#testing)
-- [Style](#style)
-- [Debugging](#debugging)
-- [Release Process](#release-process)
+- [Contributing to AgentDecompile](#contributing-to-agentdecompile)
+  - [Contents](#contents)
+  - [How to Contribute](#how-to-contribute)
+  - [Development Setup](#development-setup)
+    - [Prerequisites](#prerequisites)
+    - [Install](#install)
+  - [Project Layout](#project-layout)
+  - [Architecture](#architecture)
+    - [Entrypoints](#entrypoints)
+    - [Runtime flow](#runtime-flow)
+    - [Static call graph artifacts](#static-call-graph-artifacts)
+  - [Adding a Tool](#adding-a-tool)
+  - [Primary vs Legacy tool names](#primary-vs-legacy-tool-names)
+  - [Testing](#testing)
+  - [Style](#style)
+  - [Debugging](#debugging)
+    - [Operational patterns contributors should preserve](#operational-patterns-contributors-should-preserve)
+  - [Release Process](#release-process)
+  - [Pull Request Checklist](#pull-request-checklist)
 
 ---
 
@@ -191,6 +201,25 @@ Quick local run:
 ```bash
 uv run agentdecompile-cli --help
 ```
+
+### Operational patterns contributors should preserve
+
+When changing CLI routing, transport logic, project opening, or shared-server handling, keep these validated behaviors stable unless the PR intentionally changes them:
+
+- `/mcp` remains the canonical MCP HTTP endpoint; `/mcp/message` remains compatibility.
+- Fresh CLI invocations are session-isolated; `tool-seq` is the supported state-preserving path.
+- Shared-server authentication failures should surface both high-level wrapper context and underlying adapter cause where available.
+- Tool guidance responses (for example no-active-program cases) may be returned as normal tool content; tests should assert payload contract rather than assuming transport-level failure.
+- Convenience CLI commands and raw-tool calls can expose different option shapes; docs and tests should reflect the public command surface.
+- Local version-control probes can produce semantic errors in content (`checkout-program`, `checkin-program`) while transport and outer tool call status remain successful.
+- Local import flows should not unexpectedly require shared-server connectivity in follow-up local inspection paths unless shared mode is explicitly requested.
+
+When touching any of the above, update all of:
+
+1. `README.md` runtime/usage sections.
+2. `USAGE.md` command and failure-state sections.
+3. `examples/usage_validation.ipynb` validation logic and summary output.
+4. Focused tests in `tests/` that lock expected behavior.
 
 ---
 
