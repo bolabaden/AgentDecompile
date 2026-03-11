@@ -167,8 +167,8 @@ def _compose_env() -> dict[str, str]:
     env.setdefault("TS_HOSTNAME", "agentdecompile-test")
     env.setdefault("PUID", "1001")
     env.setdefault("PGID", "1001")
-    env.setdefault("DOCKER_BUILDKIT", "0")
-    env.setdefault("COMPOSE_DOCKER_CLI_BUILD", "0")
+    env.setdefault("DOCKER_BUILDKIT", "1")
+    env.setdefault("COMPOSE_DOCKER_CLI_BUILD", "1")
     alpine_base_image = env.get("AGENTDECOMPILE_TEST_ALPINE_BASE_IMAGE", "").strip()
     if alpine_base_image and "ALPINE_BASE_IMAGE" not in env:
         env["ALPINE_BASE_IMAGE"] = alpine_base_image
