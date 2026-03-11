@@ -26,10 +26,13 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+import agentdecompile_cli.launcher as launcher_module
 from agentdecompile_cli.executor import normalize_backend_url
+from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 from agentdecompile_cli.mcp_server.providers import project as project_provider_module
 from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
 from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS
+from agentdecompile_cli.registry import tool_registry
 from agentdecompile_cli.mcp_server.server import PythonMcpServer, ServerConfig
 
 
@@ -48,6 +51,68 @@ HTTP_TIMEOUT = 30.0
 )
 def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
     assert normalize_backend_url(raw_url) == expected_url
+
+
+def test_import_binary_alias_corrections_override_tools_list_alias_pollution() -> None:
+    parsed = tool_registry.parse_arguments(
+        {
+            "path": "/good/input.exe",
+            "filePath": "/bad/input.exe",
+            "binaryPath": "/worse/input.exe",
+            "destFolder": "/imports",
+            "recurse": True,
+            "depth": 3,
+            "autoAnalyze": True,
+            "stripPath": True,
+            "stripContainer": True,
+            "mirror": True,
+            "versioning": True,
+        },
+        "import-binary",
+    )
+
+    assert parsed["path"] == "/good/input.exe"
+    assert parsed["destinationFolder"] == "/imports"
+    assert parsed["recursive"] is True
+    assert parsed["maxDepth"] == 3
+    assert parsed["analyzeAfterImport"] is True
+    assert parsed["stripLeadingPath"] is True
+    assert parsed["stripAllContainerPath"] is True
+    assert parsed["mirrorFs"] is True
+    assert parsed["enableVersionControl"] is True
+
+
+@pytest.mark.asyncio
+async def test_import_binary_handler_prefers_path_before_filepath(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    provider = ImportExportToolProvider()
+    good_path = tmp_path / "good.bin"
+    good_path.write_bytes(b"MZ")
+    imported_paths: list[Path] = []
+
+    class _FakeProgram:
+        def getName(self) -> str:
+            return "good.bin"
+
+    class _FakeManager:
+        def import_binary(self, item: Path, program_name: str | None = None) -> _FakeProgram:
+            imported_paths.append(item)
+            return _FakeProgram()
+
+        def cleanup(self) -> None:
+            return None
+
+    monkeypatch.setattr(launcher_module, "ProjectManager", _FakeManager)
+
+    response = await provider._handle_import(
+        {
+            "path": str(good_path),
+            "filePath": str(tmp_path / "missing.bin"),
+        }
+    )
+    payload = json.loads(response[0].text)
+
+    assert payload["success"] is True
+    assert imported_paths == [good_path.resolve()]
 
 
 @pytest.mark.asyncio

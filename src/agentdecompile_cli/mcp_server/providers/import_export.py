@@ -334,7 +334,7 @@ class ImportExportToolProvider(ToolProvider):
         }
 
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
-        file_path = self._require_str(args, "filepath", "path", "file", "binarypath", "binary", name="filePath")
+        file_path = self._require_str(args, "path", "filepath", "file", "binarypath", "binary", name="filePath")
         prog_name = self._get_str(args, "programname", "name")
         language = self._get_str(args, "language", "lang", "processor")
         compiler = self._get_str(args, "compiler", "compilerspec", "compilerspecid")
