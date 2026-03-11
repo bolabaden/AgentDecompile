@@ -171,11 +171,12 @@ class RawMcpHttpBackend:
     Safe to call from **any** asyncio task — no anyio cancel scopes are created.
     """
 
-    def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT):
+    def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT, extra_headers: dict[str, str] | None = None):
         self._url = url.rstrip("/")
         self._session_id: str | None = None
         self._request_counter = 0
         self._initialized = False
+        self._extra_headers = dict(extra_headers or {})
         self._client = AsyncClient(
             timeout=Timeout(op_timeout, connect=connect_timeout),
             follow_redirects=True,
@@ -192,6 +193,7 @@ class RawMcpHttpBackend:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        h.update(self._extra_headers)
         if self._session_id:
             h["Mcp-Session-Id"] = self._session_id
         return h
@@ -368,6 +370,7 @@ class AgentDecompileMcpClient:
         host: str = "127.0.0.1",
         port: int = 8080,
         url: str | None = None,
+        extra_headers: dict[str, str] | None = None,
     ):
         """Initialize the client.
 
@@ -383,6 +386,7 @@ class AgentDecompileMcpClient:
             if not base.endswith("/mcp/message"):
                 base = f"{base.rstrip('/')}/mcp/message"
             self._url = base
+        self._extra_headers = dict(extra_headers or {})
         self._backend: RawMcpHttpBackend | None = None
         self._connected: bool = False
 
@@ -397,7 +401,7 @@ class AgentDecompileMcpClient:
 
     async def _connect_internal(self) -> None:
         """Connect to the backend using plain httpx."""
-        self._backend = RawMcpHttpBackend(self._url)
+        self._backend = RawMcpHttpBackend(self._url, extra_headers=self._extra_headers)
         try:
             await self._backend.initialize()
             self._connected = True

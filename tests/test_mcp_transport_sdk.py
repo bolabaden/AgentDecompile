@@ -85,6 +85,21 @@ async def test_list_project_files_bootstraps_shared_listing_from_env(monkeypatch
     assert payload["files"][0]["path"] == "/K1/k1_win_gog_swkotor.exe"
 
 
+@pytest.mark.asyncio
+async def test_get_current_program_surfaces_stateless_open_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = ProjectToolProvider()
+
+    async def _fake_open(args: dict[str, Any]) -> list[Any]:
+        return project_provider_module.create_success_response(
+            {"success": False, "error": "Authentication failed for shared repository"}
+        )
+
+    monkeypatch.setattr(provider, "_handle_open_project", _fake_open)
+
+    with pytest.raises(project_provider_module.ActionableError, match="Authentication failed for shared repository"):
+        await provider._handle_get_current_program({"programpath": "/K1/k1_win_gog_swkotor.exe"})
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

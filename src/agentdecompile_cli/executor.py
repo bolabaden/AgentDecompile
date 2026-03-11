@@ -271,6 +271,7 @@ def get_client(
     port: int = 8080,
     url: str | None = None,
     api_key: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> Any:
     """Create and return an AgentDecompileMcpClient instance (not connected)."""
     from agentdecompile_cli.bridge import AgentDecompileMcpClient
@@ -279,6 +280,7 @@ def get_client(
         host=host,
         port=port,
         url=url,
+        extra_headers=extra_headers,
     )
 
 
