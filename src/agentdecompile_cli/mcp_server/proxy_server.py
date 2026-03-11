@@ -46,7 +46,17 @@ class AgentDecompileMcpProxyServer:
     def __init__(self, config: ProxyServerConfig, auth_config: AuthConfig | None = None):
         self.config: ProxyServerConfig = config
         self.auth_config: AuthConfig | None = auth_config
-        self.app: FastAPI = FastAPI(title=self.config.name, version=self.config.version)
+        self.app: FastAPI = FastAPI(
+            title=self.config.name,
+            version=self.config.version,
+            description=(
+                "AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. "
+                "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
+            ),
+            docs_url="/api/docs",
+            redoc_url="/api/redoc",
+            openapi_url="/api/openapi.json",
+        )
         self._bridge: AgentDecompileStdioBridge = AgentDecompileStdioBridge(self.config.backend_url)
         self._session_manager: StreamableHTTPSessionManager = StreamableHTTPSessionManager(
             app=self._bridge.server,
@@ -77,7 +87,7 @@ class AgentDecompileMcpProxyServer:
                 self._session_manager_cm = None
             await self._bridge._reset_backend_session()
 
-        @self.app.get("/health")
+        @self.app.get("/health", tags=["meta"])
         async def health_check() -> dict[str, Any]:
             return {
                 "status": "healthy" if self._running else "starting",
@@ -85,6 +95,27 @@ class AgentDecompileMcpProxyServer:
                 "version": self.config.version,
                 "mode": "proxy",
                 "backend": self.config.backend_url,
+            }
+
+        @self.app.get("/api", tags=["meta"])
+        async def api_info() -> dict[str, Any]:
+            """API index — links to interactive documentation and transport endpoints."""
+            return {
+                "server": self.config.name,
+                "version": self.config.version,
+                "mode": "proxy",
+                "backend": self.config.backend_url,
+                "docs": {
+                    "swagger_ui": "/api/docs",
+                    "redoc": "/api/redoc",
+                    "openapi_json": "/api/openapi.json",
+                },
+                "mcp": {
+                    "streamable_http": "/mcp",
+                    "sse_message": "/mcp/message",
+                    "protocol": "Model Context Protocol (MCP) — JSON-RPC 2.0 over HTTP",
+                },
+                "health": "/health",
             }
 
         mcp_handle = self._session_manager.handle_request
