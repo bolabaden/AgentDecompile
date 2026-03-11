@@ -1220,7 +1220,6 @@ def main(
     "--mdd",
     "--max-display-depth",
     "max_display_depth",
-    "max-display-depth",
     type=int,
     default=None,
     help="Max Depth for graph generation",
@@ -1356,7 +1355,6 @@ def list_grp() -> None:
     "-f",
     "--format",
     "local_format",
-    "local-format",
     type=str,
     default=None,
     help=("Output format override (default: inherited text output). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
@@ -1391,7 +1389,6 @@ def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     "-b",
     "--binary",
     "program_path",
-    "program-path",
     required=True,
     help="Program path in project",
 )
