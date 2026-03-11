@@ -2148,7 +2148,7 @@ def memory_run(
 # ---------------------------------------------------------------------------
 
 
-@main.command("open", help="Open project or program (open-project)")
+@main.command("open", help="Open project/shared session (open-project); use import/import-binary for local binaries")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
 @click.option("--open-all-programs", "open_all_programs", is_flag=True, default=False, help="Open all programs in the project")
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
