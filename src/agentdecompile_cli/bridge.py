@@ -689,9 +689,20 @@ class AgentDecompileStdioBridge:
         self._backends: dict[str, RawMcpHttpBackend] = {}
         self._backend_locks: dict[str, asyncio.Lock] = {}
         self._backend_map_lock = asyncio.Lock()
-        self._streamable_http_headers: dict[str, str] | None = None
+        self._streamable_http_headers: dict[str, dict[str, str]] = {}
 
         self._register_handlers()
+
+    def _set_streamable_http_headers(self, session_id: str, headers: dict[str, str]) -> None:
+        """Store forwarded HTTP headers for one frontend session."""
+        if headers:
+            self._streamable_http_headers[session_id] = dict(headers)
+        else:
+            self._streamable_http_headers.pop(session_id, None)
+
+    def _get_streamable_http_headers(self, session_id: str) -> dict[str, str]:
+        """Return forwarded HTTP headers for one frontend session."""
+        return dict(self._streamable_http_headers.get(session_id, {}))
 
     def _current_frontend_session_id(self) -> str:
         sid = get_current_mcp_session_id()
@@ -739,7 +750,7 @@ class AgentDecompileStdioBridge:
             if backend is not None:
                 await backend.close()
 
-            backend = RawMcpHttpBackend(self.url)
+            backend = RawMcpHttpBackend(self.url, extra_headers=self._get_streamable_http_headers(sid))
             await backend.initialize()
             self._backends[sid] = backend
             sys.stderr.write(f"Backend session established to {self.url} (frontend session: {sid})\n")
@@ -872,6 +883,7 @@ class AgentDecompileStdioBridge:
             sid = session_id or "default"
             backend = self._backends.pop(sid, None)
             self._backend_locks.pop(sid, None)
+            self._streamable_http_headers.pop(sid, None)
             if backend is not None:
                 await backend.close()
             return
@@ -879,6 +891,7 @@ class AgentDecompileStdioBridge:
         backends = list(self._backends.values())
         self._backends.clear()
         self._backend_locks.clear()
+        self._streamable_http_headers.clear()
         for backend in backends:
             await backend.close()
 

@@ -120,6 +120,26 @@ class AgentDecompileMcpProxyServer:
 
         mcp_handle = self._session_manager.handle_request
 
+        def _forwardable_shared_headers(scope: dict[str, Any]) -> dict[str, str]:
+            forwarded: dict[str, str] = {}
+            if scope.get("type") != "http":
+                return forwarded
+
+            allowed_headers = {
+                "authorization",
+                "x-ghidra-server-host",
+                "x-ghidra-server-port",
+                "x-ghidra-repository",
+                "x-agent-server-username",
+                "x-agent-server-password",
+                "x-agent-server-repository",
+            }
+            for key_b, value_b in scope.get("headers", []):
+                key = key_b.decode("latin1").lower()
+                if key in allowed_headers:
+                    forwarded[key_b.decode("latin1")] = value_b.decode("latin1").strip()
+            return forwarded
+
         async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
             session_id = "default"
             user_agent = ""
@@ -136,6 +156,8 @@ class AgentDecompileMcpProxyServer:
                 client_info = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
+
+            self._bridge._set_streamable_http_headers(session_id, _forwardable_shared_headers(scope))
 
             pre_sessions = set(session_manager._server_instances.keys())
 
