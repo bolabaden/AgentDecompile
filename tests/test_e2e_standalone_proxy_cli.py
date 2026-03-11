@@ -863,7 +863,7 @@ class TestCLIHelp:
         assert result.returncode == 0
         assert "--transport" in result.stdout
         assert "--port" in result.stdout
-        assert "--backend-url" in result.stdout
+        assert "--project-path" in result.stdout
 
     def test_server_help_lists_transports(self):
         result = _run_server_help()
