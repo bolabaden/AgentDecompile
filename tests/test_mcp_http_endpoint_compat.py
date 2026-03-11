@@ -78,12 +78,22 @@ def test_proxy_server_accepts_root_and_mcp_compat_paths() -> None:
 def test_python_server_openapi_advertises_mcp_routes() -> None:
     server = PythonMcpServer()
     with TestClient(server.app) as client:
+        reference_response = client.get("/api/reference")
+        assert reference_response.status_code == 200
+
         response = client.get("/openapi.json")
         assert response.status_code == 200
-        paths = response.json()["paths"]
+        openapi = response.json()
+        paths = openapi["paths"]
         assert "/" in paths
+        assert "/api/reference" in paths
+        assert "/api/tool-reference" in paths
+        assert "/api/usage-examples" in paths
         assert "/mcp" in paths
         assert "/mcp/message" in paths
+        mcp_post = paths["/mcp"]["post"]
+        assert "requestBody" in mcp_post
+        assert "application/json" in mcp_post["requestBody"]["content"]
 
 
 def test_proxy_server_openapi_advertises_mcp_routes() -> None:
@@ -95,9 +105,17 @@ def test_proxy_server_openapi_advertises_mcp_routes() -> None:
         )
     )
     with TestClient(proxy.app) as client:
+        reference_response = client.get("/api/reference")
+        assert reference_response.status_code == 200
+
         response = client.get("/openapi.json")
         assert response.status_code == 200
-        paths = response.json()["paths"]
+        openapi = response.json()
+        paths = openapi["paths"]
         assert "/" in paths
+        assert "/api/reference" in paths
         assert "/mcp" in paths
         assert "/mcp/message" in paths
+        mcp_post = paths["/mcp"]["post"]
+        assert "requestBody" in mcp_post
+        assert "application/json" in mcp_post["requestBody"]["content"]

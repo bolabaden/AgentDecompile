@@ -23,6 +23,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOL_PARAMS, TOOLS
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
     AuthConfig,
@@ -38,6 +39,212 @@ from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 
 logger = logging.getLogger(__name__)
 _TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _build_tool_alias_index() -> dict[str, list[str]]:
+    alias_index: dict[str, list[str]] = {canonical: [] for canonical in TOOLS}
+    for alias_name, canonical_name in TOOL_ALIASES.items():
+        if canonical_name not in alias_index:
+            alias_index[canonical_name] = []
+        if alias_name != canonical_name:
+            alias_index[canonical_name].append(alias_name)
+    for canonical_name, aliases in alias_index.items():
+        alias_index[canonical_name] = sorted(set(aliases))
+    return alias_index
+
+
+def _build_tool_reference_payload() -> dict[str, Any]:
+    alias_index = _build_tool_alias_index()
+    canonical_tools: list[dict[str, Any]] = []
+    for canonical_name in sorted(TOOLS):
+        params = [str(param) for param in _safe_list(TOOL_PARAMS.get(canonical_name, []))]
+        canonical_tools.append(
+            {
+                "name": canonical_name,
+                "advertised": canonical_name in ADVERTISED_TOOLS,
+                "parameters": params,
+                "aliases": alias_index.get(canonical_name, []),
+            },
+        )
+
+    return {
+        "summary": {
+            "canonical_tool_count": len(TOOLS),
+            "advertised_tool_count": len(ADVERTISED_TOOLS),
+            "alias_count": sum(len(item["aliases"]) for item in canonical_tools),
+        },
+        "transport": {
+            "canonical_endpoint": "/mcp",
+            "compatibility_endpoint": "/mcp/message",
+            "notes": [
+                "Use /mcp as the canonical MCP streamable-HTTP route.",
+                "Use /mcp/message only for compatibility with clients that hardcode that path.",
+                "Standalone CLI calls are session-isolated; use tool-seq to keep state in one session.",
+            ],
+        },
+        "shared_server_headers": {
+            "authorization": "Basic <base64(username:password)>",
+            "x-ghidra-server-host": "Shared Ghidra server host",
+            "x-ghidra-server-port": "Shared Ghidra server port (usually 13100)",
+            "x-ghidra-repository": "Shared repository name",
+            "x-agent-server-username": "Optional username alias header",
+            "x-agent-server-password": "Optional password alias header",
+            "x-agent-server-repository": "Optional repository alias header",
+        },
+        "environment_variables": {
+            "shared_server": [
+                "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+                "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+            ],
+            "local_project": [
+                "AGENT_DECOMPILE_PROJECT_PATH",
+                "AGENT_DECOMPILE_PROJECT_NAME",
+            ],
+            "tool_advertisement": [
+                "AGENTDECOMPILE_ENABLE_TOOLS",
+                "AGENTDECOMPILE_DISABLE_TOOLS",
+                "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
+                "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
+            ],
+        },
+        "canonical_tools": canonical_tools,
+    }
+
+
+def _mcp_post_openapi_extra() -> dict[str, Any]:
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["jsonrpc", "id", "method"],
+                        "properties": {
+                            "jsonrpc": {"type": "string", "example": "2.0"},
+                            "id": {
+                                "oneOf": [
+                                    {"type": "integer", "example": 1},
+                                    {"type": "string", "example": "req-1"},
+                                ],
+                            },
+                            "method": {
+                                "type": "string",
+                                "enum": [
+                                    "initialize",
+                                    "tools/list",
+                                    "tools/call",
+                                    "resources/list",
+                                    "resources/read",
+                                    "prompts/list",
+                                ],
+                            },
+                            "params": {"type": "object", "additionalProperties": True},
+                        },
+                        "additionalProperties": True,
+                    },
+                    "examples": {
+                        "initialize": {
+                            "summary": "Initialize MCP session",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "initialize",
+                                "params": {
+                                    "protocolVersion": "2025-11-25",
+                                    "capabilities": {},
+                                    "clientInfo": {"name": "docs-client", "version": "1.0"},
+                                },
+                            },
+                        },
+                        "tools_list": {
+                            "summary": "List currently advertised tools",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/list",
+                                "params": {},
+                            },
+                        },
+                        "tools_call_open_project_shared": {
+                            "summary": "Open a shared-server program",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 3,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "open-project",
+                                    "arguments": {
+                                        "path": "/K1/k1_win_gog_swkotor.exe",
+                                        "serverHost": "<ghidra-host>",
+                                        "serverPort": 13100,
+                                        "serverUsername": "<username>",
+                                        "serverPassword": "<password>",
+                                        "format": "json",
+                                    },
+                                },
+                            },
+                        },
+                        "tools_call_references": {
+                            "summary": "Get references to WinMain",
+                            "value": {
+                                "jsonrpc": "2.0",
+                                "id": 4,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "get-references",
+                                    "arguments": {
+                                        "programPath": "/K1/k1_win_gog_swkotor.exe",
+                                        "target": "WinMain",
+                                        "direction": "to",
+                                        "limit": 25,
+                                        "format": "json",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "responses": {
+            "200": {
+                "description": "JSON-RPC response envelope. Tool-level failures may appear as semantic errors in successful MCP responses.",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "success": {
+                                "summary": "Successful JSON-RPC result",
+                                "value": {
+                                    "jsonrpc": "2.0",
+                                    "id": 2,
+                                    "result": {"tools": [{"name": "open-project"}]},
+                                },
+                            },
+                            "error": {
+                                "summary": "JSON-RPC transport or validation error",
+                                "value": {
+                                    "jsonrpc": "2.0",
+                                    "id": 3,
+                                    "error": {
+                                        "code": -32602,
+                                        "message": "Invalid params",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
 
 
 def _auth_context_from_scope_headers(
@@ -303,6 +510,70 @@ class PythonMcpServer:
                 "health": "/health",
             }
 
+        @self.app.get("/api/reference", tags=["reference"])
+        async def api_reference() -> dict[str, Any]:
+            """Comprehensive MCP usage, auth, and tool reference summary."""
+            return {
+                "documentation": {
+                    "openapi": "/openapi.json",
+                    "swagger_ui": "/docs",
+                    "redoc": "/redoc",
+                    "tool_reference": "/api/tool-reference",
+                    "usage_examples": "/api/usage-examples",
+                },
+                "transport": {
+                    "canonical": "/mcp",
+                    "compatibility": "/mcp/message",
+                    "json_rpc_methods": [
+                        "initialize",
+                        "tools/list",
+                        "tools/call",
+                        "resources/list",
+                        "resources/read",
+                        "prompts/list",
+                    ],
+                },
+                "auth_and_shared_project": {
+                    "headers": {
+                        "authorization": "Basic <base64(username:password)>",
+                        "x-ghidra-server-host": "Shared Ghidra host",
+                        "x-ghidra-server-port": "Shared Ghidra port",
+                        "x-ghidra-repository": "Shared repository name",
+                    },
+                    "env": {
+                        "host": "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+                        "port": "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+                        "username": "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                        "password": "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                        "repository": "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                    },
+                },
+                "session_behavior": {
+                    "cli": "Standalone CLI invocations are stateless across commands.",
+                    "tool_seq": "Use tool-seq to keep open/import/query steps in one MCP session.",
+                },
+            }
+
+        @self.app.get("/api/tool-reference", tags=["reference"])
+        async def tool_reference() -> dict[str, Any]:
+            """List canonical tools, advertised subset, parameters, and aliases."""
+            return _build_tool_reference_payload()
+
+        @self.app.get("/api/usage-examples", tags=["reference"])
+        async def usage_examples() -> dict[str, Any]:
+            """Curated command and payload examples for common local and shared workflows."""
+            return {
+                "local": {
+                    "start_server": "uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 --project-path ./agentdecompile_projects",
+                    "list_tools": "uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool --list-tools",
+                    "tool_seq": "uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool-seq '[{\"name\":\"open-project\",\"arguments\":{\"path\":\"tests/fixtures/test_x86_64\"}},{\"name\":\"list-functions\",\"arguments\":{\"programPath\":\"test_x86_64\",\"limit\":5}}]'",
+                },
+                "shared": {
+                    "open": "uv run agentdecompile-cli --mcp-server-url http://host:port/mcp open --server_host $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST --server_port $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT --server_username $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME --server_password $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD /K1/k1_win_gog_swkotor.exe",
+                    "raw_tool": '{"jsonrpc":"2.0","id":101,"method":"tools/call","params":{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":25,"format":"json"}}}',
+                },
+            }
+
         @self.app.get("/api", tags=["meta"], include_in_schema=False)
         async def legacy_api_info() -> dict[str, Any]:
             """Backward-compatible alias for the API index."""
@@ -316,10 +587,14 @@ class PythonMcpServer:
                 tags=["mcp"],
                 summary="MCP Streamable HTTP endpoint",
                 description=(
-                    "Canonical MCP streamable-HTTP endpoint. Runtime traffic is intercepted "
-                    "by the outer MCP middleware before FastAPI routing."
+                    "Canonical MCP streamable-HTTP endpoint. "
+                    "Use POST for JSON-RPC methods such as initialize, tools/list, tools/call, "
+                    "resources/list, and resources/read. Runtime traffic is intercepted "
+                    "by the outer MCP middleware before FastAPI routing. "
+                    "For complete tool contracts and aliases, see /api/tool-reference and /api/usage-examples."
                 ),
                 operation_id=f"mcp_streamable_{method.lower()}",
+                openapi_extra=_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
             )
             self.app.add_api_route(
@@ -329,10 +604,12 @@ class PythonMcpServer:
                 tags=["mcp"],
                 summary="MCP message compatibility endpoint",
                 description=(
-                    "Compatibility MCP endpoint for clients that target `/mcp/message`. "
-                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                    "Compatibility MCP endpoint for clients that target /mcp/message. "
+                    "Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware "
+                    "before FastAPI routing."
                 ),
                 operation_id=f"mcp_message_{method.lower()}",
+                openapi_extra=_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
             )
 
