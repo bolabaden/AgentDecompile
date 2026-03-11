@@ -61,11 +61,22 @@ agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 
 ### Option 3: Docker (run the server)
 
+**Published image (no build required):**
+
 ```bash
-docker compose up -d
+# HTTP server mode (matches docker-compose agentdecompile-mcp service)
+docker run --rm \
+  --add-host host.docker.internal:host-gateway \
+  -p 8080:8080 \
+  docker.io/bolabaden/agentdecompile-mcp:latest
 ```
 
-The MCP server starts on port 8080 at `http://localhost:8080/mcp/message/`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
+The MCP server starts on port 8080 at `http://localhost:8080/mcp/message`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
+
+```bash
+# Build from source and run with docker-compose
+docker compose up -d
+```
 
 ## Usage
 
@@ -82,13 +93,17 @@ uv run mcp-agentdecompile
 
 With no arguments, the launcher starts a local MCP server over stdio and uses a default project directory. Your MCP client (e.g. Claude Desktop) talks to it via stdio.
 
-**Docker (one-liner):**
+**Docker stdio (for MCP clients that spawn a process, e.g. VS Code, Claude Desktop):**
 
 ```bash
-docker run -i --rm <your-agentdecompile-image> -t stdio
+docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio
 ```
 
-Replace `<your-agentdecompile-image>` with your built image (see Dockerfile in the repo). Use `-t streamable-http` or `-t sse` and `-p 8080:8080` for HTTP-based clients.
+Use `-p 8080:8080` and omit `--entrypoint`/`-t stdio` for HTTP server mode (`streamable-http` is the default).
 
 ### Project creation and opening
 
@@ -240,10 +255,21 @@ Map a directory of binaries into the container so the server can import and anal
 mkdir -p ./binaries
 cp /path/to/your/binaries/* ./binaries/
 
-docker run -i --rm -v "$(pwd)/binaries:/binaries" -p 8080:8080 <your-agentdecompile-image> -t streamable-http /binaries/*
-```
+# HTTP server mode with binary volume
+docker run --rm \
+  --add-host host.docker.internal:host-gateway \
+  -v "$(pwd)/binaries:/binaries" \
+  -p 8080:8080 \
+  docker.io/bolabaden/agentdecompile-mcp:latest
 
-Adjust the image name and port to match your build and client.
+# stdio mode with binary volume (for VS Code / Claude Desktop)
+docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  -v "$(pwd)/binaries:/binaries" \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio
+```
 
 ### VS Code / Cursor
 
@@ -252,6 +278,22 @@ Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets.
 ```json
 {
   "servers": {
+    "agentdecompile-docker": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--add-host", "host.docker.internal:host-gateway",
+        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST=${input:ad-http-ghidra-server-host}",
+        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT=${input:ad-http-ghidra-server-port}",
+        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY=${input:ad-http-ghidra-server-repository}",
+        "-e", "AGENTDECOMPILE_GHIDRA_USERNAME=${input:ghidra-username}",
+        "-e", "AGENTDECOMPILE_GHIDRA_PASSWORD=${input:ghidra-password}",
+        "--entrypoint", "/ghidra/venv/bin/agentdecompile-server",
+        "docker.io/bolabaden/agentdecompile-mcp:latest",
+        "-t", "stdio"
+      ]
+    },
     "agentdecompile-local": {
       "type": "stdio",
       "command": "uv",
