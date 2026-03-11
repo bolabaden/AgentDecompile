@@ -26,11 +26,25 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.mcp_server.server import PythonMcpServer, ServerConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HTTP_TIMEOUT = 30.0
+
+
+@pytest.mark.parametrize(
+    ("raw_url", "expected_url"),
+    [
+        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp/message"),
+        ("http://127.0.0.1:8080/mcp", "http://127.0.0.1:8080/mcp"),
+        ("http://127.0.0.1:8080/mcp/", "http://127.0.0.1:8080/mcp"),
+        ("http://127.0.0.1:8080/mcp/message", "http://127.0.0.1:8080/mcp/message"),
+    ],
+)
+def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
+    assert normalize_backend_url(raw_url) == expected_url
 
 
 def _find_free_port() -> int:

@@ -89,7 +89,7 @@ def normalize_backend_url(value: str) -> str:
     path = (parsed.path or "").rstrip("/")
     if not path or path == "":
         path = "/mcp/message"
-    elif not path.endswith("/mcp/message"):
+    elif path not in {"/mcp", "/mcp/message"} and not path.endswith("/mcp/message"):
         path = f"{path}/mcp/message"
     return urlunparse(parsed._replace(path=path))
 
