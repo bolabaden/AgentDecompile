@@ -9,6 +9,28 @@
 - After terminal verification, update or add focused tests that reflect the observed real behavior. Tests are secondary to terminal validation, not a substitute for it.
 - If terminal validation is blocked by a missing local prerequisite, unavailable credential flow, or unavailable tool capability, say exactly what blocked it and what was still validated.
 
+## Naming Conventions
+
+When generating or suggesting names for symbols, variables, parameters, fields, types, or constants during reverse engineering work, apply these conventions consistently:
+
+| Identifier kind | Convention | Example |
+|---|---|---|
+| Local variables | `camelCase` | `itemCount`, `saveBuffer` |
+| Global variables | `camelCase` | `gameState`, `playerStats` |
+| Function parameters | `camelCase` | `charIndex`, `saveFilePath` |
+| Classes and types | `CapitalCase` (PascalCase) | `SaveGameHeader`, `ItemRecord` |
+| Structure fields | `snake_case` | `save_version`, `char_name` |
+| Enum constants | `COBRA_CASE` (SCREAMING_SNAKE) | `SAVE_SLOT_EMPTY`, `ITEM_TYPE_WEAPON` |
+
+Apply these conventions in:
+- Decompiled pseudocode variable and parameter names produced by `decompile-function` or `execute-script`
+- Symbol rename suggestions from `rename-function`, `rename-variable`, `rename-data-label`
+- Structure and field names in `create-structure` / `edit-structure` tool calls
+- Enum members defined via `create-enum` / `edit-enum`
+- Documentation, comments, and analysis summaries that reference named symbols
+
+When a name is ambiguous or cannot be inferred, prefer the convention that matches the identifier category above rather than leaving it in a raw mangled/numbered form (e.g., prefer `slotIndex` over `local_8` for a loop counter).
+
 ## Planning and Documentation Diagram Policy
 
 - Every new or updated planning/design document must include at least one Mermaid diagram.
