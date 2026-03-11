@@ -82,3 +82,10 @@ Apply these conventions in:
 - Documentation, comments, and analysis summaries that reference named symbols
 
 When a name is ambiguous or cannot be inferred, prefer the convention that matches the identifier category above rather than leaving it in a raw mangled/numbered form (e.g., prefer `slotIndex` over `local_8` for a loop counter).
+
+## Learned User Preferences
+
+## Learned Workspace Facts
+
+- When editing KOTOR or video-derived docs (e.g. docs/from_video), use correct terms: KOTOR (not Cotor), PyGhidra (Ghidra v12 Python wrapper), swkotor.exe (not sodtor.exe), CSWMinigame (not miniame).
+- open-project: analyzeAfterImport is optional and defaults to true.
