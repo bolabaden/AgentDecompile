@@ -27,6 +27,8 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 import agentdecompile_cli.launcher as launcher_module
+from agentdecompile_cli import bridge as bridge_module
+from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 from agentdecompile_cli.mcp_server.providers import project as project_provider_module
@@ -215,6 +217,46 @@ async def test_get_current_program_surfaces_stateless_open_errors(monkeypatch: p
 
     with pytest.raises(project_provider_module.ActionableError, match="Authentication failed for shared repository"):
         await provider._handle_get_current_program({"programpath": "/K1/k1_win_gog_swkotor.exe"})
+
+
+@pytest.mark.asyncio
+async def test_stdio_bridge_forwards_proxy_shared_headers_to_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeBackend:
+        def __init__(self, url: str, *, connect_timeout: float = 0.0, op_timeout: float = 0.0, extra_headers: dict[str, str] | None = None) -> None:
+            captured["url"] = url
+            captured["extra_headers"] = dict(extra_headers or {})
+            self._initialized = False
+
+        async def initialize(self) -> None:
+            self._initialized = True
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(bridge_module, "RawMcpHttpBackend", _FakeBackend)
+
+    bridge = AgentDecompileStdioBridge("http://127.0.0.1:8080/mcp")
+    bridge._set_streamable_http_headers(
+        "frontend-session",
+        {
+            "X-Ghidra-Server-Host": "170.9.241.140",
+            "X-Ghidra-Server-Port": "13100",
+            "X-Ghidra-Repository": "Odyssey",
+            "X-Agent-Server-Username": "OpenKotOR",
+            "X-Agent-Server-Password": "idekanymore",
+        },
+    )
+
+    await bridge._ensure_backend("frontend-session")
+
+    assert captured["url"] == "http://127.0.0.1:8080/mcp"
+    assert captured["extra_headers"]["X-Ghidra-Server-Host"] == "170.9.241.140"
+    assert captured["extra_headers"]["X-Ghidra-Server-Port"] == "13100"
+    assert captured["extra_headers"]["X-Ghidra-Repository"] == "Odyssey"
+    assert captured["extra_headers"]["X-Agent-Server-Username"] == "OpenKotOR"
+    assert captured["extra_headers"]["X-Agent-Server-Password"] == "idekanymore"
 
 
 def _find_free_port() -> int:
