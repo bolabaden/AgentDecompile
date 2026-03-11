@@ -13,6 +13,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_bookmarks,
     collect_comments,
@@ -89,7 +90,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="search-everything",
+                name=ToolName.SEARCH_EVERYTHING.value,
                 description="CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED SEARCH ACROSS MOST STRING-BEARING ANALYSIS DATA. Pass ALL related search terms as a 'queries' array in ONE call instead of calling this tool multiple times with individual keywords.",
                 inputSchema={
                     "type": "object",
@@ -1020,7 +1021,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 {"tool": "manage-function", "args": {"name": function_name, "mode": "info"}},
             ]
         elif result_type == "function_tag":
-            next_tools = [{"tool": "get-functions", "args": {"mode": "tags", "tag": row.get("tag", "")}}]
+            next_tools = [{"tool": ToolName.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]
         elif result_type in {"bookmark", "comment", "instruction", "export", "symbol", "string"}:
             next_tools = [
                 {"tool": "get-references", "args": {"address": address, "mode": "to"}},

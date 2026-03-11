@@ -42,6 +42,10 @@ This index now reflects the files that actually exist in the repository. Referen
 3. [../src/agentdecompile_cli/CLAUDE.md](../src/agentdecompile_cli/CLAUDE.md)
   - Registry, provider, and normalization rules.
 
+### MCP debugging (agent skill)
+
+- [../.cursor/skills/mcp-debugging/](../.cursor/skills/mcp-debugging/) — MCP debug CLIs, meta-debug loop, workflows, and Claude-oriented prompts. Invoke via `/mcp-debugging` or from AGENTS.md.
+
 ### Historical and example docs
 
 The following files are useful research artifacts, examples, or retrospectives rather than current operational guides:
@@ -73,3 +77,4 @@ When docs and prose disagree, use the code and tests:
 - Need MCP/editor config details: open [./MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md).
 - Need import/export specifics: open [./IMPORT_EXPORT_GUIDE.md](./IMPORT_EXPORT_GUIDE.md).
 - Need the fastest import/export examples: open [./QUICKSTART_IMPORT_EXPORT.md](./QUICKSTART_IMPORT_EXPORT.md).
+- Debugging MCP servers / self-healing: use skill `/mcp-debugging` or open [../.cursor/skills/mcp-debugging/](../.cursor/skills/mcp-debugging/).

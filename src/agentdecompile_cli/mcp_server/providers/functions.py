@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
@@ -31,7 +32,7 @@ class FunctionToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="list-functions",
+                name=ToolName.LIST_FUNCTIONS.value,
                 description="Retrieve a giant list of every function defined inside the program. This is useful for getting an overview of what subroutines exist, verifying if a known library function was statically linked, or mapping out everything prior to iterating over them.",
                 inputSchema={
                     "type": "object",
@@ -46,7 +47,7 @@ class FunctionToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="get-functions",
+                name=ToolName.GET_FUNCTIONS.value,
                 description="Get detailed analysis regarding one or more functions, such as decompiling to C code, disassembling to assembly, reading signatures, or viewing call relationships. Pass multiple addresses/names via 'functions' array to batch-process them in one call instead of calling this tool repeatedly.",
                 inputSchema={
                     "type": "object",

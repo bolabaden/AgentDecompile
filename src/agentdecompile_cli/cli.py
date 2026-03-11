@@ -56,7 +56,8 @@ from agentdecompile_cli.registry import (
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
     TOOLS,
-    TOOL_PARAMS,
+    ToolName,
+    get_tool_params,
     to_snake_case,
     tool_registry,
 )
@@ -93,36 +94,35 @@ def _configure_runtime_logging(verbose: bool) -> None:
 # Canonical tools that already have curated command wrappers.
 # Dynamic command registration keeps these callable but hidden from top-level help
 # to avoid duplicate/alias noise in command listings.
-_TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
+_TOOLS_WITH_CURATED_COMMANDS: frozenset[ToolName] = frozenset(
     {
-        "analyze-data-flow",
-        "analyze-program",
-        "analyze-vtables",
-        "change-processor",
-        "checkin-program",
-        "get-call-graph",
-        "get-current-address",
-        "get-current-function",
-        "get-data",
-        "get-functions",
-        "get-references",
-        "inspect-memory",
-        "list-functions",
-        "list-project-files",
-        "manage-bookmarks",
-        "manage-comments",
-        "manage-data-types",
-        "manage-files",
-        "manage-function",
-        "manage-function-tags",
-        "manage-strings",
-        "manage-structures",
-        "manage-symbols",
-        "match-function",
-        "search-constants",
-        "svr-admin",
-        "sync-project",
-        "sync-shared-project",
+        ToolName.ANALYZE_DATA_FLOW,
+        ToolName.ANALYZE_PROGRAM,
+        ToolName.ANALYZE_VTABLES,
+        ToolName.CHANGE_PROCESSOR,
+        ToolName.CHECKIN_PROGRAM,
+        ToolName.GET_CALL_GRAPH,
+        ToolName.GET_CURRENT_ADDRESS,
+        ToolName.GET_CURRENT_FUNCTION,
+        ToolName.GET_DATA,
+        ToolName.GET_FUNCTIONS,
+        ToolName.GET_REFERENCES,
+        ToolName.INSPECT_MEMORY,
+        ToolName.LIST_FUNCTIONS,
+        ToolName.LIST_PROJECT_FILES,
+        ToolName.MANAGE_BOOKMARKS,
+        ToolName.MANAGE_COMMENTS,
+        ToolName.MANAGE_DATA_TYPES,
+        ToolName.MANAGE_FILES,
+        ToolName.MANAGE_FUNCTION,
+        ToolName.MANAGE_FUNCTION_TAGS,
+        ToolName.MANAGE_STRINGS,
+        ToolName.MANAGE_STRUCTURES,
+        ToolName.MANAGE_SYMBOLS,
+        ToolName.MATCH_FUNCTION,
+        ToolName.SEARCH_CONSTANTS,
+        ToolName.SVR_ADMIN,
+        ToolName.SYNC_PROJECT,
     },
 )
 
@@ -1024,7 +1024,10 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             )(tool_command)
 
         command_name = tool_name
-        hidden_from_help = tool_name in _TOOLS_WITH_CURATED_COMMANDS or tool_name not in advertised_set
+        hidden_from_help = (
+            tool_name in {t.value for t in _TOOLS_WITH_CURATED_COMMANDS}
+            or tool_name not in advertised_set
+        )
 
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
@@ -1051,13 +1054,7 @@ def _is_cli_result_limit_param(param: str) -> bool:
 
 
 def _supported_cli_tool_params(tool_name: str) -> list[str]:
-    params = TOOL_PARAMS.get(tool_name)
-    if params is None:
-        resolved = tool_registry.resolve_tool_name(tool_name)
-        if resolved:
-            params = TOOL_PARAMS.get(resolved, [])
-        else:
-            params = []
+    params = get_tool_params(tool_name)
     return [param for param in params if not _is_cli_result_limit_param(param)]
 
 
@@ -1411,7 +1408,7 @@ def list_imports(
         payload["libraryFilter"] = library_filter
     if no_group_by_library:
         payload["groupByLibrary"] = False
-    _run_async(_call(ctx, "list-imports", **payload))
+    _run_async(_call(ctx, ToolName.LIST_IMPORTS.value, **payload))
 
 
 @list_grp.command("exports", help="List exports (list-exports)")
@@ -1443,7 +1440,7 @@ def list_project_files(ctx: click.Context, program_path: str | None) -> None:
     payload: dict[str, Any] = {}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
-    _run_async(_call(ctx, "list-project-files", **payload))
+    _run_async(_call(ctx, ToolName.LIST_PROJECT_FILES.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -1494,7 +1491,7 @@ def data_apply_type(
     }
     if archive_name is not None:
         payload["archiveName"] = archive_name
-    _run_async(_call(ctx, "apply-data-type", **payload))
+    _run_async(_call(ctx, ToolName.APPLY_DATA_TYPE.value, **payload))
 
 
 @data_grp.command("create-label", help="Create label at address (create-label)")
@@ -1641,7 +1638,7 @@ def functions_decompile(
         client = _client(ctx)
         async with client:
             result = await client.call_tool(
-                "get-functions",
+                ToolName.GET_FUNCTIONS.value,
                 {
                     "programPath": program_path,
                     "identifier": identifier,
@@ -1678,7 +1675,7 @@ def functions_disassemble(
     _run_async(
         _call(
             ctx,
-            "get-functions",
+            ToolName.GET_FUNCTIONS.value,
             programPath=program_path,
             identifier=identifier,
             view="disassemble",
@@ -1694,7 +1691,7 @@ def functions_info(ctx: click.Context, program_path: str, identifier: str) -> No
     _run_async(
         _call(
             ctx,
-            "get-functions",
+            ToolName.GET_FUNCTIONS.value,
             programPath=program_path,
             identifier=identifier,
             view="info",
@@ -1710,7 +1707,7 @@ def functions_calls(ctx: click.Context, program_path: str, identifier: str) -> N
     _run_async(
         _call(
             ctx,
-            "get-functions",
+            ToolName.GET_FUNCTIONS.value,
             programPath=program_path,
             identifier=identifier,
             view="calls",
@@ -1804,7 +1801,7 @@ def symbols_run(
     payload["filterDefaultNames"] = filter_default_names
     if mode == "demangle":
         payload["demangleAll"] = demangle_all
-    _run_async(_call(ctx, "manage-symbols", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_SYMBOLS.value, **payload))
 
 
 # --- Convenience subcommands (``symbols classes``, ``symbols imports``, …) ---
@@ -1840,7 +1837,7 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
         payload["groupByLibrary"] = group_by_library
         payload["includeExternal"] = include_external
         payload["filterDefaultNames"] = filter_default_names
-        _run_async(_call(ctx, "manage-symbols", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_SYMBOLS.value, **payload))
 
     return _cmd
 
@@ -1898,7 +1895,7 @@ def strings_run(
     if offset is not None:
         payload["offset"] = offset
     payload["includeReferencingFunctions"] = include_referencing_functions
-    _run_async(_call(ctx, "manage-strings", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_STRINGS.value, **payload))
 
 
 # --- Convenience subcommands (``strings list``, ``strings regex``, …) ---
@@ -1936,7 +1933,7 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
         if offset is not None:
             payload["offset"] = offset
         payload["includeReferencingFunctions"] = include_refs
-        _run_async(_call(ctx, "manage-strings", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_STRINGS.value, **payload))
 
     return _cmd
 
@@ -2018,7 +2015,7 @@ def list_functions_run(
     payload["untagged"] = untagged
     payload["hasTags"] = has_tags
     payload["verbose"] = verbose
-    _run_async(_call(ctx, "list-functions", **payload))
+    _run_async(_call(ctx, ToolName.LIST_FUNCTIONS.value, **payload))
 
 
 # --- Convenience subcommands (``list-functions all``, ``list-functions search``, …) ---
@@ -2051,7 +2048,7 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
             payload["offset"] = offset
         payload["filterDefaultNames"] = filter_default_names
         payload["verbose"] = verbose
-        _run_async(_call(ctx, "list-functions", **payload))
+        _run_async(_call(ctx, ToolName.LIST_FUNCTIONS.value, **payload))
 
     return _cmd
 
@@ -2151,7 +2148,7 @@ def function_run(
         payload["propagateMaxCandidates"] = propagate_max_candidates
     if propagate_max_instructions is not None:
         payload["propagateMaxInstructions"] = propagate_max_instructions
-    _run_async(_call(ctx, "manage-function", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_FUNCTION.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2184,7 +2181,7 @@ def function_tags_run(
         payload["function"] = list(function) if len(function) != 1 else function[0]
     if tags:
         payload["tags"] = list(tags)
-    _run_async(_call(ctx, "manage-function-tags", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_FUNCTION_TAGS.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2242,7 +2239,7 @@ def match_function(
         payload["maxFunctions"] = max_functions
     if batch_size is not None:
         payload["batchSize"] = batch_size
-    _run_async(_call(ctx, "match-function", **payload))
+    _run_async(_call(ctx, ToolName.MATCH_FUNCTION.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2277,7 +2274,7 @@ def memory_run(
         payload["length"] = length
     if offset is not None:
         payload["offset"] = offset
-    _run_async(_call(ctx, "inspect-memory", **payload))
+    _run_async(_call(ctx, ToolName.INSPECT_MEMORY.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2347,7 +2344,7 @@ def open_cmd(
         payload["serverHost"] = server_host
     if server_port is not None:
         payload["serverPort"] = server_port
-    _run_async(_call(ctx, "open-project", **payload))
+    _run_async(_call(ctx, ToolName.OPEN_PROJECT.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2400,7 +2397,7 @@ def references_run(
         payload["maxReferencers"] = max_referencers
     payload["includeRefContext"] = include_ref_context
     payload["includeDataRefs"] = include_data_refs
-    _run_async(_call(ctx, "get-references", **payload))
+    _run_async(_call(ctx, ToolName.GET_REFERENCES.value, **payload))
 
 
 # --- Convenience subcommands (``references to``, ``references from``, …) ---
@@ -2429,7 +2426,7 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
             payload["direction"] = direction
         if offset is not None:
             payload["offset"] = offset
-        _run_async(_call(ctx, "get-references", **payload))
+        _run_async(_call(ctx, ToolName.GET_REFERENCES.value, **payload))
 
     return _cmd
 
@@ -2482,7 +2479,7 @@ def datatypes_run(
         payload["dataTypeString"] = data_type_string
     if address_or_symbol is not None:
         payload["addressOrSymbol"] = address_or_symbol
-    _run_async(_call(ctx, "manage-data-types", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_DATA_TYPES.value, **payload))
 
 
 # --- Convenience subcommands (``datatypes archives``, ``datatypes list``, …) ---
@@ -2523,7 +2520,7 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
             payload["dataTypeString"] = data_type_string
         if address_or_symbol is not None:
             payload["addressOrSymbol"] = address_or_symbol
-        _run_async(_call(ctx, "manage-data-types", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_DATA_TYPES.value, **payload))
 
     return _cmd
 
@@ -2629,7 +2626,7 @@ def structures_run(
     if name_filter is not None:
         payload["nameFilter"] = name_filter
     payload["includeBuiltIn"] = include_built_in
-    _run_async(_call(ctx, "manage-structures", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_STRUCTURES.value, **payload))
 
 
 # --- Convenience subcommands (``structures parse``, ``structures create``, …) ---
@@ -2685,7 +2682,7 @@ def _structures_action_command(action_name: str, help_text: str | None = None):
         if name_filter is not None:
             payload["nameFilter"] = name_filter
         payload["includeBuiltIn"] = include_built_in
-        _run_async(_call(ctx, "manage-structures", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_STRUCTURES.value, **payload))
 
     return _cmd
 
@@ -2769,7 +2766,7 @@ def comments_run(
         payload["pattern"] = pattern
     payload["caseSensitive"] = case_sensitive
     payload["overrideMaxFunctionsLimit"] = override_max_functions_limit
-    _run_async(_call(ctx, "manage-comments", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_COMMENTS.value, **payload))
 
 
 # --- Convenience subcommands (``comments set``, ``comments get``, …) ---
@@ -2808,7 +2805,7 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
             payload["commentType"] = comment_type
         if search_text is not None:
             payload["searchText"] = search_text
-        _run_async(_call(ctx, "manage-comments", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_COMMENTS.value, **payload))
 
     return _cmd
 
@@ -2869,7 +2866,7 @@ def bookmarks_run(
     if search_text is not None:
         payload["searchText"] = search_text
     payload["removeAll"] = remove_all
-    _run_async(_call(ctx, "manage-bookmarks", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_BOOKMARKS.value, **payload))
 
 
 # --- Convenience subcommands (``bookmarks set``, ``bookmarks get``, …) ---
@@ -2908,7 +2905,7 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
             payload["comment"] = comment
         if search_text is not None:
             payload["searchText"] = search_text
-        _run_async(_call(ctx, "manage-bookmarks", **payload))
+        _run_async(_call(ctx, ToolName.MANAGE_BOOKMARKS.value, **payload))
 
     return _cmd
 
@@ -2947,7 +2944,7 @@ def dataflow(
         payload["startAddress"] = start_address
     if variable_name is not None:
         payload["variableName"] = variable_name
-    _run_async(_call(ctx, "analyze-data-flow", **payload))
+    _run_async(_call(ctx, ToolName.ANALYZE_DATA_FLOW.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3001,7 +2998,7 @@ def callgraph_run(
     payload["includeCallContext"] = include_call_context
     if function_addresses is not None:
         payload["functionAddresses"] = function_addresses
-    _run_async(_call(ctx, "get-call-graph", **payload))
+    _run_async(_call(ctx, ToolName.GET_CALL_GRAPH.value, **payload))
 
 
 # --- Convenience subcommands (``callgraph callers``, ``callgraph callees``, …) ---
@@ -3034,7 +3031,7 @@ def _callgraph_mode_command(mode_name: str, help_text: str | None = None):
             payload["maxDepth"] = max_depth
         if max_callers is not None:
             payload["maxCallers"] = max_callers
-        _run_async(_call(ctx, "get-call-graph", **payload))
+        _run_async(_call(ctx, ToolName.GET_CALL_GRAPH.value, **payload))
 
     return _cmd
 
@@ -3080,7 +3077,7 @@ def constants_run(
     if max_value is not None:
         payload["maxValue"] = max_value
     payload["includeSmallValues"] = include_small_values
-    _run_async(_call(ctx, "search-constants", **payload))
+    _run_async(_call(ctx, ToolName.SEARCH_CONSTANTS.value, **payload))
 
 
 # --- Convenience subcommands (``constants specific``, ``constants range``, …) ---
@@ -3111,7 +3108,7 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
             payload["minValue"] = min_value
         if max_value is not None:
             payload["maxValue"] = max_value
-        _run_async(_call(ctx, "search-constants", **payload))
+        _run_async(_call(ctx, ToolName.SEARCH_CONSTANTS.value, **payload))
 
     return _cmd
 
@@ -3154,7 +3151,7 @@ def vtables_run(
         payload["functionAddress"] = function_address
     if max_entries is not None:
         payload["maxEntries"] = max_entries
-    _run_async(_call(ctx, "analyze-vtables", **payload))
+    _run_async(_call(ctx, ToolName.ANALYZE_VTABLES.value, **payload))
 
 
 # --- Convenience subcommands (``vtables analyze``, ``vtables callers``, …) ---
@@ -3185,7 +3182,7 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
             payload["functionAddress"] = function_address
         if max_entries is not None:
             payload["maxEntries"] = max_entries
-        _run_async(_call(ctx, "analyze-vtables", **payload))
+        _run_async(_call(ctx, ToolName.ANALYZE_VTABLES.value, **payload))
 
     return _cmd
 
@@ -3228,7 +3225,7 @@ def suggest_cmd(
         payload["dataType"] = data_type
     if variable_address is not None:
         payload["variableAddress"] = variable_address
-    _run_async(_call(ctx, "suggest", **payload))
+    _run_async(_call(ctx, ToolName.SUGGEST.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3266,7 +3263,7 @@ def analyze(ctx: click.Context, program_path: str, force: bool) -> None:
     payload: dict[str, Any] = {"programPath": program_path}
     if force:
         payload["force"] = True
-    _run_async(_call(ctx, "analyze-program", **payload))
+    _run_async(_call(ctx, ToolName.ANALYZE_PROGRAM.value, **payload))
 
 
 @main.command("change-processor", help="Change processor (change-processor)")
@@ -3283,7 +3280,7 @@ def change_processor(
     payload: dict[str, Any] = {"programPath": program_path, "languageId": language_id}
     if compiler_spec_id is not None:
         payload["compilerSpecId"] = compiler_spec_id
-    _run_async(_call(ctx, "change-processor", **payload))
+    _run_async(_call(ctx, ToolName.CHANGE_PROCESSOR.value, **payload))
 
 
 @main.group("files", help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout")
@@ -3414,7 +3411,7 @@ def files_run(
     payload["force"] = force
     payload["exclusive"] = exclusive
     payload["dryRun"] = dry_run
-    _run_async(_call(ctx, "manage-files", **payload))
+    _run_async(_call(ctx, ToolName.MANAGE_FILES.value, **payload))
 
 
 @main.group("shared", help="Shared repository workflows")
@@ -3445,7 +3442,7 @@ def shared_download(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, ToolName.SYNC_PROJECT.value, **payload))
 
 
 @shared_grp.command("push", help="Push local project files toward shared-backed storage mapping")
@@ -3471,7 +3468,7 @@ def shared_push(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, ToolName.SYNC_PROJECT.value, **payload))
 
 
 @shared_grp.command("sync", help="Bidirectional shared/local synchronization")
@@ -3497,7 +3494,7 @@ def shared_sync(
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, ToolName.SYNC_PROJECT.value, **payload))
 
 
 def _gui_only_command_error(tool_name: str) -> None:
@@ -3627,7 +3624,7 @@ def svr_admin_cmd(
     timeout_seconds: int | None,
 ) -> None:
     payload = _build_svr_admin_payload(args, list(ctx.args), command, timeout_seconds)
-    _run_async(_call(ctx, "svr-admin", **payload))
+    _run_async(_call(ctx, ToolName.SVR_ADMIN.value, **payload))
 
 
 # Compatibility alias for canonical `svr-admin`.
@@ -3678,7 +3675,7 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
     kwargs: dict[str, Any] = {"code": code, "timeout": timeout}
     if program_path:
         kwargs["programPath"] = program_path
-    _run_async(_call(ctx, "execute-script", **kwargs))
+    _run_async(_call(ctx, ToolName.EXECUTE_SCRIPT.value, **kwargs))
 
 
 # ---------------------------------------------------------------------------
