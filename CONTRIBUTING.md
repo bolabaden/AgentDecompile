@@ -128,11 +128,11 @@ The repository includes machine-generated source graph artifacts so contributors
 Current generated summary:
 
 - `76` Python modules under `src/agentdecompile_cli`
-- `1401` discovered classes, functions, and methods
+- `1444` discovered classes, functions, and methods
 - `12016` call sites total
 - `4873` package-internal call sites before deduplication
 - `3150` deduplicated internal caller-to-callee edges in the full Mermaid graph
-- `83` Click command or group functions in `agentdecompile_cli.cli`
+- `84` Click command or group functions in `agentdecompile_cli.cli`
 
 ---
 

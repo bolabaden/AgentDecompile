@@ -250,7 +250,7 @@ This is the supported way to keep state inside one CLI invocation.
 
 The contracts below were re-validated against a real `agentdecompile-server -t streamable-http` process using `tests/fixtures/test_x86_64` before the strict E2E assertions were written.
 
-- Default live MCP advertisement is **36 tools**.
+- Default live MCP advertisement is **37 tools**.
 - Hidden-but-callable legacy tools still work through raw MCP and curated CLI commands; for example `manage-comments` is callable even though it is not in the default `tools/list` output.
 - `switch-project` remains accepted as a compatibility alias and currently routes to `open-project`, but it is intentionally not advertised.
 - Local JSON `list-functions` returns a `results` array, not `functions`.

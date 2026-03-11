@@ -3812,10 +3812,16 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                     sys.exit(1)
 
                 _validate_known_tool(name)
-                prepared_arguments, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, arguments)
+                prepared_arguments: dict[str, Any] = {k: v for k, v in arguments.items() if v is not None}
+                if tool_registry.is_valid_tool(name):
+                    resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(name))
+                    prepared_arguments = tool_registry.parse_arguments(prepared_arguments, resolved_name)
+
+                explicit_program = _extract_program_argument(prepared_arguments)
+                if explicit_program is not None:
+                    _set_cached_program(ctx, explicit_program)
+
                 data = await _call_raw(ctx, name, prepared_arguments, client_override=client)
-                if inferred_program is not None:
-                    data = _inject_inferred_program(data, inferred_program)
                 step_result = {
                     "index": index,
                     "name": name,

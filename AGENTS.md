@@ -59,7 +59,7 @@ Each CLI invocation creates a new MCP session. Programs loaded in one session ar
 | Test (unit only) | `uv run pytest -m unit -v` |
 | Build | `uv build` |
 
-Pre-existing lint violations (49 errors) and test failures (46 of ~1300) exist in the codebase; they are not caused by the development environment.
+Pre-existing lint violations (36 errors) exist in the codebase; they are not caused by the development environment. Unit tests have 1 pre-existing failure in `test_unified_provider_advertisement.py`; Docker-dependent e2e tests require a running Docker environment to pass.
 
 ## Naming Conventions
 

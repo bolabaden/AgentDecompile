@@ -13,7 +13,7 @@ flowchart TD
   B --> D[AgentDecompile runtime]
   C --> D
   D --> E[PyGhidra and Ghidra projects]
-  D --> F[52 canonical tools and 3 resources]
+  D --> F[53 canonical tools and 3 resources]
 ```
 
 ## Session-Validated Commands
@@ -136,8 +136,8 @@ flowchart TD
 Current source-graph inventory from `src/agentdecompile_cli`:
 
 - `76` Python modules
-- `1401` discovered classes, functions, and methods
-- `83` Click command or group functions in the CLI surface
+- `1444` discovered classes, functions, and methods
+- `84` Click command or group functions in the CLI surface
 - `3150` deduplicated internal caller-to-callee edges in the generated Mermaid graph
 
 Primary runtime entrypoints:
@@ -493,16 +493,16 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 52 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 53 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- **36 tools** are advertised by default.
+- **37 tools** are advertised by default.
 - Compatibility aliases remain callable but are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` or `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` to re-advertise them.
 - Canonical MCP tool names use **kebab-case** (for example `open-project`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
 - Representative tools: `open-project`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`
 
-Live local server contract note: the default advertised surface is currently 36 tools. Hidden compatibility tools such as `manage-comments` remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open-project` even though it is not advertised.
+Live local server contract note: the default advertised surface is currently 37 tools. Hidden compatibility tools such as `manage-comments` remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open-project` even though it is not advertised.
 
 Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
 

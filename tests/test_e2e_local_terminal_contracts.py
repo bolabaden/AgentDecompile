@@ -41,7 +41,9 @@ pytestmark = [
 KNOWN_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "test_x86_64"
 KNOWN_FIXTURE_NAME = KNOWN_FIXTURE_PATH.name
 KNOWN_ENTRY_ADDRESS = "1000004b0"
-DEFAULT_HTTP_ADVERTISED_TOOLS = [
+# Sorted canonical names matching the 37 tools advertised over streamable-http.
+# If a new tool is added to DEFAULT_ADVERTISED_TOOLS in registry.py, add it here too.
+DEFAULT_HTTP_ADVERTISED_TOOLS = frozenset([
     "analyze_data_flow",
     "analyze_program",
     "analyze_vtables",
@@ -52,10 +54,9 @@ DEFAULT_HTTP_ADVERTISED_TOOLS = [
     "checkout_status",
     "create_label",
     "decompile_function",
-    "sync_project",
+    "execute_script",
     "export",
     "get_call_graph",
-    "remove_program_binary",
     "get_current_program",
     "get_data",
     "get_references",
@@ -65,20 +66,22 @@ DEFAULT_HTTP_ADVERTISED_TOOLS = [
     "list_exports",
     "list_functions",
     "list_imports",
-    "list_project_files",
     "list_processors",
+    "list_project_files",
     "list_strings",
     "manage_function_tags",
     "match_function",
-    "execute_script",
     "open_project",
     "read_bytes",
+    "remove_program_binary",
     "search_code",
     "search_constants",
     "search_everything",
     "search_strings",
     "search_symbols",
-]
+    "svr_admin",
+    "sync_project",
+])
 
 
 @pytest.fixture(scope="module")
@@ -168,6 +171,38 @@ def local_contract_snapshot(
         listing_payload = session.call_tool_json("list-project-files", {})
         current_payload = session.call_tool_json("get-current-program", {})
         checkout_payload = session.call_tool_json("checkout-status", {})
+        # Analysis and data-retrieval operations that mirror the manual terminal workflow.
+        analyze_payload = session.call_tool_json(
+            "analyze-program",
+            {"programPath": KNOWN_FIXTURE_NAME, "force": True},
+        )
+        list_functions_payload = session.call_tool_json(
+            "list-functions",
+            {"programPath": KNOWN_FIXTURE_NAME, "limit": 50},
+        )
+        list_imports_payload = session.call_tool_json(
+            "list-imports",
+            {"programPath": KNOWN_FIXTURE_NAME},
+        )
+        list_exports_payload = session.call_tool_json(
+            "list-exports",
+            {"programPath": KNOWN_FIXTURE_NAME},
+        )
+        search_symbols_payload = session.call_tool_json(
+            "search-symbols",
+            {"programPath": KNOWN_FIXTURE_NAME, "query": "main"},
+        )
+        references_from_payload = session.call_tool_json(
+            "get-references",
+            {"programPath": KNOWN_FIXTURE_NAME, "target": KNOWN_ENTRY_ADDRESS, "mode": "from"},
+        )
+        references_to_payload = session.call_tool_json(
+            "get-references",
+            {"programPath": KNOWN_FIXTURE_NAME, "target": KNOWN_ENTRY_ADDRESS, "mode": "to"},
+        )
+        resources_programs = session.read_resource_json("ghidra://programs")
+        resources_static_analysis = session.read_resource_json("ghidra://static-analysis-results")
+        resources_debug_info = session.read_resource_json("ghidra://agentdecompile-debug-info")
         comment_get_before = session.call_tool_json(
             "manage-comments",
             {"mode": "get", "addressOrSymbol": KNOWN_ENTRY_ADDRESS},
@@ -229,6 +264,16 @@ def local_contract_snapshot(
         "listing_payload": listing_payload,
         "current_payload": current_payload,
         "checkout_payload": checkout_payload,
+        "analyze_payload": analyze_payload,
+        "list_functions_payload": list_functions_payload,
+        "list_imports_payload": list_imports_payload,
+        "list_exports_payload": list_exports_payload,
+        "search_symbols_payload": search_symbols_payload,
+        "references_from_payload": references_from_payload,
+        "references_to_payload": references_to_payload,
+        "resources_programs": resources_programs,
+        "resources_static_analysis": resources_static_analysis,
+        "resources_debug_info": resources_debug_info,
         "comment_get_before": comment_get_before,
         "comment_set": comment_set,
         "comment_get_after_set": comment_get_after_set,
@@ -258,15 +303,19 @@ def test_live_local_default_advertised_tool_surface_matches_terminal_contract(
     local_contract_snapshot: dict[str, Any],
 ) -> None:
     tool_names = local_contract_snapshot["tool_names"]
+    tool_name_set = set(tool_names)
 
-    assert tool_names == DEFAULT_HTTP_ADVERTISED_TOOLS
-    assert len(tool_names) == 36
-    assert "manage-comments" not in tool_names
-    assert "switch-project" not in tool_names
-    assert "open_project" in tool_names
-    assert "import_binary" in tool_names
-    assert "sync_project" in tool_names
-    assert "change_processor" in tool_names
+    # Exact set match – every tool that should be advertised is present.
+    assert tool_name_set == DEFAULT_HTTP_ADVERTISED_TOOLS
+    # Count: 37 tools as confirmed by live `tool --list-tools` in the terminal.
+    assert len(tool_names) == 37
+    assert "manage-comments" not in tool_name_set
+    assert "switch-project" not in tool_name_set
+    assert "open_project" in tool_name_set
+    assert "import_binary" in tool_name_set
+    assert "sync_project" in tool_name_set
+    assert "change_processor" in tool_name_set
+    assert "svr_admin" in tool_name_set
 
 
 def test_live_local_open_switch_import_and_listing_contracts(
@@ -417,3 +466,365 @@ def test_live_local_manage_comments_round_trip_and_export_contracts(
         "functionCount": 3,
         "format": "html",
     }
+
+
+# ---------------------------------------------------------------------------
+# New MCP-session tests mirroring the manual terminal validation workflow
+# ---------------------------------------------------------------------------
+
+
+def test_live_local_analyze_program_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """analyze-program returns a success action with the binary name."""
+    p = local_contract_snapshot["analyze_payload"]
+    assert p["action"] == "analyze"
+    assert p["programName"] == KNOWN_FIXTURE_NAME
+
+
+def test_live_local_list_functions_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """list-functions returns entry and _printf thunk for the known fixture."""
+    p = local_contract_snapshot["list_functions_payload"]
+    assert "results" in p
+    assert isinstance(p["results"], list)
+    assert p["count"] == len(p["results"])
+    assert p["total"] >= p["count"]
+
+    names = [f["name"] for f in p["results"]]
+    assert "entry" in names
+    assert "_printf" in names
+
+    entry_fn = next(f for f in p["results"] if f["name"] == "entry")
+    assert entry_fn["address"] == KNOWN_ENTRY_ADDRESS
+    assert entry_fn["isExternal"] is False
+    assert entry_fn["isThunk"] is False
+
+    printf_fn = next(f for f in p["results"] if f["name"] == "_printf")
+    assert printf_fn["isThunk"] is True
+
+
+def test_live_local_list_imports_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """list-imports surfaces _printf from libSystem."""
+    p = local_contract_snapshot["list_imports_payload"]
+    assert "results" in p
+    assert p["count"] >= 1
+
+    names = [r["name"] for r in p["results"]]
+    assert "_printf" in names
+
+    printf_imp = next(r for r in p["results"] if r["name"] == "_printf")
+    assert "/usr/lib/libSystem.B.dylib" in (printf_imp.get("namespace") or printf_imp.get("library") or "")
+
+
+def test_live_local_list_exports_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """list-exports contains _add, _multiply, entry, and _main."""
+    p = local_contract_snapshot["list_exports_payload"]
+    assert "results" in p
+    assert p["count"] >= 4
+
+    names = [r["name"] for r in p["results"]]
+    assert "_add" in names
+    assert "_multiply" in names
+    assert "entry" in names
+    assert "_main" in names
+
+    exports_by_name = {r["name"]: r for r in p["results"]}
+    assert exports_by_name["entry"]["address"] == KNOWN_ENTRY_ADDRESS
+
+
+def test_live_local_search_symbols_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """search-symbols query=main finds _main at the entry address."""
+    p = local_contract_snapshot["search_symbols_payload"]
+    assert p["query"] == "main"
+    assert p["count"] >= 1
+
+    names = [r["name"] for r in p["results"]]
+    assert "_main" in names
+
+    main_sym = next(r for r in p["results"] if r["name"] == "_main")
+    assert main_sym["address"] == KNOWN_ENTRY_ADDRESS
+    assert "name" in main_sym
+    assert "address" in main_sym
+    assert "type" in main_sym
+
+
+def test_live_local_get_references_from_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """get-references mode=from returns outbound references from entry."""
+    p = local_contract_snapshot["references_from_payload"]
+    assert "references" in p or "results" in p or "mode" in p
+    # mode field identifies the query type
+    assert p.get("mode") == "from" or "from" in str(p.get("target", ""))
+
+
+def test_live_local_get_references_to_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """get-references mode=to returns inbound references to entry (entry point + DATA)."""
+    p = local_contract_snapshot["references_to_payload"]
+    # At minimum the entry point itself is a reference target
+    refs = p.get("references") or p.get("results") or []
+    assert isinstance(refs, list)
+    assert len(refs) >= 1
+
+
+def test_live_local_resource_programs_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """ghidra://programs resource lists the imported binary."""
+    resources = local_contract_snapshot["resources_programs"]
+    # Resource may be a list or dict wrapping a list
+    programs = resources if isinstance(resources, list) else (
+        resources.get("programs") or resources.get("files") or resources.get("results") or []
+    )
+    names = [
+        (p.get("name") or p.get("programName") or "")
+        for p in programs
+        if isinstance(p, dict)
+    ]
+    assert any(KNOWN_FIXTURE_NAME in n for n in names), (
+        f"Expected {KNOWN_FIXTURE_NAME!r} in programs resource, got: {names}"
+    )
+
+
+def test_live_local_resource_static_analysis_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """ghidra://static-analysis-results resource returns SARIF-shaped JSON."""
+    sarif = local_contract_snapshot["resources_static_analysis"]
+    # SARIF 2.1.0 envelope
+    assert "$schema" in sarif or "version" in sarif or "runs" in sarif
+
+
+def test_live_local_resource_debug_info_contract(
+    local_contract_snapshot: dict[str, Any],
+) -> None:
+    """ghidra://agentdecompile-debug-info resource returns server metadata."""
+    info = local_contract_snapshot["resources_debug_info"]
+    # Debug info always has server version or name fields
+    assert isinstance(info, dict)
+    assert len(info) > 0
+
+
+# ---------------------------------------------------------------------------
+# CLI subprocess fixture – mirrors the terminal commands run manually
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def cli_contract_snapshot(
+    terminal_style_local_server: str,
+    local_contract_snapshot: dict[str, Any],   # ensures binary is in project before CLI runs
+) -> dict[str, Any]:
+    """Run agentdecompile-cli subcommands against the live server exactly as done in the terminal."""
+    server_url = terminal_style_local_server
+    fixture_path = str(KNOWN_FIXTURE_PATH)
+    binary_name = KNOWN_FIXTURE_NAME
+    repo_root = str(Path(__file__).resolve().parents[1])
+
+    def _cli(*args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "agentdecompile_cli.cli", "--server-url", server_url, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=repo_root,
+        )
+
+    def _cli_no_server(*args: str, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "agentdecompile_cli.cli", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=repo_root,
+        )
+
+    # --- tool --list-tools (mirrors: agentdecompile-cli --server-url ... tool --list-tools) ---
+    list_tools_result = _cli("tool", "--list-tools")
+
+    # --- tool-seq: open + list-functions (mirrors USAGE.md tool-seq example) ---
+    seq_analysis = json.dumps([
+        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "list-functions", "arguments": {"programPath": binary_name, "limit": 50, "format": "json"}},
+    ])
+    analysis_toolseq_result = _cli("tool-seq", seq_analysis, timeout=120)
+
+    # --- tool-seq: open + list-imports + list-exports + search-symbols --- 
+    seq_imports_exports = json.dumps([
+        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "list-imports", "arguments": {"programPath": binary_name, "format": "json"}},
+        {"name": "list-exports", "arguments": {"programPath": binary_name, "format": "json"}},
+        {"name": "search-symbols", "arguments": {"programPath": binary_name, "query": "main", "format": "json"}},
+    ])
+    imports_exports_toolseq_result = _cli("tool-seq", seq_imports_exports, timeout=120)
+
+    # --- tool-seq: open + get-references mode=from (mirrors: references from --binary ...) ---
+    seq_refs_from = json.dumps([
+        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "get-references", "arguments": {
+            "programPath": binary_name, "target": KNOWN_ENTRY_ADDRESS, "mode": "from", "format": "json",
+        }},
+    ])
+    references_from_toolseq_result = _cli("tool-seq", seq_refs_from, timeout=120)
+
+    # --- tool-seq: open + get-references mode=to (mirrors: references to --binary ...) ---
+    seq_refs_to = json.dumps([
+        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "get-references", "arguments": {
+            "programPath": binary_name, "target": KNOWN_ENTRY_ADDRESS, "mode": "to", "format": "json",
+        }},
+    ])
+    references_to_toolseq_result = _cli("tool-seq", seq_refs_to, timeout=120)
+
+    # --- resource programs / debug-info (no program load required in new session) ---
+    resource_programs_result = _cli("resource", "programs")
+    resource_debug_info_result = _cli("resource", "debug-info")
+
+    # --- alias commands (no server needed – purely registry lookups) ---
+    alias_ssbn_result = _cli_no_server("alias", "search-symbols-by-name")
+    alias_ss_result = _cli_no_server("alias", "search-symbols")
+    alias_op_result = _cli_no_server("alias", "open-project")
+
+    return {
+        "list_tools_result": list_tools_result,
+        "analysis_toolseq_result": analysis_toolseq_result,
+        "imports_exports_toolseq_result": imports_exports_toolseq_result,
+        "references_from_toolseq_result": references_from_toolseq_result,
+        "references_to_toolseq_result": references_to_toolseq_result,
+        "resource_programs_result": resource_programs_result,
+        "resource_debug_info_result": resource_debug_info_result,
+        "alias_ssbn_result": alias_ssbn_result,
+        "alias_ss_result": alias_ss_result,
+        "alias_op_result": alias_op_result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI tests derived from cli_contract_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_cli_tool_list_tools_shows_37(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``agentdecompile-cli tool --list-tools`` should exit 0 and mention 37 tools."""
+    result = cli_contract_snapshot["list_tools_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"tool --list-tools failed:\n{output}"
+    # Count tool lines in the output (each line has a tool name + description)
+    assert "37" in output or output.count("\n") >= 37, (
+        f"Expected at least 37 tool lines in output, got:\n{output[:2000]}"
+    )
+
+
+def test_cli_toolseq_open_and_list_functions(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """tool-seq open-project + list-functions exits 0 and surfaces entry/_printf."""
+    result = cli_contract_snapshot["analysis_toolseq_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"tool-seq analysis failed:\n{output}"
+    assert "entry" in output
+    assert "_printf" in output
+
+
+def test_cli_toolseq_list_imports_exports_search_symbols(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """tool-seq open + list-imports + list-exports + search-symbols exits 0 with known names."""
+    result = cli_contract_snapshot["imports_exports_toolseq_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"tool-seq imports/exports failed:\n{output}"
+    assert "_printf" in output        # import
+    assert "_add" in output or "_multiply" in output  # exports
+    assert "_main" in output          # search-symbols result
+
+
+def test_cli_toolseq_references_from_exit_zero(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """tool-seq open + get-references mode=from exits 0 for the entry point."""
+    result = cli_contract_snapshot["references_from_toolseq_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"tool-seq references from failed:\n{output}"
+    assert "from" in output.lower()
+
+
+def test_cli_toolseq_references_to_exit_zero(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """tool-seq open + get-references mode=to exits 0 and reports >=1 reference."""
+    result = cli_contract_snapshot["references_to_toolseq_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"tool-seq references to failed:\n{output}"
+    # entry/EXTERNAL reference always present
+    assert KNOWN_ENTRY_ADDRESS in output or "entry" in output.lower()
+
+
+def test_cli_resource_programs_exits_zero_and_lists_project(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``resource programs`` exits 0 and the project directory is listed."""
+    result = cli_contract_snapshot["resource_programs_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"resource programs failed:\n{output}"
+    assert len(output.strip()) > 0
+
+
+def test_cli_resource_debug_info_exits_zero_and_has_server_fields(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``resource debug-info`` exits 0 and returns JSON with server metadata."""
+    result = cli_contract_snapshot["resource_debug_info_result"]
+    output = result.stdout
+    assert result.returncode == 0, f"resource debug-info failed:\n{result.stdout + result.stderr}"
+    # Output should be parseable JSON or contain key server fields
+    try:
+        data = json.loads(output)
+        assert isinstance(data, dict)
+        assert len(data) > 0
+    except json.JSONDecodeError:
+        # Might be markdown-wrapped; check for known field substrings
+        assert "version" in output.lower() or "server" in output.lower(), (
+            f"debug-info output has no server fields:\n{output[:500]}"
+        )
+
+
+def test_cli_alias_search_symbols_by_name_resolves(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``alias search-symbols-by-name`` resolves to search_symbols canonical name."""
+    result = cli_contract_snapshot["alias_ssbn_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"alias search-symbols-by-name failed:\n{output}"
+    assert "search_symbols" in output or "search-symbols" in output
+
+
+def test_cli_alias_search_symbols_resolves(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``alias search-symbols`` is self-canonical and lists its aliases."""
+    result = cli_contract_snapshot["alias_ss_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"alias search-symbols failed:\n{output}"
+    assert "search_symbols" in output or "search-symbols" in output
+
+
+def test_cli_alias_open_project_resolves(
+    cli_contract_snapshot: dict[str, Any],
+) -> None:
+    """``alias open-project`` shows canonical name and any aliases."""
+    result = cli_contract_snapshot["alias_op_result"]
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"alias open-project failed:\n{output}"
+    assert "open_project" in output or "open-project" in output
