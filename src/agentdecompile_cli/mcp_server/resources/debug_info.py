@@ -686,7 +686,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_project_state(self, list_project_files: dict[str, Any]) -> dict[str, Any]:
         session_id = get_current_mcp_session_id()
-        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         runtime_dir = str(self.runtime_context.get("projectDirectory") or "").strip()
         return {
             "status": "available",

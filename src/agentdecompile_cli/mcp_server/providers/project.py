@@ -1498,10 +1498,10 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": str(base), "files": files, "count": len(files)})
 
         if self.program_info is None or getattr(self.program_info, "program", None) is None or not hasattr(getattr(self.program_info, "program", None), "getDomainFile"):
-            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if not session_binaries:
                 await self._ensure_shared_listing_available(args)
-                session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+                session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if session_binaries:
                 files = []
                 for item in session_binaries[:max_results]:
@@ -1582,7 +1582,7 @@ class ProjectToolProvider(ToolProvider):
                     )
             return create_success_response({"folder": folder, "files": files, "count": len(files)})
         except Exception as e:
-            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if session_binaries:
                 files = []
                 for item in session_binaries[:max_results]:
@@ -1613,7 +1613,7 @@ class ProjectToolProvider(ToolProvider):
             return
 
         session_id: str = get_current_mcp_session_id()
-        if SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True):
+        if SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False):
             return
 
         try:
@@ -2813,7 +2813,7 @@ class ProjectToolProvider(ToolProvider):
         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         session_id: str = get_current_mcp_session_id()
-        items: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        items: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         logger.info("shared-sync pull fetched cached session items count=%s", len(items))
         if not items:
             logger.info("shared-sync pull cache empty, listing repository items from adapter")

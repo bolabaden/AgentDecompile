@@ -1754,14 +1754,14 @@ class ToolProviderManager:
 
         advertised_tools: list[types.Tool] = []
         for canonical_name in ADVERTISED_TOOLS:
-            canonical_params = ADVERTISED_TOOL_PARAMS.get(canonical_name, [])
+            canonical_params: list[str] = ADVERTISED_TOOL_PARAMS.get(canonical_name, [])
 
-            normalized_name = n(canonical_name)
-            provider_tool = by_norm.get(normalized_name)
+            normalized_name: str = n(canonical_name)
+            provider_tool: types.Tool | None = by_norm.get(normalized_name)
 
-            schema = getattr(provider_tool, "inputSchema", None) or {"type": "object", "properties": {}, "required": []}
-            properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
-            required = schema.get("required", []) if isinstance(schema, dict) else []
+            schema: dict[str, Any] = getattr(provider_tool, "inputSchema", None) or {"type": "object", "properties": {}, "required": []}
+            properties: dict[str, Any] = schema.get("properties", {}) if isinstance(schema, dict) else {}
+            required: list[str] = schema.get("required", []) if isinstance(schema, dict) else []
 
             props_by_norm: dict[str, Any] = {}
             for key, value in properties.items():
@@ -1790,7 +1790,7 @@ class ToolProviderManager:
             }
 
             # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema
-            required_norm: set[str] = {n(str(item)) for item in required}
+            required_norm: frozenset[str] = frozenset(n(str(item)) for item in required)
             advertised_required: list[str] = []
             for param in canonical_params:
                 normalized_param = n(param)
@@ -1852,8 +1852,8 @@ class ToolProviderManager:
         logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, session_id)
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
-        norm_name = n(resolved_name)
-        provider = self._tool_map.get(norm_name)
+        norm_name: str = n(resolved_name)
+        provider: ToolProvider | None = self._tool_map.get(norm_name)
         # Follow alias chain: if the resolved name maps to an alias target, look that up
         if provider is None:
             alias_target: str | None = TOOL_ALIASES.get(norm_name)
@@ -1910,27 +1910,26 @@ class ToolProviderManager:
         if requested_program_key and requested_program_info is None:
             requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
 
-        session_program_info = SESSION_CONTEXTS.get_active_program_info(session_id)
-        effective_program_info = requested_program_info or session_program_info or self.program_info
+        session_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id)
+        effective_program_info: ProgramInfo | None = requested_program_info or session_program_info or self.program_info
 
         # Client asked for a program we couldn't open: attach list-project-files result so they can see available paths
         if requested_program_key and effective_program_info is None:
             prereq_calls: list[dict[str, Any]] = []
             try:
-                response = await self.call_tool(Tool.LIST_PROJECT_FILES.value, {"__auto_prereq_invocation": True})
-                output: Any
-                success: bool
+                response: list[types.TextContent] | None = await self.call_tool(Tool.LIST_PROJECT_FILES.value, {"__auto_prereq_invocation": True})
+                output: dict[str, Any]
+                success: bool = True
                 if response and isinstance(response[0], types.TextContent):
-                    raw_text = str(response[0].text)
+                    raw_text: str = str(response[0].text)
                     try:
-                        parsed = _json.loads(raw_text)
+                        parsed: dict[str, Any] = _json.loads(raw_text)
                     except Exception:
                         parsed = {"raw": raw_text}
                     output = parsed
                     success = not (isinstance(parsed, dict) and parsed.get("success") is False)
                 else:
                     output = {"raw": str(response)}
-                    success = True
 
                 prereq_calls.append(
                     {
@@ -1946,15 +1945,15 @@ class ToolProviderManager:
 
             return create_error_response(
                 ActionableError(
-                    f"Program path '{requested_program_key}' was provided but could not be resolved/opened from the current project or shared repository session.",
+                    f"Program path '{requested_program_key}' was provided but could not be resolved in this session. Sessions are fully isolated: this session has no project or program open for that path.",
                     context={
                         "state": "program-resolution-failed",
                         "requestedProgramPath": requested_program_key,
                         **({"prerequisiteCalls": prereq_calls} if prereq_calls else {}),
                     },
                     next_steps=[
-                        "Call `list-project-files` to discover the exact program path available in this session.",
-                        "If this is a local binary path, call `import-binary` first. If this is a project/repository path, ensure `open-project` has already established that project/session before retrying this tool.",
+                        "In this same session, open a project first: call `open-project` (shared server or local .gpr) or `import-binary` (local file), then retry this tool. CLI: use tool-seq to run open-project then this tool in one connection.",
+                        "Call `list-project-files` after opening a project to see available program paths in this session.",
                     ],
                 ),
             )

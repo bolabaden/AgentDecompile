@@ -155,7 +155,6 @@ class SessionContextStore:
     def __init__(self) -> None:
         self._lock: threading.RLock = threading.RLock()
         self._sessions: dict[str, SessionContext] = {}
-        self._last_session_with_binaries: str | None = None
         # Grace-period: evicted sessions kept for reconnection
         self._grace: dict[str, _GraceEntry] = {}
         # Client fingerprint → most recent session ID (for reconnect matching)
@@ -348,22 +347,13 @@ class SessionContextStore:
         session = self.get_or_create(session_id)
         with self._lock:
             session.project_binaries = list(binaries)
-            if session.project_binaries:
-                self._last_session_with_binaries = session.session_id
 
     def get_project_binaries(self, session_id: str, fallback_to_latest: bool = False) -> list[dict[str, Any]]:
+        """Return this session's project binaries only. Sessions are fully isolated; fallback_to_latest is ignored."""
         session = self.get_or_create(session_id)
         with self._lock:
             if session.project_binaries:
                 return list(session.project_binaries)
-
-            # Never leak binary catalogs across explicit MCP client sessions.
-            # Fallback is retained only for legacy/default session behavior.
-            if fallback_to_latest and session.session_id == "default" and self._last_session_with_binaries:
-                latest = self._sessions.get(self._last_session_with_binaries)
-                if latest and latest.project_binaries:
-                    return list(latest.project_binaries)
-
             return []
 
     def get_tool_history(self, session_id: str, limit: int = 25) -> list[dict[str, Any]]:
