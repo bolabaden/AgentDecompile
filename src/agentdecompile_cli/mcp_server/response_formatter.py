@@ -1929,6 +1929,165 @@ def _render_error(data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _render_get_function(data: dict[str, Any]) -> str:
+    """Render get-function (dissect) response as markdown. Avoids raw JSON when format=markdown."""
+    lines: list[str] = []
+    name = data.get("name", "unknown")
+    addr = data.get("address", "")
+    sig = data.get("signature", "")
+
+    lines.append(_md_heading(2, f"Function: `{name}`"))
+    lines.append("")
+    lines.append(_md_bold_kv("Address", _md_code_inline(addr)))
+    lines.append(_md_bold_kv("Signature", _md_code_inline(sig)))
+    lines.append("")
+
+    meta: dict[str, Any] = data.get("metadata") or {}
+    if meta:
+        lines.append(_md_heading(3, "Metadata"))
+        lines.append("")
+        lines.append(_md_bold_kv("Size", f"{meta.get('size', 0)} bytes"))
+        lines.append(_md_bold_kv("Return type", _md_code_inline(meta.get("returnType", ""))))
+        lines.append(_md_bold_kv("Calling convention", meta.get("callingConvention", "")))
+        flags: list[str] = []
+        if meta.get("isExternal"):
+            flags.append("External")
+        if meta.get("isThunk"):
+            flags.append("Thunk")
+        if meta.get("hasVarArgs"):
+            flags.append("VarArgs")
+        if flags:
+            lines.append(_md_bold_kv("Flags", ", ".join(flags)))
+        params: list[dict[str, Any]] = meta.get("parameters") or []
+        if params:
+            lines.append("")
+            lines.append(_md_heading(4, "Parameters"))
+            rows: list[list[str]] = [
+                [str(p.get("ordinal", i)), p.get("name", ""), _truncate(str(p.get("type", "")), 50)]
+                for i, p in enumerate(params)
+            ]
+            lines.append(_md_table(["#", "Name", "Type"], rows))
+        lines.append("")
+
+    ns: dict[str, Any] = data.get("namespace") or {}
+    if ns and (ns.get("path") or ns.get("segments")):
+        path_str = ns.get("path", "::".join(ns.get("segments") or []))
+        if path_str and str(path_str).lower() != "global":
+            lines.append(_md_heading(3, "Namespace"))
+            lines.append("")
+            lines.append(_md_code_inline(str(path_str)))
+            lines.append("")
+
+    decomp = data.get("decompilation", "")
+    if isinstance(decomp, str) and decomp.strip():
+        lines.append(_md_heading(3, "Decompilation"))
+        lines.append("")
+        lines.append(_md_code_block(decomp.rstrip(), "c"))
+        lines.append("")
+
+    disasm: dict[str, Any] = data.get("disassembly") or {}
+    instructions: list[dict[str, Any]] = disasm.get("instructions") or []
+    if instructions:
+        lines.append(_md_heading(3, "Disassembly"))
+        lines.append("")
+        count = disasm.get("count", len(instructions))
+        truncated = disasm.get("truncated", False)
+        lines.append(_md_bold_kv("Instructions", f"{count}" + (" (truncated)" if truncated else "")))
+        lines.append("")
+        asm_lines_list: list[str] = []
+        for instr in instructions:
+            a = instr.get("address", "")
+            op = instr.get("operands", "")
+            b = instr.get("bytes", "")
+            asm_lines_list.append(f"{a}  {b:<24s} {op}")
+        lines.append(_md_code_block("\n".join(asm_lines_list), "asm"))
+        lines.append("")
+
+    callers: list[dict[str, Any]] = data.get("callers") or []
+    callees: list[dict[str, Any]] = data.get("callees") or []
+    if callers or callees:
+        lines.append(_md_heading(3, "Call graph"))
+        lines.append("")
+        if callers:
+            lines.append(_md_heading(4, f"Callers ({len(callers)})"))
+            rows = [[c.get("name", ""), c.get("address", "")] for c in callers]
+            lines.append(_md_table(["Name", "Address"], rows))
+            lines.append("")
+        if callees:
+            lines.append(_md_heading(4, f"Callees ({len(callees)})"))
+            rows = [[c.get("name", ""), c.get("address", "")] for c in callees]
+            lines.append(_md_table(["Name", "Address"], rows))
+        lines.append("")
+
+    comments: dict[str, Any] = data.get("comments") or {}
+    inline: list[dict[str, Any]] = (comments.get("inline") or [])[:20]
+    if inline:
+        lines.append(_md_heading(3, "Comments (sample)"))
+        lines.append("")
+        for c in inline:
+            lines.append(f"- `{c.get('address', '')}` [{c.get('type', '')}]: {_truncate(str(c.get('text', '')), 80)}")
+        if (comments.get("inlineCount") or 0) > 20:
+            lines.append(f"- *... and {comments.get('inlineCount', 0) - 20} more*")
+        lines.append("")
+
+    labels: list[dict[str, Any]] = data.get("labels") or []
+    if labels:
+        lines.append(_md_heading(3, "Labels"))
+        lines.append("")
+        rows = [[lb.get("name", ""), lb.get("address", ""), lb.get("type", "")] for lb in labels[:30]]
+        lines.append(_md_table(["Name", "Address", "Type"], rows))
+        if len(labels) > 30:
+            lines.append(f"*... and {len(labels) - 30} more*")
+        lines.append("")
+
+    xrefs: list[dict[str, Any]] = data.get("crossReferences") or []
+    if xrefs:
+        lines.append(_md_heading(3, "Cross-references"))
+        lines.append("")
+        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in xrefs[:25]]
+        lines.append(_md_table(["From", "To", "Type"], rows))
+        if len(xrefs) > 25:
+            lines.append(f"*... and {len(xrefs) - 25} more*")
+        lines.append("")
+
+    tags_list: list[Any] = data.get("tags") or []
+    bookmarks_list: list[Any] = data.get("bookmarks") or []
+    if tags_list or bookmarks_list:
+        lines.append(_md_heading(3, "Tags & bookmarks"))
+        lines.append("")
+        if tags_list:
+            lines.append(_md_bold_kv("Tags", ", ".join(str(t) for t in tags_list)))
+        if bookmarks_list:
+            lines.append(_md_bold_kv("Bookmarks", str(len(bookmarks_list))))
+        lines.append("")
+
+    stack: dict[str, Any] = data.get("stackFrame") or {}
+    vars_list: list[dict[str, Any]] = stack.get("variables") or []
+    if vars_list:
+        lines.append(_md_heading(3, "Stack frame"))
+        lines.append("")
+        lines.append(_md_bold_kv("Frame size", f"{stack.get('frameSize', 0)} bytes"))
+        rows = [
+            [v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "param" if v.get("isParameter") else ""]
+            for v in vars_list[:25]
+        ]
+        lines.append(_md_table(["Name", "Offset", "Type", "Param"], rows))
+        if len(vars_list) > 25:
+            lines.append(f"*... and {len(vars_list) - 25} more*")
+        lines.append("")
+
+    mem: dict[str, Any] = data.get("memoryBlock") or {}
+    if mem and mem.get("name"):
+        lines.append(_md_heading(3, "Memory block"))
+        lines.append("")
+        lines.append(_md_bold_kv("Name", mem.get("name", "")))
+        lines.append(_md_bold_kv("Range", f"{mem.get('start', '')} – {mem.get('end', '')}"))
+        lines.append(_md_bold_kv("Size", f"{mem.get('size', 0)} bytes"))
+        lines.append(_md_bold_kv("Permissions", str(mem.get("permissions", ""))))
+
+    return "\n".join(lines)
+
+
 def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
     """Smart generic renderer for tools without a custom renderer.
 
@@ -2004,6 +2163,7 @@ TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "decompile": _render_decompile,
     "decompilefunction": _render_decompile,
     "listfunctions": _render_list_functions,
+    "getfunction": _render_get_function,
     "getfunctions": _render_get_functions,
     "managesymbols": _render_symbols,
     "searchsymbolsbyname": _render_symbols,
