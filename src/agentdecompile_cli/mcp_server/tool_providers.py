@@ -668,8 +668,14 @@ class ToolProvider:
             resolved_name = resolve_tool_name(name) or name
             norm_name = n(resolved_name)
             handler_method_name = self.HANDLERS.get(norm_name)
+            if handler_method_name is not None:
+                logger.debug("tool name resolved: %s -> %s", name, resolved_name)
         if handler_method_name is None:
+            logger.warning("unknown tool requested: %s", name)
             raise NotImplementedError(f"Unknown tool: {name}")
+
+        canonical_tool = resolve_tool_name(name) or name
+        logger.info("tool=%s provider=%s", canonical_tool, self.__class__.__name__)
 
         handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] = getattr(self, handler_method_name)
 
@@ -700,9 +706,11 @@ class ToolProvider:
                         break
 
         try:
-            return await handler(norm_args)
+            result = await handler(norm_args)
+            logger.debug("tool=%s completed", canonical_tool)
+            return result
         except Exception as e:
-            logger.error(f"Tool {name} error: {e.__class__.__name__}: {e}")
+            logger.error("tool=%s error=%s message=%s", canonical_tool, e.__class__.__name__, e)
             extra_context: dict[str, Any] | None = None
             if isinstance(e, ActionableError) and not auto_prereq_invocation:
                 try:
@@ -1653,8 +1661,10 @@ class ToolProviderManager:
         """Resolve and activate a program by path: cache → shared checkout → bootstrap → local path."""
         existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if existing is not None:
+            logger.debug("program already in session: session_id=%s program=%s", session_id, requested_program_key)
             return existing
 
+        logger.debug("activating program: session_id=%s program=%s", session_id, requested_program_key)
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         project_provider = self._get_project_provider()
@@ -1669,14 +1679,17 @@ class ToolProviderManager:
 
         activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if activated is not None:
+            logger.debug("program activated via shared checkout: program=%s", requested_program_key)
             return activated
 
         if project_provider is not None:
             await self._bootstrap_shared_session_from_env(session_id, requested_program_key)
             activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
             if activated is not None:
+                logger.debug("program activated via bootstrap: program=%s", requested_program_key)
                 return activated
 
+        logger.debug("activating program via local path: program=%s", requested_program_key)
         return self._activate_local_program_by_path(session_id, requested_program_key)
 
     async def get_or_open_program(
@@ -1796,6 +1809,7 @@ class ToolProviderManager:
             self.set_program_info(program_info)
 
         resolved_name: str = resolve_tool_name(name) or name
+        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, session_id)
         tool_enum: ToolName | None = resolve_tool_name_enum(name)
         if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
@@ -1823,7 +1837,9 @@ class ToolProviderManager:
                     norm_name = alias_norm
                     resolved_name = alias_target
         if provider is None:
-            tools = self.list_tools()
+            logger.warning("no provider for tool: name=%s resolved=%s", name, resolved_name)
+            tools: list[types.Tool] = self.list_tools()
+            logger.debug("found %d tools", len(tools))
             return create_error_response(
                 ActionableError(
                     f"Unknown tool: {name}",
@@ -1847,7 +1863,8 @@ class ToolProviderManager:
                 ),
             )
 
-        norm_args = {n(k): v for k, v in (arguments or {}).items()}
+        norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
+        logger.debug("normalized args: %s", norm_args)
 
         # Resolve which program this tool runs against: explicit arg wins, then session active, then manager default
         requested_program_key: str | None = None

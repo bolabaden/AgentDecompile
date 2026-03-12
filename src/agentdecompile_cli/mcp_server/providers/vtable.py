@@ -63,6 +63,8 @@ class VtableToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
+        addr_str = self._get_address_or_symbol(args)
+        logger.info("analyze-vtables mode=%s addressOrSymbol=%s", mode, addr_str or "(none)")
         assert self.program_info is not None  # for type checker
         # Shared context for all mode handlers: program, listing, memory, fm, address string, pagination
         return await self._dispatch_handler(
@@ -154,6 +156,7 @@ class VtableToolProvider(ToolProvider):
             except Exception:
                 break
 
+        logger.debug("vtable analyze: vtableAddress=%s entries=%s", addr, len(entries))
         return create_success_response(
             {
                 "mode": "analyze",
@@ -194,5 +197,6 @@ class VtableToolProvider(ToolProvider):
                     "refType": str(ref.getReferenceType()),
                 },
             )
-        paginated, has_more = self._paginate_results(all_callers, offset, max_results)
+        logger.debug("vtable callers: vtableAddress=%s refs=%s", addr, len(all_callers))
+        paginated, _ = self._paginate_results(all_callers, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_callers), mode="callers", vtableAddress=str(addr))

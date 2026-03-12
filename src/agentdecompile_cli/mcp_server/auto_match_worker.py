@@ -100,13 +100,17 @@ def run_auto_match_subprocess(
     results (list of per-target entries), count, and sourceFunction.
     """
     result: dict[str, Any] = {"success": False, "error": None, "results": [], "count": 0}
+    logger.info(
+        "auto_match_subprocess project=%s source=%s function=%s targets=%s",
+        project_name, source_program_path, function_identifier, len(target_program_paths),
+    )
     try:
         from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
 
         ghidra_project = GhidraProject.openProject(project_dir, project_name, False)
     except Exception as e:
         result["error"] = f"Failed to open project: {e}"
-        logger.warning("Auto-match worker: %s", result["error"])
+        logger.warning("auto_match open project failed: %s", result["error"])
         return result
 
     try:
@@ -174,6 +178,7 @@ def run_auto_match_subprocess(
                             best_func = func
 
                     if best_func is None:
+                        logger.debug("auto_match no match target=%s candidatesBySignature=%s", target_path, len(candidates))
                         results_per_target.append({"targetProgramPath": target_path, "matched": None, "candidatesBySignature": len(candidates)})
                         target_program.close()
                         continue
@@ -330,10 +335,11 @@ def run_auto_match_subprocess(
             result["results"] = results_per_target
             result["count"] = len(results_per_target)
             result["sourceFunction"] = source_name
+            logger.info("auto_match_subprocess success count=%s sourceFunction=%s", result["count"], source_name)
             return result
         finally:
             source_program.close()
     except Exception as e:
         result["error"] = str(e)
-        logger.warning("Auto-match worker failed: %s", e)
+        logger.warning("auto_match_subprocess failed: %s", e)
         return result
