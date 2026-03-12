@@ -26,35 +26,30 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 try:
-    import chromadb
+    import chromadb  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
-    from chromadb.config import Settings
+    from chromadb.config import Settings  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 except Exception:
     chromadb = None  # type: ignore[assignment]
     Settings = None  # type: ignore[assignment]
 
-from ghidra.framework.model import (  # pyright: ignore[reportMissingImports]
-    DomainFile,
-)
-from ghidra.program.model.listing import (
-    Program,  # pyright: ignore[reportMissingImports]
-)
-
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import (
-        DecompInterface,  # pyright: ignore[reportMissingImports]
-        DecompiledFunction,  # pyright: ignore[reportMissingImports]
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        DecompInterface,
+        DecompiledFunction,
     )
-    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports]
+    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        DomainFile,
         DomainFolder,
     )
-    from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports]
-    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-    from ghidra.program.model.listing import (
-        Function,  # pyright: ignore[reportMissingImports]
+    from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        Function,
+        Program,
     )
 
 # Configure logging
@@ -229,7 +224,10 @@ class PyGhidraContext:
             if program is None:
                 logger.error(f"Failed to init program: {binary_path_s} during the open process")
                 continue
-            program_info: ProgramInfo = self._init_program_info(program)
+            program_info: ProgramInfo | None = self._init_program_info(program)
+            if program_info is None:
+                logger.error(f"Failed to init program: {binary_path_s} during the init program info process")
+                continue
             self.programs[str(binary_path)] = program_info
 
     def list_binaries(self) -> list[str]:

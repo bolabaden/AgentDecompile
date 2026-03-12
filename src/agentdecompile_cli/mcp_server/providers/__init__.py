@@ -1,4 +1,9 @@
-"""MCP Tool Providers - Python implementations  providers."""
+"""MCP tool providers – Python implementations of MCP tools.
+
+Each provider registers HANDLERS (normalized tool name → method) and list_tools();
+ToolProviderManager dispatches tools/call to the appropriate provider. Import
+order here does not affect registration; all are collected by the manager.
+"""
 
 from .decompiler import DecompilerToolProvider
 from .functions import FunctionToolProvider

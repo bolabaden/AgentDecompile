@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -19,6 +19,12 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.registry import ToolName
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
+
+    from agentdecompile_cli.mcp_server.session_context import ProgramInfo  # pyright: ignore[reportMissingModuleSource]
+    from agentdecompile_cli.tools.decompile_tool import DecompileTool  # pyright: ignore[reportMissingModuleSource]
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +137,7 @@ class DecompilerToolProvider(ToolProvider):
         session_decomp: DecompInterface | None,  # noqa: F821
         program: Any,
     ) -> tuple[DecompInterface, bool]:  # noqa: F821
-        """Set up the decompiler interface, returning (decomp, owns_decomp)."""
+        """Set up the decompiler interface, returning (decomp, owns_decomp). When owns_decomp is True, caller must dispose decomp."""
         from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
 
         if session_decomp is None:
@@ -246,6 +252,7 @@ class DecompilerToolProvider(ToolProvider):
                 "decompilation": f"// Decompilation failed: {err_msg or 'Program unavailable'}",
             }
 
+        # Base class builds fallback (assembly listing or placeholder) so the client still gets usable output
         c_code = self._build_decompile_fallback(program, target_func, err_msg)
         sig = str(target_func.getSignature())
 
