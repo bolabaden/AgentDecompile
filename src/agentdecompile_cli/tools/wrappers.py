@@ -34,9 +34,6 @@ from agentdecompile_cli.models import (
     StringSearchResult,
     SymbolInfo,
 )
-from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
-    ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
-)
 from jpype import JByte
 
 if TYPE_CHECKING:
@@ -60,6 +57,9 @@ if TYPE_CHECKING:
         ReferenceManager as GhidraReferenceManager,
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
+    )
+    from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+        ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
 
     # Type alias for convenience

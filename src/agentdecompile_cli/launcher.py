@@ -36,13 +36,6 @@ except Exception:
     chromadb = None  # type: ignore[assignment]
     Settings = None  # type: ignore[assignment]
 
-from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    DomainFile,
-)
-from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    Program as GhidraProgram,
-)
-
 from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
 from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.tools.wrappers import GhidraTools
@@ -53,13 +46,15 @@ if TYPE_CHECKING:
         #    DecompiledFunction,
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DomainFile,
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function,
+        Program as GhidraProgram,
     )
 
     from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: F401
