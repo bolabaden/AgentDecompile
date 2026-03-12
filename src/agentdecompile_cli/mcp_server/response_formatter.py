@@ -2020,9 +2020,17 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append("")
 
     comments: dict[str, Any] = data.get("comments") or {}
+    entry_comments: dict[str, str] = comments.get("entryPoint") or {}
+    if entry_comments:
+        lines.append(_md_heading(3, "Entry-point comments"))
+        lines.append("")
+        for ctype, text in entry_comments.items():
+            if text:
+                lines.append(f"- **{ctype}:** {_truncate(str(text), 120)}")
+        lines.append("")
     inline: list[dict[str, Any]] = (comments.get("inline") or [])[:20]
     if inline:
-        lines.append(_md_heading(3, "Comments (sample)"))
+        lines.append(_md_heading(3, "Comments (inline sample)"))
         lines.append("")
         for c in inline:
             lines.append(f"- `{c.get('address', '')}` [{c.get('type', '')}]: {_truncate(str(c.get('text', '')), 80)}")
@@ -2041,17 +2049,26 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append("")
 
     xrefs: list[dict[str, Any]] = data.get("crossReferences") or []
+    outbound: list[dict[str, Any]] = data.get("outboundReferences") or []
     if xrefs:
-        lines.append(_md_heading(3, "Cross-references"))
+        lines.append(_md_heading(3, "Cross-references (inbound)"))
         lines.append("")
         rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in xrefs[:25]]
         lines.append(_md_table(["From", "To", "Type"], rows))
         if len(xrefs) > 25:
             lines.append(f"*... and {len(xrefs) - 25} more*")
         lines.append("")
+    if outbound:
+        lines.append(_md_heading(3, "Outbound references"))
+        lines.append("")
+        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in outbound[:25]]
+        lines.append(_md_table(["From", "To", "Type"], rows))
+        if len(outbound) > 25:
+            lines.append(f"*... and {len(outbound) - 25} more*")
+        lines.append("")
 
     tags_list: list[Any] = data.get("tags") or []
-    bookmarks_list: list[Any] = data.get("bookmarks") or []
+    bookmarks_list: list[dict[str, Any]] = data.get("bookmarks") or []
     if tags_list or bookmarks_list:
         lines.append(_md_heading(3, "Tags & bookmarks"))
         lines.append("")
@@ -2059,6 +2076,10 @@ def _render_get_function(data: dict[str, Any]) -> str:
             lines.append(_md_bold_kv("Tags", ", ".join(str(t) for t in tags_list)))
         if bookmarks_list:
             lines.append(_md_bold_kv("Bookmarks", str(len(bookmarks_list))))
+            rows = [[b.get("address", ""), b.get("type", ""), b.get("category", ""), _truncate(str(b.get("comment", "")), 40)] for b in bookmarks_list[:20]]
+            lines.append(_md_table(["Address", "Type", "Category", "Comment"], rows))
+            if len(bookmarks_list) > 20:
+                lines.append(f"*... and {len(bookmarks_list) - 20} more*")
         lines.append("")
 
     stack: dict[str, Any] = data.get("stackFrame") or {}
