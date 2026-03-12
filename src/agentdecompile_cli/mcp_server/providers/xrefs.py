@@ -1,9 +1,9 @@
 """Cross References Tool Provider - get-references, list-cross-references.
 
-  - get-references: Find references to/from an address. Mode = to (who references this),
-    from (what this references), both, function (refs within a function), referencers_decomp,
-    import, thunk. Paginated via limit/offset.
-  - list-cross-references: Alias that delegates to get-references with same semantics.
+- get-references: Find references to/from an address. Mode = to (who references this),
+  from (what this references), both, function (refs within a function), referencers_decomp,
+  import, thunk. Paginated via limit/offset.
+- list-cross-references: Alias that delegates to get-references with same semantics.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ class CrossReferencesToolProvider(ToolProvider):
         ]
 
     async def _handle_list_cross_references(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Alias for get-references with mode=both (refs to and from the address)."""
         updated = dict(args)
         updated.setdefault("mode", "both")
         return await self._handle(updated)

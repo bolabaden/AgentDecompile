@@ -33,6 +33,13 @@ except Exception:
     chromadb = None  # type: ignore[assignment]
     Settings = None  # type: ignore[assignment]
 
+from ghidra.framework.model import (  # pyright: ignore[reportMissingImports]
+    DomainFile,
+)
+from ghidra.program.model.listing import (
+    Program,  # pyright: ignore[reportMissingImports]
+)
+
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
@@ -42,12 +49,13 @@ if TYPE_CHECKING:
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports]
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports]
-        DomainFile,
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-    from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+    from ghidra.program.model.listing import (
+        Function,  # pyright: ignore[reportMissingImports]
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -566,8 +574,6 @@ class PyGhidraContext:
 
     def _init_chroma_code_collection_for_program(self, program_info: ProgramInfo):
         """Initialize Chroma code collection for a single program."""
-        from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports]
-
         if self.chroma_client is None:
             return
 

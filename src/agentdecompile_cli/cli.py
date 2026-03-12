@@ -32,10 +32,9 @@ import multiprocessing
 import os
 import sys
 
-from collections.abc import Coroutine
 from pathlib import Path
-from types import FunctionType, SimpleNamespace
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import click
@@ -61,6 +60,10 @@ from agentdecompile_cli.registry import (
     to_snake_case,
     tool_registry,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+    from types import FunctionType
 
 logger = logging.getLogger(__name__)
 
@@ -1026,10 +1029,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             )(tool_command)
 
         command_name = tool_name
-        hidden_from_help = (
-            tool_name in {t.value for t in _TOOLS_WITH_CURATED_COMMANDS}
-            or tool_name not in advertised_set
-        )
+        hidden_from_help = tool_name in {t.value for t in _TOOLS_WITH_CURATED_COMMANDS} or tool_name not in advertised_set
 
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
@@ -3610,10 +3610,7 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
 @main.command(
     "svr-admin",
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
-    help=(
-        "Run bundled Ghidra svrAdmin with full passthrough. "
-        "Use --arg repeatedly or pass raw trailing tokens after '--'."
-    ),
+    help=("Run bundled Ghidra svrAdmin with full passthrough. Use --arg repeatedly or pass raw trailing tokens after '--'."),
 )
 @click.option("--arg", "args", multiple=True, help="Raw token forwarded to svrAdmin (repeatable).")
 @click.option("--command", help="Optional command string tokenized server-side and appended.")

@@ -11,10 +11,12 @@ import json
 import logging
 import os
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

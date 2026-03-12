@@ -32,9 +32,9 @@ from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.launcher import AgentDecompileLauncher
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.auth import AuthConfig
 from agentdecompile_cli.project_manager import ProjectManager
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.utils import get_client, run_async
 
 if TYPE_CHECKING:
@@ -200,17 +200,9 @@ def _resolve_proxy_backend_url(
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENTDECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENTDECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENTDECOMPILE_BACKEND_URL") or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENTDECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())
@@ -392,13 +384,7 @@ def _normalize_shared_server_env_aliases() -> None:
     _resolved_user = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
     _resolved_pass = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
     if _resolved_host or _resolved_port or _resolved_repo or _resolved_user:
-        sys.stderr.write(
-            f"[env-normalize] shared server: host={_resolved_host or '(not set)'}"
-            f", port={_resolved_port or '(not set)'}"
-            f", repo={_resolved_repo or '(not set)'}"
-            f", username={'(set)' if _resolved_user else '(not set)'}"
-            f", password={'(set)' if _resolved_pass else '(not set)'}\n"
-        )
+        sys.stderr.write(f"[env-normalize] shared server: host={_resolved_host or '(not set)'}, port={_resolved_port or '(not set)'}, repo={_resolved_repo or '(not set)'}, username={'(set)' if _resolved_user else '(not set)'}, password={'(set)' if _resolved_pass else '(not set)'}\n")
     else:
         sys.stderr.write("[env-normalize] No shared Ghidra server env vars detected.\n")
 
@@ -486,10 +472,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
 def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
     """Resolve and validate project path inputs into directory/name/.gpr tuple."""
     project_path = _resolve_default_project_path(args.project_path).resolve()
-    sys.stderr.write(
-        f"[project-paths] raw='{args.project_path}' \u2192 resolved='{project_path}'"
-        f" (suffix='{project_path.suffix}', project_name='{args.project_name}')\n"
-    )
+    sys.stderr.write(f"[project-paths] raw='{args.project_path}' \u2192 resolved='{project_path}' (suffix='{project_path.suffix}', project_name='{args.project_name}')\n")
     if project_path.suffix.lower() == ".gpr":
         if args.project_name != "my_project":
             parser.error("Cannot use --project-name with a .gpr file")
@@ -793,10 +776,7 @@ def main() -> None:
 
     # Setup project paths
     project_directory, project_name, project_path_gpr = _setup_project_paths(parser, args)
-    sys.stderr.write(
-        f"[main] project_directory={project_directory!r}, project_name={project_name!r},"
-        f" project_path_gpr={project_path_gpr!r}\n"
-    )
+    sys.stderr.write(f"[main] project_directory={project_directory!r}, project_name={project_name!r}, project_path_gpr={project_path_gpr!r}\n")
 
     # Initialize PyGhidra
     _initialize_pyghidra(args.verbose_analysis)
@@ -901,10 +881,7 @@ def proxy_main() -> None:
         getattr(args, "mcp_server_url", None),
     )
     if not backend_url or not backend_url.strip():
-        sys.stderr.write(
-            "agentdecompile-proxy requires a backend URL. Set --backend-url or --mcp-server-url, "
-            "or env AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL.\n"
-        )
+        sys.stderr.write("agentdecompile-proxy requires a backend URL. Set --backend-url or --mcp-server-url, or env AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL.\n")
         sys.exit(1)
     backend_url = normalize_backend_url(backend_url.strip())
 

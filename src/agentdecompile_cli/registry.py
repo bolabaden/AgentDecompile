@@ -24,10 +24,11 @@ import re
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mcp import types
-from mcp.client.session import ClientSession
+if TYPE_CHECKING:
+    from mcp import types
+    from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,7 @@ MODE_PARAM_ALIASES: frozenset[str] = frozenset(
     },
 )
 
+# Parameter names that may hold natural-language instructions; used by NL parsing to find user intents
 NATURAL_LANGUAGE_INPUT_KEYS: frozenset[str] = frozenset(
     {
         "applescript",
@@ -303,7 +305,25 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     ),
     "manage-function-tags": _params("programPath", "function", "mode", "tags"),
     "manage-function": _params(
-        "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions"
+        "programPath",
+        "mode",
+        "address",
+        "functionIdentifier",
+        "name",
+        "functions",
+        "oldName",
+        "newName",
+        "variableMappings",
+        "prototype",
+        "variableName",
+        "newType",
+        "datatypeMappings",
+        "archiveName",
+        "createIfNotExists",
+        "propagate",
+        "propagateProgramPaths",
+        "propagateMaxCandidates",
+        "propagateMaxInstructions",
     ),
     "manage-strings": _params("programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions"),
     "manage-structures": _params(
@@ -565,13 +585,12 @@ def _find_repo_root_for_tools_list() -> Path | None:
 def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dict[str, set[str]]], dict[str, str]]:
     """Parse TOOLS_LIST.md and extract parameter names, param aliases, and tool aliases.
 
-    Reads the TOOLS_LIST.md file and extracts:
-    - Tool parameter definitions
-    - Parameter aliases/synonyms
-    - Tool aliases (forwarding relationships)
+    Returns a 3-tuple: (tool_params, tool_param_aliases, tool_aliases).
+    - tool_params: canonical tool name → list of param names.
+    - tool_param_aliases: param alias → set of canonical param names (e.g. "action" → {"mode"}).
+    - tool_aliases: alias tool name → canonical tool name.
 
-    This enables dynamic synchronization between documentation and code,
-    ensuring tool specifications stay in sync with the implementation.
+    Reads the TOOLS_LIST.md file when present so documentation and code stay in sync.
 
     Returns:
         Tuple of (params_by_tool, param_aliases_by_tool_norm, tool_aliases_by_norm):
@@ -1029,12 +1048,8 @@ class ToolRegistry:
         # Pre-computed normalized (alpha-only, lowercase) lookups so that
         # callers using alpha-only keys (e.g. "getdata") resolve correctly
         # alongside the kebab-case storage keys (e.g. "get-data").
-        self._params_by_norm: dict[str, list[str]] = {
-            normalize_identifier(t.value): p for t, p in TOOL_PARAMS.items()
-        }
-        self._display_name_by_norm: dict[str, str] = {
-            normalize_identifier(t.value): t.value for t in TOOL_PARAMS
-        }
+        self._params_by_norm: dict[str, list[str]] = {normalize_identifier(t.value): p for t, p in TOOL_PARAMS.items()}
+        self._display_name_by_norm: dict[str, str] = {normalize_identifier(t.value): t.value for t in TOOL_PARAMS}
         self._tool_by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in self._tools}
 
     def get_tools(self) -> list[str]:

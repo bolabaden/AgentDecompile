@@ -1,8 +1,8 @@
 """Memory Tool Provider - inspect-memory, read-bytes.
 
-  - inspect-memory: mode = blocks (memory map), read (raw bytes at address), data_at
-    (typed data at address), data_items (list of defined data), segments (alias for blocks).
-  - read-bytes: Convenience handler that delegates to inspect-memory with mode=read.
+- inspect-memory: mode = blocks (memory map), read (raw bytes at address), data_at
+  (typed data at address), data_items (list of defined data), segments (alias for blocks).
+- read-bytes: Convenience handler that delegates to inspect-memory with mode=read.
 """
 
 from __future__ import annotations
@@ -13,16 +13,18 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryToolProvider(ToolProvider):
+    """Provides inspect-memory (blocks/read/data_at/data_items) and read-bytes (delegates to inspect-memory mode=read)."""
+
     HANDLERS = {"inspectmemory": "_handle", "readbytes": "_handle_read_bytes"}
 
     @staticmethod
@@ -81,7 +83,7 @@ class MemoryToolProvider(ToolProvider):
         """Normalize read-bytes params (binaryName→programPath, address→addressOrSymbol, size→length) and delegate to inspect-memory mode=read."""
         forwarded = dict(args)
         forwarded.setdefault("mode", "read")
-
+        # Map read-bytes-specific param names to what _handle expects
         self._set_forwarded_if_missing(forwarded, "programpath", forwarded.get("binaryname"))
         self._set_forwarded_if_missing(forwarded, "addressorsymbol", forwarded.get("address"))
         if forwarded.get("length") is None and forwarded.get("size") is not None:
@@ -113,7 +115,11 @@ class MemoryToolProvider(ToolProvider):
         )
 
     async def _handle_blocks(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
-        """Return memory map: each block has name, start, end, size, r/w/x permissions, initialized flag."""
+        """Return memory map: each block has name, start, end, size, r/w/x permissions, initialized flag.
+
+        Blocks are the program's memory regions (e.g. .text, .data, .rdata); useful to find
+        where code vs data lives before reading bytes or applying types.
+        """
         blocks = []
         for blk in memory.getBlocks():
             blocks.append(
@@ -130,6 +136,7 @@ class MemoryToolProvider(ToolProvider):
         return create_success_response({"mode": "blocks", "blocks": blocks, "count": len(blocks)})
 
     async def _handle_read(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+        """Read raw bytes at address; return hex dump and ASCII view. Cap length at 10000 to avoid huge responses."""
         addr_str = self._require_address_or_symbol(args)
         length = self._get_int(args, "length", "size", "len", default=256)
         length = min(length, 10000)
@@ -139,6 +146,7 @@ class MemoryToolProvider(ToolProvider):
         try:
             actual = memory.getBytes(addr, buf)
         except Exception:
+            # Some Ghidra versions or address spaces don't support getBytes; fall back to byte-by-byte read
             actual = 0
             for i in range(length):
                 try:
@@ -191,7 +199,10 @@ class MemoryToolProvider(ToolProvider):
         )
 
     async def _handle_data_items(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
-        """List all memory locations that have a data type applied (getDefinedData), paginated."""
+        """List all memory locations that have a data type applied (getDefinedData), paginated.
+
+        getDefinedData(True) walks the listing forward; each item has address, dataType, length, label.
+        """
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         listing = self._get_listing(program)

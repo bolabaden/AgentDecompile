@@ -28,11 +28,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-scout-broad-sweep",
         "title": "Scout: Broad Sweep Discovery",
-        "description": (
-            "A broad surface-level sweep of the binary to discover ALL symbols, "
-            "strings, cross-references, and namespaces related to a target subsystem. "
-            "This agent casts a wide net and prioritises coverage over depth."
-        ),
+        "description": ("A broad surface-level sweep of the binary to discover ALL symbols, strings, cross-references, and namespaces related to a target subsystem. This agent casts a wide net and prioritises coverage over depth."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project (e.g. /K1/swkotor.exe)", "required": True},
             {"name": "analysis_target", "description": "Subsystem to investigate (e.g. 'save/load serialization', 'combat system', 'dialog engine')", "required": True},
@@ -87,11 +83,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-diver-deep-dive",
         "title": "Diver: Deep Dive Decompilation",
-        "description": (
-            "Decompiles and extracts complete C/C++ source-equivalent code for ALL "
-            "functions related to the target subsystem. Traces full call chains and "
-            "extracts data structures."
-        ),
+        "description": ("Decompiles and extracts complete C/C++ source-equivalent code for ALL functions related to the target subsystem. Traces full call chains and extracts data structures."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project", "required": True},
             {"name": "analysis_target", "description": "Subsystem to investigate", "required": True},
@@ -144,11 +136,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-bottom-up-analyst",
         "title": "Bottom-Up Analyst: Primitives to Entry Points",
-        "description": (
-            "Starts from low-level I/O primitives and traces callers upward, "
-            "decompiling the full chain from file operations to high-level entry "
-            "points. Discovers patterns humans would miss."
-        ),
+        "description": ("Starts from low-level I/O primitives and traces callers upward, decompiling the full chain from file operations to high-level entry points. Discovers patterns humans would miss."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project", "required": True},
             {"name": "analysis_target", "description": "Subsystem to investigate", "required": True},
@@ -246,11 +234,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-data-architect",
         "title": "Data Architect: Structure & Type Reconstruction",
-        "description": (
-            "Translates reverse engineering findings into formal Ghidra data types: "
-            "structures, enums, and type definitions. Validates against existing types "
-            "and applies them to the binary."
-        ),
+        "description": ("Translates reverse engineering findings into formal Ghidra data types: structures, enums, and type definitions. Validates against existing types and applies them to the binary."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project", "required": True},
             {"name": "analysis_target", "description": "Subsystem to investigate", "required": True},
@@ -395,12 +379,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-convergence-orchestrator",
         "title": "Convergence Orchestrator: Multi-Subagent Verification",
-        "description": (
-            "Meta-prompt that orchestrates multiple independent subagents (Scout, Diver, "
-            "Bottom-Up, Top-Down) to analyse the same subsystem from different angles. "
-            "Subagents do NOT communicate — the orchestrator compares their outputs and "
-            "identifies discrepancies until findings converge."
-        ),
+        "description": ("Meta-prompt that orchestrates multiple independent subagents (Scout, Diver, Bottom-Up, Top-Down) to analyse the same subsystem from different angles. Subagents do NOT communicate — the orchestrator compares their outputs and identifies discrepancies until findings converge."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project", "required": True},
             {"name": "analysis_target", "description": "Subsystem to investigate", "required": True},
@@ -460,12 +439,7 @@ _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "re-iterative-verifier",
         "title": "Iterative Verifier: Repeat Until Converged",
-        "description": (
-            "Takes existing analysis findings and independently re-verifies them "
-            "by re-running tool calls, cross-checking addresses, and confirming "
-            "decompiled output matches expectations. Keeps iterating until findings "
-            "are stable across consecutive runs."
-        ),
+        "description": ("Takes existing analysis findings and independently re-verifies them by re-running tool calls, cross-checking addresses, and confirming decompiled output matches expectations. Keeps iterating until findings are stable across consecutive runs."),
         "arguments": [
             {"name": "program_path", "description": "Path to the program in the Ghidra project", "required": True},
             {"name": "analysis_target", "description": "Subsystem to verify", "required": True},
@@ -542,7 +516,7 @@ def _render_messages(
             types.PromptMessage(
                 role=msg_def["role"],
                 content=types.TextContent(type="text", text=text),
-            )
+            ),
         )
     return messages
 
@@ -569,7 +543,7 @@ def list_prompts() -> list[types.Prompt]:
                 name=p["name"],
                 description=p.get("description"),
                 arguments=prompt_args if prompt_args else None,
-            )
+            ),
         )
     return prompts
 

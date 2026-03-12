@@ -27,13 +27,13 @@ import os
 import re
 import time
 
-from collections.abc import Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.launcher import ProgramInfo
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -45,7 +45,6 @@ from agentdecompile_cli.registry import (
     DISABLED_GUI_ONLY_TOOLS,
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
-    ToolName,
     is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
@@ -54,7 +53,11 @@ from agentdecompile_cli.registry import (
 )
 
 if TYPE_CHECKING:
-    from agentdecompile_cli.launcher import ProgramInfo
+    from collections.abc import Awaitable, Callable
+
+    from agentdecompile_cli.registry import (
+        ToolName,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -779,7 +782,7 @@ class ToolProvider:
 
             lowered = normalized_step.lower()
             entries: list[tuple[str, dict[str, Any]]] = []
-
+            # Match suggested-step phrases to concrete tool + args (for prerequisiteCall in error response)
             if "call `list-project-files`" in lowered:
                 entries.append(("list-project-files", {}))
 
@@ -830,7 +833,7 @@ class ToolProvider:
             }
 
         invocation_args = dict(tool_args)
-        invocation_args["__auto_prereq_invocation"] = True
+        invocation_args["__auto_prereq_invocation"] = True  # skip building nested prerequisite context on this call
         response = await self._manager.call_tool(tool_name, invocation_args, program_info=self.program_info)
 
         output: Any
@@ -855,6 +858,7 @@ class ToolProvider:
         }
 
     async def _build_prerequisite_call_context(self, error: ActionableError, args: dict[str, Any]) -> dict[str, Any] | None:
+        """Build error context with prerequisiteCalls: merge error's next_steps with inferred steps, run suggested tools, attach outputs."""
         inferred_context, inferred_steps = _default_error_guidance(error.message)
         combined_steps = _merge_steps(error.next_steps, inferred_steps)
         combined_context = _merge_context(error.context, inferred_context)
@@ -893,6 +897,7 @@ class ToolProvider:
 
     @staticmethod
     def _get_str(args: dict[str, Any], *keys: str, default: str = "") -> str:
+        """First non-empty string value for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None and str(v).strip():
@@ -901,6 +906,7 @@ class ToolProvider:
 
     @staticmethod
     def _get_int(args: dict[str, Any], *keys: str, default: int = 0) -> int:
+        """First value that coerces to int for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -909,6 +915,7 @@ class ToolProvider:
 
     @staticmethod
     def _get_bool(args: dict[str, Any], *keys: str, default: bool = False) -> bool:
+        """First value that coerces to bool for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -917,6 +924,7 @@ class ToolProvider:
 
     @staticmethod
     def _get_list(args: dict[str, Any], *keys: str) -> list | None:
+        """First value that coerces to list for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -1043,8 +1051,8 @@ class ToolProvider:
         Raises:
             ActionableError: If mode/key not found in dispatch
         """
+        # Pattern 1: (dispatch_dict, key, param_name) → returns handler callable for caller to invoke
         if len(args) == 3 and isinstance(args[0], dict) and isinstance(args[1], str) and isinstance(args[2], str):
-            # Pattern 1: _dispatch_handler(dispatch, key, param_name) -> callable
             dispatch, key, param_name = args
             handler = dispatch.get(key)
             if handler is None:
@@ -1058,8 +1066,8 @@ class ToolProvider:
                     ],
                 )
             return handler
+        # Pattern 2: (args_dict, mode_key, dispatch_dict, **kwargs) → invokes handler and returns result
         if len(args) == 3 and isinstance(args[2], dict):
-            # Pattern 2: _dispatch_handler(args, mode, dispatch_dict, **kwargs) -> result
             args_dict, mode_key, dispatch_dict = args
             mode_norm = n(mode_key)
             normalized_dispatch = {n(k): v for k, v in dispatch_dict.items()}
@@ -1099,6 +1107,7 @@ class ToolProvider:
             )
 
     def _require_ghidra(self) -> None:
+        """Ensure GhidraTools wrapper is available; used by providers that need script/analysis beyond raw program API."""
         if self.ghidra_tools is None:
             raise ActionableError(
                 "No program loaded (Ghidra tools unavailable)",
@@ -1119,7 +1128,11 @@ class ToolProvider:
         program: Any | None = None,
         include_externals: bool = True,
     ) -> Any | None:
-        """Resolve a function by name, entrypoint string, or address/symbol."""
+        """Resolve a function by name, entrypoint string, or address/symbol.
+
+        Tries in order: exact name match, exact entry point string, then AddressUtil
+        (hex address or symbol name) and getFunctionContaining(addr).
+        """
         if not function_identifier:
             return None
 
@@ -1218,6 +1231,7 @@ class ToolProvider:
         reason: str | None = None,
         max_instructions: int = 300,
     ) -> str:
+        """When DecompInterface is unavailable, return a comment block + disassembly up to max_instructions."""
         listing = program.getListing()
         body = target_func.getBody()
         lines: list[str] = []
@@ -1412,7 +1426,8 @@ class ToolProviderManager:
         self.ghidra_project = project
 
     def _register(self, provider: ToolProvider) -> None:
-        provider._manager = self  # back-reference for cross-provider updates
+        """Register a provider: store back-reference for prerequisite calls, then map each of its tool names to this provider."""
+        provider._manager = self
         self.providers.append(provider)
         for tool in provider.list_tools():
             self._tool_map[n(tool.name)] = provider
@@ -1444,6 +1459,7 @@ class ToolProviderManager:
             VtableToolProvider,
         )
 
+        # Register each provider; one failure does not block others
         for cls in (
             BookmarkToolProvider,
             CallGraphToolProvider,
@@ -1491,6 +1507,7 @@ class ToolProviderManager:
                 logger.warning("_on_program_info_changed callback failed: %s", e)
 
     def _get_project_provider(self) -> Any | None:
+        """Return the provider that handles open-project and shared checkout (ProjectToolProvider)."""
         for provider in self.providers:
             if hasattr(provider, "_handle_open") and hasattr(provider, "_checkout_shared_program"):
                 return provider
@@ -1511,8 +1528,7 @@ class ToolProviderManager:
 
         open_args: dict[str, Any] = {
             "serverhost": host,
-            "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip()
-            or "13100",
+            "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
             "serverusername": os.getenv(
                 "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
                 os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")),
@@ -1743,6 +1759,7 @@ class ToolProviderManager:
             for key, value in properties.items():
                 props_by_norm[n(key)] = value
 
+            # Build properties from canonical param list; use provider schema when present, else infer from param name
             advertised_properties: dict[str, Any] = {}
             for param in canonical_params:
                 snake_param = to_snake_case(param)
@@ -1756,6 +1773,7 @@ class ToolProviderManager:
 
                 advertised_properties[snake_param] = provider_param_schema or _infer_param_schema(param)
 
+            # Let client choose markdown (human-readable) vs json (machine-readable) for tool output
             advertised_properties["format"] = {
                 "type": "string",
                 "enum": ["markdown", "json"],
@@ -1763,6 +1781,7 @@ class ToolProviderManager:
                 "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended.",
             }
 
+            # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema
             required_norm: set[str] = {n(str(item)) for item in required}
             advertised_required: list[str] = []
             for param in canonical_params:
@@ -1776,7 +1795,7 @@ class ToolProviderManager:
             # Build schema from canonical params + provider schema; add format (markdown/json) for response formatting
             advertised_tools.append(
                 types.Tool(
-                    name=to_snake_case(canonical_name),
+                    name=canonical_name,
                     description=(provider_tool.description if provider_tool is not None and getattr(provider_tool, "description", None) else canonical_name),
                     inputSchema={
                         "type": "object",
@@ -1808,8 +1827,8 @@ class ToolProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
+        session_id: str = get_current_mcp_session_id()
         resolved_name: str = resolve_tool_name(name) or name
-        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, session_id)
         tool_enum: ToolName | None = resolve_tool_name_enum(name)
         if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
@@ -1822,7 +1841,7 @@ class ToolProviderManager:
                     ],
                 ),
             )
-        session_id: str = get_current_mcp_session_id()
+        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, session_id)
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
         norm_name = n(resolved_name)
@@ -1866,7 +1885,7 @@ class ToolProviderManager:
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
         logger.debug("normalized args: %s", norm_args)
 
-        # Resolve which program this tool runs against: explicit arg wins, then session active, then manager default
+        # Program resolution order: args (programPath/binary/path) → session active → manager default
         requested_program_key: str | None = None
         for key in ("programpath", "binary", "binaryname", "path"):
             value = norm_args.get(key)
@@ -1886,6 +1905,7 @@ class ToolProviderManager:
         session_program_info = SESSION_CONTEXTS.get_active_program_info(session_id)
         effective_program_info = requested_program_info or session_program_info or self.program_info
 
+        # Client asked for a program we couldn't open: attach list-project-files result so they can see available paths
         if requested_program_key and effective_program_info is None:
             prereq_calls: list[dict[str, Any]] = []
             try:
@@ -1939,9 +1959,9 @@ class ToolProviderManager:
 
         result = await provider.call_tool(name, arguments)
 
-        # Auto match-function propagation: after function-modifying tools, optionally run match-function
-        # internally (env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE). Recursion guard: skip when this call
-        # is the internal match-function invocation.
+        # Auto match-function: when env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE is set and this tool+mode
+        # is a trigger (e.g. managefunction+rename), run match-function in background to propagate
+        # name/tags/comments to other open programs. Skip when we're already inside that invocation.
         if not norm_args.get(AUTO_MATCH_INVOCATION_KEY, False):
             _run_auto_match = False
             env_propagate = os.environ.get(_ENV_AUTO_MATCH_PROPAGATE, "").strip().lower() in ("1", "true", "yes")
@@ -1970,6 +1990,7 @@ class ToolProviderManager:
                         if v is not None and str(v).strip():
                             func_id = str(v).strip()
                             break
+                    # Targets: AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS (comma list) or all other open programs in session
                     target_paths: list[str] = []
                     env_paths = os.environ.get(_ENV_AUTO_MATCH_TARGET_PATHS, "").strip()
                     if env_paths:

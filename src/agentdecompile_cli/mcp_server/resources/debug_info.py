@@ -26,17 +26,17 @@ from mcp import types
 from pydantic import AnyUrl
 
 from agentdecompile_cli.mcp_server.auth import get_current_auth_context
+from agentdecompile_cli.mcp_server.profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
+from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
 from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS, get_current_mcp_session_id
 from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, ToolName
 
-from agentdecompile_cli.mcp_server.profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
-from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
 from .programs import ProgramListResource
 from .static_analysis import StaticAnalysisResultsResource
 
 logger = logging.getLogger(__name__)
 
-# Legacy URIs still accepted so existing clients keep working
+# Legacy URIs still accepted so existing clients keep working; read_resource dispatches by URI to the right payload
 _LEGACY_PROGRAMS_URI = "ghidra://programs"
 _LEGACY_STATIC_ANALYSIS_URI = "ghidra://static-analysis-results"
 _LEGACY_DEBUG_INFO_URI = "ghidra://agentdecompile-debug-info"
@@ -46,7 +46,7 @@ _SUPPORTED_URIS = frozenset(
         _LEGACY_PROGRAMS_URI,
         _LEGACY_STATIC_ANALYSIS_URI,
         _LEGACY_DEBUG_INFO_URI,
-    }
+    },
 )
 
 _VERSION_CONTROL_TOOLS_DOC = {
@@ -77,7 +77,7 @@ _VERSION_CONTROL_TOOLS_DOC = {
             "modesRelevantToVersionControl": ["checkout", "uncheckout", "unhijack"],
         },
     ],
-    "workflow": "1. open-project (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment=\"Description of changes\".",
+    "workflow": '1. open-project (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment="Description of changes".',
 }
 
 
@@ -93,15 +93,17 @@ class DebugInfoResource(ResourceProvider):
         super().__init__(*args, **kwargs)
         self._start_time: float = time.time()
         self._resource_read_count: int = 0
-        self._programs_resource = ProgramListResource()
-        self._static_analysis_resource = StaticAnalysisResultsResource()
+        self._programs_resource: ProgramListResource = ProgramListResource()
+        self._static_analysis_resource: StaticAnalysisResultsResource = StaticAnalysisResultsResource()
 
     def set_program_info(self, program_info) -> None:
+        """Forward program_info to sub-resources so ghidra://programs and ghidra://static-analysis-results see the same program."""
         super().set_program_info(program_info)
         self._programs_resource.set_program_info(program_info)
         self._static_analysis_resource.set_program_info(program_info)
 
     def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+        """Forward manager to sub-resources so list-project-files / get-current-program and programs/static-analysis can call tools."""
         super().set_tool_provider_manager(tool_provider_manager)
         self._programs_resource.set_tool_provider_manager(tool_provider_manager)
         self._static_analysis_resource.set_tool_provider_manager(tool_provider_manager)
@@ -623,7 +625,7 @@ class DebugInfoResource(ResourceProvider):
                     "username": auth_ctx.username,
                     "password": auth_ctx.password,
                     "repository": auth_ctx.repository,
-                }
+                },
             )
 
         env_state = self._sanitize_sensitive(
@@ -659,7 +661,7 @@ class DebugInfoResource(ResourceProvider):
                     "AGENT_DECOMPILE_SERVER_PASSWORD",
                     "AGENTDECOMPILE_SERVER_PASSWORD",
                 ),
-            }
+            },
         )
 
         return {
@@ -703,7 +705,7 @@ class DebugInfoResource(ResourceProvider):
                         "path": str(item),
                         "isDirectory": item.is_dir(),
                         "size": None if item.is_dir() else item.stat().st_size,
-                    }
+                    },
                 )
             except Exception as exc:
                 entries.append(
@@ -711,7 +713,7 @@ class DebugInfoResource(ResourceProvider):
                         "name": item.name,
                         "path": str(item),
                         "error": str(exc),
-                    }
+                    },
                 )
 
         return {

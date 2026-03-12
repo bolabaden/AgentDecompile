@@ -27,10 +27,7 @@ import json
 import os
 import sys
 
-from collections import deque
-from collections.abc import Iterable
 from pathlib import Path
-from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -43,7 +40,6 @@ except ImportError:
     BrokenResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
     ClosedResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
 
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from httpx import AsyncClient, Timeout
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -60,9 +56,14 @@ from mcp.types import (
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
-from agentdecompile_cli.registry import resolve_tool_name, ToolName
+from agentdecompile_cli.registry import resolve_tool_name
 
 if TYPE_CHECKING:
+    from collections import deque
+    from collections.abc import Iterable
+    from types import TracebackType
+
+    from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
     from mcp.server.lowlevel.helper_types import ReadResourceContents
     from mcp.server.lowlevel.server import (
         CombinationContent,
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
         UnstructuredContent,
     )
     from mcp.types import (
-        CallToolResult,
         GetPromptResult,
         Prompt,
         Resource,
@@ -233,11 +233,12 @@ class RawMcpHttpBackend:
             retry_url = f"{self._url}/"
             resp = await self._client.post(retry_url, json=body, headers=self._headers())
 
-        # Capture session id.
+        # Capture session id from response so subsequent requests reuse the same session
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
         if sid:
             self._session_id = sid
 
+        # Some servers expose /mcp but not /mcp/message; retry without /message on 404
         if resp.status_code == 404 and self._url.endswith("/mcp/message/"):
             retry_url = self._url.rstrip("/")
             resp = await self._client.post(retry_url, json=body, headers=self._headers())
@@ -747,7 +748,9 @@ class AgentDecompileStdioBridge:
             return lock
 
     async def _ensure_backend(self, session_id: str | None = None) -> RawMcpHttpBackend:
-        """Return (or lazily create) the backend connection for one frontend session."""
+        """Return (or lazily create) the backend connection for one frontend session.
+        Per-session lock prevents concurrent requests from opening duplicate connections.
+        """
         sid = session_id or self._current_frontend_session_id()
         backend = self._backends.get(sid)
         if backend is not None and backend._initialized:
@@ -792,11 +795,7 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         )
         if not server_host:
-            sys.stderr.write(
-                "[auto-open] No shared server host found in env. Checked:"
-                " AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST,"
-                " AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n"
-            )
+            sys.stderr.write("[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n")
             return  # No shared server configured – nothing to auto-open.
 
         server_port = (
@@ -807,18 +806,8 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or "13100"
         )
-        server_username = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-        )
-        server_password = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-        )
+        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
         repository = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
@@ -826,13 +815,7 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
         )
-        sys.stderr.write(
-            f"[auto-open] Resolved env: host={server_host!r},"
-            f" port={server_port!r},"
-            f" username={'(set)' if server_username else '(not set)'},"
-            f" password={'(set)' if server_password else '(not set)'},"
-            f" repository={repository!r}\n"
-        )
+        sys.stderr.write(f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n")
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
@@ -918,7 +901,7 @@ class AgentDecompileStdioBridge:
             await backend.close()
 
     async def _backend_request(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        """Convenience: ensure backend, call *method*, retry once on connection errors."""
+        """Ensure backend for current session, call *method*, retry once on connection errors by resetting session."""
         last_exc: Exception | None = None
         session_id = self._current_frontend_session_id()
         for attempt in range(2):
@@ -932,7 +915,7 @@ class AgentDecompileStdioBridge:
                     sys.stderr.write(
                         f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
                     )
-                    # Invalidate the session so _ensure_backend creates a fresh one.
+                    # Invalidate this session's backend so next _ensure_backend creates a fresh connection
                     await self._reset_backend_session(session_id)
                     continue
                 break

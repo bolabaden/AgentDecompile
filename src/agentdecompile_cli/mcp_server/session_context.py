@@ -85,6 +85,7 @@ class SessionContext:
     Keys in open_programs are program paths (as used by tools). active_program_key
     is the path of the "current" program when the client does not pass programPath.
     """
+
     session_id: str
     project_handle: Any | None = None
     open_programs: dict[str, ProgramInfo] = field(default_factory=dict)
@@ -110,6 +111,7 @@ class SessionContext:
 @dataclass
 class _GraceEntry:
     """A session evicted from the SDK that is kept alive for reconnection."""
+
     context: SessionContext
     evicted_at: float = field(default_factory=time.monotonic)
     grace_seconds: float = _DEFAULT_GRACE_PERIOD
@@ -151,10 +153,7 @@ class SessionContextStore:
     def _purge_expired_grace_entries(self) -> None:
         now = time.monotonic()
         with self._lock:
-            expired = [
-                sid for sid, entry in self._grace.items()
-                if (now - entry.evicted_at) > entry.grace_seconds
-            ]
+            expired = [sid for sid, entry in self._grace.items() if (now - entry.evicted_at) > entry.grace_seconds]
             for sid in expired:
                 entry = self._grace.pop(sid, None)
                 if entry:
@@ -294,6 +293,7 @@ class SessionContextStore:
             return session
 
     def add_tool_history(self, session_id: str, tool_name: str, arguments: dict[str, Any]) -> None:
+        """Append one tool invocation to session history; keep only the last 250 entries to bound memory."""
         session = self.get_or_create(session_id)
         with self._lock:
             session.tool_history.append({"tool": tool_name, "arguments": dict(arguments or {})})
@@ -382,12 +382,14 @@ class SessionContextStore:
             return session.active_program_key
 
     def get_program_info(self, session_id: str, key: str) -> ProgramInfo | None:
+        """Return ProgramInfo for a program key; tries exact key, then case-insensitive and path-normalized matches, then program name."""
         session = self.get_or_create(session_id)
         with self._lock:
             direct = session.open_programs.get(key)
             if direct is not None:
                 return direct
 
+            # Fallback: case-insensitive key match, then path without leading slashes, then Ghidra program name
             key_l = key.strip().lower()
             for existing_key, info in session.open_programs.items():
                 if existing_key.strip().lower() == key_l:
@@ -398,6 +400,7 @@ class SessionContextStore:
                 try:
                     program = getattr(info, "program", None)
                     if program is not None and hasattr(program, "getName"):
+                        # Match by last path component (e.g. "binary.exe") vs program.getName()
                         if str(program.getName()).strip().lower() == key_l.split("/")[-1]:
                             return info
                 except Exception:

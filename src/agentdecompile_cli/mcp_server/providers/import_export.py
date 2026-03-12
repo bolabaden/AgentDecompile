@@ -23,7 +23,6 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -33,6 +32,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +385,13 @@ class ImportExportToolProvider(ToolProvider):
                                 path_in_project = str(df.getPathname())
                         except Exception:
                             pass
-                        imported_programs.append({
-                            "sourcePath": str(item),
-                            "programName": final_name,
-                            "programPath": path_in_project or f"/{final_name}",
-                        })
+                        imported_programs.append(
+                            {
+                                "sourcePath": str(item),
+                                "programName": final_name,
+                                "programPath": path_in_project or f"/{final_name}",
+                            },
+                        )
                         # Leave program in project; do not release (we are not the consumer)
                     except Exception as exc:
                         errors.append({"path": str(item), "error": str(exc)})
@@ -916,10 +918,13 @@ class ImportExportToolProvider(ToolProvider):
                         class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
                             def getComment(self) -> str:  # noqa: N802
                                 return checkin_comment
+
                             def keepCheckedOut(self) -> bool:  # noqa: N802
                                 return _keep
+
                             def createKeepFile(self) -> bool:  # noqa: N802
                                 return False
+
                         domain_file.checkin(_SimpleCheckinHandler(), TaskMonitor.DUMMY)
                         results.append({"programPath": path_key, "success": True})
                     except Exception as e:

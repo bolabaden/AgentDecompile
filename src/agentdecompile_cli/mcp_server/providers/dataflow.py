@@ -1,9 +1,9 @@
 """Data Flow Tool Provider - analyze-data-flow.
 
-  - direction=backward: Where a value at the given address came from (e.g. user input → vulnerability).
-  - direction=forward: Where a value at the given address flows to.
-  - direction=variable_accesses: Reads/writes to a variable at the given address.
-  - Uses Ghidra DecompInterface and P-code analysis; _empty_response builds a consistent empty-result payload for errors or no-data cases.
+- direction=backward: Where a value at the given address came from (e.g. user input → vulnerability).
+- direction=forward: Where a value at the given address flows to.
+- direction=variable_accesses: Reads/writes to a variable at the given address.
+- Uses Ghidra DecompInterface and P-code analysis; _empty_response builds a consistent empty-result payload for errors or no-data cases.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 
-from argparse import Namespace
 from pathlib import Path
 from time import time
 from typing import TYPE_CHECKING, Any
@@ -20,6 +19,8 @@ from agentdecompile_cli.tools.decompile_tool import DecompileTool
 
 # needed for ghidra python vscode autocomplete
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from ghidra.app.decompiler import (
         DecompInterface as GhidraDecompInterface,
         DecompileResults as GhidraDecompileResults,

@@ -6,16 +6,19 @@ with placeholders for CodeQL integration.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
 import subprocess
 import sys
 
-from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import argparse
+
+    from collections.abc import Callable, Mapping, Sequence
 
 
 def run(

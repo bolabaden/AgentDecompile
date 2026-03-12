@@ -20,9 +20,6 @@ import asyncio
 import contextlib
 import sys
 
-from collections import deque
-from collections.abc import Iterable
-from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -36,7 +33,6 @@ except ImportError:
     BrokenResourceError = _PlaceholderConnectionError
     ClosedResourceError = _PlaceholderConnectionError
 
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from httpx import AsyncClient
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -52,6 +48,13 @@ from mcp.types import (
 )
 
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
+
+if TYPE_CHECKING:
+    from collections import deque
+    from collections.abc import Iterable
+    from types import TracebackType
+
+    from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 
 class ClientError(Exception):
@@ -439,16 +442,12 @@ class AgentDecompileStdioBridge:
                 return []
 
         @self.server.get_prompt()
-        async def get_prompt(
-            name: str, arguments: dict[str, str] | None
-        ) -> GetPromptResult:
+        async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
             try:
                 async with self._with_backend_session("get_prompt") as session:
                     return await session.get_prompt(name, arguments)
             except Exception as e:
-                sys.stderr.write(
-                    f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n"
-                )
+                sys.stderr.write(f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n")
                 raise
 
     def _create_initialization_options(self):

@@ -9,13 +9,13 @@ Provides a single, consistent interface for function decompilation.
 
 from __future__ import annotations
 
-import argparse
-
 from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.models import DecompiledFunction
 
 if TYPE_CHECKING:
+    import argparse
+
     from agentdecompile_cli.launcher import ProgramInfo
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
         DecompInterface as GhidraDecompInterface,

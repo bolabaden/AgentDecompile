@@ -1,12 +1,12 @@
 """MCP utilities used by tool providers and the server.
 
-  - AddressUtil: Format/parse/validate Ghidra addresses (0x-prefix hex).
-  - ProgramLookupUtil: Resolve programPath to Program from open programs list.
-  - SymbolUtil: Symbol name/address resolution and formatting.
-  - MemoryUtil: Read bytes, inspect memory at address.
-  - SchemaUtil / SchemaBuilder: Build MCP JSON schema for tool parameters.
-  - DebugLogger: Conditional debug logging.
-  - AgentDecompileInternalServiceRegistry: Internal service lookup (if used).
+- AddressUtil: Format/parse/validate Ghidra addresses (0x-prefix hex).
+- ProgramLookupUtil: Resolve programPath to Program from open programs list.
+- SymbolUtil: Symbol name/address resolution and formatting.
+- MemoryUtil: Read bytes, inspect memory at address.
+- SchemaUtil / SchemaBuilder: Build MCP JSON schema for tool parameters.
+- DebugLogger: Conditional debug logging.
+- AgentDecompileInternalServiceRegistry: Internal service lookup (if used).
 """
 
 from .address_util import AddressUtil

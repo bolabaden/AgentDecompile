@@ -1,11 +1,11 @@
 """Symbol Tool Provider - manage-symbols, search-symbols, list-imports, list-exports, create-label.
 
-  - manage-symbols: mode = symbols|classes|namespaces|imports|exports|create_label|count|
-    rename_data|demangle. List/search/rename symbols; filterDefaultNames skips auto-generated
-    names like FUN_00101000.
-  - search-symbols (search-symbols-by-name): Query symbols by name/pattern.
-  - list-imports / list-exports: Aliases that delegate to manage-symbols with mode imports/exports.
-  - create-label: Alias for manage-symbols mode create_label.
+- manage-symbols: mode = symbols|classes|namespaces|imports|exports|create_label|count|
+  rename_data|demangle. List/search/rename symbols; filterDefaultNames skips auto-generated
+  names like FUN_00101000.
+- search-symbols (search-symbols-by-name): Query symbols by name/pattern.
+- list-imports / list-exports: Aliases that delegate to manage-symbols with mode imports/exports.
+- create-label: Alias for manage-symbols mode create_label.
 """
 
 from __future__ import annotations
@@ -13,12 +13,10 @@ from __future__ import annotations
 import logging
 import re
 
-from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_exports,
     collect_imports,
@@ -28,6 +26,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 

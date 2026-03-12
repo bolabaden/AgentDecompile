@@ -18,20 +18,16 @@ import socket
 import threading
 import time
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
-from mcp import types
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
-from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOLS, ToolName, get_tool_params
 from agentdecompile_cli.mcp_server import prompt_providers
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
-    AuthConfig,
     AuthContext,
     AuthMiddleware,
     get_current_auth_context,
@@ -41,16 +37,28 @@ from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderMan
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, ToolName, get_tool_params
+
+if TYPE_CHECKING:
+    from mcp import types
+    from mcp.server import Server as MCPServer
+
+    from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
+    from agentdecompile_cli.mcp_server.auth import (
+        AuthConfig,
+    )
 
 logger = logging.getLogger(__name__)
 _TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
 
 
 def _safe_list(value: Any) -> list[Any]:
+    """Ensure value is a list for JSON/response building; return empty list if not."""
     return value if isinstance(value, list) else []
 
 
 def _build_tool_alias_index() -> dict[str, list[str]]:
+    """Build canonical tool name → sorted list of alias names for the /tool-reference payload."""
     alias_index: dict[str, list[str]] = {canonical: [] for canonical in TOOLS}
     for alias_name, canonical_name in TOOL_ALIASES.items():
         if canonical_name not in alias_index:
@@ -379,11 +387,7 @@ class PythonMcpServer:
         self.app: FastAPI = FastAPI(
             title=self.config.name,
             version=self.config.version,
-            description=(
-                "AgentDecompile MCP server — exposes Ghidra reverse-engineering capabilities "
-                "as Model Context Protocol tools for AI agents. "
-                "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
-            ),
+            description=("AgentDecompile MCP server — exposes Ghidra reverse-engineering capabilities as Model Context Protocol tools for AI agents. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."),
             docs_url="/docs",
             redoc_url="/redoc",
             openapi_url="/openapi.json",
@@ -467,9 +471,7 @@ class PythonMcpServer:
             return prompt_providers.list_prompts()
 
         @server.get_prompt()
-        async def get_prompt(
-            name: str, arguments: dict[str, str] | None
-        ) -> types.GetPromptResult:
+        async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
             """Resolve a prompt by name with the given arguments."""
             return prompt_providers.get_prompt(name, arguments)
 
@@ -613,7 +615,7 @@ class PythonMcpServer:
                 "local": {
                     "start_server": "uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 --project-path ./agentdecompile_projects",
                     "list_tools": "uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool --list-tools",
-                    "tool_seq": "uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool-seq '[{\"name\":\"open-project\",\"arguments\":{\"path\":\"tests/fixtures/test_x86_64\"}},{\"name\":\"list-functions\",\"arguments\":{\"programPath\":\"test_x86_64\",\"limit\":5}}]'",
+                    "tool_seq": 'uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool-seq \'[{"name":"open-project","arguments":{"path":"tests/fixtures/test_x86_64"}},{"name":"list-functions","arguments":{"programPath":"test_x86_64","limit":5}}]\'',
                 },
                 "shared": {
                     "open": "uv run agentdecompile-cli --mcp-server-url http://host:port/mcp open --server_host $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST --server_port $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT --server_username $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME --server_password $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD /K1/k1_win_gog_swkotor.exe",
@@ -650,11 +652,7 @@ class PythonMcpServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility endpoint",
-                description=(
-                    "Compatibility MCP endpoint for clients that target /mcp/message. "
-                    "Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware "
-                    "before FastAPI routing."
-                ),
+                description=("Compatibility MCP endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"mcp_message_{method.lower()}",
                 openapi_extra=_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -684,6 +682,7 @@ class PythonMcpServer:
             # Capture which sessions exist before the SDK handles the request.
             pre_sessions = set(session_manager._server_instances.keys())
 
+            # Set context vars so tool/resource handlers see this request's session (and optional auth)
             auth_token = None
             if get_current_auth_context() is None:
                 header_auth_ctx = _auth_context_from_scope_headers(scope, self.auth_config)
@@ -704,7 +703,8 @@ class PythonMcpServer:
             new_sids = post_sessions - pre_sessions
             if new_sids and (user_agent or remote_addr):
                 fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
-                    user_agent=user_agent, remote_addr=remote_addr,
+                    user_agent=user_agent,
+                    remote_addr=remote_addr,
                 )
                 for new_sid in new_sids:
                     SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)
@@ -756,8 +756,7 @@ class PythonMcpServer:
                             cleaned = [(k, v) for k, v in raw_headers if k.lower() != b"mcp-session-id"]
                             if in_grace:
                                 logger.info(
-                                    "Session %s not in SDK but in grace period — "
-                                    "stripping header; state will be reclaimed on new session.",
+                                    "Session %s not in SDK but in grace period — stripping header; state will be reclaimed on new session.",
                                     sid[:12],
                                 )
                             else:

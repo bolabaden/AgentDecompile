@@ -1,26 +1,30 @@
 """Constant Search Tool Provider - search-constants.
 
-Modes: specific, range, common.
-Scans instructions for scalar operands matching search criteria.
+- mode=specific: Find instructions that use an exact numeric value.
+- mode=range: Find instructions with operands between minValue and maxValue.
+- mode=common: Find well-known magic/crypto constants (uses _collectors.collect_constants).
+- maxInstructions caps how many instructions are scanned; samplesPerConstant limits examples per constant.
 """
 
 from __future__ import annotations
 
 import logging
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_constants
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_LARGE_PAGE_LIMIT,
     DEFAULT_MAX_INSTRUCTIONS,
     DEFAULT_SAMPLES_PER_CONSTANT,
     ToolProvider,
 )
+from agentdecompile_cli.registry import ToolName
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

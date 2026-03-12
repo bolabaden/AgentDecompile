@@ -29,6 +29,7 @@ class ProgramListResource(ResourceProvider):
 
     @staticmethod
     def _is_programs_uri(uri: str) -> bool:
+        """Return True if URI is ghidra://programs (scheme ghidra, path/netloc 'programs')."""
         parsed = urlsplit(uri)
         if parsed.scheme.lower() != "ghidra":
             return False
@@ -56,6 +57,7 @@ class ProgramListResource(ResourceProvider):
 
         try:
             session_id = get_current_mcp_session_id()
+            # Prefer session's project binaries (from open-project / list-project-files); fallback_to_latest for default session
             session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
             if session_binaries:
                 programs = [
@@ -105,5 +107,5 @@ class ProgramListResource(ResourceProvider):
             return json.dumps({"programs": programs})
         except Exception as e:
             logger.error(f"ProgramListResource: Error reading resource: {e}", exc_info=True)
-            # Return empty list on error instead of raising
+            # Return empty list + error message so clients get a valid JSON response instead of a raised exception
             return json.dumps({"programs": [], "error": str(e)})

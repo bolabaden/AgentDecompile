@@ -8,14 +8,14 @@ Prefer importing from agentdecompile_cli.registry.
 from __future__ import annotations
 
 from agentdecompile_cli.registry import (
+    RESOURCE_URIS,
     RESOURCE_URI_DEBUG_INFO,
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
-    RESOURCE_URIS,
-    ResourceUri,
-    ToolName,
     TOOLS,
     TOOL_PARAMS as _TOOL_PARAMS_ENUM,
+    ResourceUri,
+    ToolName,
     build_tool_payload,
     get_tool_params,
     to_camel_case_key,
@@ -23,14 +23,14 @@ from agentdecompile_cli.registry import (
 
 # Re-export enums and TOOLS from registry (single source of truth).
 __all__ = [
+    "RESOURCE_URIS",
     "RESOURCE_URI_DEBUG_INFO",
     "RESOURCE_URI_PROGRAMS",
     "RESOURCE_URI_STATIC_ANALYSIS",
-    "RESOURCE_URIS",
-    "ResourceUri",
-    "ToolName",
     "TOOLS",
     "TOOL_PARAMS",
+    "ResourceUri",
+    "ToolName",
     "build_tool_payload",
     "get_tool_params",
     "to_camel_case_key",

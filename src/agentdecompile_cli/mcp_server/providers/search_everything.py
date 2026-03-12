@@ -17,7 +17,6 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_bookmarks,
     collect_comments,
@@ -40,6 +39,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -524,6 +524,7 @@ class SearchEverythingToolProvider(ToolProvider):
         max_instructions_scan: int,
         decompile_timeout: int,
     ) -> list[dict[str, Any]]:
+        """Dispatch to the _search_* method for the given scope; program-agnostic scopes (processors, project_files) omit program."""
         if scope == "functions":
             return self._search_functions(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "function_signatures":
@@ -949,7 +950,7 @@ class SearchEverythingToolProvider(ToolProvider):
                     "numComponents": int(struct.get("numComponents", 0)),
                     "isUnion": bool(struct.get("isUnion", False)),
                     **best,
-                }
+                },
             )
         return results
 
@@ -981,7 +982,7 @@ class SearchEverythingToolProvider(ToolProvider):
                         "offset": int(component.get("offset", 0)),
                         "length": int(component.get("length", 0)),
                         **best,
-                    }
+                    },
                 )
         return results
 

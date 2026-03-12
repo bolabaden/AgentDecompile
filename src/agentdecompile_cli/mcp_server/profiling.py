@@ -69,7 +69,7 @@ def _fallback_summary_json(profile_path: Path, *, top_n: int = 10) -> dict[str, 
                     "cumtime": func_stats[3],
                 }
                 for func_key, func_stats in by_cumulative
-            ]
+            ],
         },
     }
 

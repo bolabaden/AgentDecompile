@@ -14,7 +14,6 @@ from typing import Any, cast
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structure_fields,
     collect_structures,
@@ -24,6 +23,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 

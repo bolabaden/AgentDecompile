@@ -18,12 +18,12 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_function_comments,
     collect_function_tags,
 )
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +282,14 @@ class GetFunctionAioToolProvider(ToolProvider):
             it = listing.getInstructions(body, True)
             while it.hasNext() and len(instructions) < max_insns:
                 instr = it.next()
-                instructions.append({
-                    "address": str(instr.getAddress()),
-                    "mnemonic": str(instr.getMnemonicString()),
-                    "operands": str(instr),
-                    "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
-                })
+                instructions.append(
+                    {
+                        "address": str(instr.getAddress()),
+                        "mnemonic": str(instr.getMnemonicString()),
+                        "operands": str(instr),
+                        "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
+                    },
+                )
         return {
             "instructions": instructions,
             "count": len(instructions),
@@ -319,11 +321,13 @@ class GetFunctionAioToolProvider(ToolProvider):
                 for label, code in _TYPES:
                     val = cu.getComment(code)
                     if val:
-                        inline.append({
-                            "address": addr,
-                            "type": label,
-                            "text": str(val),
-                        })
+                        inline.append(
+                            {
+                                "address": addr,
+                                "type": label,
+                                "text": str(val),
+                            },
+                        )
 
         return {
             "entryPoint": entry_comments,
@@ -343,30 +347,26 @@ class GetFunctionAioToolProvider(ToolProvider):
             sym = sym_iter.next()
             addr = sym.getAddress()
             if body.contains(addr):
-                labels.append({
-                    "name": str(sym.getName()),
-                    "address": str(addr),
-                    "type": str(sym.getSymbolType()),
-                    "isPrimary": bool(sym.isPrimary()),
-                    "source": str(sym.getSource()) if hasattr(sym, "getSource") else "",
-                })
+                labels.append(
+                    {
+                        "name": str(sym.getName()),
+                        "address": str(addr),
+                        "type": str(sym.getSymbolType()),
+                        "isPrimary": bool(sym.isPrimary()),
+                        "source": str(sym.getSource()) if hasattr(sym, "getSource") else "",
+                    },
+                )
             else:
                 break  # past the body
         return labels
 
     @staticmethod
     def _collect_callers(func: Any) -> list[dict[str, Any]]:
-        return [
-            {"name": c.getName(), "address": str(c.getEntryPoint())}
-            for c in func.getCallingFunctions(None)
-        ]
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in func.getCallingFunctions(None)]
 
     @staticmethod
     def _collect_callees(func: Any) -> list[dict[str, Any]]:
-        return [
-            {"name": c.getName(), "address": str(c.getEntryPoint())}
-            for c in func.getCalledFunctions(None)
-        ]
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in func.getCalledFunctions(None)]
 
     @staticmethod
     def _collect_xrefs(program: Any, entry: Any, max_refs: int) -> list[dict[str, Any]]:
@@ -376,13 +376,15 @@ class GetFunctionAioToolProvider(ToolProvider):
         for ref in ref_mgr.getReferencesTo(entry):
             if len(refs) >= max_refs:
                 break
-            refs.append({
-                "fromAddress": str(ref.getFromAddress()),
-                "toAddress": str(ref.getToAddress()),
-                "type": str(ref.getReferenceType()),
-                "isCall": bool(ref.getReferenceType().isCall()) if hasattr(ref.getReferenceType(), "isCall") else False,
-                "isData": bool(ref.getReferenceType().isData()) if hasattr(ref.getReferenceType(), "isData") else False,
-            })
+            refs.append(
+                {
+                    "fromAddress": str(ref.getFromAddress()),
+                    "toAddress": str(ref.getToAddress()),
+                    "type": str(ref.getReferenceType()),
+                    "isCall": bool(ref.getReferenceType().isCall()) if hasattr(ref.getReferenceType(), "isCall") else False,
+                    "isData": bool(ref.getReferenceType().isData()) if hasattr(ref.getReferenceType(), "isData") else False,
+                },
+            )
         return refs
 
     @staticmethod
@@ -397,12 +399,14 @@ class GetFunctionAioToolProvider(ToolProvider):
             bm = it.next()
             addr = bm.getAddress()
             if body.contains(addr):
-                bookmarks.append({
-                    "address": str(addr),
-                    "type": str(bm.getTypeString()),
-                    "category": str(bm.getCategory()),
-                    "comment": str(bm.getComment() or ""),
-                })
+                bookmarks.append(
+                    {
+                        "address": str(addr),
+                        "type": str(bm.getTypeString()),
+                        "category": str(bm.getCategory()),
+                        "comment": str(bm.getComment() or ""),
+                    },
+                )
             else:
                 break
         return bookmarks
@@ -415,14 +419,16 @@ class GetFunctionAioToolProvider(ToolProvider):
             return {"variables": [], "frameSize": 0}
         variables: list[dict[str, Any]] = []
         for var in frame.getStackVariables():
-            variables.append({
-                "name": str(var.getName()),
-                "offset": int(var.getStackOffset()),
-                "size": int(var.getLength()),
-                "dataType": str(var.getDataType()),
-                "comment": str(var.getComment() or ""),
-                "isParameter": var.getStackOffset() >= 0,  # heuristic: positive offsets = params on many ABIs
-            })
+            variables.append(
+                {
+                    "name": str(var.getName()),
+                    "offset": int(var.getStackOffset()),
+                    "size": int(var.getLength()),
+                    "dataType": str(var.getDataType()),
+                    "comment": str(var.getComment() or ""),
+                    "isParameter": var.getStackOffset() >= 0,  # heuristic: positive offsets = params on many ABIs
+                },
+            )
         return {
             "variables": variables,
             "frameSize": int(frame.getFrameSize()),

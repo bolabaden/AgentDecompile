@@ -19,12 +19,17 @@ All rendering is purely a presentation layer — zero changes to handler logic.
 
 from __future__ import annotations
 
+import logging
 import re
 
-from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agentdecompile_cli.registry import ToolName, is_tool_advertised, normalize_identifier
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Markdown building helpers
@@ -1986,6 +1991,8 @@ def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
 # Tool renderer registry: normalized name → render function
 # ---------------------------------------------------------------------------
 
+# Per-tool markdown renderers: when format=markdown, the intercept uses this map to turn
+# JSON tool output into readable markdown. Tools not listed use _render_generic (table + key blocks).
 TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "executescript": _render_execute_script,
     "decompile": _render_decompile,
@@ -2062,10 +2069,12 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     Returns:
         A markdown string suitable for returning as TextContent.text.
     """
+    logger.debug("render_tool_response tool=%s", normalized_tool_name)
     # Errors are always rendered with _render_error so the user sees a clear message
     if data.get("success") is False:
         body: str = _render_error(data)
     else:
+        # Look up per-tool renderer (key = normalize_identifier(tool_name)); missing or exception → generic table + key blocks
         renderer = TOOL_RENDERERS.get(normalized_tool_name)
         if renderer is not None:
             try:

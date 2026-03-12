@@ -1,9 +1,9 @@
 """Data Tool Provider - get-data, apply-data-type.
 
-  - get-data: Read raw bytes or interpreted data at an address (with optional length).
-    Returns hex dump and/or structured view depending on existing data type.
-  - apply-data-type: Set or change the data type at an address (e.g. define as string,
-    struct, pointer). Used to improve listing and decompilation accuracy.
+- get-data: Read raw bytes or interpreted data at an address (with optional length).
+  Returns hex dump and/or structured view depending on existing data type.
+- apply-data-type: Set or change the data type at an address (e.g. define as string,
+  struct, pointer). Used to improve listing and decompilation accuracy.
 """
 
 from __future__ import annotations
@@ -14,16 +14,18 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
 
 class DataToolProvider(ToolProvider):
+    """Provides get-data (read bytes/typed data at address) and apply-data-type (set type at address for listing/decompiler)."""
+
     HANDLERS = {
         "getdata": "_handle_get",
         "applydatatype": "_handle_apply",
@@ -85,6 +87,7 @@ class DataToolProvider(ToolProvider):
         ]
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Read raw bytes at address; include hex/ascii/both per format. Cap length at 10000."""
         self._require_program()
         addr_str = self._require_address_or_symbol(args)
         length = self._get_int(args, "length", "size", "len", default=16)
@@ -103,7 +106,7 @@ class DataToolProvider(ToolProvider):
         if fmt in ("ascii", "both"):
             result["ascii"] = "".join(chr(b) if 32 <= b < 127 else "." for b in buf[:actual])
 
-        # Also check for defined data at address
+        # If Ghidra has already defined data at this address, include type and value in the response
         listing = self._get_listing(program)
         data = listing.getDataAt(addr)
         if data is not None:
@@ -115,6 +118,7 @@ class DataToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _handle_apply(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Apply a data type at the given address: clear existing code units there, then createData with the parsed type."""
         self._require_program()
         addr_str = self._require_address_or_symbol(args)
         dt_name = self._require_str(args, "datatype", "datatypestring", "type", "typename", name="dataType")
@@ -122,7 +126,6 @@ class DataToolProvider(ToolProvider):
         program = self.program_info.program
         addr = self._resolve_address(addr_str, program=program)
 
-        # Parse data type
         from ghidra.util.data import DataTypeParser
 
         dtm = program.getDataTypeManager()

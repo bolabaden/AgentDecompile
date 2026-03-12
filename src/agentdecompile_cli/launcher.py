@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+# Chromadb is optional; semantic search features degrade gracefully when unavailable
 try:
     import chromadb
 
@@ -34,6 +35,13 @@ try:
 except Exception:
     chromadb = None  # type: ignore[assignment]
     Settings = None  # type: ignore[assignment]
+
+from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    DomainFile,
+)
+from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    Program as GhidraProgram,
+)
 
 from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
 from agentdecompile_cli.registry import ToolName
@@ -46,13 +54,12 @@ if TYPE_CHECKING:
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        DomainFile,
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        Program as GhidraProgram,
+        Function,
     )
 
     from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: F401
@@ -228,10 +235,7 @@ class PyGhidraContext:
             symbols_path: Path to local symbol store.
             sym_file_path: Path to a specific PDB file.
         """
-        sys.stderr.write(
-            f"[PyGhidraContext] Initializing: project_name={project_name!r},"
-            f" project_path={project_path!r}\n"
-        )
+        sys.stderr.write(f"[PyGhidraContext] Initializing: project_name={project_name!r}, project_path={project_path!r}\n")
         self._init_basic_attributes(project_name, project_path)
         self._init_project_and_programs()
         self._init_agentdecompile_directory(agentdecompile_dir)
@@ -239,20 +243,13 @@ class PyGhidraContext:
         self._init_analysis_options(force_analysis, verbose_analysis, no_symbols, gdts, program_options)
         self._init_symbol_configuration(symbols_path, sym_file_path, gzfs_path)
         self._init_threading_and_executors(threaded, max_workers, wait_for_analysis)
-        sys.stderr.write(
-            f"[PyGhidraContext] Ready: {len(self.programs)} program(s) loaded,"
-            f" chromadb={'yes' if self.chroma_client else 'no'},"
-            f" max_workers={self.max_workers}\n"
-        )
+        sys.stderr.write(f"[PyGhidraContext] Ready: {len(self.programs)} program(s) loaded, chromadb={'yes' if self.chroma_client else 'no'}, max_workers={self.max_workers}\n")
 
     def _init_basic_attributes(self, project_name: str, project_path: str | Path) -> None:
         """Initialize basic project attributes."""
         self.project_name: str = project_name
         self.project_path: Path = Path(project_path)
-        sys.stderr.write(
-            f"[PyGhidraContext] project_name={self.project_name!r},"
-            f" project_path={self.project_path!r} (exists={self.project_path.exists()})\n"
-        )
+        sys.stderr.write(f"[PyGhidraContext] project_name={self.project_name!r}, project_path={self.project_path!r} (exists={self.project_path.exists()})\n")
 
     def _init_project_and_programs(self) -> None:
         """Initialize the Ghidra project and existing programs."""
@@ -352,10 +349,7 @@ class PyGhidraContext:
         locator = ProjectLocator(project_dir_str, self.project_name)
         marker_exists = locator.getMarkerFile().exists()
         proj_dir_exists = locator.getProjectDir().exists()
-        sys.stderr.write(
-            f"[_get_or_create_project] dir={project_dir_str!r}, name={self.project_name!r},"
-            f" marker_exists={marker_exists}, proj_dir_exists={proj_dir_exists}\n"
-        )
+        sys.stderr.write(f"[_get_or_create_project] dir={project_dir_str!r}, name={self.project_name!r}, marker_exists={marker_exists}, proj_dir_exists={proj_dir_exists}\n")
 
         if proj_dir_exists and marker_exists:
             logger.info(f"Opening existing project: {self.project_name}")
@@ -809,8 +803,6 @@ class PyGhidraContext:
         Returns:
             Tuple of (documents, ids, metadatas)
         """
-        from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-
         tools = GhidraTools(program_info)
         functions = tools.get_all_functions()
         decompiles: list[str] = []
@@ -1494,18 +1486,9 @@ def _has_shared_server_credentials() -> bool:
     configured, multiple instances must not share the same local project
     directory because Ghidra's file-based locking prevents concurrent access.
     """
-    host = (
-        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_SERVER_HOST", "").strip()
-    )
+    host = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_SERVER_HOST", "").strip()
     result = bool(host)
-    sys.stderr.write(
-        f"[_has_shared_server_credentials] AGENT_DECOMPILE_GHIDRA_SERVER_HOST={host!r}"
-        f" -> result={result}\n"
-    )
+    sys.stderr.write(f"[_has_shared_server_credentials] AGENT_DECOMPILE_GHIDRA_SERVER_HOST={host!r} -> result={result}\n")
     return result
 
 
@@ -1682,15 +1665,10 @@ class AgentDecompileLauncher:
                 os.environ["AGENT_DECOMPILE_PORT"] = str(selected_port)
 
             project_path_setting = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
-            sys.stderr.write(
-                f"[launcher.start] project_directory={project_directory!r},"
-                f" project_name={project_name!r},"
-                f" project_path_setting={project_path_setting!r},"
-                f" selected_host={selected_host!r}, selected_port={selected_port}\n"
-            )
+            sys.stderr.write(f"[launcher.start] project_directory={project_directory!r}, project_name={project_name!r}, project_path_setting={project_path_setting!r}, selected_host={selected_host!r}, selected_port={selected_port}\n")
 
             if project_path_setting:
-                sys.stderr.write(f"[launcher.start] BRANCH: project_path_setting from env -> resolving...\n")
+                sys.stderr.write("[launcher.start] BRANCH: project_path_setting from env -> resolving...\n")
                 projects_dir, resolved_project_name, resolved_project_gpr = _resolve_project_path_setting(
                     project_path_setting,
                     project_name=project_name,
@@ -1698,11 +1676,7 @@ class AgentDecompileLauncher:
                 )
                 project_name = resolved_project_name
                 self.user_project_path = resolved_project_gpr or projects_dir
-                sys.stderr.write(
-                    f"[launcher.start] Resolved: projects_dir={projects_dir!r},"
-                    f" project_name={project_name!r},"
-                    f" user_project_path={self.user_project_path!r}\n"
-                )
+                sys.stderr.write(f"[launcher.start] Resolved: projects_dir={projects_dir!r}, project_name={project_name!r}, user_project_path={self.user_project_path!r}\n")
             elif project_directory is not None and project_name:
                 # When shared Ghidra server credentials are configured, each
                 # instance needs its own local workspace to avoid lock conflicts.
@@ -1712,24 +1686,15 @@ class AgentDecompileLauncher:
                 _default_dirs = {"agentdecompile_projects", "./agentdecompile_projects"}
                 _is_default_dir = Path(project_directory).name in _default_dirs or str(Path(project_directory)).replace("\\", "/").endswith("agentdecompile_projects")
                 _has_shared = _has_shared_server_credentials()
-                sys.stderr.write(
-                    f"[launcher.start] BRANCH: project_directory={project_directory!r},"
-                    f" _is_default_dir={_is_default_dir},"
-                    f" _has_shared_server_credentials={_has_shared},"
-                    f" Path.name={Path(project_directory).name!r}\n"
-                )
+                sys.stderr.write(f"[launcher.start] BRANCH: project_directory={project_directory!r}, _is_default_dir={_is_default_dir}, _has_shared_server_credentials={_has_shared}, Path.name={Path(project_directory).name!r}\n")
                 if _is_default_dir and _has_shared:
                     self.temp_project_dir = Path(tempfile.mkdtemp(prefix="agentdecompile_shared_"))
                     projects_dir = self.temp_project_dir
-                    sys.stderr.write(
-                        f"[launcher.start] Using EPHEMERAL workspace for shared server: {projects_dir}\n"
-                    )
+                    sys.stderr.write(f"[launcher.start] Using EPHEMERAL workspace for shared server: {projects_dir}\n")
                 else:
                     projects_dir = Path(project_directory)
                     projects_dir.mkdir(parents=True, exist_ok=True)
-                    sys.stderr.write(
-                        f"[launcher.start] Using PERSISTENT project dir: {projects_dir}\n"
-                    )
+                    sys.stderr.write(f"[launcher.start] Using PERSISTENT project dir: {projects_dir}\n")
             else:
                 # Stdio mode: ephemeral projects in temp directory (session-scoped, auto-cleanup)
                 # Keeps working directory clean - no .agentdecompile creation in cwd
@@ -1739,10 +1704,7 @@ class AgentDecompileLauncher:
 
                 # Use temp directory for the project (not .agentdecompile/projects)
                 projects_dir = self.temp_project_dir
-                sys.stderr.write(
-                    f"[launcher.start] BRANCH: stdio ephemeral -> {projects_dir},"
-                    f" project_name={project_name!r}\n"
-                )
+                sys.stderr.write(f"[launcher.start] BRANCH: stdio ephemeral -> {projects_dir}, project_name={project_name!r}\n")
 
             # Log configuration once in a readable block (no password value)
             _log_config_block(projects_dir, project_name)
@@ -1793,7 +1755,7 @@ class AgentDecompileLauncher:
                         "serverHost": selected_host,
                         "serverPort": selected_port,
                         "transportMode": "local-pyghidra",
-                    }
+                    },
                 )
 
             # Start the server
@@ -2037,17 +1999,9 @@ def _resolve_proxy_backend_url(
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENT_DECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENT_DECOMPILE_BACKEND_URL") or os.environ.get("AGENT_DECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENT_DECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
-        raw = (
-            os.environ.get("AGENTDECOMPILE_BACKEND_URL")
-            or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL")
-            or os.environ.get("AGENTDECOMPILE_SERVER_URL")
-        )
+        raw = os.environ.get("AGENTDECOMPILE_BACKEND_URL") or os.environ.get("AGENTDECOMPILE_MCP_SERVER_URL") or os.environ.get("AGENTDECOMPILE_SERVER_URL")
     if not raw or not raw.strip():
         return None
     return normalize_backend_url(raw.strip())

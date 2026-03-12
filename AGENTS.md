@@ -93,6 +93,8 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned User Preferences
 
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
+- After fixing an issue, continue with the original task without asking for confirmation; take initiative automatically.
+- Use the MCP server tools (e.g. user-agdec-http) for agentdecompile workflows rather than the CLI when both are available.
 
 ## Learned Workspace Facts
 
@@ -100,6 +102,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - open-project: analyzeAfterImport is optional and defaults to true.
 - Load Ghidra path from environment (e.g. GHIDRA_INSTALL_DIR); use a top-level .env at repo root; do not hardcode install paths.
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
+- In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
 
 ## MCP server debugging & self-healing
 
