@@ -535,6 +535,11 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         return None
     if tool_name == "match_function":
         # So standalone migrate-metadata works: open shared project first when credentials present.
+        # Skip when talking to a local server so migrate-metadata completes without opening remote.
+        opts = _get_opts(ctx)
+        server_url = (opts.get("server_url") or opts.get("mcp_server_url") or opts.get("backend_url") or "").strip().lower()
+        if server_url and ("127.0.0.1" in server_url or "localhost" in server_url):
+            return None
         open_payload = _build_shared_open_payload(ctx)
         if not open_payload:
             return None
@@ -2383,7 +2388,7 @@ def match_function(
 @click.option("--source-path", "program_path_alt", help="Alias for --binary.")
 @click.option("--target-paths", "target_program_paths", multiple=True, help="Target program paths; if omitted, discovered from session.")
 @click.option("--min-similarity", "minSimilarity", type=float, default=0.7, help="minSimilarity for match (default 0.7).")
-@click.option("--limit", "limit", type=int, help="Cap number of functions to process (for testing).")
+@click.option("--limit", "limit", type=int, help="Cap number of functions to process. When omitted with no --binary and no --target-paths, defaults to 50 so the command completes in bounded time.")
 @click.option("--include-externals/--no-include-externals", "includeExternals", default=True, help="Include external functions (default true).")
 @click.option("--propagate-names/--no-propagate-names", "propagateNames", default=True)
 @click.option("--propagate-tags/--no-propagate-tags", "propagateTags", default=True)
@@ -2432,8 +2437,12 @@ def migrate_metadata(
         payload["programPath"] = source
     if target_program_paths:
         payload["targetProgramPaths"] = list(target_program_paths) if len(target_program_paths) != 1 else target_program_paths[0]
-    if limit is not None:
-        payload["limit"] = limit
+    # When no args at all (no binary, no target-paths), default limit so the command completes in bounded time
+    effective_limit = limit
+    if effective_limit is None and not source and not target_program_paths:
+        effective_limit = 50
+    if effective_limit is not None:
+        payload["limit"] = effective_limit
     if do_checkin:
         _run_async(_migrate_metadata_then_checkin(ctx, payload))
     else:
