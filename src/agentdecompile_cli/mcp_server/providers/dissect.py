@@ -8,6 +8,7 @@ in a single MCP tool call. MCP tool name is get-function; this module implements
 
 from __future__ import annotations
 
+from itertools import islice
 import logging
 
 from typing import Any, ClassVar
@@ -85,6 +86,14 @@ class GetFunctionAioToolProvider(ToolProvider):
                             "default": 200,
                             "description": "Cap on cross-references returned, default 200; omit unless needed.",
                         },
+                        "maxCallers": {
+                            "type": "integer",
+                            "description": "Cap on callers returned; omit for no limit.",
+                        },
+                        "maxCallees": {
+                            "type": "integer",
+                            "description": "Cap on callees returned; omit for no limit.",
+                        },
                     },
                     "required": [],
                 },
@@ -107,6 +116,8 @@ class GetFunctionAioToolProvider(ToolProvider):
         timeout = self._get_int(args, "timeout", default=DEFAULT_TIMEOUT_SECONDS)
         max_instructions = self._get_int(args, "maxinstructions", "maxinsns", default=2000)
         max_refs = self._get_int(args, "maxrefs", "maxreferences", default=200)
+        max_callers = self._get_int(args, "maxcallers", default=None)
+        max_callees = self._get_int(args, "maxcallees", default=None)
 
         program = getattr(self.program_info, "program", None)
         if program is None:
@@ -145,8 +156,8 @@ class GetFunctionAioToolProvider(ToolProvider):
         result["labels"] = self._collect_labels(program, body)
 
         # --- Callers & callees ---
-        result["callers"] = self._collect_callers(target)
-        result["callees"] = self._collect_callees(target)
+        result["callers"] = self._collect_callers(target, max_callers)
+        result["callees"] = self._collect_callees(target, max_callees)
 
         # --- Inbound cross-references ---
         result["crossReferences"] = self._collect_xrefs(program, entry, max_refs)
@@ -210,7 +221,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             "segments": parts,
         }
 
-    def _decompile(self, func: Any, program: Any, timeout: int) -> str:
+    def _decompile(self, func: Any, program: Any, timeout: int | None = None) -> str:
         try:
             from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
@@ -236,11 +247,11 @@ class GetFunctionAioToolProvider(ToolProvider):
                 except Exception:
                     pass
 
-            dr = decomp.decompileFunction(func, timeout, monitor)
+            dr: Any = decomp.decompileFunction(func, timeout or 60, monitor)
             if dr and dr.decompileCompleted():
                 df = dr.getDecompiledFunction()
                 code = df.getC() if df else None
-                if code:
+                if code is not None and code.strip():
                     if owns:
                         decomp.dispose()
                     return str(code)
@@ -252,12 +263,12 @@ class GetFunctionAioToolProvider(ToolProvider):
                 retry_opts.grabFromProgram(program)
                 retry.setOptions(retry_opts)
                 retry.openProgram(program)
-                retry_dr = retry.decompileFunction(func, timeout, monitor)
+                retry_dr = retry.decompileFunction(func, timeout or 60, monitor)
                 if retry_dr and retry_dr.decompileCompleted():
                     retry_df = retry_dr.getDecompiledFunction()
                     code = retry_df.getC() if retry_df else None
                     retry.dispose()
-                    if code:
+                    if code is not None and code.strip():
                         if owns:
                             decomp.dispose()
                         return str(code)
@@ -274,13 +285,13 @@ class GetFunctionAioToolProvider(ToolProvider):
         return self._build_decompile_fallback(program, func, "decompiler unavailable", max_instructions=400)
 
     @staticmethod
-    def _disassemble(func: Any, program: Any, max_insns: int) -> dict[str, Any]:
+    def _disassemble(func: Any, program: Any, max_insns: int | None = None) -> dict[str, Any]:
         listing = program.getListing()
         body = func.getBody()
         instructions: list[dict[str, Any]] = []
         if body:
             it = listing.getInstructions(body, True)
-            while it.hasNext() and len(instructions) < max_insns:
+            while it.hasNext() and (max_insns is None or len(instructions) < max_insns):
                 instr = it.next()
                 instructions.append(
                     {
@@ -293,7 +304,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         return {
             "instructions": instructions,
             "count": len(instructions),
-            "truncated": len(instructions) >= max_insns,
+            "truncated": max_insns is not None and len(instructions) >= max_insns,
         }
 
     @staticmethod
@@ -361,20 +372,20 @@ class GetFunctionAioToolProvider(ToolProvider):
         return labels
 
     @staticmethod
-    def _collect_callers(func: Any) -> list[dict[str, Any]]:
-        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in func.getCallingFunctions(None)]
+    def _collect_callers(func: Any, max_callers: int | None = None) -> list[dict[str, Any]]:
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCallingFunctions(None), max_callers)]
 
     @staticmethod
-    def _collect_callees(func: Any) -> list[dict[str, Any]]:
-        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in func.getCalledFunctions(None)]
+    def _collect_callees(func: Any, max_callees: int | None = None) -> list[dict[str, Any]]:
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCalledFunctions(None), max_callees)]
 
     @staticmethod
-    def _collect_xrefs(program: Any, entry: Any, max_refs: int) -> list[dict[str, Any]]:
+    def _collect_xrefs(program: Any, entry: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
         """Inbound cross-references to the function entry point."""
-        ref_mgr = program.getReferenceManager()
+        ref_mgr: Any = program.getReferenceManager()
         refs: list[dict[str, Any]] = []
-        for ref in ref_mgr.getReferencesTo(entry):
-            if len(refs) >= max_refs:
+        for ref in islice(ref_mgr.getReferencesTo(entry), max_refs):
+            if max_refs is not None and len(refs) >= max_refs:
                 break
             refs.append(
                 {
@@ -390,13 +401,13 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_bookmarks(program: Any, body: Any) -> list[dict[str, Any]]:
         """Bookmarks within the function's address range."""
-        bm_mgr = program.getBookmarkManager()
+        bm_mgr: Any = program.getBookmarkManager()
         bookmarks: list[dict[str, Any]] = []
         if body is None:
             return bookmarks
-        it = bm_mgr.getBookmarksIterator(body.getMinAddress(), True)
+        it: Any = bm_mgr.getBookmarksIterator(body.getMinAddress(), True)
         while it.hasNext():
-            bm = it.next()
+            bm: Any = it.next()
             addr = bm.getAddress()
             if body.contains(addr):
                 bookmarks.append(
@@ -412,13 +423,15 @@ class GetFunctionAioToolProvider(ToolProvider):
         return bookmarks
 
     @staticmethod
-    def _collect_stack_frame(func: Any) -> dict[str, Any]:
+    def _collect_stack_frame(func: Any, max_variables: int | None = None) -> dict[str, Any]:
         """Stack frame layout: local variables, parameters, and frame size."""
-        frame = func.getStackFrame()
+        frame: Any = func.getStackFrame()
         if frame is None:
             return {"variables": [], "frameSize": 0}
         variables: list[dict[str, Any]] = []
-        for var in frame.getStackVariables():
+        for var in islice(frame.getStackVariables(), max_variables):
+            if max_variables is not None and len(variables) >= max_variables:
+                break
             variables.append(
                 {
                     "name": str(var.getName()),
@@ -441,8 +454,8 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_memory_block(program: Any, address: Any) -> dict[str, Any] | None:
         """Info about the memory block containing the function entry point."""
-        mem = program.getMemory()
-        block = mem.getBlock(address)
+        mem: Any = program.getMemory()
+        block: Any = mem.getBlock(address)
         if block is None:
             return None
         return {

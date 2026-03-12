@@ -95,6 +95,8 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
 - After fixing an issue, continue with the original task without asking for confirmation; take initiative automatically.
 - Use the MCP server tools (e.g. user-agdec-http) for agentdecompile workflows rather than the CLI when both are available.
+- Default to markdown (not JSON) for tool output; scale output detail by result count (few results = full detail, many = trimmed).
+- Prefer supporting Ghidra server auth via headers or CLI args when possible, not only via process environment.
 
 ## Learned Workspace Facts
 

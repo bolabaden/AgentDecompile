@@ -12,6 +12,7 @@ import logging
 
 from datetime import datetime, timezone
 from itertools import islice
+from typing import Any
 
 from mcp import types
 from pydantic import AnyUrl
@@ -96,10 +97,27 @@ class StaticAnalysisResultsResource(ResourceProvider):
             ],
         }
 
+    def _is_analysis_complete(self, program: Any) -> bool:
+        """Return True if program analysis is complete; safe for ProgramDB and headless."""
+        try:
+            get_state = getattr(program, "getAnalysisState", None)
+            if get_state is not None:
+                state = get_state()
+                if state is not None and hasattr(state, "isDone"):
+                    return bool(state.isDone())
+        except Exception:
+            pass
+        try:
+            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
+            return bool(GhidraProgramUtilities.isAnalyzed(program))
+        except Exception:
+            return False
+
     async def _generate_sarif_report(self) -> dict:
         """Generate a SARIF 2.1.0 compliant static analysis report."""
-        program = self.program_info.program
-        results = []
+        assert self.program_info is not None, "Program info is required to generate SARIF report"
+        program: Any = self.program_info.program
+        results: list[dict[str, Any]] = []
 
         # Collect various analysis results
         results.extend(await self._collect_undefined_references())
@@ -157,7 +175,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
                     ],
                     "results": results,
                     "properties": {
-                        "analysisComplete": program.getAnalysisState().isDone(),
+                        "analysisComplete": self._is_analysis_complete(program),
                         "generatedAt": now,
                         "programPath": str(self.program_info.file_path) if self.program_info.file_path else "unknown",
                     },
@@ -167,8 +185,9 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_undefined_references(self) -> list[dict]:
         """Collect results for undefined references."""
-        results = []
-        program = self.program_info.program
+        results: list[dict[str, Any]] = []
+        assert self.program_info is not None, "Program info is required to collect undefined references"
+        program: Any = self.program_info.program
         ref_mgr = program.getReferenceManager()
 
         try:
@@ -200,8 +219,9 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_bookmarks(self) -> list[dict]:
         """Collect results from bookmarks added during analysis."""
-        results = []
-        program = self.program_info.program
+        results: list[dict[str, Any]] = []
+        assert self.program_info is not None, "Program info is required to collect bookmarks"
+        program: Any = self.program_info.program
         bookmark_mgr = program.getBookmarkManager()
 
         try:
@@ -239,8 +259,9 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_analysis_warnings(self) -> list[dict]:
         """Collect analysis warnings (functions with issues, etc.)."""
-        results = []
-        program = self.program_info.program
+        results: list[dict[str, Any]] = []
+        assert self.program_info is not None, "Program info is required to collect analysis warnings"
+        program: Any = self.program_info.program
 
         try:
             func_mgr = program.getFunctionManager()

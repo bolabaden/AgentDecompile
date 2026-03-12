@@ -1526,32 +1526,75 @@ class ToolProviderManager:
         session_id: str,
         requested_program_key: str,
     ) -> None:
+        """Connect to shared server from request auth context (X-Ghidra-* headers) or env, then checkout the requested program in this session."""
         project_provider = self._get_project_provider()
         if project_provider is None:
             return
 
-        host = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
+        host = ""
+        port_str = "13100"
+        username = ""
+        password = ""
+        repo = ""
+        try:
+            from agentdecompile_cli.mcp_server.auth import get_current_auth_context
+
+            auth_ctx = get_current_auth_context()
+            if auth_ctx is not None and (auth_ctx.server_host or auth_ctx.username):
+                host = (auth_ctx.server_host or "").strip()
+                port_str = str(auth_ctx.server_port) if auth_ctx.server_port else "13100"
+                username = (auth_ctx.username or "").strip()
+                password = (auth_ctx.password or "").strip()
+                repo = (auth_ctx.repository or "").strip()
+        except Exception:
+            pass
+        if not host:
+            host = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENTDECOMPILE_GHIDRA_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")))))
+            ).strip()
         if not host:
             return
+        if not port_str or port_str == "0":
+            port_str = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENTDECOMPILE_GHIDRA_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")))
+            ).strip() or "13100"
+        if not username:
+            username = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_GHIDRA_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))))
+            ).strip()
+        if not password:
+            password = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_GHIDRA_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))))
+            ).strip()
+        if not repo:
+            repo = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")))
+            ).strip()
 
         open_args: dict[str, Any] = {
+            "shared": True,
             "serverhost": host,
-            "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
-            "serverusername": os.getenv(
-                "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
-                os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")),
-            ).strip(),
-            "serverpassword": os.getenv(
-                "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
-                os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", "")),
-            ).strip(),
-            "path": requested_program_key,
+            "serverport": port_str,
+            "serverusername": username,
+            "serverpassword": password,
+            "path": repo or requested_program_key,
         }
 
         try:
-            await project_provider._handle_open(open_args)
+            await project_provider._handle_open_project(open_args)
         except Exception as e:
-            logger.debug("Shared-session bootstrap failed for %s: %s", requested_program_key, e)
+            logger.debug("Shared-session bootstrap (open-project) failed: %s", e)
+            return
+
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        if handle and n(str(handle.get("mode", ""))) == "sharedserver":
+            repository_adapter = handle.get("repository_adapter")
+            if repository_adapter is not None:
+                try:
+                    await project_provider._checkout_shared_program(repository_adapter, requested_program_key, session_id)
+                except Exception as e:
+                    logger.debug("Shared-session bootstrap (checkout program) failed for %s: %s", requested_program_key, e)
 
     def _resolve_project_data(self) -> Any | None:
         ghidra_project = self.ghidra_project

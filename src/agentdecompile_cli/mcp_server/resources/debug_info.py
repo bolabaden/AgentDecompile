@@ -782,12 +782,14 @@ class DebugInfoResource(ResourceProvider):
 
         try:
             prog = self.program_info.current_program
-            listing = prog.getListing() if prog else None
-
-            # Gather analysis metrics
+            # Gather analysis metrics (function count from FunctionManager, not Listing)
             functions_count = 0
-            if listing:
-                functions_count = listing.getNumFunctions()
+            if prog:
+                fm = getattr(prog, "getFunctionManager", None)
+                if fm is not None:
+                    fm = fm()
+                    if fm is not None and hasattr(fm, "getFunctionCount"):
+                        functions_count = int(fm.getFunctionCount())
 
             # Get strings
             strings_count = 0

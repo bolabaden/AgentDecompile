@@ -143,6 +143,7 @@ class Tool(str, Enum):
     MANAGE_STRUCTURES = "manage-structures"
     MANAGE_SYMBOLS = "manage-symbols"
     MATCH_FUNCTION = "match-function"
+    MIGRATE_METADATA = "migrate-metadata"
     EXECUTE_SCRIPT = "execute-script"
     OPEN_ALL_PROGRAMS_IN_CODE_BROWSER = "open-all-programs-in-code-browser"
     OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
@@ -410,6 +411,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     ),
     Tool.MANAGE_SYMBOLS.value: _params("programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll"),
     Tool.MATCH_FUNCTION.value: _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
+    Tool.MIGRATE_METADATA.value: _params("programPath", "targetProgramPaths", "minSimilarity", "limit", "includeExternals", "propagateNames", "propagateTags", "propagateComments", "propagatePrototype", "propagateBookmarks"),
     Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
     Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
     Tool.OPEN_PROJECT.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),

@@ -318,6 +318,7 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_HOST", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
         or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
     )
@@ -325,6 +326,7 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_PORT", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
         or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "13100").strip()
         or "13100"
@@ -338,6 +340,7 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_USERNAME", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
         or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
     )
@@ -345,6 +348,7 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_PASSWORD", "").strip()
         or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
         or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
     )
@@ -352,6 +356,7 @@ def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
         str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
         or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
         or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_REPOSITORY", "").strip()
         or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
         or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
     )
@@ -646,11 +651,9 @@ async def _call_raw(
     Returns:
         Raw tool result dictionary from MCP server
     """
-    # CLI always requests JSON from the MCP server so it can apply local
-    # formatting via format_output() / the -f flag.  The server's default
-    # is markdown (rich output for direct MCP consumers like VS Code / Claude),
-    # but the CLI needs structured data for its own shell/json/xml/table modes.
-    payload.setdefault("format", "json")
+    # Default to markdown for human-readable output. Use -f json when you need
+    # machine-readable output (shell/json/xml/table modes parse structured data).
+    payload.setdefault("format", "markdown")
 
     # Canonicalize tool + args through the shared registry path when known.
     call_tool_name, safe_payload = _resolve_tool_call_target(tool, payload)
