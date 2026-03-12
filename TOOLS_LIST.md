@@ -1188,7 +1188,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 ### Manage Functions and Variables
 
-`manage-function` to rename and set prototype.
+`rename-function` and `set-function-prototype` to rename and set prototype.
 
 ### Transfer Analysis Across Similar Binaries
 
@@ -1319,9 +1319,9 @@ Ask yourself:
 #### 3. IMPROVE - Make Small Database Changes (1-3 tool calls)
 Prioritize clarity improvements:
 ```
-manage-function with mode='rename_variable': var_1 → encryption_key, iVar2 → buffer_size
-manage-function with mode='set_variable_type': local_10 from undefined4 to uint32_t
-manage-function with mode='set_prototype': void FUN_00401234(uint8_t* data, size_t len)
+rename-variable: var_1 → encryption_key, iVar2 → buffer_size
+set-local-variable-type: local_10 from undefined4 to uint32_t
+set-function-prototype: void FUN_00401234(uint8_t* data, size_t len)
 apply-data-type: Apply uint8_t[256] to S-box constant
 manage-comments with mode='set': Document key findings in code
 ```
@@ -1364,8 +1364,8 @@ Every 3-5 tool calls, ask:
 **Investigation:**
 3. Identify key operations (loops, conditionals, API calls)
 4. Check strings/constants referenced: `get-data`, `inspect-memory`
-5. Use `manage-function` to rename variables based on usage patterns
-6. Use `manage-function` to fix variable types where evident from operations
+5. Use `rename-variable` to rename variables based on usage patterns
+6. Use `set-local-variable-type` to fix variable types where evident from operations
 7. Use `manage-comments` to document behavior
 
 **Synthesis:**
