@@ -339,6 +339,14 @@ class RawMcpHttpBackend:
     async def list_prompts(self) -> list[dict[str, Any]]:
         return await self._request_list("prompts/list", "prompts")
 
+    async def get_prompt(
+        self,
+        name: str,
+        arguments: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Return the prompt result from prompts/get."""
+        return await self._request("prompts/get", {"name": name, "arguments": arguments or {}})
+
     async def close(self) -> None:
         """Close the underlying httpx client."""
         try:
@@ -796,8 +804,18 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or "13100"
         )
-        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        server_username = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        )
+        server_password = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        )
         repository = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
@@ -1026,21 +1044,15 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
             return []
 
-    async def _handle_get_prompt(
-        self, name: str, arguments: dict[str, str] | None
-    ) -> GetPromptResult:
+    async def _handle_get_prompt(self, name: str, arguments: dict[str, str] | None) -> GetPromptResult:
         """Handle MCP get_prompt request by forwarding to backend."""
         from mcp.types import GetPromptResult as _GetPromptResult
 
         try:
-            raw: dict[str, Any] = await self._backend_request(
-                "get_prompt", {"name": name, "arguments": arguments}
-            )
+            raw: dict[str, Any] = await self._backend_request("get_prompt", {"name": name, "arguments": arguments})
             return _GetPromptResult.model_validate(raw)
         except Exception as e:
-            sys.stderr.write(
-                f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n"
-            )
+            sys.stderr.write(f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n")
             raise
 
     def _register_handlers(self):
@@ -1072,9 +1084,7 @@ class AgentDecompileStdioBridge:
             return await self._handle_list_prompts()
 
         @self.server.get_prompt()
-        async def get_prompt(
-            name: str, arguments: dict[str, str] | None
-        ) -> GetPromptResult:  # type: ignore[name-defined]
+        async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:  # type: ignore[name-defined]
             return await self._handle_get_prompt(name, arguments)
 
     def _create_initialization_options(self):

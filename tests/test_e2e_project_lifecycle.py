@@ -141,10 +141,10 @@ def test_known_fixture_analysis_outputs_match_observed_contract(
     assert f"| entry | {KNOWN_ENTRY_ADDRESS} | 1 | 0 |  |  |" in functions_text
     assert f"| _printf | {KNOWN_PRINTF_ADDRESS} | 1 | 0 |  | Yes |" in functions_text
     assert "Lists all functions defined in the binary with their addresses, sizes, and basic metadata." in functions_text
-    assert "Call `get-functions mode=decompile function=entry` to read the pseudocode of a specific function." in functions_text
-    assert "Call `get-functions function=entry view=info` for detailed metadata (params, return type)." in functions_text
-    assert "Use `namePattern` regex to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals)." in functions_text
-    assert "Call `manage-symbols mode=count` for a quick symbol count overview without listing." in functions_text
+    assert "Call `decompile-function` with `functionIdentifier=entry`" in functions_text
+    assert "Call `get-call-graph` with `function=entry`" in functions_text
+    assert "Use `namePattern` with `list-functions` to filter" in functions_text
+    assert "Call `get-current-program` for a quick symbol/function count overview" in functions_text
 
     assert references_text == expected_references
     assert "**mode:** to" in references_text

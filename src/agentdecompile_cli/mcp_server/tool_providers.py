@@ -1633,6 +1633,29 @@ class ToolProviderManager:
 
         return self._activate_local_program_by_path(session_id, requested_program_key)
 
+    async def get_or_open_program(
+        self,
+        session_id: str,
+        program_path: str,
+    ) -> ProgramInfo | None:
+        """Open a program by path if not already open; return its ProgramInfo without leaving it active.
+
+        Used by match-function for cross-program matching: open each target program,
+        read its functions, then restore the original active program.
+        """
+        existing = SESSION_CONTEXTS.get_program_info(session_id, program_path)
+        if existing is not None:
+            return existing
+        saved_key = SESSION_CONTEXTS.get_active_program_key(session_id)
+        saved_info = SESSION_CONTEXTS.get_active_program_info(session_id)
+        activated = await self._activate_requested_program(session_id, program_path)
+        if activated is None:
+            return None
+        if saved_key and saved_info:
+            SESSION_CONTEXTS.set_active_program_info(session_id, saved_key, saved_info)
+            self.set_program_info(saved_info)
+        return activated
+
     def list_tools(self) -> list[types.Tool]:
         provider_tools: list[types.Tool] = []
         for p in self.providers:

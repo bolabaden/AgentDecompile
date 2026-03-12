@@ -369,6 +369,12 @@ class SessionContextStore:
         with self._lock:
             return session.get_active_program_info()
 
+    def get_active_program_key(self, session_id: str) -> str | None:
+        """Return the session's active program path key (for restoring after opening another program)."""
+        session = self.get_or_create(session_id)
+        with self._lock:
+            return session.active_program_key
+
     def get_program_info(self, session_id: str, key: str) -> ProgramInfo | None:
         session = self.get_or_create(session_id)
         with self._lock:

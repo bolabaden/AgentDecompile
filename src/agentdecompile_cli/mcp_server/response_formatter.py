@@ -144,6 +144,8 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
+    # Prefer decompile-function and get-current-program; get-functions is legacy and regression
+    # often reintroduces it in suggested next steps — do not suggest get-functions here.
     total: int = data.get("total", data.get("count", 0))
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -151,11 +153,11 @@ def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         name: str = first.get("name", "")
         if name:
-            steps.append(f"Call `get-functions mode=decompile function={name}` to read the pseudocode of a specific function.")
-            steps.append(f"Call `get-functions function={name} view=info` for detailed metadata (params, return type).")
+            steps.append(f"Call `decompile-function` with `functionIdentifier={name}` to read the pseudocode of a specific function.")
+            steps.append(f"Call `get-call-graph` with `function={name}` and `mode=graph` for caller/callee metadata.")
     if total > len(results):
-        steps.append(f"Use `offset` + `limit` to paginate through all {total} functions.")
-    steps.append("Use `namePattern` regex to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals).")
+        steps.append(f"Use `offset` and `limit` with `list-functions` to paginate through all {total} functions.")
+    steps.append("Use `namePattern` with `list-functions` to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals).")
     steps.append("Call `get-current-program` for a quick symbol/function count overview without listing.")
     return steps
 
@@ -538,22 +540,24 @@ def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
     steps: list[str] = []
     error = data.get("error", "")
     results = data.get("results", [])
-    
+    mode = data.get("mode", "")
+
     # If function not found, suggest searching first
     if "not found" in error.lower() or "not exist" in error.lower():
-        steps.append("The function wasn't found. First, use `search-everything query={function_name}` to locate it in the binary.")
-        steps.append("Once found, use `search-code` for decompiled code search, or `list-functions` to browse all functions.")
-        steps.append("Then retry `match-function` with the correct function address or symbol name.")
-    # If successful matches
+        steps.append("The function wasn't found. Use `search-everything` or `list-functions` to locate it, then retry `match-function` with the correct functionIdentifier or address.")
+    # Cross-program success: suggest verifying matches and propagating further
+    elif mode == "cross-program" and results:
+        steps.append("Use `decompile-function` with `programPath` set to each target and `functionIdentifier` set to the matched function to compare implementations.")
+        steps.append("To propagate more annotations, re-run `match-function` with `propagateNames`, `propagateTags`, or `propagateComments` set to true.")
+        steps.append("Use `manage-function-tags` on matched functions to group them by subsystem or purpose.")
+    # Single-program successful matches
     elif results:
-        steps.append("Compare matched functions across binaries to identify similarities (reused code, shared libraries).")
-        steps.append("Use `decompile function={name}` on matched functions to examine them side-by-side in detail.")
+        steps.append("Use `decompile-function` on matched function names to compare implementations in detail.")
         steps.append("Tag matched functions with `manage-function-tags` to group them by library or purpose.")
     # Generic case
     else:
-        steps.append("Use `search-everything` to find the function you want to match across builds/versions.")
-        steps.append("Once you have a function identifier (address or symbol), call `match-function` with it.")
-    
+        steps.append("For cross-program matching: call `match-function` with `functionIdentifier`, `programPath` (source), and `targetProgramPaths` (one or more target binaries).")
+        steps.append("Use `search-everything` or `list-functions` to find the function to match if needed.")
     return steps
 
 
