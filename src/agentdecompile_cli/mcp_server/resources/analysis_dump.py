@@ -199,6 +199,7 @@ class AnalysisDumpResource(ResourceProvider):
 
         # No program loaded: return programs list + empty categories + keyLegend so clients can parse future dumps
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
+            logger.info("analysis-dump read: no program loaded, returning programs list only")
             session_id = get_current_mcp_session_id()
             programs = _collect_programs_from_session(session_id)
             payload = {
@@ -225,6 +226,10 @@ class AnalysisDumpResource(ResourceProvider):
         data_types = _collect_data_types_fast(program)
         strings = _collect_strings_fast(program)
         programs = _collect_programs_from_session(session_id)
+        logger.info(
+            "analysis-dump read: bookmarks=%s symbols=%s comments=%s functions=%s dataTypes=%s strings=%s",
+            len(bookmarks), len(symbols), len(comments), len(functions), len(data_types), len(strings),
+        )
 
         payload = {
             "keyLegend": {"a": "address", "n": "name", "t": "type/comment", "c": "category", "m": "comment", "y": "symbolType", "p": "path/params/parentNamespace", "s": "signature/source", "z": "size", "e": "isExternal", "k": "kind/isThunk", "r": "returnType", "v": "value", "f": "function", "fa": "functionAddress"},

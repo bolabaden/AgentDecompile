@@ -88,6 +88,7 @@ class CallGraphToolProvider(ToolProvider):
 
         mode_explicit = self._get_str(args, "mode", "action", "operation")
         direction_raw = self._get_str(args, "direction", default="calling")
+        logger.info("get-call-graph function=%s direction=%s", func, direction_raw)
         _dir_aliases = {"callers": "calling", "callees": "called", "up": "calling", "down": "called"}
         direction = _dir_aliases.get(n(direction_raw), direction_raw)
 
@@ -123,6 +124,7 @@ class CallGraphToolProvider(ToolProvider):
                     top_layers=top,
                     bottom_layers=bottom,
                 )
+                logger.debug("get-call-graph completed via CallGraphTool function=%s", func)
                 return create_success_response(
                     {
                         "functionName": result.function_name,
@@ -133,7 +135,7 @@ class CallGraphToolProvider(ToolProvider):
                     },
                 )
             except Exception as e:
-                logger.warning(f"CallGraphTool failed, using Ghidra API: {e}")
+                logger.warning("CallGraphTool failed, using Ghidra API fallback: %s", e)
 
         # Fallback: use Ghidra API directly
         try:
