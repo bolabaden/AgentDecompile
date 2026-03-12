@@ -3338,11 +3338,23 @@ class ProjectToolProvider(ToolProvider):
                 pass
 
         if project_data is not None:
-            # Check if the file is already in the local project
-            try:
-                domain_file = project_data.getFile(program_path)
-                if domain_file is None:
-                    # Need to create the file in the local project from the shared repo.
+            # Prefer RepositoryAdapter.checkout() so the file is versioned and supports checkin.
+            domain_file = project_data.getFile(program_path)
+            if domain_file is None and hasattr(repository_adapter, "checkout"):
+                try:
+                    from ghidra.framework.store import CheckoutType  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                    checkout_type = CheckoutType.NORMAL
+                    status = repository_adapter.checkout(folder_path, item_name, checkout_type, program_path)
+                    if status is not None:
+                        domain_file = project_data.getFile(program_path)
+                        if domain_file is not None:
+                            logger.info("Checked out '%s' via RepositoryAdapter.checkout (versioned)", program_path)
+                except Exception as exc:
+                    logger.debug("RepositoryAdapter.checkout for '%s' failed: %s. Trying createFile fallback.", program_path, exc)
+                    domain_file = None
+
+            if domain_file is None:
+                try:
                     parent_folder = project_data.getFolder(folder_path)
                     if parent_folder is None:
                         parent_folder = project_data.getRootFolder()
@@ -3409,6 +3421,22 @@ class ProjectToolProvider(ToolProvider):
                             logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
             except Exception as exc:
                 logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
+
+            # If we have a versioned domain_file (e.g. from RepositoryAdapter.checkout) but haven't opened it yet
+            if domain_file is not None and program is None and ghidra_project is not None:
+                try:
+                    program = ghidra_project.openProgram(domain_file)
+                    if program is not None:
+                        logger.info("Opened '%s' via GhidraProject.openProgram (versioned)", program_path)
+                except Exception:
+                    pass
+            if domain_file is not None and program is None:
+                try:
+                    program = self._get_domain_object_compat(domain_file, monitor)  # pyright: ignore[reportAttributeAccessIssue]
+                    if program is not None:
+                        logger.info("Opened '%s' via DomainFile.getDomainObject (versioned)", program_path)
+                except Exception:
+                    pass
 
         if program is None:
             # Fallback: open the item directly via low-level API

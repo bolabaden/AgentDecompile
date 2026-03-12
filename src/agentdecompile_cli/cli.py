@@ -547,6 +547,21 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         if _get_error_result_message(open_result):
             return open_result
         return None  # proceed with match-function call
+    # Bootstrap shared project for checkout/checkin/checkout-status when path looks like shared repo path
+    if tool_name in ("checkout_program", "checkin_program", "checkout_status"):
+        program_path = (
+            payload.get("program_path") or payload.get("programPath") or payload.get("path") or ""
+        )
+        if isinstance(program_path, str) and program_path.strip() and (
+            program_path.startswith("/") or "/" in program_path
+        ):
+            open_payload = _build_shared_open_payload(ctx)
+            if not open_payload:
+                return None
+            open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+            if _get_error_result_message(open_result):
+                return open_result
+        return None
     return None
 
 
