@@ -1128,13 +1128,57 @@ class ImportExportToolProvider(ToolProvider):
                 },
             )
 
+    def _resolve_domain_file_for_checkout_status(self, program_path: str) -> tuple[Any, str] | None:
+        """Resolve DomainFile and display name for the given program path. Returns (domain_file, display_name) or None."""
+        if not program_path:
+            return None
+        normalized = program_path.strip()
+        session_id = get_current_mcp_session_id()
+
+        # 1) Session: program open under this path (exact or path-normalized match)
+        info = SESSION_CONTEXTS.get_program_info(session_id, normalized)
+        if info is not None and getattr(info, "program", None) is not None:
+            try:
+                df = info.program.getDomainFile()
+                if df is not None:
+                    df_path = str(df.getPathname() or "").strip()
+                    if df_path == normalized or df_path.lstrip("/") == normalized.lstrip("/"):
+                        return (df, df.getName() or df_path or normalized)
+            except Exception:
+                pass
+
+        # 2) Project data: getFile by path (shared or local project)
+        project_data = None
+        if self._manager is not None and hasattr(self._manager, "_resolve_project_data"):
+            try:
+                project_data = self._manager._resolve_project_data()
+            except Exception:
+                project_data = None
+        if project_data is None and self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+            try:
+                active_df = self.program_info.program.getDomainFile()
+                if active_df is not None:
+                    project_data = active_df.getProjectData()
+            except Exception:
+                pass
+        if project_data is not None:
+            for candidate in (normalized, f"/{normalized.lstrip('/')}"):
+                try:
+                    df = project_data.getFile(candidate)
+                    if df is not None:
+                        return (df, df.getName() or df.getPathname() or candidate)
+                except Exception:
+                    continue
+        return None
+
     async def _handle_checkout_status(self, args: dict[str, Any]) -> list[types.TextContent]:
         program_path = self._get_str(args, "programpath", "program_path", "path").strip()
 
-        # If a specific program_path is provided, check if it looks like a shared repository path
+        # If a specific program_path is provided, resolve the domain file for that path (not the active program)
+        domain_file = None
+        program_display_name = program_path or ""
         if program_path:
             if program_path.startswith("/") or "/" in program_path:
-                # If no program is currently loaded, guide user to open-project first
                 if not self.program_info:
                     return create_success_response(
                         {
@@ -1154,17 +1198,64 @@ class ImportExportToolProvider(ToolProvider):
                             ],
                         },
                     )
-                # If a program is already loaded, proceed with status check on that program
+            resolved = self._resolve_domain_file_for_checkout_status(program_path)
+            if resolved is not None:
+                domain_file, program_display_name = resolved
 
-        self._require_program()
-        assert self.program_info is not None
-        program = self.program_info.program
+        # If we didn't resolve by path, use active program only when path was not provided or path matches active
+        if domain_file is None:
+            if not self.program_info or getattr(self.program_info, "program", None) is None:
+                return create_success_response(
+                    {
+                        "action": "checkout_status",
+                        "program": program_path or "",
+                        "success": False,
+                        "error": f"Program path '{program_path}' could not be resolved from the current project or session, and no program is active. Call open-project or list-project-files first."
+                        if program_path
+                        else "No program loaded. Call open-project or import-binary first.",
+                    },
+                )
+            program = self.program_info.program
+            try:
+                domain_file = program.getDomainFile()
+                if domain_file is None:
+                    raise RuntimeError("No domain file associated with active program")
+                program_display_name = program.getName()
+                # If user asked for a specific path that we didn't resolve, ensure we're not reporting the wrong program
+                if program_path:
+                    df_path = str(domain_file.getPathname() or "").strip()
+                    if df_path != program_path and df_path.lstrip("/") != program_path.strip().lstrip("/"):
+                        return create_success_response(
+                            {
+                                "action": "checkout_status",
+                                "program": program_path,
+                                "success": False,
+                                "error": f"Requested program path '{program_path}' could not be resolved. Active program is '{program_display_name}' (path: {df_path}). Open the requested program first (e.g. open-project with that path) or omit program_path to query the active program.",
+                                "activeProgram": program_display_name,
+                                "activePath": df_path,
+                            },
+                        )
+            except Exception as exc:
+                return create_success_response(
+                    {
+                        "action": "checkout_status",
+                        "program": program_path or (program.getName() if program else "unknown"),
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+
+        if domain_file is None:
+            return create_success_response(
+                {
+                    "action": "checkout_status",
+                    "program": program_path,
+                    "success": False,
+                    "error": f"Program path '{program_path}' could not be resolved from the current project or session. Call open-project or list-project-files first.",
+                },
+            )
 
         try:
-            domain_file = program.getDomainFile()
-            if domain_file is None:
-                raise RuntimeError("No domain file associated with active program")
-
             is_versioned = domain_file.isVersioned()
             is_checked_out = domain_file.isCheckedOut() if is_versioned else False
             is_exclusive = domain_file.isCheckedOutExclusive() if is_checked_out else False
@@ -1191,7 +1282,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkout_status",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "is_versioned": is_versioned,
                     "is_checked_out": is_checked_out,
                     "is_exclusive": is_exclusive,
@@ -1209,7 +1300,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkout_status",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "success": False,
                     "error": str(exc),
                 },

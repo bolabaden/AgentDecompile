@@ -536,6 +536,17 @@ class PythonMcpServer:
                 "sessions": SESSION_CONTEXTS.stats(),
             }
 
+        @self.app.get("/.well-known/oauth-authorization-server", tags=["meta"], include_in_schema=False)
+        async def oauth_authorization_server_discovery() -> dict[str, Any]:
+            """RFC 8414 discovery: this server does not provide OAuth 2.0 authorization; return minimal doc to avoid 404 probes."""
+            return {
+                "issuer": "",
+                "authorization_endpoint": "",
+                "token_endpoint": "",
+                "response_types_supported": [],
+                "scopes_supported": [],
+            }
+
         @self.app.get("/", tags=["meta"])
         async def api_info() -> dict[str, Any]:
             """API index — links to interactive documentation and transport endpoints."""

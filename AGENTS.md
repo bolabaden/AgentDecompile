@@ -103,6 +103,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Load Ghidra path from environment (e.g. GHIDRA_INSTALL_DIR); use a top-level .env at repo root; do not hardcode install paths.
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
+- For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
 
 ## MCP server debugging & self-healing
 
