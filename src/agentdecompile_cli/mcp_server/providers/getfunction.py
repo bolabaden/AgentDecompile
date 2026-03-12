@@ -867,7 +867,17 @@ class GetFunctionToolProvider(ToolProvider):
             targets = resolved_targets
             include_externals = self._get_bool(args, "includeexternals", "includeexternals", default=True)
             limit = self._get_int(args, "limit", "maxfunctions", "maxcount", default=None)
+            # Treat limit<=0 as no limit (process all functions)
+            if limit is not None and limit <= 0:
+                limit = None
             identifiers = self._list_source_function_identifiers(program, include_externals, limit)
+            logger.info(
+                "match-function bulk: source_path=%s target_count=%d identifier_count=%d limit=%s",
+                source_path,
+                len(targets),
+                len(identifiers),
+                limit,
+            )
             if not identifiers:
                 return create_success_response(
                     {
@@ -888,7 +898,10 @@ class GetFunctionToolProvider(ToolProvider):
             results_by_function: list[dict[str, Any]] = []
             errors_count = 0
             matches_per_target: dict[str, int] = {t: 0 for t in targets}
-            for ident in identifiers:
+            progress_interval = 1000
+            for idx, ident in enumerate(identifiers):
+                if progress_interval and (idx + 1) % progress_interval == 0:
+                    logger.info("match-function bulk progress: %d/%d", idx + 1, len(identifiers))
                 func = self._resolve_function(ident)
                 if func is None:
                     continue
@@ -949,6 +962,14 @@ class GetFunctionToolProvider(ToolProvider):
                         "matchesPerTarget": matches_per_target,
                     },
                 },
+            )
+        # No targets: bulk was intended but session has no other binaries (or targetProgramPaths not passed)
+        func_id_any = self._get_address_or_symbol(args)
+        if not func_id_any and source_path:
+            raise ValueError(
+                "No target programs found for bulk migration. Open a project with multiple binaries, "
+                "or pass targetProgramPaths (e.g. CLI: --target-paths /path/to/other.exe). "
+                "For single-function match, pass function or addressOrSymbol."
             )
         # Single-program: similar (rank by signature + call graph), callers, callees, or signature-only
         func_id = self._require_address_or_symbol(args)
