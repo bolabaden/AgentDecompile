@@ -14,7 +14,7 @@ import pytest
 from agentdecompile_cli.executor import DynamicToolExecutor
 from agentdecompile_cli.registry import (
     TOOLS,
-    ToolName,
+    Tool,
     ToolRegistry,
     get_tool_params,
     normalize_identifier,
@@ -24,7 +24,7 @@ from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
 pytestmark = pytest.mark.unit
 
-_TOOLS_WITH_PARAMS: list[str] = [t.value for t in ToolName if get_tool_params(t)]
+_TOOLS_WITH_PARAMS: list[str] = [t.value for t in Tool if get_tool_params(t)]
 
 
 def _tool_variants(name: str) -> list[str]:
@@ -180,31 +180,31 @@ class TestDynamicExecutorRequiredValidation:
             executor._validate_arguments_dynamically("get-data", {"addressOrSymbol": "0x401000"})
 
 
-class TestToolNameEnum:
-    """Test ToolName enum and resolve_tool_name_enum."""
+class TestToolEnum:
+    """Test Tool enum and resolve_tool_name_enum."""
 
     def test_tools_derived_from_enum(self):
-        """TOOLS list should match ToolName enum values."""
-        assert TOOLS == [t.value for t in ToolName]
-        assert len(TOOLS) == len(list(ToolName))
+        """TOOLS list should match Tool enum values."""
+        assert TOOLS == [t.value for t in Tool]
+        assert len(TOOLS) == len(list(Tool))
 
     def test_resolve_tool_name_enum_canonical(self):
         """resolve_tool_name_enum returns enum for canonical kebab-case names."""
-        assert resolve_tool_name_enum("open-project") == ToolName.OPEN_PROJECT
-        assert resolve_tool_name_enum("get-functions") == ToolName.GET_FUNCTIONS
-        assert resolve_tool_name_enum("manage-bookmarks") == ToolName.MANAGE_BOOKMARKS
+        assert resolve_tool_name_enum("open-project") == Tool.OPEN_PROJECT
+        assert resolve_tool_name_enum("get-functions") == Tool.GET_FUNCTIONS
+        assert resolve_tool_name_enum("manage-bookmarks") == Tool.MANAGE_BOOKMARKS
 
     def test_resolve_tool_name_enum_aliases(self):
         """resolve_tool_name_enum returns enum for known aliases (alias -> canonical)."""
-        assert resolve_tool_name_enum("get-symbols") == ToolName.MANAGE_SYMBOLS
-        assert resolve_tool_name_enum("get-bookmarks") == ToolName.MANAGE_BOOKMARKS
+        assert resolve_tool_name_enum("get-symbols") == Tool.MANAGE_SYMBOLS
+        assert resolve_tool_name_enum("get-bookmarks") == Tool.MANAGE_BOOKMARKS
         # get-call-tree is an alias for get-call-graph (not a canonical tool name)
-        assert resolve_tool_name_enum("get-call-tree") == ToolName.GET_CALL_GRAPH
+        assert resolve_tool_name_enum("get-call-tree") == Tool.GET_CALL_GRAPH
 
     def test_resolve_tool_name_enum_variants(self):
         """resolve_tool_name_enum accepts case/separator variants."""
-        assert resolve_tool_name_enum("Open_Project") == ToolName.OPEN_PROJECT
-        assert resolve_tool_name_enum("GETFUNCTIONS") == ToolName.GET_FUNCTIONS
+        assert resolve_tool_name_enum("Open_Project") == Tool.OPEN_PROJECT
+        assert resolve_tool_name_enum("GETFUNCTIONS") == Tool.GET_FUNCTIONS
 
     def test_resolve_tool_name_enum_unknown_returns_none(self):
         """resolve_tool_name_enum returns None for unknown tool names."""
@@ -212,6 +212,30 @@ class TestToolNameEnum:
         assert resolve_tool_name_enum("") is None
 
     def test_get_tool_params_accepts_enum(self):
-        """get_tool_params accepts ToolName enum."""
-        assert "programPath" in get_tool_params(ToolName.GET_DATA)
-        assert "path" in get_tool_params(ToolName.OPEN_PROJECT)
+        """get_tool_params accepts Tool enum."""
+        assert "programPath" in get_tool_params(Tool.GET_DATA)
+        assert "path" in get_tool_params(Tool.OPEN_PROJECT)
+
+    def test_tool_from_string(self):
+        """Tool.from_string matches resolve_tool_name_enum."""
+        assert Tool.from_string("open-project") == Tool.OPEN_PROJECT
+        assert Tool.from_string("get-symbols") == Tool.MANAGE_SYMBOLS
+        assert Tool.from_string("unknown-tool") is None
+
+    def test_tool_params_property(self):
+        """Tool.params returns same as get_tool_params(tool)."""
+        assert "programPath" in Tool.GET_DATA.params
+        assert "path" in Tool.OPEN_PROJECT.params
+
+    def test_tool_normalized_property(self):
+        """Tool.normalized is alpha-only lowercase."""
+        assert Tool.OPEN_PROJECT.normalized == "openproject"
+        assert Tool.GET_FUNCTIONS.normalized == "getfunctions"
+
+    def test_tool_is_gui_only_disabled(self):
+        """GUI-only disabled tools have is_gui_only_disabled True."""
+        # At least one known GUI-only tool should be disabled
+        from agentdecompile_cli.registry import DISABLED_GUI_ONLY_TOOLS
+
+        for t in Tool:
+            assert t.is_gui_only_disabled == (t in DISABLED_GUI_ONLY_TOOLS)

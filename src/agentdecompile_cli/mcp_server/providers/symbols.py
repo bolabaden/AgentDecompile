@@ -26,7 +26,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -81,7 +81,7 @@ class SymbolToolProvider(ToolProvider):
 
         return [
             types.Tool(
-                name=ToolName.MANAGE_SYMBOLS.value,
+                name=Tool.MANAGE_SYMBOLS.value,
                 description="Central utility to search, rename, count, and categorize all programmatic labels (symbols, imports, exports) in the program.",
                 inputSchema=base_manage_schema,
             ),
@@ -101,7 +101,7 @@ class SymbolToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.SEARCH_SYMBOLS.value,
+                name=Tool.SEARCH_SYMBOLS.value,
                 description="Look up a list of program symbols by matching parts of their names.",
                 inputSchema={
                     "type": "object",
@@ -116,7 +116,7 @@ class SymbolToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.LIST_IMPORTS.value,
+                name=Tool.LIST_IMPORTS.value,
                 description="Retrieve a list of all external library functions the program loads to function.",
                 inputSchema={
                     "type": "object",
@@ -128,7 +128,7 @@ class SymbolToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.LIST_EXPORTS.value,
+                name=Tool.LIST_EXPORTS.value,
                 description="Retrieve a list of all internal library functions the program exposes for others to use.",
                 inputSchema={
                     "type": "object",
@@ -140,7 +140,7 @@ class SymbolToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.CREATE_LABEL.value,
+                name=Tool.CREATE_LABEL.value,
                 description="Slap a custom string tag (label) onto a specific memory address.",
                 inputSchema={
                     "type": "object",

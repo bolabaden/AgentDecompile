@@ -23,7 +23,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class StructureToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.MANAGE_STRUCTURES.value,
+                name=Tool.MANAGE_STRUCTURES.value,
                 description="Create, list, apply, parse, and edit complex data structures (like C structs and unions) to map out memory layouts.",
                 inputSchema={
                     "type": "object",

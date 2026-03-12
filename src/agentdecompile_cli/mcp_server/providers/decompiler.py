@@ -18,7 +18,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
@@ -56,7 +56,7 @@ class DecompilerToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.DECOMPILE_FUNCTION.value,
+                name=Tool.DECOMPILE_FUNCTION.value,
                 description="Convert machine code representing a function into high-level, human-readable C-like pseudocode. Use this tool to easily read and understand what a function does without having to read assembly instructions.",
                 inputSchema={
                     "type": "object",

@@ -44,13 +44,12 @@ from agentdecompile_cli.mcp_server.session_context import (
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     ADVERTISED_TOOL_PARAMS,
-    DISABLED_GUI_ONLY_TOOLS,
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
+    Tool,
     is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
-    resolve_tool_name_enum,
     to_snake_case,
 )
 
@@ -58,7 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from agentdecompile_cli.registry import (
-        ToolName,
+        Tool,
     )
 
 logger = logging.getLogger(__name__)
@@ -452,7 +451,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
         )
 
     if "not connected to repository server" in lowered or "shared-server" in lowered:
-        manage_files_tool = recommend_tool("manage-files", "list-project-files")
+        manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value)
         steps = [
             "Call `open-project` first with shared-server parameters to establish a repository session.",
         ]
@@ -466,7 +465,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
         )
 
     if "path does not exist" in lowered or "path not found" in lowered or "invalid folder path" in lowered:
-        manage_files_tool = recommend_tool("manage-files")
+        manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value)
         if manage_files_tool:
             steps = [
                 f"Call `{manage_files_tool}` with `mode=list` on the parent folder to discover the correct path.",
@@ -483,7 +482,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
         )
 
     if "not a readable file" in lowered or "is not a directory" in lowered:
-        manage_files_tool = recommend_tool("manage-files")
+        manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value)
         if manage_files_tool:
             steps = [
                 f"Call `{manage_files_tool}` `mode=info` on the same path to verify file vs directory.",
@@ -728,7 +727,7 @@ class ToolProvider:
                 context=_merge_context(
                     {
                         "tool": to_snake_case(resolve_tool_name(name) or name),
-                        "canonicalToolName": resolve_tool_name(name) or name,
+                        "canonicalTool": resolve_tool_name(name) or name,
                         "provider": self.__class__.__name__,
                         "handler": handler_method_name,
                         "errorTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -787,7 +786,7 @@ class ToolProvider:
             entries: list[tuple[str, dict[str, Any]]] = []
             # Match suggested-step phrases to concrete tool + args (for prerequisiteCall in error response)
             if "call `list-project-files`" in lowered:
-                entries.append(("list-project-files", {}))
+                entries.append((Tool.LIST_PROJECT_FILES.value, {}))
 
             if "call `get-current-program`" in lowered:
                 entries.append(("get-current-program", {}))
@@ -796,7 +795,7 @@ class ToolProvider:
                 manage_args: dict[str, Any] = {"mode": "list"}
                 if path_hint:
                     manage_args["path"] = path_hint
-                entries.append(("manage-files", manage_args))
+                entries.append((Tool.MANAGE_FILES.value, manage_args))
 
             if "call `list_tools`" in lowered or "call `list-tools`" in lowered:
                 entries.append(("list_tools", {}))
@@ -908,25 +907,25 @@ class ToolProvider:
         return default
 
     @staticmethod
-    def _get_int(args: dict[str, Any], *keys: str, default: int = 0) -> int:
+    def _get_int(args: dict[str, Any], *keys: str, default: int | None = 0) -> int:
         """First value that coerces to int for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
-                return _coerce_int(v, default)
-        return default
+                return _coerce_int(v, 0 if default is None else default)
+        return 0 if default is None else default
 
     @staticmethod
-    def _get_bool(args: dict[str, Any], *keys: str, default: bool = False) -> bool:
+    def _get_bool(args: dict[str, Any], *keys: str, default: bool | None = False) -> bool:
         """First value that coerces to bool for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
                 return _coerce_bool(v)
-        return default
+        return False if default is None else default
 
     @staticmethod
-    def _get_list(args: dict[str, Any], *keys: str) -> list | None:
+    def _get_list(args: dict[str, Any], *keys: str) -> list[Any] | None:
         """First value that coerces to list for any of the given keys (normalized)."""
         for k in keys:
             v = args.get(n(k))
@@ -942,7 +941,7 @@ class ToolProvider:
             if v is not None:
                 return v
         label = name or " or ".join(keys)
-        raise ValueError(f"Required parameter missing: {label}")
+        raise ValueError(f"Required parameter missing: `{label}`")
 
     @staticmethod
     def _require_str(args: dict[str, Any], *keys: str, name: str = "") -> str:
@@ -951,9 +950,9 @@ class ToolProvider:
             if v is not None and str(v).strip():
                 return str(v)
         label = name or " or ".join(keys)
-        raise ValueError(f"Required parameter missing or empty: {label}")
+        raise ValueError(f"Required parameter missing or empty: `{label}`")
 
-    def _get_address_or_symbol(self, args: dict[str, Any], default: str = "") -> str:
+    def _get_address_or_symbol(self, args: dict[str, Any], default: str | None = None) -> str:
         """Get address or symbol parameter with common aliases consolidated.
 
         **Consolidates 8-10 parameter aliases into a single lookup**, eliminating
@@ -995,17 +994,17 @@ class ToolProvider:
             "functionidentifier",
             "functionaddress",
             "targetaddress",
-            default=default,
+            default="" if default is None else default,
         )
 
     def _require_address_or_symbol(self, args: dict[str, Any]) -> str:
         """Like _get_address_or_symbol but raises ValueError if not found."""
         result = self._get_address_or_symbol(args)
         if not result:
-            raise ValueError("Required parameter missing: address or symbol")
+            raise ValueError("Required parameter missing: `address` or `symbol`")
         return result
 
-    def _get_pagination_params(self, args: dict[str, Any], default_limit: int = DEFAULT_PAGE_LIMIT) -> tuple[int, int]:
+    def _get_pagination_params(self, args: dict[str, Any], default_limit: int | None = DEFAULT_PAGE_LIMIT) -> tuple[int, int]:
         """Extract pagination parameters (offset, limit) from args.
 
         Consolidates two repeated extraction calls:
@@ -1030,7 +1029,7 @@ class ToolProvider:
             >>> results = all_results[offset : offset + limit]
         """
         offset = self._get_int(args, "offset", "startindex", default=0)
-        limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=default_limit)
+        limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default= DEFAULT_PAGE_LIMIT if default_limit is None else default_limit)
         return offset, limit
 
     def _dispatch_handler(self, *args, **kwargs) -> Any:
@@ -1056,10 +1055,13 @@ class ToolProvider:
         """
         # Pattern 1: (dispatch_dict, key, param_name) → returns handler callable for caller to invoke
         if len(args) == 3 and isinstance(args[0], dict) and isinstance(args[1], str) and isinstance(args[2], str):
+            dispatch: dict[str, Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]]]
+            key: str
+            param_name: str
             dispatch, key, param_name = args
-            handler = dispatch.get(key)
+            handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] | None = dispatch.get(key)
             if handler is None:
-                available = list(dispatch.keys())
+                available: list[str] = list(dispatch.keys())
                 raise ActionableError(
                     f"Unsupported {param_name}: '{key}'",
                     context={"state": "unsupported-parameter-value", "parameter": param_name, "value": key, "available": available},
@@ -1071,9 +1073,12 @@ class ToolProvider:
             return handler
         # Pattern 2: (args_dict, mode_key, dispatch_dict, **kwargs) → invokes handler and returns result
         if len(args) == 3 and isinstance(args[2], dict):
+            args_dict: dict[str, Any]
+            mode_key: str
+            dispatch_dict: dict[str, Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]]]
             args_dict, mode_key, dispatch_dict = args
             mode_norm = n(mode_key)
-            normalized_dispatch = {n(k): v for k, v in dispatch_dict.items()}
+            normalized_dispatch: dict[str, Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]]] = {n(k): v for k, v in dispatch_dict.items()}
             handler_name = normalized_dispatch.get(mode_norm)
             if handler_name is None:
                 available = list(normalized_dispatch.keys())
@@ -1832,12 +1837,12 @@ class ToolProviderManager:
 
         session_id: str = get_current_mcp_session_id()
         resolved_name: str = resolve_tool_name(name) or name
-        tool_enum: ToolName | None = resolve_tool_name_enum(name)
-        if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
+        tool_enum: Tool | None = Tool.from_string(name)
+        if tool_enum is not None and tool_enum.is_gui_only_disabled:
             return create_error_response(
                 ActionableError(
                     f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",
-                    context={"tool": to_snake_case(resolved_name), "state": "gui-only-disabled"},
+                    context={"tool": tool_enum.snake_name, "state": "gui-only-disabled"},
                     next_steps=[
                         "Run this tool in GUI mode (Code Browser) instead of headless mode.",
                         "Use a headless-compatible alternative tool for automation workflows.",
@@ -1912,7 +1917,7 @@ class ToolProviderManager:
         if requested_program_key and effective_program_info is None:
             prereq_calls: list[dict[str, Any]] = []
             try:
-                response = await self.call_tool("list-project-files", {"__auto_prereq_invocation": True})
+                response = await self.call_tool(Tool.LIST_PROJECT_FILES.value, {"__auto_prereq_invocation": True})
                 output: Any
                 success: bool
                 if response and isinstance(response[0], types.TextContent):
@@ -1929,7 +1934,7 @@ class ToolProviderManager:
 
                 prereq_calls.append(
                     {
-                        "tool": "list-project-files",
+                        "tool": Tool.LIST_PROJECT_FILES.value,
                         "arguments": {},
                         "success": success,
                         "output": output,
@@ -2025,7 +2030,7 @@ class ToolProviderManager:
                             "__auto_match_invocation": True,
                         }
                         try:
-                            await self.call_tool("match-function", match_args, program_info=effective_program_info)
+                            await self.call_tool(Tool.MATCH_FUNCTION.value, match_args, program_info=effective_program_info)
                         except Exception as auto_match_exc:
                             logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
 

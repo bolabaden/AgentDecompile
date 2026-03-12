@@ -32,7 +32,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class ImportExportToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.IMPORT_BINARY.value,
+                name=Tool.IMPORT_BINARY.value,
                 description="Load a raw binary file (e.g. .exe, .elf, .bin) from your hard drive into the Ghidra project so that it can be deeply analyzed. Use this to start a reverse engineering session on a new file.",
                 inputSchema={
                     "type": "object",
@@ -71,7 +71,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.EXPORT.value,
+                name=Tool.EXPORT.value,
                 description="Export your reverse engineering work directly out of the project. This allows you to generate C code files, HTML summaries, or binary save files (like `.gzf`) from your modified data.",
                 inputSchema={
                     "type": "object",
@@ -94,7 +94,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.ANALYZE_PROGRAM.value,
+                name=Tool.ANALYZE_PROGRAM.value,
                 description="Trigger the heavy auto-analysis subsystem inside Ghidra. Use this after loading a program if you notice data looks incomplete, strings are unbroken, or functions fail to decompile correctly. This tool refuses to rerun once Ghidra already analyzed the program unless you explicitly set force=true.",
                 inputSchema={
                     "type": "object",
@@ -107,7 +107,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.CHECKIN_PROGRAM.value,
+                name=Tool.CHECKIN_PROGRAM.value,
                 description="If you are using a shared/version-controlled Ghidra Server project, use this to commit your changes directly to the server, preserving your work as a new version. Omit program_path to check in every open program that is checked out and can be checked in (checkin all).",
                 inputSchema={
                     "type": "object",
@@ -121,7 +121,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.CHECKOUT_PROGRAM.value,
+                name=Tool.CHECKOUT_PROGRAM.value,
                 description="Check out a versioned file from the shared Ghidra Server repository so it can be modified. Must be called before making changes when working with a version-controlled project. Use checkin-program when done.",
                 inputSchema={
                     "type": "object",
@@ -134,7 +134,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.CHECKOUT_STATUS.value,
+                name=Tool.CHECKOUT_STATUS.value,
                 description="Query the checkout state of a versioned Ghidra project file. Shows whether the file is checked out, who has it checked out, and whether it has local modifications since checkout.",
                 inputSchema={
                     "type": "object",
@@ -146,7 +146,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.CHANGE_PROCESSOR.value,
+                name=Tool.CHANGE_PROCESSOR.value,
                 description="Change the CPU architecture or target compiler specification used for disassembling memory. This forces the entire program to restructure itself around a radically different interpretation, so use carefully.",
                 inputSchema={
                     "type": "object",
@@ -159,7 +159,7 @@ class ImportExportToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.LIST_PROCESSORS.value,
+                name=Tool.LIST_PROCESSORS.value,
                 description="List all the CPU instruction architectures currently supported by the Ghidra database engine. Used to discover exact IDs needed for change-processor.",
                 inputSchema={
                     "type": "object",

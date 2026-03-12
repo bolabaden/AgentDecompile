@@ -20,7 +20,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class CommentToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.MANAGE_COMMENTS.value,
+                name=Tool.MANAGE_COMMENTS.value,
                 description="Read, write, search, or delete notes left for other analysts (or yourself) at specific lines of assembly or decompiled pseudo-code. Use this to document what complicated logic means as you figure it out.",
                 inputSchema={
                     "type": "object",

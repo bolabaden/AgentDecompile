@@ -19,7 +19,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class CallGraphToolProvider(ToolProvider):
 
         return [
             types.Tool(
-                name=ToolName.GET_CALL_GRAPH.value,
+                name=Tool.GET_CALL_GRAPH.value,
                 description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code.",
                 inputSchema=schema,
             ),

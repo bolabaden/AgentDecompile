@@ -44,7 +44,7 @@ from agentdecompile_cli.mcp_server.session_context import (
 )
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, ToolName, get_tool_params
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, Tool, get_tool_params
 
 if TYPE_CHECKING:
     from contextvars import Token
@@ -224,7 +224,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 3,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": ToolName.OPEN_PROJECT.value,
+                                    "name": Tool.OPEN_PROJECT.value,
                                     "arguments": {
                                         "path": "/K1/k1_win_gog_swkotor.exe",
                                         "serverHost": "<ghidra-host>",
@@ -243,7 +243,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 4,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": ToolName.GET_REFERENCES.value,
+                                    "name": Tool.GET_REFERENCES.value,
                                     "arguments": {
                                         "programPath": "/K1/k1_win_gog_swkotor.exe",
                                         "target": "WinMain",
@@ -269,7 +269,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "value": {
                                     "jsonrpc": "2.0",
                                     "id": 2,
-                                    "result": {"tools": [{"name": ToolName.OPEN_PROJECT.value}]},
+                                    "result": {"tools": [{"name": Tool.OPEN_PROJECT.value}]},
                                 },
                             },
                             "error": {
@@ -635,7 +635,7 @@ class PythonMcpServer:
                 "local": {
                     "start_server": "uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 --project-path ./agentdecompile_projects",
                     "list_tools": "uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool --list-tools",
-                    "tool_seq": 'uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool-seq \'[{"name":"open-project","arguments":{"path":"tests/fixtures/test_x86_64"}},{"name":"list-functions","arguments":{"programPath":"test_x86_64","limit":5}}]\'',
+                    "tool_seq": f'uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool-seq \'[{{"name":"{Tool.OPEN_PROJECT.value}","arguments":{{"path":"tests/fixtures/test_x86_64"}}}},{{"name":"{Tool.LIST_FUNCTIONS.value}","arguments":{{"programPath":"test_x86_64","limit":5}}}}]\'',
                 },
                 "shared": {
                     "open": "uv run agentdecompile-cli --mcp-server-url http://host:port/mcp open --server_host $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST --server_port $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT --server_username $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME --server_password $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD /K1/k1_win_gog_swkotor.exe",

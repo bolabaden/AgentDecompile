@@ -39,7 +39,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.SEARCH_EVERYTHING.value,
+                name=Tool.SEARCH_EVERYTHING.value,
                 description="CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED SEARCH ACROSS MOST STRING-BEARING ANALYSIS DATA. Pass ALL related search terms as a 'queries' array in ONE call instead of calling this tool multiple times with individual keywords.",
                 inputSchema={
                     "type": "object",
@@ -1015,31 +1015,31 @@ class SearchEverythingToolProvider(ToolProvider):
         next_tools: list[dict[str, Any]] = []
         if result_type == "function":
             next_tools = [
-                {"tool": ToolName.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": ToolName.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
-                {"tool": ToolName.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
+                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
+                {"tool": Tool.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
+                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
                 {"tool": "manage-comments", "args": {"address": address, "mode": "get"}},
             ]
         elif result_type == "function_parameter":
             next_tools = [
-                {"tool": ToolName.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": ToolName.GET_FUNCTIONS.value, "args": {"identifier": function_name}},
+                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name}},
             ]
         elif result_type == "function_tag":
-            next_tools = [{"tool": ToolName.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]
+            next_tools = [{"tool": Tool.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]
         elif result_type in {"bookmark", "comment", "instruction", "export", "symbol", "string"}:
             next_tools = [
-                {"tool": ToolName.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
-                {"tool": ToolName.DECOMPILE_FUNCTION.value, "args": {"address": address}},
+                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
+                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"address": address}},
             ]
         elif result_type == "decompiled_code":
             next_tools = [
-                {"tool": ToolName.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": ToolName.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
+                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
+                {"tool": Tool.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
             ]
         elif result_type == "import":
             next_tools = [
-                {"tool": ToolName.GET_REFERENCES.value, "args": {"mode": "import", "importName": row.get("name", "")}},
+                {"tool": Tool.GET_REFERENCES.value, "args": {"mode": "import", "importName": row.get("name", "")}},
                 {"tool": "list-imports", "args": {"query": row.get("name", "")}},
             ]
         elif result_type in {"namespace", "class"}:

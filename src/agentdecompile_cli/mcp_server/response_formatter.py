@@ -24,7 +24,7 @@ import re
 
 from typing import TYPE_CHECKING, Any, cast
 
-from agentdecompile_cli.registry import ToolName, is_tool_advertised, normalize_identifier
+from agentdecompile_cli.registry import Tool, is_tool_advertised, normalize_identifier
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,16 +88,16 @@ def _pagination_footer(data: dict[str, Any]) -> str:
 # we omit "Suggested Next Steps" lines that mention them so the client isn't told to use unavailable tools.
 _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
     normalize_identifier("annotate-function"),
-    normalize_identifier(ToolName.GET_FUNCTIONS.value),
-    normalize_identifier(ToolName.LIST_STRINGS.value),
-    normalize_identifier(ToolName.MANAGE_BOOKMARKS.value),
-    normalize_identifier(ToolName.MANAGE_COMMENTS.value),
-    normalize_identifier(ToolName.MANAGE_DATA_TYPES.value),
-    normalize_identifier(ToolName.MANAGE_FILES.value),
-    normalize_identifier(ToolName.MANAGE_FUNCTION.value),
-    normalize_identifier(ToolName.MANAGE_STRUCTURES.value),
-    normalize_identifier(ToolName.MANAGE_SYMBOLS.value),
-    normalize_identifier(ToolName.SEARCH_STRINGS.value),
+    Tool.GET_FUNCTIONS.normalized,
+    Tool.LIST_STRINGS.normalized,
+    Tool.MANAGE_BOOKMARKS.normalized,
+    Tool.MANAGE_COMMENTS.normalized,
+    Tool.MANAGE_DATA_TYPES.normalized,
+    Tool.MANAGE_FILES.normalized,
+    Tool.MANAGE_FUNCTION.normalized,
+    Tool.MANAGE_STRUCTURES.normalized,
+    Tool.MANAGE_SYMBOLS.normalized,
+    Tool.SEARCH_STRINGS.normalized,
 }
 
 
@@ -496,7 +496,7 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     steps: list[str] = []
-    if action == ToolName.OPEN_PROJECT.value:
+    if action == Tool.OPEN_PROJECT.value:
         steps.append("Project opened. Call `list-project-files` to see available programs in the project.")
         steps.append("Start with `list-functions` for function overview or `inspect-memory mode=blocks` for memory layout.")
     elif loaded is True:
@@ -545,9 +545,15 @@ def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
 
 def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
     steps: list[str] = []
-    error = data.get("error", "")
-    results = data.get("results", [])
-    mode = data.get("mode", "")
+    error: str = data.get("error", "")
+    mode: str = data.get("mode", "")
+
+    results: list[dict[str, Any]] = data.get("results", [])
+    if mode == "cross-program-bulk":
+        summary = data.get("summary") or {}
+        steps.append(f"Bulk run processed {summary.get('processed', 0)} functions; see resultsByFunction and summary.matchesPerTarget.")
+        steps.append("Each result entry may include functionDetails (get-function output) for the matched target function.")
+        return steps
 
     # If function not found, suggest searching first
     if "not found" in error.lower() or "not exist" in error.lower():
@@ -1147,7 +1153,7 @@ def _render_memory(data: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     # Fallback for unrecognized mode
-    return _render_generic(data, "inspect-memory")
+    return _render_generic(data, Tool.INSPECT_MEMORY.value)
 
 
 def _render_callgraph(data: dict[str, Any]) -> str:
@@ -1228,7 +1234,7 @@ def _render_callgraph(data: dict[str, Any]) -> str:
             lines.append("*No callees found (leaf function).*")
         return "\n".join(lines)
 
-    return _render_generic(data, "get-call-graph")
+    return _render_generic(data, Tool.GET_CALL_GRAPH.value)
 
 
 def _render_comments(data: dict[str, Any]) -> str:
@@ -1741,7 +1747,7 @@ def _render_project(data: dict[str, Any]) -> str:
     loaded = data.get("loaded")
     lines: list[str] = []
 
-    if action == ToolName.OPEN_PROJECT.value:
+    if action == Tool.OPEN_PROJECT.value:
         mode: str = data.get("mode", "")
         lines.append(_md_heading(2, "Program Opened"))
         lines.append("")

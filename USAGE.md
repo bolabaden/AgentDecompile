@@ -462,6 +462,8 @@ For full workflow success with a shared server, the Ghidra repository must be re
 - **Automated:** Set `GHIDRA_INSTALL_DIR` to your Ghidra install, then run `uv run python helper_scripts/run_live_agdec_http_test.py`. This starts the server, imports `tests/fixtures/test_x86_64`, runs the validation, and stops the server.
 - **Manual:** Start `agentdecompile-server -t streamable-http`, then run the script with `--server-url http://127.0.0.1:8080/mcp --bootstrap-import tests/fixtures/test_x86_64` (bootstrap imports the fixture and uses it for the tool-seq).
 
+To bulk-propagate function metadata from a well-documented binary to others (e.g. K1), prefer `uv run agentdecompile-cli migrate-metadata --binary <source>` (or `helper_scripts/migrate_k1_metadata.py` with `--server-url` and `--source-path`, which forwards to the CLI). The migration runs inside the **match-function** tool in bulk mode (one call with no function identifier); the tool iterates all source functions and discovers targets from the session. For shared (Ghidra server) projects, open the project first (e.g. via MCP or tool-seq), then run migrate-metadata.
+
 ## 6. Tool naming guidance
 
 - Prefer canonical tool names from [TOOLS_LIST.md](TOOLS_LIST.md).

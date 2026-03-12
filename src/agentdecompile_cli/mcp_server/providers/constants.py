@@ -21,7 +21,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_SAMPLES_PER_CONSTANT,
     ToolProvider,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,7 +35,7 @@ class ConstantSearchToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.SEARCH_CONSTANTS.value,
+                name=Tool.SEARCH_CONSTANTS.value,
                 description="Scan the assembly instructions of the program to find a specific hardcoded number, a range of numbers, or a list of commonly used magic numbers (like crypto signatures or checksums). Use this to locate where a known algorithm or specific value is configured in code.",
                 inputSchema={
                     "type": "object",

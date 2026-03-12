@@ -18,7 +18,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class CrossReferencesToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.GET_REFERENCES.value,
+                name=Tool.GET_REFERENCES.value,
                 description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address.",
                 inputSchema={
                     "type": "object",
@@ -53,7 +53,7 @@ class CrossReferencesToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.LIST_CROSS_REFERENCES.value,
+                name=Tool.LIST_CROSS_REFERENCES.value,
                 description="Extract every interaction mapping to and from a specific target address simultaneously.",
                 inputSchema={
                     "type": "object",

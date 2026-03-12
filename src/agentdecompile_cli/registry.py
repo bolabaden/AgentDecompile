@@ -1,11 +1,11 @@
 """Unified tool registry - schema definitions, normalization, and ToolRegistry class.
 
 Merged from tools_schema.py and tool_registry.py. Single source of truth for:
-  - Tool names: ToolName enum (canonical kebab-case); TOOLS list for advertisement.
+  - Tool names: Tool enum (canonical kebab-case); TOOLS list for advertisement.
   - Parameter schemas: TOOL_PARAMS, TOOL_PARAM_ALIASES (e.g. mode/action/operation).
   - Normalization: normalize_identifier() strips non-alpha and lowercases so that
     "program-path", "programPath", and "program_path" all match the same param.
-  - Resolution: resolve_tool_name() / resolve_tool_name_enum() map input to ToolName.
+  - Resolution: resolve_tool_name() / resolve_tool_name_enum() (or Tool.from_string()) map input to Tool.
   - Resource URIs: RESOURCE_URIS, RESOURCE_URI_DEBUG_INFO, etc. for read_resource.
 
 Tool execution flow: CLI or MCP client sends tool name + args → registry normalizes
@@ -98,8 +98,8 @@ _NL_PHRASE_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 
-class ToolName(str, Enum):
-    """Canonical MCP tool names. Use .value for wire/CLI (kebab-case string)."""
+class Tool(str, Enum):
+    """Canonical MCP tool names. Use .value (or .wire_name) for wire/CLI (kebab-case string)."""
 
     ANALYZE_DATA_FLOW = "analyze-data-flow"
     ANALYZE_PROGRAM = "analyze-program"
@@ -156,8 +156,62 @@ class ToolName(str, Enum):
     SVR_ADMIN = "svr-admin"
     SUGGEST = "suggest"
 
+    @property
+    def wire_name(self) -> str:
+        """Canonical kebab-case name for MCP/CLI wire (same as .value)."""
+        return self.value
 
-TOOLS: list[str] = [t.value for t in ToolName]
+    @property
+    def normalized(self) -> str:
+        """Alpha-only lowercase form for matching (normalize_identifier(.value))."""
+        return normalize_identifier(self.value)
+
+    @property
+    def snake_name(self) -> str:
+        """Snake_case form for display/CLI (to_snake_case(.value))."""
+        return to_snake_case(self.value)
+
+    @property
+    def params(self) -> list[str]:
+        """Parameter names (camelCase) for this tool. Returns a copy."""
+        return list(TOOL_PARAMS.get(self, []))
+
+    @property
+    def is_hidden(self) -> bool:
+        """True if this tool is in the default hidden set (curated commands)."""
+        return self in _DEFAULT_HIDDEN_TOOLS
+
+    @property
+    def is_gui_only_disabled(self) -> bool:
+        """True if this tool is disabled in headless (GUI-only)."""
+        return self in DISABLED_GUI_ONLY_TOOLS
+
+    @property
+    def is_advertised(self) -> bool:
+        """True if this tool is currently advertised (env-aware)."""
+        return any(normalize_identifier(t) == self.normalized for t in ADVERTISED_TOOLS)
+
+    @classmethod
+    def from_string(cls, s: str) -> Tool | None:
+        """Resolve any alias/variant to canonical Tool, or None if unknown."""
+        resolved = resolve_tool_name(s)
+        if resolved is None:
+            return None
+        try:
+            return cls(resolved)
+        except ValueError:
+            return None
+
+    @classmethod
+    def advertised(cls) -> list[Tool]:
+        """Tools currently advertised (env-aware). Same logic as ADVERTISED_TOOLS but returns list[Tool]."""
+        return [t for t in cls if t.is_advertised]
+
+
+# Backward-compat alias
+ToolName = Tool
+
+TOOLS: list[str] = [t.value for t in Tool]
 
 
 # ---------------------------------------------------------------------------
@@ -231,44 +285,44 @@ def _canonical_param_name(param: str) -> str:
 
 
 # Required / common: programPath is optional in GUI, required in headless for program-scoped tools
-# Built as str keys for _merge_tools_list_params; then converted to dict[ToolName, list[str]] below.
+# Built as str keys for _merge_tools_list_params; then converted to dict[Tool, list[str]] below.
 _TOOL_PARAMS_STR: dict[str, list[str]] = {
-    ToolName.ANALYZE_DATA_FLOW.value: _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
-    ToolName.ANALYZE_PROGRAM.value: _params("programPath", "analyzers", "force"),
-    ToolName.ANALYZE_VTABLES.value: _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
-    ToolName.APPLY_DATA_TYPE.value: _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
-    ToolName.CHANGE_PROCESSOR.value: _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
-    ToolName.CHECKIN_PROGRAM.value: _params("programPath", "comment", "keepCheckedOut"),
-    ToolName.CHECKOUT_PROGRAM.value: _params("programPath", "exclusive"),
-    ToolName.CHECKOUT_STATUS.value: _params("programPath"),
-    ToolName.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
-    ToolName.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
-    ToolName.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
-    ToolName.GET_FUNCTION.value: _params("programPath", "function", "addressOrSymbol", "functionIdentifier", "timeout", "maxInstructions", "maxRefs"),
-    ToolName.REMOVE_PROGRAM_BINARY.value: _params("programPath", "confirm"),
-    ToolName.EXECUTE_SCRIPT.value: _params("code", "programPath", "timeout"),
-    ToolName.EXPORT.value: _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
-    ToolName.GEN_CALLGRAPH.value: _params("programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers"),
-    ToolName.GET_CALL_GRAPH.value: _params("programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses"),
-    ToolName.GET_CURRENT_ADDRESS.value: _params("programPath"),
-    ToolName.GET_CURRENT_FUNCTION.value: _params("programPath"),
-    ToolName.GET_CURRENT_PROGRAM.value: _params("programPath"),
-    ToolName.GET_DATA.value: _params("programPath", "addressOrSymbol"),
-    ToolName.GET_FUNCTIONS.value: _params("programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose"),
-    ToolName.GET_REFERENCES.value: _params("programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow"),
-    ToolName.IMPORT_BINARY.value: _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
-    ToolName.INSPECT_MEMORY.value: _params("programPath", "mode", "address", "length", "offset", "limit"),
-    ToolName.LIST_CROSS_REFERENCES.value: _params("programPath", "address", "direction", "maxResults"),
-    ToolName.LIST_EXPORTS.value: _params("programPath", "filter", "maxResults", "offset", "startIndex"),
-    ToolName.LIST_FUNCTIONS.value: _params("programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers"),
-    ToolName.LIST_IMPORTS.value: _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
-    ToolName.LIST_PROCESSORS.value: _params("filter"),
-    ToolName.LIST_PROJECT_FILES.value: [],
-    ToolName.LIST_STRINGS.value: _params("programPath", "filter", "maxResults", "offset"),
-    ToolName.MANAGE_BOOKMARKS.value: _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
-    ToolName.MANAGE_COMMENTS.value: _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),
-    ToolName.MANAGE_DATA_TYPES.value: _params("programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol"),
-    ToolName.MANAGE_FILES.value: _params(
+    Tool.ANALYZE_DATA_FLOW.value: _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
+    Tool.ANALYZE_PROGRAM.value: _params("programPath", "analyzers", "force"),
+    Tool.ANALYZE_VTABLES.value: _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
+    Tool.APPLY_DATA_TYPE.value: _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
+    Tool.CHANGE_PROCESSOR.value: _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
+    Tool.CHECKIN_PROGRAM.value: _params("programPath", "comment", "keepCheckedOut"),
+    Tool.CHECKOUT_PROGRAM.value: _params("programPath", "exclusive"),
+    Tool.CHECKOUT_STATUS.value: _params("programPath"),
+    Tool.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
+    Tool.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
+    Tool.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
+    Tool.GET_FUNCTION.value: _params("programPath", "function", "addressOrSymbol", "functionIdentifier", "timeout", "maxInstructions", "maxRefs"),
+    Tool.REMOVE_PROGRAM_BINARY.value: _params("programPath", "confirm"),
+    Tool.EXECUTE_SCRIPT.value: _params("code", "programPath", "timeout"),
+    Tool.EXPORT.value: _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
+    Tool.GEN_CALLGRAPH.value: _params("programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers"),
+    Tool.GET_CALL_GRAPH.value: _params("programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses"),
+    Tool.GET_CURRENT_ADDRESS.value: _params("programPath"),
+    Tool.GET_CURRENT_FUNCTION.value: _params("programPath"),
+    Tool.GET_CURRENT_PROGRAM.value: _params("programPath"),
+    Tool.GET_DATA.value: _params("programPath", "addressOrSymbol"),
+    Tool.GET_FUNCTIONS.value: _params("programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose"),
+    Tool.GET_REFERENCES.value: _params("programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow"),
+    Tool.IMPORT_BINARY.value: _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
+    Tool.INSPECT_MEMORY.value: _params("programPath", "mode", "address", "length", "offset", "limit"),
+    Tool.LIST_CROSS_REFERENCES.value: _params("programPath", "address", "direction", "maxResults"),
+    Tool.LIST_EXPORTS.value: _params("programPath", "filter", "maxResults", "offset", "startIndex"),
+    Tool.LIST_FUNCTIONS.value: _params("programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers"),
+    Tool.LIST_IMPORTS.value: _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
+    Tool.LIST_PROCESSORS.value: _params("filter"),
+    Tool.LIST_PROJECT_FILES.value: [],
+    Tool.LIST_STRINGS.value: _params("programPath", "filter", "maxResults", "offset"),
+    Tool.MANAGE_BOOKMARKS.value: _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
+    Tool.MANAGE_COMMENTS.value: _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),
+    Tool.MANAGE_DATA_TYPES.value: _params("programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol"),
+    Tool.MANAGE_FILES.value: _params(
         "mode",
         "path",
         "sourcePath",
@@ -303,8 +357,8 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "compilerSpecId",
         "endian",
     ),
-    ToolName.MANAGE_FUNCTION_TAGS.value: _params("programPath", "function", "mode", "tags"),
-    ToolName.MANAGE_FUNCTION.value: _params(
+    Tool.MANAGE_FUNCTION_TAGS.value: _params("programPath", "function", "mode", "tags"),
+    Tool.MANAGE_FUNCTION.value: _params(
         "programPath",
         "mode",
         "address",
@@ -325,8 +379,8 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "propagateMaxCandidates",
         "propagateMaxInstructions",
     ),
-    ToolName.MANAGE_STRINGS.value: _params("programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions"),
-    ToolName.MANAGE_STRUCTURES.value: _params(
+    Tool.MANAGE_STRINGS.value: _params("programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions"),
+    Tool.MANAGE_STRUCTURES.value: _params(
         "programPath",
         "mode",
         "cDefinition",
@@ -354,20 +408,20 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "newComment",
         "newLength",
     ),
-    ToolName.MANAGE_SYMBOLS.value: _params("programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll"),
-    ToolName.MATCH_FUNCTION.value: _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
-    ToolName.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
-    ToolName.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
-    ToolName.OPEN_PROJECT.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
-    ToolName.READ_BYTES.value: _params("programPath", "address", "length"),
-    ToolName.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
-    ToolName.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
-    ToolName.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
-    ToolName.SEARCH_STRINGS.value: _params("programPath", "pattern", "searchString", "maxResults"),
-    ToolName.SEARCH_SYMBOLS.value: _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
-    ToolName.SVR_ADMIN.value: _params("args", "command", "timeoutSeconds"),
-    ToolName.SUGGEST.value: _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
-    ToolName.SYNC_PROJECT.value: _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
+    Tool.MANAGE_SYMBOLS.value: _params("programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll"),
+    Tool.MATCH_FUNCTION.value: _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
+    Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
+    Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
+    Tool.OPEN_PROJECT.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
+    Tool.READ_BYTES.value: _params("programPath", "address", "length"),
+    Tool.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
+    Tool.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
+    Tool.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
+    Tool.SEARCH_STRINGS.value: _params("programPath", "pattern", "searchString", "maxResults"),
+    Tool.SEARCH_SYMBOLS.value: _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
+    Tool.SVR_ADMIN.value: _params("args", "command", "timeoutSeconds"),
+    Tool.SUGGEST.value: _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
+    Tool.SYNC_PROJECT.value: _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
 }
 
 # Populated from TOOLS_LIST.md when available.
@@ -382,123 +436,123 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
-    "open": ToolName.OPEN_PROJECT.value,
-    "switch-project": ToolName.OPEN_PROJECT.value,  # folded into open-project
-    "download-shared-repository": ToolName.SYNC_PROJECT.value,
-    "sync-shared-repository": ToolName.SYNC_PROJECT.value,
-    "sync-shared-project": ToolName.SYNC_PROJECT.value,
-    "pull-shared-repository": ToolName.SYNC_PROJECT.value,
-    "push-shared-repository": ToolName.SYNC_PROJECT.value,
-    "download-shared-project": ToolName.SYNC_PROJECT.value,
-    "delete-project-binary": ToolName.REMOVE_PROGRAM_BINARY.value,
-    "gen-callgraph": ToolName.GET_CALL_GRAPH.value,
-    "list-cross-references": ToolName.GET_REFERENCES.value,
-    "list-strings": ToolName.MANAGE_STRINGS.value,
-    "search-strings": ToolName.MANAGE_STRINGS.value,
+    "open": Tool.OPEN_PROJECT.value,
+    "switch-project": Tool.OPEN_PROJECT.value,  # folded into open-project
+    "download-shared-repository": Tool.SYNC_PROJECT.value,
+    "sync-shared-repository": Tool.SYNC_PROJECT.value,
+    "sync-shared-project": Tool.SYNC_PROJECT.value,
+    "pull-shared-repository": Tool.SYNC_PROJECT.value,
+    "push-shared-repository": Tool.SYNC_PROJECT.value,
+    "download-shared-project": Tool.SYNC_PROJECT.value,
+    "delete-project-binary": Tool.REMOVE_PROGRAM_BINARY.value,
+    "gen-callgraph": Tool.GET_CALL_GRAPH.value,
+    "list-cross-references": Tool.GET_REFERENCES.value,
+    "list-strings": Tool.MANAGE_STRINGS.value,
+    "search-strings": Tool.MANAGE_STRINGS.value,
     # analyze-data-flow overloads
-    "find-variable-accesses": ToolName.ANALYZE_DATA_FLOW.value,
-    "trace-data-flow-backward": ToolName.ANALYZE_DATA_FLOW.value,
-    "trace-data-flow-forward": ToolName.ANALYZE_DATA_FLOW.value,
+    "find-variable-accesses": Tool.ANALYZE_DATA_FLOW.value,
+    "trace-data-flow-backward": Tool.ANALYZE_DATA_FLOW.value,
+    "trace-data-flow-forward": Tool.ANALYZE_DATA_FLOW.value,
     # analyze-vtables overloads
-    "analyze-vtable": ToolName.ANALYZE_VTABLES.value,
-    "find-vtable-callers": ToolName.ANALYZE_VTABLES.value,
-    "find-vtables-containing-function": ToolName.ANALYZE_VTABLES.value,
+    "analyze-vtable": Tool.ANALYZE_VTABLES.value,
+    "find-vtable-callers": Tool.ANALYZE_VTABLES.value,
+    "find-vtables-containing-function": Tool.ANALYZE_VTABLES.value,
     # decompile-function overloads/synonyms
-    "get-decompilation": ToolName.DECOMPILE_FUNCTION.value,
+    "get-decompilation": Tool.DECOMPILE_FUNCTION.value,
     # get-call-graph overloads
-    "find-common-callers": ToolName.GET_CALL_GRAPH.value,
-    "get-call-tree": ToolName.GET_CALL_GRAPH.value,
-    "get-callers-decompiled": ToolName.GET_CALL_GRAPH.value,
+    "find-common-callers": Tool.GET_CALL_GRAPH.value,
+    "get-call-tree": Tool.GET_CALL_GRAPH.value,
+    "get-callers-decompiled": Tool.GET_CALL_GRAPH.value,
     # get-functions overloads/synonyms
-    "get-function-by-address": ToolName.GET_FUNCTIONS.value,
-    "find-function": ToolName.GET_FUNCTIONS.value,
-    "get-all-functions": ToolName.LIST_FUNCTIONS.value,
+    "get-function-by-address": Tool.GET_FUNCTIONS.value,
+    "find-function": Tool.GET_FUNCTIONS.value,
+    "get-all-functions": Tool.LIST_FUNCTIONS.value,
     # get-references overloads
-    "find-cross-references": ToolName.GET_REFERENCES.value,
-    "find-import-references": ToolName.GET_REFERENCES.value,
-    "get-referencers-decompiled": ToolName.GET_REFERENCES.value,
-    "resolve-thunk": ToolName.GET_REFERENCES.value,
+    "find-cross-references": Tool.GET_REFERENCES.value,
+    "find-import-references": Tool.GET_REFERENCES.value,
+    "get-referencers-decompiled": Tool.GET_REFERENCES.value,
+    "resolve-thunk": Tool.GET_REFERENCES.value,
     # import-binary overloads/legacy
-    "import-file": ToolName.IMPORT_BINARY.value,
+    "import-file": Tool.IMPORT_BINARY.value,
     # inspect-memory overloads
-    "get-memory-blocks": ToolName.INSPECT_MEMORY.value,
-    "read-memory": ToolName.INSPECT_MEMORY.value,
-    "read-bytes": ToolName.INSPECT_MEMORY.value,
+    "get-memory-blocks": Tool.INSPECT_MEMORY.value,
+    "read-memory": Tool.INSPECT_MEMORY.value,
+    "read-bytes": Tool.INSPECT_MEMORY.value,
     # list-functions overloads
-    "get-function-count": ToolName.LIST_FUNCTIONS.value,
-    "get-functions-by-similarity": ToolName.LIST_FUNCTIONS.value,
-    "get-undefined-function-candidates": ToolName.LIST_FUNCTIONS.value,
-    "list-methods": ToolName.LIST_FUNCTIONS.value,
+    "get-function-count": Tool.LIST_FUNCTIONS.value,
+    "get-functions-by-similarity": Tool.LIST_FUNCTIONS.value,
+    "get-undefined-function-candidates": Tool.LIST_FUNCTIONS.value,
+    "list-methods": Tool.LIST_FUNCTIONS.value,
     # manage-bookmarks overloads/legacy
-    "set-bookmark": ToolName.MANAGE_BOOKMARKS.value,
-    "get-bookmarks": ToolName.MANAGE_BOOKMARKS.value,
-    "remove-bookmark": ToolName.MANAGE_BOOKMARKS.value,
-    "search-bookmarks": ToolName.MANAGE_BOOKMARKS.value,
-    "list-bookmark-categories": ToolName.MANAGE_BOOKMARKS.value,
+    "set-bookmark": Tool.MANAGE_BOOKMARKS.value,
+    "get-bookmarks": Tool.MANAGE_BOOKMARKS.value,
+    "remove-bookmark": Tool.MANAGE_BOOKMARKS.value,
+    "search-bookmarks": Tool.MANAGE_BOOKMARKS.value,
+    "list-bookmark-categories": Tool.MANAGE_BOOKMARKS.value,
     # manage-comments overloads/legacy
-    "set-comment": ToolName.MANAGE_COMMENTS.value,
-    "get-comments": ToolName.MANAGE_COMMENTS.value,
-    "remove-comment": ToolName.MANAGE_COMMENTS.value,
-    "search-comments": ToolName.MANAGE_COMMENTS.value,
-    "set-decompilation-comment": ToolName.MANAGE_COMMENTS.value,
+    "set-comment": Tool.MANAGE_COMMENTS.value,
+    "get-comments": Tool.MANAGE_COMMENTS.value,
+    "remove-comment": Tool.MANAGE_COMMENTS.value,
+    "search-comments": Tool.MANAGE_COMMENTS.value,
+    "set-decompilation-comment": Tool.MANAGE_COMMENTS.value,
     # manage-data-types overloads
-    "get-data-type-archives": ToolName.MANAGE_DATA_TYPES.value,
-    "get-data-type-by-string": ToolName.MANAGE_DATA_TYPES.value,
+    "get-data-type-archives": Tool.MANAGE_DATA_TYPES.value,
+    "get-data-type-by-string": Tool.MANAGE_DATA_TYPES.value,
     # manage-function overloads/legacy
-    "rename-function": ToolName.MANAGE_FUNCTION.value,
-    "rename-function-by-address": ToolName.MANAGE_FUNCTION.value,
-    "set-function-prototype": ToolName.MANAGE_FUNCTION.value,
-    "set-local-variable-type": ToolName.MANAGE_FUNCTION.value,
-    "rename-variable": ToolName.MANAGE_FUNCTION.value,
-    "change-variable-datatypes": ToolName.MANAGE_FUNCTION.value,
-    "create-function": ToolName.MANAGE_FUNCTION.value,
-    "rename-variables": ToolName.MANAGE_FUNCTION.value,
+    "rename-function": Tool.MANAGE_FUNCTION.value,
+    "rename-function-by-address": Tool.MANAGE_FUNCTION.value,
+    "set-function-prototype": Tool.MANAGE_FUNCTION.value,
+    "set-local-variable-type": Tool.MANAGE_FUNCTION.value,
+    "rename-variable": Tool.MANAGE_FUNCTION.value,
+    "change-variable-datatypes": Tool.MANAGE_FUNCTION.value,
+    "create-function": Tool.MANAGE_FUNCTION.value,
+    "rename-variables": Tool.MANAGE_FUNCTION.value,
     # manage-function-tags overloads
-    "function-tags": ToolName.MANAGE_FUNCTION_TAGS.value,
+    "function-tags": Tool.MANAGE_FUNCTION_TAGS.value,
     # manage-strings overloads
-    "get-strings": ToolName.MANAGE_STRINGS.value,
-    "get-strings-by-similarity": ToolName.MANAGE_STRINGS.value,
-    "get-strings-count": ToolName.MANAGE_STRINGS.value,
-    "search-strings-regex": ToolName.MANAGE_STRINGS.value,
+    "get-strings": Tool.MANAGE_STRINGS.value,
+    "get-strings-by-similarity": Tool.MANAGE_STRINGS.value,
+    "get-strings-count": Tool.MANAGE_STRINGS.value,
+    "search-strings-regex": Tool.MANAGE_STRINGS.value,
     # manage-structures overloads
-    "add-structure-field": ToolName.MANAGE_STRUCTURES.value,
-    "apply-structure": ToolName.MANAGE_STRUCTURES.value,
-    "create-structure": ToolName.MANAGE_STRUCTURES.value,
-    "delete-structure": ToolName.MANAGE_STRUCTURES.value,
-    "get-structure-info": ToolName.MANAGE_STRUCTURES.value,
-    "list-structures": ToolName.MANAGE_STRUCTURES.value,
-    "modify-structure-field": ToolName.MANAGE_STRUCTURES.value,
-    "modify-structure-from-c": ToolName.MANAGE_STRUCTURES.value,
-    "parse-c-header": ToolName.MANAGE_STRUCTURES.value,
-    "parse-c-structure": ToolName.MANAGE_STRUCTURES.value,
-    "validate-c-structure": ToolName.MANAGE_STRUCTURES.value,
+    "add-structure-field": Tool.MANAGE_STRUCTURES.value,
+    "apply-structure": Tool.MANAGE_STRUCTURES.value,
+    "create-structure": Tool.MANAGE_STRUCTURES.value,
+    "delete-structure": Tool.MANAGE_STRUCTURES.value,
+    "get-structure-info": Tool.MANAGE_STRUCTURES.value,
+    "list-structures": Tool.MANAGE_STRUCTURES.value,
+    "modify-structure-field": Tool.MANAGE_STRUCTURES.value,
+    "modify-structure-from-c": Tool.MANAGE_STRUCTURES.value,
+    "parse-c-header": Tool.MANAGE_STRUCTURES.value,
+    "parse-c-structure": Tool.MANAGE_STRUCTURES.value,
+    "validate-c-structure": Tool.MANAGE_STRUCTURES.value,
     # manage-symbols overloads/legacy
-    "list-classes": ToolName.MANAGE_SYMBOLS.value,
-    "list-namespaces": ToolName.MANAGE_SYMBOLS.value,
-    "rename-data": ToolName.MANAGE_SYMBOLS.value,
-    "get-symbols": ToolName.MANAGE_SYMBOLS.value,
-    "get-symbols-count": ToolName.MANAGE_SYMBOLS.value,
+    "list-classes": Tool.MANAGE_SYMBOLS.value,
+    "list-namespaces": Tool.MANAGE_SYMBOLS.value,
+    "rename-data": Tool.MANAGE_SYMBOLS.value,
+    "get-symbols": Tool.MANAGE_SYMBOLS.value,
+    "get-symbols-count": Tool.MANAGE_SYMBOLS.value,
     # search-code overloads
-    "search-decompilation": ToolName.SEARCH_CODE.value,
+    "search-decompilation": Tool.SEARCH_CODE.value,
     # search-constants overloads
-    "find-constant-uses": ToolName.SEARCH_CONSTANTS.value,
-    "find-constants-in-range": ToolName.SEARCH_CONSTANTS.value,
-    "list-common-constants": ToolName.SEARCH_CONSTANTS.value,
+    "find-constant-uses": Tool.SEARCH_CONSTANTS.value,
+    "find-constants-in-range": Tool.SEARCH_CONSTANTS.value,
+    "list-common-constants": Tool.SEARCH_CONSTANTS.value,
     # search-everything overloads
-    "global-search": ToolName.SEARCH_EVERYTHING.value,
-    "search-anything": ToolName.SEARCH_EVERYTHING.value,
-    "unified-search": ToolName.SEARCH_EVERYTHING.value,
+    "global-search": Tool.SEARCH_EVERYTHING.value,
+    "search-anything": Tool.SEARCH_EVERYTHING.value,
+    "unified-search": Tool.SEARCH_EVERYTHING.value,
 }
 
 # GUI-only tools disabled for headless MCP/CLI usage.
 # These tools require a graphical interface and are not available in server/headless mode.
 # They remain defined for completeness but are filtered out of advertised tool lists.
-DISABLED_GUI_ONLY_TOOLS: frozenset[ToolName] = frozenset(
+DISABLED_GUI_ONLY_TOOLS: frozenset[Tool] = frozenset(
     {
-        ToolName.GET_CURRENT_ADDRESS,
-        ToolName.GET_CURRENT_FUNCTION,
-        ToolName.OPEN_PROGRAM_IN_CODE_BROWSER,
-        ToolName.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER,
+        Tool.GET_CURRENT_ADDRESS,
+        Tool.GET_CURRENT_FUNCTION,
+        Tool.OPEN_PROGRAM_IN_CODE_BROWSER,
+        Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER,
     },
 )
 
@@ -519,25 +573,17 @@ def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def resolve_tool_name_enum(tool_name: str) -> ToolName | None:
-    """Resolve arbitrary tool name/alias to canonical ToolName enum, or None if unknown."""
-    resolved = resolve_tool_name(tool_name)
-    if resolved is None:
-        return None
-    try:
-        return ToolName(resolved)
-    except ValueError:
-        return None
+def resolve_tool_name_enum(tool_name: str) -> Tool | None:
+    """Resolve arbitrary tool name/alias to canonical Tool enum, or None if unknown. Thin wrapper for Tool.from_string()."""
+    return Tool.from_string(tool_name)
 
 
-def get_tool_params(tool_name: ToolName | str) -> list[str]:
-    """Return the list of parameter names (camelCase) for a tool, or empty if unknown."""
-    if isinstance(tool_name, ToolName):
-        return list(TOOL_PARAMS.get(tool_name, []))
-    resolved = resolve_tool_name_enum(tool_name)
-    if resolved is None:
-        return []
-    return list(TOOL_PARAMS.get(resolved, []))
+def get_tool_params(tool_name: Tool | str) -> list[str]:
+    """Return the list of parameter names (camelCase) for a tool, or empty if unknown. Prefer tool.params when you have a Tool."""
+    if isinstance(tool_name, Tool):
+        return tool_name.params
+    resolved = Tool.from_string(tool_name)
+    return resolved.params if resolved is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -722,7 +768,7 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
 
 _tools_list_params, _tools_list_param_aliases, _tools_list_tool_aliases = _extract_tools_list_sync_data()
 _merged_params_str: dict[str, list[str]] = _merge_tools_list_params(_TOOL_PARAMS_STR, _tools_list_params)
-TOOL_PARAMS: dict[ToolName, list[str]] = {ToolName(k): v for k, v in _merged_params_str.items()}
+TOOL_PARAMS: dict[Tool, list[str]] = {Tool(k): v for k, v in _merged_params_str.items()}
 TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
 TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
@@ -761,10 +807,10 @@ def _add_builtin_param_aliases() -> None:
         ("versioning", "enableVersionControl"),
         ("depth", "maxDepth"),
     ):
-        _add(ToolName.IMPORT_BINARY.value, alias_name, canonical_param, replace=True)
+        _add(Tool.IMPORT_BINARY.value, alias_name, canonical_param, replace=True)
 
     # Open/shared-server argument harmonization.
-    for tool_name in (ToolName.OPEN_PROJECT.value,):
+    for tool_name in (Tool.OPEN_PROJECT.value,):
         _add(tool_name, "isShared", "shared")
         _add(tool_name, "sharedMode", "shared")
         _add(tool_name, "shared_mode", "shared")
@@ -789,20 +835,20 @@ _add_builtin_param_aliases()
 # Default advertised surface (MCP + CLI) is blacklist-driven.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
 # New tools are auto-advertised unless added to this hidden set.
-_DEFAULT_HIDDEN_TOOLS: frozenset[ToolName] = frozenset(
+_DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     {
-        ToolName.DELETE_PROJECT_BINARY,
-        ToolName.GEN_CALLGRAPH,
-        ToolName.GET_FUNCTIONS,
-        ToolName.MANAGE_BOOKMARKS,
-        ToolName.MANAGE_COMMENTS,
-        ToolName.MANAGE_DATA_TYPES,
-        ToolName.MANAGE_FILES,
-        ToolName.MANAGE_FUNCTION,
-        ToolName.MANAGE_STRINGS,
-        ToolName.MANAGE_STRUCTURES,
-        ToolName.MANAGE_SYMBOLS,
-        ToolName.SUGGEST,
+        Tool.DELETE_PROJECT_BINARY,
+        Tool.GEN_CALLGRAPH,
+        Tool.GET_FUNCTIONS,
+        Tool.MANAGE_BOOKMARKS,
+        Tool.MANAGE_COMMENTS,
+        Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_FILES,
+        Tool.MANAGE_FUNCTION,
+        Tool.MANAGE_STRINGS,
+        Tool.MANAGE_STRUCTURES,
+        Tool.MANAGE_SYMBOLS,
+        Tool.SUGGEST,
     },
 )
 
@@ -861,7 +907,7 @@ def _build_advertised_tools() -> list[str]:
     Otherwise: start from all canonical tools, remove disabled, then either hide
     _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
     """
-    canonical_visible = [t.value for t in ToolName if t not in DISABLED_GUI_ONLY_TOOLS]
+    canonical_visible = [t.value for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
     hidden_set = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
     disabled_set = _get_disabled_tools()
     explicit_set = _get_explicit_enabled_tools()
@@ -888,9 +934,9 @@ _ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ()
 
 
 def is_tool_advertised(tool_name: str) -> bool:
-    """Check if a tool is currently advertised based on env var configuration."""
-    normalized = normalize_identifier(tool_name)
-    return any(normalize_identifier(t) == normalized for t in ADVERTISED_TOOLS)
+    """Check if a tool is currently advertised based on env var configuration. Prefer tool.is_advertised when you have a Tool."""
+    t = Tool.from_string(tool_name)
+    return t.is_advertised if t is not None else False
 
 
 def get_advertised_tools() -> list[str]:

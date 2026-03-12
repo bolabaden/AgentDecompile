@@ -372,7 +372,7 @@ class AgentDecompileMcpClient:
 
         async with AgentDecompileMcpClient(host="127.0.0.1", port=8080) as client:
             tools = await client.list_tools()
-            result = await client.call_tool(ToolName.GET_FUNCTIONS.value, {"programPath": "..."})
+            result = await client.call_tool(Tool.GET_FUNCTIONS.value, {"programPath": "..."})
     """
 
     def __init__(

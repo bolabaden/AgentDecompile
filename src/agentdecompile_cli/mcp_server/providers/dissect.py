@@ -23,7 +23,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.GET_FUNCTION.value,
+                name=Tool.GET_FUNCTION.value,
                 description=(
                     "Deep, all-in-one inspection of a single function. "
                     "Returns every available detail in one call: decompiled C code, "
@@ -120,7 +120,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         body = target.getBody()
 
         result: dict[str, Any] = {
-            "tool": ToolName.GET_FUNCTION.value,
+            "tool": Tool.GET_FUNCTION.value,
             "name": target.getName(),
             "address": str(entry),
             "signature": str(target.getSignature()),

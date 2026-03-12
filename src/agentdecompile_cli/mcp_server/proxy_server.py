@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.mcp_server.auth import AuthMiddleware
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     from agentdecompile_cli.mcp_server.auth import AuthConfig
@@ -84,7 +84,7 @@ def _proxy_mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 2,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": ToolName.OPEN_PROJECT.value,
+                                    "name": Tool.OPEN_PROJECT.value,
                                     "arguments": {
                                         "path": "/K1/k1_win_gog_swkotor.exe",
                                         "format": "json",

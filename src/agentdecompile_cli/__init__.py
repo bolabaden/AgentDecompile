@@ -6,7 +6,7 @@ Programmatic use: AgentDecompileMcpClient for async HTTP access to an existing s
 
 Package layout:
   - bridge: HTTP client (AgentDecompileMcpClient), stdio bridge, MCP session fix.
-  - registry: Tool names (ToolName enum), normalization, TOOLS, TOOL_PARAMS, resource URIs.
+  - registry: Tool names (Tool enum), normalization, TOOLS, TOOL_PARAMS, resource URIs.
   - executor: run_async(), get_client(), error handling, backend URL resolution.
   - launcher: PyGhidra init, ProjectManager, AgentDecompileLauncher (see launcher.py).
   - mcp_server: FastMCP server, ToolProviderManager, providers/*, resources, prompts.
@@ -33,6 +33,7 @@ from agentdecompile_cli.registry import (
     RESOURCE_URI_STATIC_ANALYSIS,
     RESOURCE_URIS,
     ResourceUri,
+    Tool,
     ToolName,
     TOOLS,
     TOOL_PARAMS,
@@ -62,6 +63,7 @@ __all__ = [
     "NotFoundError",
     "ResourceUri",
     "ServerNotRunningError",
+    "Tool",
     "ToolName",
     "__version__",
     "build_tool_payload",
