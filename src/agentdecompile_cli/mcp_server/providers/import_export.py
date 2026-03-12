@@ -355,22 +355,54 @@ class ImportExportToolProvider(ToolProvider):
         errors: list[dict[str, Any]] = []
         discovered_count = 0
 
-        try:
-            from agentdecompile_cli.launcher import ProjectManager
+        # Prefer the session's Ghidra project (launcher) so import goes into the correct project.
+        ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
 
-            manager = ProjectManager()
-            try:
+        try:
+            if ghidra_project is not None:
+                from java.io import File  # pyright: ignore[reportMissingImports]
+
                 for item in self._iter_files_to_import(source, recursive, max_depth):
                     discovered_count += 1
+                    name = prog_name or item.name
                     try:
-                        program = manager.import_binary(item, program_name=prog_name or item.name)
+                        program = ghidra_project.importProgram(File(str(item)))
                         if program is None:
-                            raise RuntimeError("import_binary returned None")
-                        imported_programs.append({"sourcePath": str(item), "programName": program.getName() if hasattr(program, "getName") else item.name})
+                            raise RuntimeError("importProgram returned None")
+                        if name and (not item.name or name.strip().lower() != item.name.strip().lower()):
+                            ghidra_project.saveAs(program, "/", name.strip(), True)
+                        final_name = name.strip() or (program.getName() if hasattr(program, "getName") else item.name)
+                        path_in_project = ""
+                        try:
+                            df = program.getDomainFile()
+                            if df is not None:
+                                path_in_project = str(df.getPathname())
+                        except Exception:
+                            pass
+                        imported_programs.append({
+                            "sourcePath": str(item),
+                            "programName": final_name,
+                            "programPath": path_in_project or f"/{final_name}",
+                        })
+                        # Leave program in project; do not release (we are not the consumer)
                     except Exception as exc:
                         errors.append({"path": str(item), "error": str(exc)})
-            finally:
-                manager.cleanup()
+            else:
+                from agentdecompile_cli.launcher import ProjectManager
+
+                manager = ProjectManager()
+                try:
+                    for item in self._iter_files_to_import(source, recursive, max_depth):
+                        discovered_count += 1
+                        try:
+                            program = manager.import_binary(item, program_name=prog_name or item.name)
+                            if program is None:
+                                raise RuntimeError("import_binary returned None")
+                            imported_programs.append({"sourcePath": str(item), "programName": program.getName() if hasattr(program, "getName") else item.name})
+                        except Exception as exc:
+                            errors.append({"path": str(item), "error": str(exc)})
+                finally:
+                    manager.cleanup()
         except Exception as exc:
             return create_success_response(
                 {

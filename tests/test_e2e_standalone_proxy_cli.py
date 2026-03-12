@@ -331,11 +331,9 @@ class TestStandaloneResourcesList:
             body = _post_with_session(client, sid, _resources_list_payload())
             resources = body["result"]["resources"]
             assert isinstance(resources, list)
-            assert len(resources) == 3
+            assert len(resources) == 1
             uris = {str(r["uri"]) for r in resources}
-            assert "ghidra://programs" in uris
-            assert "ghidra://static-analysis-results" in uris
-            assert "ghidra://agentdecompile-debug-info" in uris
+            assert uris == {"agentdecompile://debug-info"}
 
 
 class TestStandaloneResourcesRead:

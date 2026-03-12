@@ -20,15 +20,13 @@ class TestResourceProvidersIntegration:
         return ResourceProviderManager()
 
     @pytest.mark.asyncio
-    async def test_list_resources_returns_three(self, resource_manager):
-        """Test that listResources returns exactly 3 resources."""
+    async def test_list_resources_returns_canonical_resource(self, resource_manager):
+        """Test that listResources advertises only the canonical unified resource."""
         resources = resource_manager.list_resources()
-        assert len(resources) == 3, f"Expected 3 resources, got {len(resources)}"
+        assert len(resources) == 1, f"Expected 1 resource, got {len(resources)}"
         
         uris = [str(r.uri) for r in resources]
-        assert "ghidra://programs" in uris
-        assert "ghidra://static-analysis-results" in uris
-        assert "ghidra://agentdecompile-debug-info" in uris
+        assert "agentdecompile://debug-info" in uris
 
     @pytest.mark.asyncio
     async def test_read_programs_without_program(self, resource_manager):
@@ -62,7 +60,7 @@ class TestResourceProvidersIntegration:
     @pytest.mark.asyncio
     async def test_read_debug_info_without_program(self, resource_manager):
         """Test reading debug info resource without a program loaded."""
-        result = await resource_manager.read_resource("ghidra://agentdecompile-debug-info")
+        result = await resource_manager.read_resource("agentdecompile://debug-info")
         
         # Should return valid JSON
         data = json.loads(result)
@@ -124,7 +122,7 @@ def test_resource_providers_standalone():
         print(f"  Found {len(resources)} resources:")
         for r in resources:
             print(f"    - {r.uri} ({r.name})")
-        assert len(resources) == 3
+        assert len(resources) == 1
         
         # Test 2: Read each resource
         print("\n[TEST 2] Read All Resources (No Program Loaded)")

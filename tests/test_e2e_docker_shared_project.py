@@ -754,9 +754,7 @@ class TestDockerResources:
         assert isinstance(data["profiling"]["recent_runs"], list)
         assert data["profiling"]["run_count"] == len(data["profiling"]["recent_runs"])
         assert data["resources"]["resources_served"] == [
-            "ghidra://programs",
-            "ghidra://static-analysis-results",
-            "ghidra://agentdecompile-debug-info",
+            "agentdecompile://debug-info",
         ]
         assert data["resources"]["cache_status"] == "enabled"
 
@@ -903,9 +901,7 @@ class TestDockerCLI:
         assert isinstance(data["profiling"]["recent_runs"], list)
         assert data["profiling"]["run_count"] == len(data["profiling"]["recent_runs"])
         assert data["resources"]["resources_served"] == [
-            "ghidra://programs",
-            "ghidra://static-analysis-results",
-            "ghidra://agentdecompile-debug-info",
+            "agentdecompile://debug-info",
         ]
         assert data["resources"]["cache_status"] == "enabled"
 

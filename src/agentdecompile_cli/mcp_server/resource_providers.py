@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from collections.abc import Callable
+from typing import Any
 
 from mcp import types
 
@@ -18,10 +19,20 @@ class ResourceProvider:
 
     def __init__(self, program_info: ProgramInfo | None = None):
         self.program_info: ProgramInfo | None = program_info
+        self.tool_provider_manager: Any | None = None
+        self.runtime_context: dict[str, Any] = {}
 
     def set_program_info(self, program_info: ProgramInfo) -> None:
         """Set the program info."""
         self.program_info = program_info
+
+    def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+        """Set the tool-provider manager for cross-resource tool calls."""
+        self.tool_provider_manager = tool_provider_manager
+
+    def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
+        """Set runtime metadata captured during server startup."""
+        self.runtime_context = dict(runtime_context or {})
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of resources provided by this provider."""
@@ -47,23 +58,24 @@ class ResourceProviderManager:
     def __init__(self):
         self.providers: list[ResourceProvider] = []
         self.program_info: ProgramInfo | None = None
+        self.tool_provider_manager: Any | None = None
+        self.runtime_context: dict[str, Any] = {}
 
         # Initialize all resource providers
         self._init_providers()
 
     def _init_providers(self) -> None:
         """Initialize all resource providers."""
-        from agentdecompile_cli.mcp_server.resources import (
-            DebugInfoResource,
-            ProgramListResource,
-            StaticAnalysisResultsResource,
-        )
+        from agentdecompile_cli.mcp_server.resources import DebugInfoResource
 
         self.providers = [
-            ProgramListResource(),
-            StaticAnalysisResultsResource(),
             DebugInfoResource(),
         ]
+
+        if self.tool_provider_manager is not None:
+            self._for_each_provider(lambda provider: provider.set_tool_provider_manager(self.tool_provider_manager))
+        if self.runtime_context:
+            self._for_each_provider(lambda provider: provider.set_runtime_context(self.runtime_context))
 
     def _for_each_provider(self, action: Callable[[ResourceProvider], None]) -> None:
         """Apply an action to each registered provider."""
@@ -74,6 +86,16 @@ class ResourceProviderManager:
         """Set program info for all providers."""
         self.program_info = program_info
         self._for_each_provider(lambda provider: provider.set_program_info(program_info))
+
+    def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+        """Set tool-provider manager for all resource providers."""
+        self.tool_provider_manager = tool_provider_manager
+        self._for_each_provider(lambda provider: provider.set_tool_provider_manager(tool_provider_manager))
+
+    def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
+        """Set startup/runtime context for all resource providers."""
+        self.runtime_context = dict(runtime_context or {})
+        self._for_each_provider(lambda provider: provider.set_runtime_context(self.runtime_context))
 
     def list_resources(self) -> list[types.Resource]:
         """List all resources from all providers."""

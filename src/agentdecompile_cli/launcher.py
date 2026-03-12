@@ -1783,6 +1783,16 @@ class AgentDecompileLauncher:
             # Pass the GhidraProject so providers can checkout from shared repos
             if self.pyghidra_context is not None:
                 self.mcp_server.set_ghidra_project(self.pyghidra_context.project)
+                self.mcp_server.set_runtime_context(
+                    {
+                        "projectDirectory": str(projects_dir),
+                        "projectName": project_name,
+                        "projectPathGpr": str(Path(projects_dir) / f"{project_name}.gpr"),
+                        "serverHost": selected_host,
+                        "serverPort": selected_port,
+                        "transportMode": "local-pyghidra",
+                    }
+                )
 
             # Start the server
             self.port = self.mcp_server.start()

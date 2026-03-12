@@ -1346,7 +1346,7 @@ def list_grp() -> None:
 
 @list_grp.command(
     "binaries",
-    help="List all programs in the project (ghidra://programs)",
+    help="List all programs in the project (legacy alias ghidra://programs)",
 )
 @click.option(
     "-f",
@@ -1526,7 +1526,7 @@ def data_create_label(
 
 @main.group(
     "resource",
-    help="Read MCP resources: programs, static-analysis-results, agentdecompile-debug-info",
+    help="Read MCP resources. Canonical advertised URI: agentdecompile://debug-info. Legacy program/static-analysis aliases remain readable.",
 )
 def resource_grp() -> None:
     pass
@@ -1572,7 +1572,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
     click.echo(format_output(data or result, _fmt(ctx)))
 
 
-@resource_grp.command("programs", help="Read ghidra://programs (same as list binaries)")
+@resource_grp.command("programs", help="Read legacy alias ghidra://programs (same as list binaries)")
 @click.pass_context
 def resource_programs(ctx: click.Context) -> None:
     _run_async(_read_resource(ctx, RESOURCE_URI_PROGRAMS))
@@ -1580,7 +1580,7 @@ def resource_programs(ctx: click.Context) -> None:
 
 @resource_grp.command(
     "static-analysis",
-    help="Read ghidra://static-analysis-results (SARIF 2.1.0)",
+    help="Read legacy alias ghidra://static-analysis-results (SARIF 2.1.0)",
 )
 @click.pass_context
 def resource_static_analysis(ctx: click.Context) -> None:
@@ -1589,7 +1589,7 @@ def resource_static_analysis(ctx: click.Context) -> None:
 
 @resource_grp.command(
     "debug-info",
-    help="Read ghidra://agentdecompile-debug-info (JSON)",
+    help="Read agentdecompile://debug-info (legacy ghidra://agentdecompile-debug-info is still accepted)",
 )
 @click.pass_context
 def resource_debug_info(ctx: click.Context) -> None:

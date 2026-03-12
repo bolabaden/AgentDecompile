@@ -402,6 +402,47 @@ Tool responses are returned as Markdown-formatted text by default. To receive ra
 
 Error responses for unresolvable program paths are returned as raw JSON (with `"success": false`) even in Markdown mode.
 
+### Direct HTTP header mapping for shared-server access
+
+If you are calling the MCP HTTP endpoint directly, the shared-server environment variables map to HTTP like this:
+
+| Environment variable | HTTP equivalent | Notes |
+|----------|---------|---------|
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | Request URL | Usually `http://host:port/mcp`. Not a header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | `X-Ghidra-Server-Host` | Shared Ghidra server host. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PORT` | `X-Ghidra-Server-Port` | Shared Ghidra server port, usually `13100`. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | `X-Ghidra-Repository` | Preferred repository header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` + `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | `Authorization: Basic <base64(username:password)>` | Preferred credential form. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | `X-Agent-Server-Username` | Accepted alias header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | `X-Agent-Server-Password` | Accepted alias header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | `X-Agent-Server-Repository` | Accepted repository alias header. |
+
+Standard transport headers:
+
+- `Content-Type: application/json`
+- `Accept: application/json, text/event-stream`
+- `Mcp-Session-Id: <value from prior response>` on follow-up requests in the same MCP session
+
+Header precedence:
+
+- Credentials: `Authorization` first, then `X-Agent-Server-Username` / `X-Agent-Server-Password`
+- Repository: `X-Ghidra-Repository` first, then `X-Agent-Server-Repository`
+
+Exact shared-server example:
+
+```http
+POST /mcp HTTP/1.1
+Host: 170.9.241.140:8080
+Content-Type: application/json
+Accept: application/json, text/event-stream
+Authorization: Basic <base64(username:password)>
+X-Ghidra-Server-Host: 170.9.241.140
+X-Ghidra-Server-Port: 13100
+X-Ghidra-Repository: Odyssey
+
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"raw-http-client","version":"1.0"}}}
+```
+
 ## 5. Validate agdec-http (tool sweep + debug log)
 
 To test the agdec-http MCP server and confirm all tools are callable, use the unified CLI testing script. It runs `tools/list` and a tool-seq (open-project, list-project-files, get-current-program, list-functions, search-symbols, get-references, list-imports, list-exports, decompile-function) and writes NDJSON to a debug log (e.g. `debug-cd359b.log`).

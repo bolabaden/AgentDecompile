@@ -95,6 +95,28 @@ def _build_tool_reference_payload() -> dict[str, Any]:
             "x-agent-server-password": "Optional password alias header",
             "x-agent-server-repository": "Optional repository alias header",
         },
+        "shared_server_http_mapping": {
+            "request_url": {
+                "env": "AGENT_DECOMPILE_MCP_SERVER_URL",
+                "usage": "Request URL itself, typically http://host:port/mcp",
+            },
+            "env_to_headers": {
+                "AGENT_DECOMPILE_GHIDRA_SERVER_HOST": ["X-Ghidra-Server-Host"],
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PORT": ["X-Ghidra-Server-Port"],
+                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": ["X-Ghidra-Repository", "X-Agent-Server-Repository"],
+                "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME": ["Authorization", "X-Agent-Server-Username"],
+                "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": ["Authorization", "X-Agent-Server-Password"],
+            },
+            "transport_headers": {
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+                "mcp-session-id": "Send on follow-up requests after the server returns it",
+            },
+            "precedence": {
+                "credentials": ["Authorization", "X-Agent-Server-Username/X-Agent-Server-Password"],
+                "repository": ["X-Ghidra-Repository", "X-Agent-Server-Repository"],
+            },
+        },
         "environment_variables": {
             "shared_server": [
                 "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
@@ -371,6 +393,7 @@ class PythonMcpServer:
         self.tool_providers: UnifiedToolProviderManager = UnifiedToolProviderManager()
         self.tool_providers.register_all_providers()
         self.resource_providers: ResourceProviderManager = ResourceProviderManager()
+        self.resource_providers.set_tool_provider_manager(self.tool_providers)
 
         # Keep server.program_info in sync when providers update it (e.g. checkout).
         self.tool_providers._on_program_info_changed = self._on_provider_program_info_changed
@@ -539,13 +562,26 @@ class PythonMcpServer:
                         "x-ghidra-server-host": "Shared Ghidra host",
                         "x-ghidra-server-port": "Shared Ghidra port",
                         "x-ghidra-repository": "Shared repository name",
+                        "x-agent-server-username": "Accepted username alias header",
+                        "x-agent-server-password": "Accepted password alias header",
+                        "x-agent-server-repository": "Accepted repository alias header",
                     },
                     "env": {
+                        "mcp_server_url": "AGENT_DECOMPILE_MCP_SERVER_URL (request URL, not a header)",
                         "host": "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
                         "port": "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
                         "username": "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
                         "password": "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
                         "repository": "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                    },
+                    "transport_headers": {
+                        "content-type": "application/json",
+                        "accept": "application/json, text/event-stream",
+                        "mcp-session-id": "Send on follow-up requests after the server returns it",
+                    },
+                    "precedence": {
+                        "credentials": ["authorization", "x-agent-server-username/x-agent-server-password"],
+                        "repository": ["x-ghidra-repository", "x-agent-server-repository"],
                     },
                 },
                 "session_behavior": {
@@ -741,6 +777,10 @@ class PythonMcpServer:
     ) -> None:
         """Set the project manager for program lifecycle management."""
         self.project_manager = project_manager
+
+    def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
+        """Set server startup/runtime context for resources and diagnostics."""
+        self.resource_providers.set_runtime_context(runtime_context)
 
     def set_program_info(
         self,

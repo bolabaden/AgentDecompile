@@ -26,6 +26,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
+from pydantic import AnyUrl
 
 from agentdecompile_cli import cli as cli_module
 import agentdecompile_cli.launcher as launcher_module
@@ -411,11 +412,9 @@ async def test_streamable_http_sdk_client_lists_tools_resources_and_calls_tool(b
 
             resources = await session.list_resources()
             resource_uris = {str(resource.uri) for resource in resources.resources}
-            assert "ghidra://programs" in resource_uris
-            assert "ghidra://static-analysis-results" in resource_uris
-            assert "ghidra://agentdecompile-debug-info" in resource_uris
+            assert resource_uris == {"agentdecompile://debug-info"}
 
-            resource = await session.read_resource("ghidra://programs")
+            resource = await session.read_resource(AnyUrl(url="ghidra://programs"))
             resource_texts = [getattr(content, "text", "") for content in resource.contents]
             programs_payload = json.loads("\n".join(t for t in resource_texts if t))
             assert "programs" in programs_payload
@@ -451,7 +450,7 @@ async def test_stdio_sdk_client_lists_tools_resources_and_calls_tool(backend_ser
 
             resources = await session.list_resources()
             resource_uris = {str(resource.uri) for resource in resources.resources}
-            assert "ghidra://programs" in resource_uris
+            assert resource_uris == {"agentdecompile://debug-info"}
 
             result = await session.call_tool("execute-script", arguments={"code": "__result__ = 'stdio_ok'", "format": "json"})
             result_payload = json.loads(_extract_text_blocks(result))

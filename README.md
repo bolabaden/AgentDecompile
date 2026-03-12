@@ -553,6 +553,52 @@ Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PA
 
 When opening a `.gpr` file connected to a Ghidra Server, authentication may be required. Provide credentials via the `open` tool parameters (`serverUsername`, `serverPassword`) or the environment variables above; tool parameters override env. Local projects do not need credentials. If shared-project open or authentication fails, set the env vars or pass parameters. For troubleshooting, see [CONTRIBUTING.md](CONTRIBUTING.md) (Ghidra Project Authentication Implementation).
 
+#### HTTP header mapping for shared-server requests
+
+When you call the HTTP MCP endpoint directly, the shared-server environment variables map to request fields like this:
+
+| Environment variable | HTTP equivalent | Notes |
+|----------|---------|---------|
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | Request URL | This is the MCP endpoint itself, typically `http://host:port/mcp`. It is not sent as a header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | `X-Ghidra-Server-Host` | Shared Ghidra server host. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PORT` | `X-Ghidra-Server-Port` | Shared Ghidra server port, usually `13100`. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | `X-Ghidra-Repository` | Shared repository name. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` + `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | `Authorization: Basic <base64(username:password)>` | Preferred credential form for direct HTTP clients. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | `X-Agent-Server-Username` | Accepted credential alias header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | `X-Agent-Server-Password` | Accepted credential alias header. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | `X-Agent-Server-Repository` | Accepted repository alias header. The CLI sends both repository headers. |
+
+The HTTP client should also send these transport headers:
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `Accept` | `application/json, text/event-stream` |
+| `Mcp-Session-Id` | Only on follow-up requests after the server returns a session ID. |
+
+Credential precedence for raw HTTP requests is:
+
+1. `Authorization: Basic ...`
+2. `X-Agent-Server-Username` + `X-Agent-Server-Password`
+
+Repository precedence is:
+
+1. `X-Ghidra-Repository`
+2. `X-Agent-Server-Repository`
+
+Example direct HTTP request:
+
+```bash
+curl -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Basic <base64(username:password)>" \
+  -H "X-Ghidra-Server-Host: ghidra.example.com" \
+  -H "X-Ghidra-Server-Port: 13100" \
+  -H "X-Ghidra-Repository: Odyssey" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+```
+
 ### Structures (manage-structures)
 
 The current `manage-structures` provider supports `parse`, `validate`, `create`, `add_field`, `modify_field`, `modify_from_c`, `info`, `list`, `apply`, `delete`, and `parse_header`. For precise structure definitions, use `parse_header` or `modify_from_c` with a full C definition. See [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained command reference.
