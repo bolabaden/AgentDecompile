@@ -394,15 +394,17 @@ class TestStandaloneResourcesRead:
 class TestStandalonePromptsList:
     """Test prompts/list endpoint."""
 
-    def test_list_prompts_returns_empty(self):
+    def test_list_prompts_returns_all(self):
         server = PythonMcpServer()
         with TestClient(server.app) as client:
             _, sid = _init_session(client)
             body = _post_with_session(client, sid, _prompts_list_payload())
             prompts = body["result"]["prompts"]
             assert isinstance(prompts, list)
-            # Currently no prompts are implemented
-            assert len(prompts) == 0
+            assert len(prompts) >= 9
+            names = {p["name"] for p in prompts}
+            assert "re-scout-broad-sweep" in names
+            assert "re-convergence-orchestrator" in names
 
 
 class TestStandaloneToolCallsNoProgram:

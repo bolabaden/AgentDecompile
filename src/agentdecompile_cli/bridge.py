@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     )
     from mcp.types import (
         CallToolResult,
+        GetPromptResult,
         Prompt,
         Resource,
     )
@@ -1025,6 +1026,23 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
             return []
 
+    async def _handle_get_prompt(
+        self, name: str, arguments: dict[str, str] | None
+    ) -> GetPromptResult:
+        """Handle MCP get_prompt request by forwarding to backend."""
+        from mcp.types import GetPromptResult as _GetPromptResult
+
+        try:
+            raw: dict[str, Any] = await self._backend_request(
+                "get_prompt", {"name": name, "arguments": arguments}
+            )
+            return _GetPromptResult.model_validate(raw)
+        except Exception as e:
+            sys.stderr.write(
+                f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n"
+            )
+            raise
+
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
 
@@ -1052,6 +1070,12 @@ class AgentDecompileStdioBridge:
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
             return await self._handle_list_prompts()
+
+        @self.server.get_prompt()
+        async def get_prompt(
+            name: str, arguments: dict[str, str] | None
+        ) -> GetPromptResult:  # type: ignore[name-defined]
+            return await self._handle_get_prompt(name, arguments)
 
     def _create_initialization_options(self):
         """Create MCP initialization options with explicit logging capability.

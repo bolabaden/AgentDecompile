@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
 from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOLS, ToolName, get_tool_params
+from agentdecompile_cli.mcp_server import prompt_providers
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
     AuthConfig,
@@ -459,8 +460,14 @@ class PythonMcpServer:
         @server.list_prompts()
         async def list_prompts() -> list[types.Prompt]:
             """List all available MCP prompts."""
-            # No prompts are currently implemented, return empty list
-            return []
+            return prompt_providers.list_prompts()
+
+        @server.get_prompt()
+        async def get_prompt(
+            name: str, arguments: dict[str, str] | None
+        ) -> types.GetPromptResult:
+            """Resolve a prompt by name with the given arguments."""
+            return prompt_providers.get_prompt(name, arguments)
 
         return server
 
