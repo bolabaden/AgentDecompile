@@ -806,27 +806,34 @@ class GetFunctionToolProvider(ToolProvider):
                     logger.debug("Propagate bookmarks skipped: %s", e)
 
             # Enrich with get-function output for contextual details (same shape as get-function tool)
-            manager = getattr(self, "_manager", None)
+            manager: Any | None = getattr(self, "_manager", None)
             if manager is not None and entry.get("matched"):
-                matched_info = entry["matched"]
-                gf_name = (matched_info.get("name") or matched_info.get("address") or "").strip()
-                if gf_name:
+                matched_info: dict[str, Any] = entry["matched"]
+                gf_address: str = (matched_info.get("address") or "").strip()
+                gf_name: str = (matched_info.get("name") or gf_address or "").strip()
+                if gf_name or gf_address:
                     try:
-                        result_count = (
+                        result_count: int = (
                             detail_result_count if detail_result_count is not None else len(target_paths)
                         )
+                        max_callers: int | None = None
+                        max_callees: int | None = None
+                        max_instructions: int = 0
                         max_callers, max_callees, max_instructions = _detail_limits(result_count)
                         gf_payload: dict[str, Any] = {
                             "programPath": target_path,
-                            "function": gf_name,
                             "format": "json",
                         }
+                        # Prefer address for resolution so get-function finds the same function in the target
+                        if gf_address:
+                            gf_payload["addressOrSymbol"] = gf_address
+                        gf_payload["function"] = gf_name or gf_address
                         if max_callers is not None:
                             gf_payload["maxCallers"] = max_callers
                         if max_callees is not None:
                             gf_payload["maxCallees"] = max_callees
                         gf_payload["maxInstructions"] = max_instructions
-                        gf_resp = await manager.call_tool(
+                        gf_resp: list[types.TextContent] | None = await manager.call_tool(
                             "get-function",
                             gf_payload,
                         )
@@ -835,7 +842,7 @@ class GetFunctionToolProvider(ToolProvider):
                             if isinstance(parsed, dict):
                                 entry["functionDetails"] = parsed
                     except Exception as e:
-                        logger.debug("get-function enrichment for %s in %s: %s", gf_name, target_path, e)
+                        logger.debug("get-function enrichment for %s in %s: %s", gf_name or gf_address, target_path, e)
 
             results_per_target.append(entry)
 

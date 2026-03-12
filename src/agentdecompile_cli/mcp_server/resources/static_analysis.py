@@ -39,37 +39,37 @@ class StaticAnalysisResultsResource(ResourceProvider):
     async def read_resource(self, uri: str) -> str:
         """Read the static analysis results resource as SARIF 2.1.0 JSON."""
         if str(uri) != "ghidra://static-analysis-results":
-            raise NotImplementedError(f"Unknown resource: {uri}")
+            raise NotImplementedError(f"Unknown resource: '{uri}'")
 
         logger.info("StaticAnalysisResultsResource: reading resource for URI %s", uri)
-        logger.info(f"  program_info: {self.program_info}")
-        logger.info(f"  program_info.program: {self.program_info.program if self.program_info else 'N/A'}")
+        logger.info(f"  program_info: '{self.program_info}'")
+        logger.info(f"  program_info.program: '{self.program_info.program if self.program_info else 'N/A'}'")
 
         # Check if program is loaded using correct attribute name
-        has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
-        logger.info("  has_program: %s", has_program)
+        has_program: bool = self.program_info is not None and getattr(self.program_info, "program", None) is not None
+        logger.info("  has_program: '%s'", str(has_program))
 
         if not has_program:
             # Return empty SARIF report when no program is loaded
-            logger.info("No program loaded for static analysis results, returning empty SARIF")
+            logger.info("No program loaded for static analysis results, returning empty SARIF report")
             return json.dumps(self._empty_sarif_report(), indent=2)
 
         try:
             logger.info("Program loaded, generating SARIF report")
-            sarif_report = await self._generate_sarif_report()
-            logger.info(f"SARIF report generated successfully, {len(json.dumps(sarif_report))} bytes")
+            sarif_report: dict[str, Any] = await self._generate_sarif_report()
+            logger.info(f"SARIF report generated successfully, '{len(json.dumps(sarif_report))}' bytes length")
             return json.dumps(sarif_report, indent=2)
         except Exception as e:
-            logger.error(f"Error generating SARIF report: {e!s}", exc_info=True)
+            logger.error(f"Error generating SARIF report: '{e.__class__.__name__}: {e}'", exc_info=True)
             # Return empty SARIF with error information instead of raising
-            empty_report = self._empty_sarif_report()
-            empty_report["runs"][0]["properties"]["error"] = str(e)
+            empty_report: dict[str, Any] = self._empty_sarif_report()
+            empty_report["runs"][0]["properties"]["error"] = f"'{e.__class__.__name__}: {e}'"
             empty_report["runs"][0]["properties"]["status"] = "error"
             return json.dumps(empty_report, indent=2)
 
-    def _empty_sarif_report(self) -> dict:
+    def _empty_sarif_report(self) -> dict[str, Any]:
         """Generate an empty SARIF 2.1.0 report when no program is loaded."""
-        now = datetime.now(timezone.utc).isoformat() + "Z"
+        now: str = datetime.now(timezone.utc).isoformat() + "Z"
 
         return {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -109,11 +109,12 @@ class StaticAnalysisResultsResource(ResourceProvider):
             pass
         try:
             from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
+
             return bool(GhidraProgramUtilities.isAnalyzed(program))
         except Exception:
             return False
 
-    async def _generate_sarif_report(self) -> dict:
+    async def _generate_sarif_report(self) -> dict[str, Any]:
         """Generate a SARIF 2.1.0 compliant static analysis report."""
         assert self.program_info is not None, "Program info is required to generate SARIF report"
         program: Any = self.program_info.program
@@ -124,7 +125,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
         results.extend(await self._collect_bookmarks())
         results.extend(await self._collect_analysis_warnings())
 
-        now = datetime.now(timezone.utc).isoformat() + "Z"
+        now: str = datetime.now(timezone.utc).isoformat() + "Z"
 
         return {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -183,12 +184,12 @@ class StaticAnalysisResultsResource(ResourceProvider):
             ],
         }
 
-    async def _collect_undefined_references(self) -> list[dict]:
+    async def _collect_undefined_references(self) -> list[dict[str, Any]]:
         """Collect results for undefined references."""
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect undefined references"
         program: Any = self.program_info.program
-        ref_mgr = program.getReferenceManager()
+        ref_mgr: Any = program.getReferenceManager()
 
         try:
             # Iterate through references to find undefined references
@@ -213,11 +214,11 @@ class StaticAnalysisResultsResource(ResourceProvider):
                         },
                     )
         except Exception as e:
-            logger.debug(f"Error collecting undefined references: {e!s}")
+            logger.debug(f"Error collecting undefined references: '{e.__class__.__name__}: {e}'")
 
         return results
 
-    async def _collect_bookmarks(self) -> list[dict]:
+    async def _collect_bookmarks(self) -> list[dict[str, Any]]:
         """Collect results from bookmarks added during analysis."""
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect bookmarks"
@@ -226,13 +227,13 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
         try:
             # Get all bookmarks
-            bookmarks = bookmark_mgr.getBookmarks("Analysis")
+            bookmarks: Any = bookmark_mgr.getBookmarks("Analysis")
             if bookmarks:
                 for bookmark in islice(bookmarks, 30):  # Limit results
                     if bookmark:
-                        address = bookmark.getAddress()
-                        category = bookmark.getCategory()
-                        comment = bookmark.getComment()
+                        address: Any = bookmark.getAddress()
+                        category: Any = bookmark.getCategory()
+                        comment: Any = bookmark.getComment()
 
                         results.append(
                             {
@@ -253,19 +254,19 @@ class StaticAnalysisResultsResource(ResourceProvider):
                             },
                         )
         except Exception as e:
-            logger.debug(f"Error collecting bookmarks: {e!s}")
+            logger.debug(f"Error collecting bookmarks: '{e.__class__.__name__}: {e}'")
 
         return results
 
-    async def _collect_analysis_warnings(self) -> list[dict]:
+    async def _collect_analysis_warnings(self) -> list[dict[str, Any]]:
         """Collect analysis warnings (functions with issues, etc.)."""
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect analysis warnings"
         program: Any = self.program_info.program
 
         try:
-            func_mgr = program.getFunctionManager()
-            func_count = 0
+            func_mgr: Any = program.getFunctionManager()
+            func_count: int = 0
 
             # Scan for problematic functions
             for func in func_mgr.getFunctions(True):
@@ -315,6 +316,6 @@ class StaticAnalysisResultsResource(ResourceProvider):
                         },
                     )
         except Exception as e:
-            logger.debug(f"Error collecting analysis warnings: {e!s}")
+            logger.debug(f"Error collecting analysis warnings: '{e.__class__.__name__}: {e}'")
 
         return results
