@@ -112,6 +112,8 @@ def resolve_backend_url(
     env_url_keys: tuple[str, ...] = (
         "AGENT_DECOMPILE_MCP_SERVER_URL",
         "AGENT_DECOMPILE_SERVER_URL",
+        "AGENTDECOMPILE_MCP_SERVER_URL",
+        "AGENTDECOMPILE_SERVER_URL",
     ),
     env_host_key: str = "AGENT_DECOMPILE_MCP_SERVER_HOST",
     env_port_key: str = "AGENT_DECOMPILE_MCP_SERVER_PORT",

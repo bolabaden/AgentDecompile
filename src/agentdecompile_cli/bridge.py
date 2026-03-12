@@ -28,7 +28,9 @@ import os
 import sys
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
+
+from mcp.server.models import InitializationOptions
 
 try:
     from anyio import BrokenResourceError, ClosedResourceError
@@ -133,20 +135,20 @@ class NotFoundError(ClientError):
 # RawMcpHttpBackend – plain httpx JSON-RPC client (no anyio / no MCP SDK client)
 # ---------------------------------------------------------------------------
 
-MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_PROTOCOL_VERSION: str = "2025-03-26"
 
 # Timeout for initial transport connect
-CONNECT_TIMEOUT = 10.0
+CONNECT_TIMEOUT: float = 10.0
 # Timeout for backend operations (tool calls, list_resources, etc.)
-BACKEND_OP_TIMEOUT = 120.0
+BACKEND_OP_TIMEOUT: float = 120.0
 
-_TRANSPORT_ERROR_KEYWORDS = (
-    "ConnectError",
-    "ConnectTimeout",
-    "ConnectionRefused",
+_TRANSPORT_ERROR_KEYWORDS: tuple[str, ...] = (
     "BrokenResource",
     "ClosedResource",
+    "ConnectError",
     "connection reset",
+    "ConnectionRefused",
+    "ConnectTimeout",
     "Timed out",
     "TimeoutException",
 )
@@ -172,13 +174,20 @@ class RawMcpHttpBackend:
     Safe to call from **any** asyncio task — no anyio cancel scopes are created.
     """
 
-    def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT, extra_headers: dict[str, str] | None = None):
-        self._url = url.rstrip("/")
+    def __init__(
+        self,
+        url: str,
+        *,
+        connect_timeout: float = CONNECT_TIMEOUT,
+        op_timeout: float = BACKEND_OP_TIMEOUT,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        self._url: str = url.rstrip("/")
         self._session_id: str | None = None
-        self._request_counter = 0
-        self._initialized = False
-        self._extra_headers = dict(extra_headers or {})
-        self._client = AsyncClient(
+        self._request_counter: int = 0
+        self._initialized: bool = False
+        self._extra_headers: dict[str, str] = dict(extra_headers or {})
+        self._client: AsyncClient = AsyncClient(
             timeout=Timeout(op_timeout, connect=connect_timeout),
             follow_redirects=True,
         )
@@ -327,7 +336,11 @@ class RawMcpHttpBackend:
         """Return the raw tool list from ``tools/list``."""
         return await self._request_list("tools/list", "tools")
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Call a tool and return the raw result dict."""
         return await self._request("tools/call", {"name": name, "arguments": arguments or {}})
 
@@ -416,21 +429,20 @@ class AgentDecompileMcpClient:
             await self._backend.initialize()
             self._connected = True
         except Exception as e:
-            if self._backend:
+            if self._backend is not None:
                 await self._backend.close()
             self._backend = None
+            msg_prefix = f"Cannot connect to AgentDecompile server at {self._url}"
             if self._is_connection_error(e):
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile server at {self._url}\n\n{get_server_start_message()}",
-                ) from e
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n{get_server_start_message()}",
-            ) from e
+                msg = f"{msg_prefix}\n\n{get_server_start_message()}"
+            else:
+                msg = f"{msg_prefix}: {e}\n\n{get_server_start_message()}"
+            raise ServerNotRunningError(msg) from e
 
     async def _close_internal(self) -> None:
         """Close connection and release resources."""
         self._connected = False
-        if self._backend:
+        if self._backend is not None:
             await self._backend.close()
             self._backend = None
 
@@ -489,7 +501,11 @@ class AgentDecompileMcpClient:
         """List tools offered by the server."""
         return await self._require_connected_backend().list_tools()
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Call a tool by name with optional arguments."""
         result = await self._require_connected_backend().call_tool(name, arguments or {})
         return self._extract_result(result)
@@ -726,20 +742,20 @@ class AgentDecompileStdioBridge:
         open-project use the right .gpr path instead of the backend default (e.g. my_project.gpr).
         Enables multiple proxy sessions to target different projects via env.
         """
-        path_val = os.environ.get("AGENTDECOMPILE_PROJECT_PATH", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_PATH", "").strip()
-        if not path_val:
+        path_val: str = os.environ.get("AGENTDECOMPILE_PROJECT_PATH", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_PATH", "").strip() or ""
+        if not path_val.strip():
             return {}
-        path = Path(path_val).expanduser()
+        path: Path = Path(path_val.strip()).expanduser()
         if path.suffix.lower() == ".gpr":
             return {"X-AgentDecompile-Project-Path": path.as_posix()}
-        name_val = os.environ.get("AGENTDECOMPILE_PROJECT_NAME", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "").strip()
-        name = name_val or "my_project"
-        if not name.endswith(".gpr"):
-            name = f"{name}.gpr"
+        name_val: str = os.environ.get("AGENTDECOMPILE_PROJECT_NAME", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "").strip() or ""
+        name: str = name_val.strip() or "my_project"
+        if not name.lower().strip().endswith(".gpr"):
+            name = f"{name.strip()}.gpr"
         return {"X-AgentDecompile-Project-Path": (path / name).as_posix()}
 
     def _current_frontend_session_id(self) -> str:
-        sid = get_current_mcp_session_id()
+        sid: str = get_current_mcp_session_id()
         if sid and sid != "default":
             return sid
 
@@ -762,7 +778,7 @@ class AgentDecompileStdioBridge:
 
     async def _get_backend_lock(self, session_id: str) -> asyncio.Lock:
         async with self._backend_map_lock:
-            lock = self._backend_locks.get(session_id)
+            lock: asyncio.Lock | None = self._backend_locks.get(session_id)
             if lock is None:
                 lock = asyncio.Lock()
                 self._backend_locks[session_id] = lock
@@ -772,12 +788,12 @@ class AgentDecompileStdioBridge:
         """Return (or lazily create) the backend connection for one frontend session.
         Per-session lock prevents concurrent requests from opening duplicate connections.
         """
-        sid = session_id or self._current_frontend_session_id()
-        backend = self._backends.get(sid)
+        sid: str = session_id or self._current_frontend_session_id()
+        backend: RawMcpHttpBackend | None = self._backends.get(sid)
         if backend is not None and backend._initialized:
             return backend
 
-        lock = await self._get_backend_lock(sid)
+        lock: asyncio.Lock = await self._get_backend_lock(sid)
         async with lock:
             backend = self._backends.get(sid)
             if backend is not None and backend._initialized:
@@ -786,7 +802,7 @@ class AgentDecompileStdioBridge:
             if backend is not None:
                 await backend.close()
 
-            merged_headers = {
+            merged_headers: dict[str, str] = {
                 **self._get_streamable_http_headers(sid),
                 **self._proxy_project_path_headers(),
             }
@@ -812,60 +828,78 @@ class AgentDecompileStdioBridge:
         backend so that tools like ``list-project-files`` work immediately
         without requiring a manual ``open-project`` call.
         """
-        server_host = (
+        server_host: str = (
             os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
             or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
             or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        )
-        if not server_host:
-            sys.stderr.write("[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n")
+            or ""
+        ).strip()
+        if not server_host.strip():
+            sys.stderr.write(
+                "[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n"
+            )
             return  # No shared server configured – nothing to auto-open.
 
-        server_port = (
+        server_port: str = (
             os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
             or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT", "").strip()
             or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or "13100"
-        )
-        server_username = os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-        server_password = os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-        repository = (
+        ).strip()
+        server_username: str = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+            or ""
+        ).strip()
+        server_password: str = (
+            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+            or ""
+        ).strip()
+        repository: str = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+            or ""
+        ).strip()
+        sys.stderr.write(
+            f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n"
         )
-        sys.stderr.write(f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n")
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
             "server_port": int(server_port) if server_port.isdigit() else 13100,
         }
-        if server_username:
+        if server_username.strip():
             open_args["server_username"] = server_username
         if server_password:
             open_args["server_password"] = server_password
-        if repository:
+        if repository.strip():
             open_args["path"] = repository
 
         # Log the exact args being sent (redact password)
-        _log_args = {k: ("***" if "password" in k.lower() else v) for k, v in open_args.items()}
+        _log_args: dict[str, Any] = {k: ("***" if "password" in k.lower() else v) for k, v in open_args.items()}
         sys.stderr.write(f"[auto-open] Calling connect-shared-project with args: {_log_args}\n")
         sys.stderr.write(f"Auto-opening shared server {server_host}:{open_args['server_port']}{(' repo=' + repository) if repository else ''} ...\n")
 
         try:
-            result = await backend.call_tool("connect-shared-project", open_args)
+            result: dict[str, Any] = await backend.call_tool("connect-shared-project", open_args)
             # Log a structured summary of the result.
             if isinstance(result, dict):
-                content = result.get("content", [])
+                content: list[dict[str, Any]] = result.get("content", [])
                 is_error = result.get("isError", False)
                 if is_error:
-                    text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                    text_parts: list[str] = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
                     sys.stderr.write(f"Auto-open FAILED: {' '.join(text_parts)}\n")
                 else:
                     # Parse the embedded JSON to get structured fields.
@@ -909,16 +943,16 @@ class AgentDecompileStdioBridge:
         If ``session_id`` is provided, only that frontend-mapped backend session
         is reset. Otherwise all backend sessions are reset.
         """
-        if session_id:
-            sid = session_id or "default"
-            backend = self._backends.pop(sid, None)
+        if session_id is not None and session_id.strip():
+            sid: str = session_id.strip() or "default"
+            backend: RawMcpHttpBackend | None = self._backends.pop(sid, None)
             self._backend_locks.pop(sid, None)
             self._streamable_http_headers.pop(sid, None)
             if backend is not None:
                 await backend.close()
             return
 
-        backends = list(self._backends.values())
+        backends: list[RawMcpHttpBackend] = list(self._backends.values())
         self._backends.clear()
         self._backend_locks.clear()
         self._streamable_http_headers.clear()
@@ -928,18 +962,17 @@ class AgentDecompileStdioBridge:
     async def _backend_request(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Ensure backend for current session, call *method*, retry once on connection errors by resetting session."""
         last_exc: Exception | None = None
-        session_id = self._current_frontend_session_id()
+        session_id: str = self._current_frontend_session_id()
         for attempt in range(2):
             try:
-                backend = await self._ensure_backend(session_id)
-                func = getattr(backend, method)
+                backend: RawMcpHttpBackend = await self._ensure_backend(session_id)
+                func: Callable[[Any, Any], Any] = getattr(backend, method)
                 return await func(*args, **kwargs)
             except Exception as exc:
                 last_exc = exc
                 if attempt == 0 and self._is_connection_error(exc):
-                    sys.stderr.write(
-                        f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
-                    )
+                    msg = f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]"
+                    sys.stderr.write(msg + "\n")
                     # Invalidate this session's backend so next _ensure_backend creates a fresh connection
                     await self._reset_backend_session(session_id)
                     continue
@@ -979,7 +1012,8 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(f"Tools advertised: {len(advertised)}\n")
             return advertised
         except Exception as e:
-            sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: list_tools failed: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return []
 
     async def _handle_call_tool(
@@ -1039,7 +1073,8 @@ class AgentDecompileStdioBridge:
                     return c0.get("text", c0.get("blob", ""))
             return ""
         except Exception as e:
-            sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return ""
 
     async def _handle_list_prompts(self) -> list[Prompt]:
@@ -1052,7 +1087,8 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(f"Prompts available: {len(prompts)}\n")
             return prompts
         except Exception as e:
-            sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return []
 
     async def _handle_get_prompt(self, name: str, arguments: dict[str, str] | None) -> GetPromptResult:
@@ -1063,7 +1099,8 @@ class AgentDecompileStdioBridge:
             raw: dict[str, Any] = await self._backend_request("get_prompt", {"name": name, "arguments": arguments})
             return _GetPromptResult.model_validate(raw)
         except Exception as e:
-            sys.stderr.write(f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             raise
 
     def _register_handlers(self):
@@ -1104,12 +1141,12 @@ class AgentDecompileStdioBridge:
         Some MCP clients attempt to set the server log level during/after
         initialize and expect `capabilities.logging` to be present.
         """
-        options = self.server.create_initialization_options()
-        capabilities = getattr(options, "capabilities", None)
+        options: InitializationOptions = self.server.create_initialization_options()
+        capabilities: ServerCapabilities | None = getattr(options, "capabilities", None)
         if capabilities is None:
             capabilities = ServerCapabilities()
 
-        if getattr(capabilities, "logging", None) is None:
+        if hasattr(capabilities, "logging") and capabilities.logging is None:
             capabilities = capabilities.model_copy(update={"logging": LoggingCapability()})
 
         return options.model_copy(update={"capabilities": capabilities})
