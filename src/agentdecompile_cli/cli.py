@@ -134,7 +134,23 @@ _TOOLS_WITH_CURATED_COMMANDS: frozenset[Tool] = frozenset(
 
 def _get_opts(ctx: click.Context) -> dict[str, Any]:
     """Global options from context (set by main group)."""
-    return ctx.obj or {}
+    if ctx.obj and isinstance(ctx.obj, dict):
+        return ctx.obj
+    # Subcommands get their own context; use root so main's opts are available
+    root = getattr(ctx, "find_root", None)
+    if root is not None:
+        try:
+            root_ctx = root()
+            if root_ctx.obj and isinstance(root_ctx.obj, dict):
+                return root_ctx.obj
+        except Exception:
+            pass
+    current = ctx.parent
+    while current is not None:
+        if current.obj and isinstance(current.obj, dict):
+            return current.obj
+        current = current.parent
+    return {}
 
 
 def _client(ctx: click.Context) -> Any:
@@ -1056,6 +1072,31 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             ctx = click.get_current_context()
             # Remove None values and format arguments
             args = {k: v for k, v in kwargs.items() if v is not None}
+            # For open-project, merge global Ghidra server options so --ghidra-server-username etc. are sent
+            if _tool_name == Tool.OPEN_PROJECT.value:
+                opts = _get_opts(ctx)
+                if not args.get("serverUsername") and not args.get("server_username"):
+                    v = opts.get("ghidra_server_username") or opts.get("server_username")
+                    if v:
+                        args["serverUsername"] = str(v).strip()
+                if not args.get("serverPassword") and not args.get("server_password"):
+                    v = opts.get("ghidra_server_password") or opts.get("server_password")
+                    if v:
+                        args["serverPassword"] = str(v).strip()
+                if not args.get("serverHost") and not args.get("server_host"):
+                    v = opts.get("ghidra_server_host") or opts.get("server_host")
+                    if v:
+                        args["serverHost"] = str(v).strip()
+                if args.get("serverPort") is None and args.get("server_port") is None:
+                    v = opts.get("ghidra_server_port") or opts.get("server_port")
+                    if v is not None:
+                        args["serverPort"] = int(v)
+                if not args.get("repositoryName") and not args.get("repository_name"):
+                    v = opts.get("ghidra_server_repository") or opts.get("server_repository")
+                    if v:
+                        args["repositoryName"] = str(v).strip()
+                    if v and not args.get("path"):
+                        args["path"] = str(v).strip()
 
             # Call the tool using the unified registry
             async def _run():
@@ -2435,6 +2476,7 @@ def memory_run(
 @click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
 @click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
 @click.option("--server_port", "--server-port", "--ghidra_server_port", "--ghidra-server-port", "server_port", type=int)
+@click.option("--server_repository", "--server-repository", "--ghidra_server_repository", "--ghidra-server-repository", "server_repository")
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
@@ -2449,9 +2491,23 @@ def open_cmd(
     server_password: str | None,
     server_host: str | None,
     server_port: int | None,
+    server_repository: str | None,
 ) -> None:
     payload: dict[str, Any] = {}
-    is_shared_server_mode = shared or bool(server_host and server_host.strip())
+    opts = _get_opts(ctx)
+    # Merge global Ghidra server options when command-level options are not set (e.g. --ghidra-server-username before open)
+    if not (server_username and server_username.strip()):
+        server_username = opts.get("ghidra_server_username") or opts.get("server_username")
+    if not (server_password and server_password.strip()):
+        server_password = opts.get("ghidra_server_password") or opts.get("server_password")
+    if not (server_host and server_host.strip()):
+        server_host = opts.get("ghidra_server_host") or opts.get("server_host")
+    if server_port is None:
+        server_port = opts.get("ghidra_server_port") or opts.get("server_port")
+    if not (server_repository and server_repository.strip()):
+        server_repository = opts.get("ghidra_server_repository") or opts.get("server_repository")
+
+    is_shared_server_mode = shared or bool(server_host and str(server_host).strip())
 
     # When connecting to a remote Ghidra shared-project server, the MCP
     # backend typically runs on the *same* host (Docker exposes the Ghidra
@@ -2459,8 +2515,7 @@ def open_cmd(
     # provided --server_host but did NOT override the global --host /
     # --server-url (which still points at localhost), automatically route
     # the MCP client connection to the remote host on the default MCP port.
-    if is_shared_server_mode:
-        opts = ctx.ensure_object(dict)
+    if is_shared_server_mode and server_host:
         if opts.get("host") == "127.0.0.1" and not opts.get("server_url"):
             opts["host"] = server_host
 
@@ -2469,6 +2524,8 @@ def open_cmd(
             payload["path"] = path
         else:
             payload["path"] = str(Path(path).resolve()) if path != "/" else path
+    elif is_shared_server_mode and server_repository and str(server_repository).strip():
+        payload["path"] = str(server_repository).strip()
     if extensions is not None:
         payload["extensions"] = extensions
     if shared:
@@ -2477,14 +2534,16 @@ def open_cmd(
     payload["destinationFolder"] = destination_folder
     payload["analyzeAfterImport"] = analyze_after_import
     payload["enableVersionControl"] = enable_version_control
-    if server_username is not None and server_username.strip():
-        payload["serverUsername"] = server_username
-    if server_password is not None and server_password.strip():
-        payload["serverPassword"] = server_password
-    if server_host is not None and server_host.strip():
-        payload["serverHost"] = server_host
+    if server_username is not None and str(server_username).strip():
+        payload["serverUsername"] = str(server_username).strip()
+    if server_password is not None and str(server_password).strip():
+        payload["serverPassword"] = str(server_password).strip()
+    if server_host is not None and str(server_host).strip():
+        payload["serverHost"] = str(server_host).strip()
     if server_port is not None:
-        payload["serverPort"] = server_port
+        payload["serverPort"] = int(server_port)
+    if server_repository is not None and str(server_repository).strip():
+        payload["repositoryName"] = str(server_repository).strip()
     _run_async(_call(ctx, Tool.OPEN_PROJECT.value, **payload))
 
 
@@ -3952,10 +4011,53 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                 if tool_registry.is_valid_tool(name):
                     resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(name))
                     prepared_arguments = tool_registry.parse_arguments(prepared_arguments, resolved_name)
+                # For open-project, merge global Ghidra server options so tool-seq sends credentials
+                if tool_registry.canonicalize_tool_name(name) == tool_registry.canonicalize_tool_name(Tool.OPEN_PROJECT.value):
+                    opts = _get_opts(ctx)
+                    # Ensure we have root/group opts (tool-seq runs as subcommand; ctx.obj may be unset)
+                    if not opts and ctx.parent and isinstance(getattr(ctx.parent, "obj", None), dict):
+                        opts = ctx.parent.obj or {}
+                    # Fallback to env so credentials are sent even when opts not propagated
+                    def _g(k: str, *alt: str) -> Any:
+                        for key in (k, *alt):
+                            v = (opts or {}).get(key)
+                            if v is not None and str(v).strip() != "":
+                                return v
+                        return None
+                    if not prepared_arguments.get("serverUsername"):
+                        v = _g("ghidra_server_username", "server_username") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME")
+                        if v:
+                            prepared_arguments["serverUsername"] = str(v).strip()
+                    if not prepared_arguments.get("serverPassword"):
+                        v = _g("ghidra_server_password", "server_password") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD")
+                        if v:
+                            prepared_arguments["serverPassword"] = str(v).strip()
+                    if not prepared_arguments.get("serverHost"):
+                        v = _g("ghidra_server_host", "server_host") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST")
+                        if v:
+                            prepared_arguments["serverHost"] = str(v).strip()
+                    if prepared_arguments.get("serverPort") is None:
+                        v = _g("ghidra_server_port", "server_port")
+                        if v is not None:
+                            prepared_arguments["serverPort"] = int(v)
+                        else:
+                            p = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT")
+                            if p:
+                                try:
+                                    prepared_arguments["serverPort"] = int(p)
+                                except ValueError:
+                                    pass
+                    if not prepared_arguments.get("repositoryName"):
+                        v = _g("ghidra_server_repository", "server_repository") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                        if v:
+                            prepared_arguments["repositoryName"] = str(v).strip()
+                            if not prepared_arguments.get("path"):
+                                prepared_arguments["path"] = str(v).strip()
 
                 explicit_program = _extract_program_argument(prepared_arguments)
                 if explicit_program is not None:
                     _set_cached_program(ctx, explicit_program)
+
 
                 data = await _call_raw(ctx, name, prepared_arguments, client_override=client)
                 step_result = {
