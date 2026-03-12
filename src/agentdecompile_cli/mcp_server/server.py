@@ -681,7 +681,8 @@ class PythonMcpServer:
                     elif header_name == "user-agent":
                         user_agent = value_b.decode("latin1", errors="replace")
                     elif header_name == "x-agentdecompile-project-path":
-                        project_path_override = value_b.decode("latin1").strip() or None
+                        raw = value_b.decode("latin1").strip()
+                        project_path_override = raw.replace("\\", "/") if raw else None
                 client_info = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""

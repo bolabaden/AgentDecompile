@@ -731,12 +731,12 @@ class AgentDecompileStdioBridge:
             return {}
         path = Path(path_val).expanduser()
         if path.suffix.lower() == ".gpr":
-            return {"X-AgentDecompile-Project-Path": str(path)}
+            return {"X-AgentDecompile-Project-Path": path.as_posix()}
         name_val = os.environ.get("AGENTDECOMPILE_PROJECT_NAME", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "").strip()
         name = name_val or "my_project"
         if not name.endswith(".gpr"):
             name = f"{name}.gpr"
-        return {"X-AgentDecompile-Project-Path": str(path / name)}
+        return {"X-AgentDecompile-Project-Path": (path / name).as_posix()}
 
     def _current_frontend_session_id(self) -> str:
         sid = get_current_mcp_session_id()

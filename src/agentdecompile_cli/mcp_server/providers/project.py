@@ -1186,9 +1186,11 @@ class ProjectToolProvider(ToolProvider):
 
     async def _handle_open(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Open a program or project from local filesystem or current project."""
-        path: str = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
+        path_raw: str = self._get_str(args, "programpath", "filepath", "file", "path", "program", "binary")
+        # Normalize so backend sees one path form (e.g. proxy on Windows sends forward slashes; backend may be Linux)
+        path: str = (path_raw or "").replace("\\", "/").strip()
 
-        if not path or not path.strip():
+        if not path:
             raise ActionableError(
                 "programPath or filePath required",
                 context={"action": "open", "mode": "local-or-project"},
@@ -1218,6 +1220,9 @@ class ProjectToolProvider(ToolProvider):
 
         resolved: Path = Path(path).expanduser().resolve()
         if not resolved.exists():
+            # If path is a .gpr project path, create parent dirs and the project so open-project works without pre-existing dirs
+            if resolved.suffix.lower() == ".gpr":
+                return await self._create_and_open_gpr_project(resolved, args)
             normalized_project_path = self._normalize_repo_path(path)
             path_name = normalized_project_path.strip("/").split("/")[-1] or normalized_project_path.strip("/")
             project_data = self._get_active_project_data()
@@ -1336,19 +1341,43 @@ class ProjectToolProvider(ToolProvider):
             },
         )
 
+    async def _create_and_open_gpr_project(self, gpr_path: Path, args: dict[str, Any]) -> list[types.TextContent]:
+        """Create parent dirs and a new Ghidra project at the given .gpr path, then open it."""
+        project_dir: Path = gpr_path.parent
+        project_name: str = gpr_path.stem
+        try:
+            project_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            raise ActionableError(
+                f"Failed to create project directory '{project_dir}': {exc}",
+                context={"action": "open", "mode": "gpr-project", "path": str(gpr_path), "state": "create-dir-failed"},
+                next_steps=["Check filesystem permissions and retry with a valid parent path."],
+            ) from exc
+        try:
+            from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+            ghidra_project: Any = GhidraProject.createProject(str(project_dir), project_name, False)
+        except Exception as exc:
+            raise ActionableError(
+                f"Failed to create .gpr project '{gpr_path}': {exc}",
+                context={"action": "open", "mode": "gpr-project", "path": str(gpr_path), "state": "project-create-failed"},
+                next_steps=["Verify the parent path is writable and retry."],
+            ) from exc
+        return await self._set_gpr_project_state_and_respond(gpr_path, project_dir, project_name, ghidra_project, args)
+
     async def _open_gpr_project(self, gpr_path: Path, args: dict[str, Any]) -> list[types.TextContent]:
         """Open an existing Ghidra .gpr project file.
 
         This uses GhidraProject.openProject() to open a .gpr-backed project,
         sets it as the active project on the manager, and lists available programs.
         """
-        project_dir = gpr_path.parent
-        project_name = gpr_path.stem  # e.g. "my_project" from "my_project.gpr"
+        project_dir: Path = gpr_path.parent
+        project_name: str = gpr_path.stem  # e.g. "my_project" from "my_project.gpr"
 
         try:
             from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-            ghidra_project = GhidraProject.openProject(str(project_dir), project_name, False)
+            ghidra_project: Any = GhidraProject.openProject(str(project_dir), project_name, False)
         except Exception as exc:
             raise ActionableError(
                 f"Failed to open .gpr project '{gpr_path}': {exc}",
@@ -1359,6 +1388,17 @@ class ProjectToolProvider(ToolProvider):
                 ],
             ) from exc
 
+        return await self._set_gpr_project_state_and_respond(gpr_path, project_dir, project_name, ghidra_project, args)
+
+    async def _set_gpr_project_state_and_respond(
+        self,
+        gpr_path: Path,
+        project_dir: Path,
+        project_name: str,
+        ghidra_project: Any,
+        args: dict[str, Any],
+    ) -> list[types.TextContent]:
+        """Set manager/session state and build success response for an open/create .gpr project."""
         # Set on the manager so all providers can use it
         if self._manager is not None:
             self._manager.ghidra_project = ghidra_project
