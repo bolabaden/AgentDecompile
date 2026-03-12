@@ -24,6 +24,7 @@ import json
 import logging
 
 from collections import defaultdict
+from pathlib import Path
 from dataclasses import dataclass
 from itertools import islice
 from typing import Any, ClassVar, cast
@@ -560,19 +561,28 @@ class GetFunctionToolProvider(ToolProvider):
         session_id = get_current_mcp_session_id()
         binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         source_norm = (source_path or "").strip().lower().replace("\\", "/")
+        source_basename = (Path(source_path).name or "").lower() if source_path else ""
         binary_extensions = (".exe", ".dll", ".so", ".dylib")
         paths: list[str] = []
+        eligible_count = 0
         for item in binaries:
             if not isinstance(item, dict):
                 continue
             if str(item.get("type") or "").strip() == "Folder":
                 continue
             path = (item.get("path") or item.get("name") or "").strip().replace("\\", "/")
-            if not path or path.lower() == source_norm:
+            if not path or not any(path.lower().endswith(ext) for ext in binary_extensions):
                 continue
-            if not any(path.lower().endswith(ext) for ext in binary_extensions):
+            eligible_count += 1
+            if path.lower() == source_norm:
+                continue
+            # Exclude same program when path differs only by directory (e.g. "test_x86_64" vs "tests/fixtures/test_x86_64")
+            if source_basename and (Path(path).name or "").lower() == source_basename:
                 continue
             paths.append(path)
+        # Single program in session: no other targets (avoid matching program to itself)
+        if eligible_count <= 1:
+            return []
         return paths
 
     def _list_source_function_identifiers(

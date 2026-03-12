@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from agentdecompile_cli.cli import _build_svr_admin_payload, _get_error_result_message
@@ -164,3 +167,23 @@ class TestBuildSvrAdminPayload:
             timeout_seconds=None,
         )
         assert out == {"command": "-users"}
+
+
+class TestMigrateMetadataNoArgs:
+    """migrate-metadata with no arguments must complete (default limit 50), not hang."""
+
+    def test_migrate_metadata_no_args_exits_without_hang(self) -> None:
+        """With no server, migrate-metadata should fail fast with connection error, not hang."""
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.argv = ['agentdecompile-cli', '--server-url', 'http://127.0.0.1:19999', 'migrate-metadata']; from agentdecompile_cli.cli import cli_entry_point; cli_entry_point()",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert proc.returncode != 0
+        out = (proc.stdout + proc.stderr).lower()
+        assert "connect" in out or "refused" in out or "attempt" in out
