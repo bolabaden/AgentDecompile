@@ -102,7 +102,6 @@ class ToolName(str, Enum):
     CREATE_LABEL = "create-label"
     DECOMPILE_FUNCTION = "decompile-function"
     DELETE_PROJECT_BINARY = "delete-project-binary"
-    DISSECT_FUNCTION = "dissect-function"
     SYNC_PROJECT = "sync-project"
     EXPORT = "export"
     GEN_CALLGRAPH = "gen-callgraph"
@@ -112,6 +111,7 @@ class ToolName(str, Enum):
     GET_CURRENT_FUNCTION = "get-current-function"
     GET_CURRENT_PROGRAM = "get-current-program"
     GET_DATA = "get-data"
+    GET_FUNCTION = "get-function"
     GET_FUNCTIONS = "get-functions"
     GET_REFERENCES = "get-references"
     IMPORT_BINARY = "import-binary"
@@ -158,14 +158,12 @@ TOOLS: list[str] = [t.value for t in ToolName]
 class ResourceUri(str, Enum):
     """Canonical resource URIs for read_resource."""
 
-    PROGRAMS = "ghidra://programs"
-    STATIC_ANALYSIS = "ghidra://static-analysis-results"
-    DEBUG_INFO = "ghidra://agentdecompile-debug-info"
+    DEBUG_INFO = "agentdecompile://debug-info"
 
 
-RESOURCE_URI_PROGRAMS = ResourceUri.PROGRAMS.value
-RESOURCE_URI_STATIC_ANALYSIS = ResourceUri.STATIC_ANALYSIS.value
 RESOURCE_URI_DEBUG_INFO = ResourceUri.DEBUG_INFO.value
+RESOURCE_URI_PROGRAMS = "ghidra://programs"
+RESOURCE_URI_STATIC_ANALYSIS = "ghidra://static-analysis-results"
 
 RESOURCE_URIS: list[str] = [u.value for u in ResourceUri]
 
@@ -235,7 +233,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
     "decompile-function": _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
     "delete-project-binary": _params("programPath", "confirm"),
-    "dissect-function": _params("programPath", "function", "addressOrSymbol", "functionIdentifier", "timeout", "maxInstructions", "maxRefs"),
+    "get-function": _params("programPath", "function", "addressOrSymbol", "functionIdentifier", "timeout", "maxInstructions", "maxRefs"),
     "remove-program-binary": _params("programPath", "confirm"),
     "execute-script": _params("code", "programPath", "timeout"),
     "export": _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),

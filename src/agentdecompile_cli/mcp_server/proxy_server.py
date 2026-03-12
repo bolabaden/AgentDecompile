@@ -216,6 +216,25 @@ class AgentDecompileMcpProxyServer:
                     "x-agent-server-password",
                     "x-agent-server-repository",
                 ],
+                "shared_server_http_mapping": {
+                    "request_url": "Use the proxy MCP URL itself, typically http://host:port/mcp",
+                    "env_to_headers": {
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_HOST": ["X-Ghidra-Server-Host"],
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_PORT": ["X-Ghidra-Server-Port"],
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": ["X-Ghidra-Repository", "X-Agent-Server-Repository"],
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME": ["Authorization", "X-Agent-Server-Username"],
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": ["Authorization", "X-Agent-Server-Password"],
+                    },
+                    "transport_headers": {
+                        "content-type": "application/json",
+                        "accept": "application/json, text/event-stream",
+                        "mcp-session-id": "Send on follow-up requests after the proxy returns it",
+                    },
+                    "precedence": {
+                        "credentials": ["authorization", "x-agent-server-username/x-agent-server-password"],
+                        "repository": ["x-ghidra-repository", "x-agent-server-repository"],
+                    },
+                },
                 "notes": [
                     "Proxy mode does not run local PyGhidra analysis.",
                     "MCP sessions are local to the proxy and bridged to backend sessions.",

@@ -1,4 +1,4 @@
-"""Dissect Function Tool Provider – dissect-function.
+"""Get Function Tool Provider – get-function.
 
 All-in-one deep inspection of a single function. Returns decompilation,
 disassembly, comments, labels, callers, callees, cross-references, tags,
@@ -28,17 +28,17 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 logger = logging.getLogger(__name__)
 
 
-class DissectFunctionToolProvider(ToolProvider):
+class GetFunctionAioToolProvider(ToolProvider):
     """AIO provider that returns everything knowable about a single function."""
 
     HANDLERS: ClassVar[dict[str, str]] = {
-        "dissectfunction": "_handle",
+        "getfunction": "_handle",
     }
 
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.DISSECT_FUNCTION.value,
+                name=ToolName.GET_FUNCTION.value,
                 description=(
                     "Deep, all-in-one inspection of a single function. "
                     "Returns every available detail in one call: decompiled C code, "
@@ -120,7 +120,7 @@ class DissectFunctionToolProvider(ToolProvider):
         body = target.getBody()
 
         result: dict[str, Any] = {
-            "tool": "dissect-function",
+            "tool": ToolName.GET_FUNCTION.value,
             "name": target.getName(),
             "address": str(entry),
             "signature": str(target.getSignature()),
@@ -269,7 +269,7 @@ class DissectFunctionToolProvider(ToolProvider):
         except ImportError:
             pass
         except Exception as exc:
-            logger.debug("Decompiler error in dissect-function: %s", exc)
+            logger.debug("Decompiler error in get-function: %s", exc)
 
         return self._build_decompile_fallback(program, func, "decompiler unavailable", max_instructions=400)
 

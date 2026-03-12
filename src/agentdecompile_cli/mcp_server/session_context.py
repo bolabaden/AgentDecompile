@@ -299,6 +299,11 @@ class SessionContextStore:
         with self._lock:
             session.project_handle = handle
 
+    def get_project_handle(self, session_id: str) -> Any | None:
+        session = self.get_or_create(session_id)
+        with self._lock:
+            return session.project_handle
+
     def set_project_binaries(self, session_id: str, binaries: list[dict[str, Any]]) -> None:
         session = self.get_or_create(session_id)
         with self._lock:
@@ -320,6 +325,38 @@ class SessionContextStore:
                     return list(latest.project_binaries)
 
             return []
+
+    def get_tool_history(self, session_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        session = self.get_or_create(session_id)
+        with self._lock:
+            if limit <= 0:
+                return []
+            return [dict(entry) for entry in session.tool_history[-limit:]]
+
+    def get_session_snapshot(
+        self,
+        session_id: str,
+        *,
+        project_binary_limit: int = 50,
+        tool_history_limit: int = 25,
+    ) -> dict[str, Any]:
+        session = self.get_or_create(session_id)
+        with self._lock:
+            return {
+                "sessionId": session.session_id,
+                "activeProgramKey": session.active_program_key,
+                "openProgramKeys": list(session.open_programs.keys()),
+                "openProgramCount": len(session.open_programs),
+                "projectHandle": session.project_handle,
+                "projectBinaryCount": len(session.project_binaries),
+                "projectBinaries": [dict(item) for item in session.project_binaries[:project_binary_limit]],
+                "toolHistoryCount": len(session.tool_history),
+                "recentToolHistory": [dict(entry) for entry in session.tool_history[-tool_history_limit:]],
+                "preferences": dict(session.preferences),
+                "createdAt": session.created_at,
+                "lastActivity": session.last_activity,
+                "clientFingerprint": session.client_fingerprint,
+            }
 
     def set_active_program_info(self, session_id: str, key: str, program_info: ProgramInfo) -> None:
         session = self.get_or_create(session_id)

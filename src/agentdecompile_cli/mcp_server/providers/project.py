@@ -1218,40 +1218,81 @@ class ProjectToolProvider(ToolProvider):
         resolved: Path = Path(path).expanduser().resolve()
         if not resolved.exists():
             normalized_project_path = self._normalize_repo_path(path)
+            path_name = normalized_project_path.strip("/").split("/")[-1] or normalized_project_path.strip("/")
             project_data = self._get_active_project_data()
+            root_folder: Any = None
+            if project_data is None:
+                ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                if ghidra_project is not None:
+                    try:
+                        root_folder = ghidra_project.getRootFolder()
+                        if root_folder is not None and hasattr(root_folder, "getProjectData"):
+                            project_data = root_folder.getProjectData()
+                    except Exception:
+                        pass
+            domain_file: Any = None
             if project_data is not None:
                 try:
                     domain_file = project_data.getFile(normalized_project_path)
                 except Exception:
-                    domain_file = None
-
-                if domain_file is not None:
+                    pass
+                if domain_file is None and self._manager is not None:
                     try:
-                        program = self._open_program_from_domain_file(domain_file)
-                        self._set_active_program_info(program, normalized_project_path)
-                        return create_success_response(
-                            {
-                                "action": "open",
-                                "mode": "project-domain",
-                                "path": normalized_project_path,
-                                "exists": True,
-                                "isProjectPath": True,
-                                "message": f"Opened project domain file: {normalized_project_path}",
-                            },
-                        )
-                    except Exception as exc:
-                        raise ActionableError(
-                            f"Failed to open project path '{normalized_project_path}': {exc}",
-                            context={"action": "open", "path": normalized_project_path, "state": "project-open-failed"},
-                            next_steps=[
-                                "Call `list-project-files` to confirm the exact program path.",
-                                "Retry with that project path.",
-                            ],
-                        ) from exc
+                        root_folder = project_data.getRootFolder() if root_folder is None else root_folder
+                        if root_folder is not None and path_name:
+                            domain_file = self._manager._find_domain_file_by_name(root_folder, path_name, 5000)
+                    except Exception:
+                        pass
+            if domain_file is None and root_folder is not None and path_name and self._manager is not None:
+                try:
+                    domain_file = self._manager._find_domain_file_by_name(root_folder, path_name, 5000)
+                except Exception:
+                    pass
+            if domain_file is None and root_folder is None:
+                ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                if ghidra_project is not None and path_name and self._manager is not None:
+                    try:
+                        root_folder = ghidra_project.getRootFolder()
+                        if root_folder is not None:
+                            domain_file = self._manager._find_domain_file_by_name(root_folder, path_name, 5000)
+                    except Exception:
+                        pass
 
+            if domain_file is not None:
+                try:
+                    program = self._open_program_from_domain_file(domain_file)
+                    self._set_active_program_info(program, normalized_project_path)
+                    return create_success_response(
+                        {
+                            "action": "open",
+                            "mode": "project-domain",
+                            "path": normalized_project_path,
+                            "exists": True,
+                            "isProjectPath": True,
+                            "message": f"Opened project domain file: {normalized_project_path}",
+                        },
+                    )
+                except Exception as exc:
+                    raise ActionableError(
+                        f"Failed to open project path '{normalized_project_path}': {exc}",
+                        context={"action": "open", "path": normalized_project_path, "state": "project-open-failed"},
+                        next_steps=[
+                            "Call `list-project-files` to confirm the exact program path.",
+                            "Retry with that project path.",
+                        ],
+                    ) from exc
+
+            ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
             raise ActionableError(
                 f"Path does not exist: {path}",
-                context={"action": "open", "path": path, "state": "path-not-found"},
+                context={
+                    "action": "open",
+                    "path": path,
+                    "state": "path-not-found",
+                    "has_ghidra_project": ghidra_project is not None,
+                    "has_root_folder": root_folder is not None,
+                    "path_name": path_name,
+                },
                 next_steps=filter_recommendations(
                     [
                         "Verify the path exists in the backend filesystem.",
@@ -1437,6 +1478,23 @@ class ProjectToolProvider(ToolProvider):
                         "source": "shared-server-session",
                     },
                 )
+            # No program loaded and no session binaries: list from ghidra_project root if available
+            ghidra_project_noload: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            if ghidra_project_noload is not None:
+                try:
+                    root_folder_noload = ghidra_project_noload.getRootFolder()
+                    if root_folder_noload is not None:
+                        normalized_folder_noload = self._normalize_repo_path(folder)
+                        if normalized_folder_noload == "/":
+                            target_folder_noload = root_folder_noload
+                        else:
+                            target_folder_noload = root_folder_noload.getFolder(normalized_folder_noload) if hasattr(root_folder_noload, "getFolder") else None
+                        if target_folder_noload is not None:
+                            files_noload = self._list_domain_files(target_folder_noload, max_results)
+                            logger.info("list-project-files (no program loaded): listed %s items from project", len(files_noload))
+                            return create_success_response({"folder": folder, "files": files_noload, "count": len(files_noload)})
+                except Exception as e:
+                    logger.warning("list-project-files (no program loaded): failed to list from ghidra_project: %s", e)
             return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
 
         try:

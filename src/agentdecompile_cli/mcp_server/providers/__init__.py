@@ -21,7 +21,7 @@ from .script import ScriptToolProvider
 from .search_everything import SearchEverythingToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
-from .dissect import DissectFunctionToolProvider
+from .dissect import GetFunctionAioToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
@@ -33,7 +33,7 @@ __all__ = [
     "DataToolProvider",
     "DataTypeToolProvider",
     "DecompilerToolProvider",
-    "DissectFunctionToolProvider",
+    "GetFunctionAioToolProvider",
     "FunctionToolProvider",
     "GetFunctionToolProvider",
     "ImportExportToolProvider",

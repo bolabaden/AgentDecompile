@@ -1290,17 +1290,17 @@ class TestResourcesListProtocol:
 
     def test_resource_count(self, local_http_session: JsonRpcMcpSession):
         resources = local_http_session.list_resources()
-        assert len(resources) >= 3
+        assert len(resources) == 1
 
     def test_program_list_resource(self, local_http_session: JsonRpcMcpSession):
         resources = local_http_session.list_resources()
         uris = [r["uri"] for r in resources]
-        assert "ghidra://programs" in uris
+        assert "agentdecompile://debug-info" in uris
 
     def test_sarif_resource(self, local_http_session: JsonRpcMcpSession):
         resources = local_http_session.list_resources()
         uris = [r["uri"] for r in resources]
-        assert "ghidra://static-analysis-results" in uris
+        assert "agentdecompile://debug-info" in uris
 
     def test_resource_fields(self, local_http_session: JsonRpcMcpSession):
         resources = local_http_session.list_resources()

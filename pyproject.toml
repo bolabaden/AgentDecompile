@@ -42,7 +42,7 @@ classifiers = [
 
 dependencies = [
     "click>=8.3.1",
-    "fastapi>=0.134.0",
+    "fastapi>=0.135.1",
     "ghidra-stubs>=12.0.2",
     "httpx-sse>=0.4.3",
     "httpx>=0.28.1,<1.0",
@@ -77,7 +77,7 @@ agentdecompile-proxy = "agentdecompile_cli.server:proxy_main"
 
 [project.optional-dependencies]
 semantic = [
-  "chromadb>=1.5.2",
+  "chromadb>=1.5.5",
 ]
 test = [
     "pytest>=9.0.2",
