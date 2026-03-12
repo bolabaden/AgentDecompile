@@ -17,6 +17,7 @@ from mcp import types
 
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -100,20 +101,30 @@ class GetFunctionToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=ToolName.MATCH_FUNCTION.value,
-                description="Find other functions in the binary that look or behave similarly to a target function. Use this to find cloned functions, shared library code, or to discover groups of functions that share common traits like the same number of arguments or similar callers/callees.",
+                description="Match functions across different builds or versions of a binary (cross-program matching). Primary use: give a source function and one or more target program paths; the tool finds the equivalent function in each target by signature (and optional name) and can propagate names, tags, and comments. Use without targetProgramPaths for single-program modes: similar, callers, callees, signature.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path to the program."},
-                        "function": {"type": "string", "description": "The target function you want to match against."},
-                        "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the target function."},
+                        "programPath": {"type": "string", "description": "Path to the source program containing the function to match."},
+                        "function": {"type": "string", "description": "The source function name or address to match (alias: functionIdentifier, addressOrSymbol)."},
+                        "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the source function."},
+                        "functionIdentifier": {"type": "string", "description": "Source function name or address (same as function)."},
+                        "targetProgramPaths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Paths to target programs to find the equivalent function in. When provided, cross-program matching runs (primary use). Omit for single-program modes.",
+                        },
+                        "minSimilarity": {"type": "number", "default": 0.7, "description": "Minimum similarity 0–1 (or 0–100). Name match = 1.0, signature-only = 0.7. Default 0.7."},
+                        "propagateNames": {"type": "boolean", "default": False, "description": "If true, set the matched target function's name to the source function's name."},
+                        "propagateTags": {"type": "boolean", "default": False, "description": "If true, copy source function's tags to the matched target function."},
+                        "propagateComments": {"type": "boolean", "default": False, "description": "If true, copy source function's plate/pre comment to the matched target function."},
                         "mode": {
                             "type": "string",
                             "enum": ["similar", "callers", "callees", "signature"],
                             "default": "similar",
-                            "description": "How to evaluate similarity: 'similar' (overall heuristics), 'callers' (functions grouped by who calls them), 'callees' (functions grouped by who they call), 'signature' (functions with identical argument types).",
+                            "description": "Single-program only: 'similar', 'callers', 'callees', or 'signature'. Ignored when targetProgramPaths is provided.",
                         },
-                        "maxResults": {"type": "integer", "default": 100, "description": "Number of matched functions to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Single-program mode: number of matched functions to return."},
                     },
                     "required": [],
                 },
@@ -387,20 +398,185 @@ class GetFunctionToolProvider(ToolProvider):
         self._MATCH_INDEX_CACHE[cache_key] = index
         return index, False
 
+    def _normalize_min_similarity(self, args: dict[str, Any]) -> float:
+        """Return minSimilarity in 0.0–1.0 (accepts 0–100 or 0–1)."""
+        raw = self._get_str(args, "minsimilarity", "similaritythreshold", default="")
+        if not raw:
+            return 0.7
+        try:
+            v = float(raw)
+            return min(1.0, max(0.0, v / 100.0 if v > 1 else v))
+        except (ValueError, TypeError):
+            return 0.7
+
+    async def _handle_match_cross_program(
+        self,
+        source_func: Any,
+        source_program: Any,
+        target_paths: list[str],
+        min_similarity: float,
+        propagate_names: bool,
+        propagate_tags: bool,
+        propagate_comments: bool,
+    ) -> list[types.TextContent]:
+        """Match source function to equivalent functions in target programs; optionally propagate name/tags/comments."""
+        session_id = get_current_mcp_session_id()
+        manager = getattr(self, "_manager", None)
+        if manager is None:
+            raise ValueError(
+                "Cross-program matching requires a session with program resolution. "
+                "Ensure open-project or import-binary has been used so target programs can be opened."
+            )
+
+        source_name = source_func.getName()
+        source_param_count = source_func.getParameterCount()
+        source_return_type = str(source_func.getReturnType())
+        source_sig = str(source_func.getSignature())
+        sig_key = (source_param_count, source_return_type)
+
+        results_per_target: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        for target_path in target_paths:
+            target_path = str(target_path).strip()
+            if not target_path:
+                continue
+            try:
+                target_info = await manager.get_or_open_program(session_id, target_path)
+            except Exception as e:
+                errors.append(f"{target_path}: {e}")
+                results_per_target.append(
+                    {"targetProgramPath": target_path, "matched": None, "error": str(e)}
+                )
+                continue
+            if target_info is None:
+                errors.append(f"{target_path}: could not open program")
+                results_per_target.append(
+                    {"targetProgramPath": target_path, "matched": None, "error": "Could not open program"}
+                )
+                continue
+
+            target_program = target_info.program
+            target_fm = self._get_function_manager(target_program)
+            target_index, _ = self._get_match_index(target_program, target_fm)
+
+            candidates = target_index.by_signature.get(sig_key, [])
+            best_feature: _FunctionMatchFeature | None = None
+            best_score = 0.0
+            for feat in candidates:
+                score = 1.0 if feat.name == source_name else 0.7
+                if score >= min_similarity and score > best_score:
+                    best_score = score
+                    best_feature = feat
+
+            if best_feature is None:
+                results_per_target.append(
+                    {
+                        "targetProgramPath": target_path,
+                        "matched": None,
+                        "candidatesBySignature": len(candidates),
+                        "message": "No match meeting minSimilarity",
+                    }
+                )
+                continue
+
+            target_func = best_feature.function
+            entry: dict[str, Any] = {
+                "targetProgramPath": target_path,
+                "matched": {
+                    "name": best_feature.name,
+                    "address": best_feature.address,
+                    "signature": best_feature.signature,
+                    "similarityScore": best_score,
+                },
+                "propagated": [],
+            }
+
+            if propagate_names and best_feature.name != source_name:
+                def _rename() -> None:
+                    from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+                    target_func.setName(source_name, SourceType.USER_DEFINED)
+
+                self._run_program_transaction(target_program, "match-function-rename", _rename)
+                entry["propagated"].append("name")
+
+            if propagate_tags:
+                source_tags = [t.getName() for t in source_func.getTags()]
+                existing = {t.getName() for t in target_func.getTags()}
+                to_add = [t for t in source_tags if t not in existing]
+                if to_add:
+                    def _add_tags() -> None:
+                        for tag in to_add:
+                            target_func.addTag(tag)
+
+                    self._run_program_transaction(target_program, "match-function-tags", _add_tags)
+                    entry["propagated"].extend(to_add)
+
+            if propagate_comments:
+                try:
+                    from ghidra.program.model.listing import CodeUnit  # pyright: ignore[reportMissingModuleSource]
+                    source_listing = source_program.getListing()
+                    target_listing = target_program.getListing()
+                    source_entry = source_func.getEntryPoint()
+                    target_entry = target_func.getEntryPoint()
+                    for ctype in (CodeUnit.PLATE_COMMENT, CodeUnit.PRE_COMMENT):
+                        try:
+                            comment = source_listing.getComment(ctype, source_entry)
+                            if comment and str(comment).strip():
+                                def _set_comment() -> None:
+                                    target_listing.setComment(target_entry, ctype, comment)
+
+                                self._run_program_transaction(target_program, "match-function-comment", _set_comment)
+                                entry["propagated"].append("comment")
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.debug("Propagate comments skipped: %s", e)
+
+            results_per_target.append(entry)
+
+        return create_success_response(
+            {
+                "mode": "cross-program",
+                "sourceFunction": source_name,
+                "sourceSignature": source_sig,
+                "targetProgramPaths": target_paths,
+                "minSimilarity": min_similarity,
+                "results": results_per_target,
+                "count": len(results_per_target),
+                "errors": errors if errors else None,
+            }
+        )
+
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         raw_targets = args.get(n("targetprogrampaths"))
+        target_paths: list[str] = []
         if raw_targets is not None:
             if isinstance(raw_targets, list):
-                has_paths = any(x and str(x).strip() for x in raw_targets)
-            else:
-                has_paths = bool(str(raw_targets).strip())
-            if has_paths:
-                raise ValueError(
-                    "Cross-program matching (targetProgramPaths) is not yet implemented. "
-                    "Use match-function without targetProgramPaths for single-program modes: "
-                    "similar, callers, callees, or signature."
-                )
+                target_paths = [str(x).strip() for x in raw_targets if x and str(x).strip()]
+            elif str(raw_targets).strip():
+                target_paths = [str(raw_targets).strip()]
+        if target_paths:
+            func_id = self._require_address_or_symbol(args)
+            func = self._resolve_function(func_id)
+            if func is None:
+                raise ValueError(f"Function not found: {func_id}")
+            assert self.program_info is not None
+            min_sim = self._normalize_min_similarity(args)
+            propagate_names = self._get_bool(args, "propagatenames", "propagatename", default=False)
+            propagate_tags = self._get_bool(args, "propagatetags", "propagatetag", default=False)
+            propagate_comments = self._get_bool(args, "propagatecomments", "propagatecomment", default=False)
+            return await self._handle_match_cross_program(
+                func,
+                self.program_info.program,
+                target_paths,
+                min_sim,
+                propagate_names,
+                propagate_tags,
+                propagate_comments,
+            )
         func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")
         max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)
