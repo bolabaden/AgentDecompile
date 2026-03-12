@@ -713,12 +713,14 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
         return 1
 
     bootstrap_import = (getattr(args, "bootstrap_import", None) or "").strip()
+    program_path_in_project = program_path  # used for non-bootstrap and updated from list-project-files in bootstrap
     if bootstrap_import:
         resolved_bootstrap = Path(bootstrap_import).resolve()
         if not resolved_bootstrap.exists():
             print(f"Bootstrap path does not exist: {resolved_bootstrap}")
             return 2
         program_path = resolved_bootstrap.name
+        program_path_in_project = f"/{program_path}"
         # No shared-server credentials when bootstrapping a local import
         host = ""
         port = 0
@@ -739,16 +741,18 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
 
     if bootstrap_import:
         resolved_bootstrap = Path(bootstrap_import).resolve()
+        # After list-project-files we will set this from the first program path in the response
+        program_path_in_project = f"/{program_path}"
         steps = [
             ("import_binary", "import-binary", {"path": str(resolved_bootstrap), "format": "json"}),
             ("list_project_files", "list-project-files", {"format": "json"}),
-            ("get_current_program", "get-current-program", {"programPath": program_path, "format": "json"}),
-            ("list_functions", "list-functions", {"programPath": program_path, "limit": 5, "format": "json"}),
-            ("search_symbols", "search-symbols", {"programPath": program_path, "query": "main", "limit": 5, "format": "json"}),
-            ("get_references", "get-references", {"programPath": program_path, "target": "entry", "direction": "to", "limit": 5, "format": "json"}),
-            ("list_imports", "list-imports", {"programPath": program_path, "limit": 5, "format": "json"}),
-            ("list_exports", "list-exports", {"programPath": program_path, "limit": 5, "format": "json"}),
-            ("decompile_function", "decompile-function", {"programPath": program_path, "functionIdentifier": "entry", "limit": 20, "format": "json"}),
+            ("get_current_program", "get-current-program", {"programPath": program_path_in_project, "format": "json"}),
+            ("list_functions", "list-functions", {"programPath": program_path_in_project, "limit": 5, "format": "json"}),
+            ("search_symbols", "search-symbols", {"programPath": program_path_in_project, "query": "main", "limit": 5, "format": "json"}),
+            ("get_references", "get-references", {"programPath": program_path_in_project, "target": "entry", "direction": "to", "limit": 5, "format": "json"}),
+            ("list_imports", "list-imports", {"programPath": program_path_in_project, "limit": 5, "format": "json"}),
+            ("list_exports", "list-exports", {"programPath": program_path_in_project, "limit": 5, "format": "json"}),
+            ("decompile_function", "decompile-function", {"programPath": program_path_in_project, "functionIdentifier": "entry", "limit": 20, "format": "json"}),
         ]
     else:
         steps = [
@@ -764,11 +768,17 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
         ]
 
     failed = 0
+    # Bootstrap: use path from list-project-files for subsequent steps
+    current_program_path = program_path_in_project if bootstrap_import else program_path
+
     for step_name, tool_name, tool_args in steps:
         try:
+            args_to_send = dict(tool_args)
+            if bootstrap_import and "programPath" in args_to_send:
+                args_to_send["programPath"] = current_program_path
             call_resp = _agdec_http_post(
                 base_url, "tools/call",
-                {"name": tool_name, "arguments": tool_args},
+                {"name": tool_name, "arguments": args_to_send},
                 session_headers, request_id, timeout,
             )
             request_id += 1
@@ -804,6 +814,30 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
                     return 1
             else:
                 print(f"  OK   {tool_name}")
+                # Bootstrap: set program path from import or list-project-files response
+                if bootstrap_import and text_parts:
+                    try:
+                        parsed = json.loads(text_parts[0])
+                        if isinstance(parsed, dict):
+                            if step_name == "import_binary":
+                                progs = parsed.get("importedPrograms") or []
+                                if progs and isinstance(progs[0], dict):
+                                    p = progs[0].get("programPath") or progs[0].get("path")
+                                    if p:
+                                        current_program_path = p
+                            elif step_name == "list_project_files":
+                                items = parsed.get("files") or parsed.get("items") or []
+                                if isinstance(items, list):
+                                    for it in items:
+                                        if isinstance(it, dict):
+                                            t = str(it.get("type", ""))
+                                            if t != "Folder" and (t == "Program" or "Program" in t or not t):
+                                                p = it.get("path") or it.get("programPath")
+                                                if p:
+                                                    current_program_path = p
+                                                    break
+                    except (json.JSONDecodeError, TypeError):
+                        pass
         except Exception as e:
             failed += 1
             _append_debug_log(log_path, {

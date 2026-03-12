@@ -85,10 +85,14 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 
 ## Learned User Preferences
 
+- Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
+
 ## Learned Workspace Facts
 
 - When editing KOTOR or video-derived docs (e.g. docs/from_video), use correct terms: KOTOR (not Cotor), PyGhidra (Ghidra v12 Python wrapper), swkotor.exe (not sodtor.exe), CSWMinigame (not miniame).
 - open-project: analyzeAfterImport is optional and defaults to true.
+- Load Ghidra path from environment (e.g. GHIDRA_INSTALL_DIR); use a top-level .env at repo root; do not hardcode install paths.
+- Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 
 ## MCP server debugging & self-healing
 

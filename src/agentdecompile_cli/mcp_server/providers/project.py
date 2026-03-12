@@ -74,6 +74,7 @@ def _shared_connection_context(
     auth_provided: bool,
     server_username: str | None = None,
     repository_name: str | None = None,
+    requested_path: str | None = None,
     server_reachable: bool | None = None,
     wrapper_error: str | None = None,
     adapter_error: str | None = None,
@@ -90,6 +91,8 @@ def _shared_connection_context(
         context["serverUsername"] = server_username
     if repository_name:
         context["repository"] = repository_name
+    if requested_path:
+        context["requestedPath"] = requested_path
     if server_reachable is not None:
         context["serverReachable"] = server_reachable
     if wrapper_error:
@@ -353,10 +356,6 @@ class ProjectToolProvider(ToolProvider):
                     "required": [],
                 },
             ),
-            # NOTE: switch-project was removed as an advertised tool.
-            # Its functionality is folded into open-project (which handles local,
-            # .gpr, and shared modes with env var auto-detection).
-            # Calling "switch-project" still works — it routes to open-project.
         ]
 
     @staticmethod
@@ -830,6 +829,7 @@ class ProjectToolProvider(ToolProvider):
                             server_host=server_host,
                             server_port=server_port,
                             server_username=server_username,
+                            requested_path=path or None,
                             auth_provided=auth_provided,
                             server_reachable=server_reachable,
                             wrapper_error=exc_text,
@@ -853,6 +853,7 @@ class ProjectToolProvider(ToolProvider):
                         server_host=server_host,
                         server_port=server_port,
                         server_username=server_username or None,
+                        requested_path=path or None,
                         auth_provided=auth_provided,
                         server_reachable=server_reachable,
                         wrapper_error=exc_text,
@@ -879,6 +880,7 @@ class ProjectToolProvider(ToolProvider):
                             server_host=server_host,
                             server_port=server_port,
                             server_username=server_username,
+                            requested_path=path or None,
                             auth_provided=auth_provided,
                             server_reachable=server_reachable,
                             adapter_error=adapter_error,
@@ -900,6 +902,7 @@ class ProjectToolProvider(ToolProvider):
                         server_host=server_host,
                         server_port=server_port,
                         server_username=server_username or None,
+                        requested_path=path or None,
                         auth_provided=auth_provided,
                         server_reachable=server_reachable,
                         adapter_error=adapter_error,
@@ -929,6 +932,7 @@ class ProjectToolProvider(ToolProvider):
                         server_host=server_host,
                         server_port=server_port,
                         server_username=server_username,
+                        requested_path=path or None,
                         auth_provided=auth_provided,
                         server_reachable=server_reachable,
                         wrapper_error=exc_text,
@@ -951,6 +955,7 @@ class ProjectToolProvider(ToolProvider):
                     server_host=server_host,
                     server_port=server_port,
                     server_username=server_username or None,
+                    requested_path=path or None,
                     auth_provided=auth_provided,
                     server_reachable=server_reachable,
                     wrapper_error=exc_text,
@@ -1027,6 +1032,7 @@ class ProjectToolProvider(ToolProvider):
                     server_port=server_port,
                     server_username=server_username or None,
                     repository_name=repository_name,
+                    requested_path=path or None,
                     auth_provided=auth_provided,
                     server_reachable=server_reachable,
                 ),
@@ -1053,6 +1059,7 @@ class ProjectToolProvider(ToolProvider):
                             server_port=server_port,
                             server_username=server_username or None,
                             repository_name=repository_name,
+                            requested_path=path or None,
                             auth_provided=auth_provided,
                             server_reachable=server_reachable,
                             wrapper_error=exc_text,
@@ -1070,6 +1077,7 @@ class ProjectToolProvider(ToolProvider):
                         server_port=server_port,
                         server_username=server_username or None,
                         repository_name=repository_name,
+                        requested_path=path or None,
                         auth_provided=auth_provided,
                         server_reachable=server_reachable,
                         wrapper_error=exc_text,
@@ -1090,6 +1098,7 @@ class ProjectToolProvider(ToolProvider):
                             server_port=server_port,
                             server_username=server_username or None,
                             repository_name=repository_name,
+                            requested_path=path or None,
                             auth_provided=auth_provided,
                             server_reachable=server_reachable,
                         ),
@@ -1106,6 +1115,7 @@ class ProjectToolProvider(ToolProvider):
                         server_port=server_port,
                         server_username=server_username or None,
                         repository_name=repository_name,
+                        requested_path=path or None,
                         auth_provided=auth_provided,
                         server_reachable=server_reachable,
                     ),
