@@ -3414,27 +3414,32 @@ class ProjectToolProvider(ToolProvider):
                         except Exception:
                             pass
 
-                if domain_file is not None:
-                    # Prefer GhidraProject.openProgram() which gives writable access
-                    # on local project files, over getDomainObject() which may
-                    # open read-only.
-                    opened = False
-                    if ghidra_project is not None:
-                        try:
-                            domain_obj = ghidra_project.openProgram(domain_file)
+                    if domain_file is not None:
+                        # Prefer GhidraProject.openProgram() which gives writable access
+                        # on local project files, over getDomainObject() which may
+                        # open read-only.
+                        opened = False
+                        if ghidra_project is not None:
+                            try:
+                                domain_obj = ghidra_project.openProgram(domain_file)
+                                if domain_obj is not None:
+                                    program = domain_obj
+                                    opened = True
+                                    logger.info("Opened '%s' via GhidraProject.openProgram (writable)", program_path)
+                            except Exception:
+                                pass
+                        if not opened:
+                            domain_obj = self._get_domain_object_compat(domain_file, monitor)  # pyright: ignore[reportAttributeAccessIssue]
                             if domain_obj is not None:
                                 program = domain_obj
-                                opened = True
-                                logger.info("Opened '%s' via GhidraProject.openProgram (writable)", program_path)
-                        except Exception:
-                            pass
-                    if not opened:
-                        domain_obj = self._get_domain_object_compat(domain_file, monitor)  # pyright: ignore[reportAttributeAccessIssue]
-                        if domain_obj is not None:
-                            program = domain_obj
-                            logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
-            except Exception as exc:
-                logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
+                                logger.info("Opened '%s' via DomainFile.getDomainObject (path=%s)", program_path, domain_file.getPathname())
+                except Exception as exc:
+                    logger.info("project_data checkout of '%s' failed: %s. Trying lower-level fallbacks.", program_path, exc)
+                finally:
+                    try:
+                        domain_file.release(consumer)
+                    except Exception:
+                        pass
 
             # If we have a versioned domain_file (e.g. from RepositoryAdapter.checkout) but haven't opened it yet
             if domain_file is not None and program is None and ghidra_project is not None:
