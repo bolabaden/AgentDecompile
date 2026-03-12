@@ -789,7 +789,7 @@ class SearchEverythingToolProvider(ToolProvider):
                     continue
             decomp.dispose()
         except Exception as e:
-            logger.warning(f"Decompilation scope failed: {e}")
+            logger.warning("Decompilation scope failed: %s", e)
         return results
 
     def _search_disassembly(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, max_instructions_scan: int) -> list[dict[str, Any]]:
@@ -997,9 +997,9 @@ class SearchEverythingToolProvider(ToolProvider):
             "callingConvention": str(function.get("callingConvention", "")),
             "parameterCount": int(function.get("parameterCount", 0)),
             "size": int(function.get("size", 0)),
-            "isExternal": bool(function.get("isExternal", False)),
-            "isThunk": bool(function.get("isThunk", False)),
-            "hasVarArgs": bool(function.get("hasVarArgs", False)),
+            "isExternal": bool(function.get("isExternal")),
+            "isThunk": bool(function.get("isThunk")),
+            "hasVarArgs": bool(function.get("hasVarArgs")),
             "parameters": function.get("parameters", []),
             "comments": function.get("comments", {}),
             "tags": function.get("tags", []),
@@ -1117,7 +1117,7 @@ class SearchEverythingToolProvider(ToolProvider):
                     continue
                 results.append({"scope": "processors", "languageId": str(desc.getLanguageID()), "processor": str(desc.getProcessor().toString()), "description": str(desc.getDescription()), **best})
         except Exception as e:
-            logger.warning(f"Processor scope failed: {e}")
+            logger.warning("Processor scope failed: %s", e)
         return results
 
     def _search_project_files(self, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:

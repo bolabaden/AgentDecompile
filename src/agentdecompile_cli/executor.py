@@ -719,7 +719,7 @@ class DynamicToolExecutor:
             return result
 
         except Exception as e:
-            logger.error(f"Tool execution failed: {tool_name} - {e}")
+            logger.error("Tool execution failed: %s - %s", tool_name, e)
             return self._create_error_response(e)
 
     def _resolve_tool_name(self, tool_name: str) -> str | None:

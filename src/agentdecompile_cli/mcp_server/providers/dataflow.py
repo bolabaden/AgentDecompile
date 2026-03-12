@@ -220,7 +220,7 @@ class DataFlowToolProvider(ToolProvider):
         except ImportError:
             return self._empty_response(direction, addr, note="DecompInterface not available in this environment")
         except Exception as e:
-            logger.error(f"Data flow analysis error: {e}")
+            logger.error("Data flow analysis error: %s", e)
             return self._empty_response(direction, addr, error=str(e))
         finally:
             if decomp is not None:

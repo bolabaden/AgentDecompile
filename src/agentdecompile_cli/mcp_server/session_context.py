@@ -38,6 +38,14 @@ CURRENT_MCP_SESSION_ID: ContextVar[str] = ContextVar("current_mcp_session_id", d
 # When set, debug_info and open-project flows use this path instead of runtime_context.
 CURRENT_REQUEST_PROJECT_PATH_OVERRIDE: ContextVar[str | None] = ContextVar("current_request_project_path_override", default=None)
 
+# Per-request auto match-function propagation (X-AgentDecompile-Auto-Match-Propagate header).
+# When set, overrides AGENTDECOMPILE_AUTO_MATCH_PROPAGATE for this request (value: 1, true, yes).
+CURRENT_REQUEST_AUTO_MATCH_PROPAGATE: ContextVar[str | None] = ContextVar("current_request_auto_match_propagate", default=None)
+
+# Per-request auto match target paths (X-AgentDecompile-Auto-Match-Target-Paths header).
+# Comma-separated program paths; when set, overrides AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS for this request.
+CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS: ContextVar[str | None] = ContextVar("current_request_auto_match_target_paths", default=None)
+
 # Default grace period in seconds.  Overridden by AGENTDECOMPILE_SESSION_GRACE_PERIOD
 _DEFAULT_GRACE_PERIOD: int = 300
 # How frequently the reaper thread checks for expired entries (seconds)
@@ -60,6 +68,16 @@ def _get_grace_period() -> int:
 def get_current_request_project_path_override() -> str | None:
     """Return the current request's project path override (from proxy header), if any."""
     return CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.get()
+
+
+def get_current_request_auto_match_propagate() -> str | None:
+    """Return the current request's auto-match-propagate value (X-AgentDecompile-Auto-Match-Propagate), if any."""
+    return CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.get()
+
+
+def get_current_request_auto_match_target_paths() -> str | None:
+    """Return the current request's auto-match target paths (X-AgentDecompile-Auto-Match-Target-Paths), if any."""
+    return CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.get()
 
 
 def get_current_mcp_session_id() -> str:

@@ -18,6 +18,7 @@ import socket
 import threading
 import time
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -36,6 +37,8 @@ from agentdecompile_cli.mcp_server.auth import (
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
 from agentdecompile_cli.mcp_server.session_context import (
     CURRENT_MCP_SESSION_ID,
+    CURRENT_REQUEST_AUTO_MATCH_PROPAGATE,
+    CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS,
     CURRENT_REQUEST_PROJECT_PATH_OVERRIDE,
     SESSION_CONTEXTS,
 )
@@ -44,6 +47,8 @@ from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, ToolName, get_tool_params
 
 if TYPE_CHECKING:
+    from contextvars import Token
+
     from mcp import types
     from mcp.server import Server as MCPServer
 
@@ -459,7 +464,7 @@ class PythonMcpServer:
         async def read_resource(uri: str) -> str:
             """Read a resource by URI."""
             try:
-                logger.info(f"MCP read_resource called with URI: {uri}")
+                logger.info("MCP read_resource called with URI: %s", uri)
                 result = await self.resource_providers.read_resource(uri, self.program_info)
                 logger.info(f"MCP read_resource succeeded for {uri}, returning {len(result)} bytes")
                 return result
@@ -667,11 +672,15 @@ class PythonMcpServer:
 
         async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
             """Propagate MCP session ID into ContextVar, bind fingerprint, then delegate."""
-            session_id = "default"
-            user_agent = ""
-            remote_addr = ""
+            session_id: str = "default"
+            user_agent: str = ""
+            remote_addr: str = ""
             project_path_override: str | None = None
+            auto_match_propagate: str | None = None
+            auto_match_target_paths: str | None = None
             if scope.get("type") == "http":
+                key_b: bytes
+                value_b: bytes
                 for key_b, value_b in scope.get("headers", []):
                     header_name = key_b.decode("latin1").lower()
                     if header_name == "mcp-session-id":
@@ -683,39 +692,53 @@ class PythonMcpServer:
                     elif header_name == "x-agentdecompile-project-path":
                         raw = value_b.decode("latin1").strip()
                         project_path_override = raw.replace("\\", "/") if raw else None
-                client_info = scope.get("client")
+                    elif header_name == "x-agentdecompile-auto-match-propagate":
+                        auto_match_propagate = value_b.decode("latin1").strip() or None
+                    elif header_name == "x-agentdecompile-auto-match-target-paths":
+                        auto_match_target_paths = value_b.decode("latin1").strip() or None
+                client_info: tuple[int, int] | None = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
 
             # Capture which sessions exist before the SDK handles the request.
-            pre_sessions = set(session_manager._server_instances.keys())
+            pre_sessions: set[str] = set(session_manager._server_instances.keys())
 
             # Set context vars so tool/resource handlers see this request's session (and optional auth)
-            auth_token = None
+            auth_token: Token[AuthContext | None] | None = None
             if get_current_auth_context() is None:
                 header_auth_ctx = _auth_context_from_scope_headers(scope, self.auth_config)
                 if header_auth_ctx is not None:
                     auth_token = CURRENT_AUTH_CONTEXT.set(header_auth_ctx)
 
-            token = CURRENT_MCP_SESSION_ID.set(session_id)
-            project_path_token = None
+            token: Token[str] = CURRENT_MCP_SESSION_ID.set(session_id)
+            project_path_token: Token[str | None] | None = None
+            auto_match_propagate_token: Token[str | None] | None = None
+            auto_match_target_paths_token: Token[str | None] | None = None
             if project_path_override:
                 project_path_token = CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.set(project_path_override)
+            if auto_match_propagate is not None:
+                auto_match_propagate_token = CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.set(auto_match_propagate)
+            if auto_match_target_paths is not None:
+                auto_match_target_paths_token = CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.set(auto_match_target_paths)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
                 if project_path_token is not None:
                     CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.reset(project_path_token)
+                if auto_match_propagate_token is not None:
+                    CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.reset(auto_match_propagate_token)
+                if auto_match_target_paths_token is not None:
+                    CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.reset(auto_match_target_paths_token)
                 if auth_token is not None:
                     CURRENT_AUTH_CONTEXT.reset(auth_token)
 
             # After the SDK processes the request, detect newly created sessions
             # and bind the client fingerprint for reconnection support.
-            post_sessions = set(session_manager._server_instances.keys())
-            new_sids = post_sessions - pre_sessions
+            post_sessions: set[str] = set(session_manager._server_instances.keys())
+            new_sids: set[str] = post_sessions - pre_sessions
             if new_sids and (user_agent or remote_addr):
-                fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
+                fingerprint: str = SESSION_CONTEXTS.compute_client_fingerprint(
                     user_agent=user_agent,
                     remote_addr=remote_addr,
                 )
@@ -723,12 +746,12 @@ class PythonMcpServer:
                     SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)
 
             # Detect sessions that disappeared (crashed/terminated) and evict to grace.
-            removed_sids = pre_sessions - post_sessions
+            removed_sids: set[str] = pre_sessions - post_sessions
             for gone_sid in removed_sids:
                 SESSION_CONTEXTS.evict_to_grace(gone_sid)
 
         # Optionally wrap with auth (experimental, off by default).
-        mcp_app: Any = _mcp_asgi
+        mcp_app: Callable[[dict[str, Any], Any, Any], Awaitable[None]] = _mcp_asgi
         if self.auth_config is not None:
             mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
 

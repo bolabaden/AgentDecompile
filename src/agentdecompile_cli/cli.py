@@ -1564,7 +1564,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # No cached program, raise original error
                     raise e
             except Exception as recovery_error:
-                logger.debug(f"Resource recovery failed: {recovery_error}")
+                logger.debug("Resource recovery failed: %s", recovery_error)
                 raise e
         else:
             # Not a program-loading error, re-raise

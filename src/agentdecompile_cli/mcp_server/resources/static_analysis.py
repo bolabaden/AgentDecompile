@@ -40,13 +40,13 @@ class StaticAnalysisResultsResource(ResourceProvider):
         if str(uri) != "ghidra://static-analysis-results":
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        logger.info(f"StaticAnalysisResultsResource: reading resource for URI {uri}")
+        logger.info("StaticAnalysisResultsResource: reading resource for URI %s", uri)
         logger.info(f"  program_info: {self.program_info}")
         logger.info(f"  program_info.program: {self.program_info.program if self.program_info else 'N/A'}")
 
         # Check if program is loaded using correct attribute name
         has_program = self.program_info is not None and getattr(self.program_info, "program", None) is not None
-        logger.info(f"  has_program: {has_program}")
+        logger.info("  has_program: %s", has_program)
 
         if not has_program:
             # Return empty SARIF report when no program is loaded

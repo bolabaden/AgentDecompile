@@ -1144,7 +1144,7 @@ class ProjectToolProvider(ToolProvider):
                 if bp == norm_target or bp.lstrip("/") == norm_target.lstrip("/"):
                     matched = bp
                     break
-                if (b.get("name") or "") == norm_target.split("/")[-1]:
+                if (b.get("name") or "") == norm_target.rsplit("/", maxsplit=1)[-1]:
                     matched = bp
                     break
             if matched:
@@ -1170,7 +1170,7 @@ class ProjectToolProvider(ToolProvider):
                 "serverReachable": server_reachable,
                 "serverConnected": bool(server_adapter.isConnected()),
                 "authProvided": auth_provided,
-                "serverUsername": server_username if server_username else None,
+                "serverUsername": server_username or None,
                 "repository": repository_name,
                 "repositoryCreated": repository_created,
                 "availableRepositories": repository_names,
@@ -1649,7 +1649,7 @@ class ProjectToolProvider(ToolProvider):
         try:
             open_result = await self._handle_open_project(open_args)
         except Exception as e:
-            logger.debug(f"Auto-open failed for stateless request ({requested_program}): {e}")
+            logger.debug("Auto-open failed for stateless request (%s): %s", requested_program, e)
             raise
 
         program = getattr(self.program_info, "program", None) if self.program_info is not None else None

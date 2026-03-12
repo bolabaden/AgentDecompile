@@ -9,7 +9,6 @@ Delegates to tools.callgraph_tool.CallGraphTool for unified behavior.
 from __future__ import annotations
 
 import json
-import re
 import sys
 
 from collections import deque
@@ -160,8 +159,7 @@ class CallGraph:
                     # don't append to destinations in this case
                     continue
 
-                for d in dst:
-                    destinations.add(d[0])
+                destinations.update(d[0] for d in dst)
 
             end_nodes = set(self.graph.keys()).difference(destinations)
 
@@ -268,7 +266,7 @@ class CallGraph:
 
     @staticmethod
     def remove_bad_mermaid_chars(text: str) -> str:
-        return re.sub(r"`", "", text)
+        return text.replace(r"`", "")
 
     def gen_mermaid_flow_graph(
         self,

@@ -259,7 +259,7 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
                     return normalized
                 return normalized[:limit]
         except Exception as e:
-            logger.warning(f"GhidraTools.get_all_strings failed: {e}")
+            logger.warning("GhidraTools.get_all_strings failed: %s", e)
             # Fallback to direct iterator access below
 
     # Fallback 1: Try direct DefinedDataIterator access
@@ -459,7 +459,7 @@ def collect_constants(
                     except Exception:
                         continue
     except Exception as e:
-        logger.warning(f"Instruction scan error: {e}")
+        logger.warning("Instruction scan error: %s", e)
 
     sorted_vals = sorted(constants.keys(), key=lambda v: len(constants[v]), reverse=True)
     all_results: list[dict[str, Any]] = []

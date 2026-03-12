@@ -38,6 +38,8 @@ from agentdecompile_cli.mcp_server.response_formatter import render_tool_respons
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
+    get_current_request_auto_match_propagate,
+    get_current_request_auto_match_target_paths,
 )
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
@@ -89,11 +91,12 @@ _AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
 
 
 def _get_auto_match_executor() -> ProcessPoolExecutor:
-    """Create or return the ProcessPoolExecutor for auto-match (spawn, max_workers=2)."""
+    """Create or return the ProcessPoolExecutor for auto-match (spawn, max_workers=cpu count)."""
     global _AUTO_MATCH_EXECUTOR
     if _AUTO_MATCH_EXECUTOR is None:
         ctx = multiprocessing.get_context("spawn")
-        _AUTO_MATCH_EXECUTOR = ProcessPoolExecutor(max_workers=2, mp_context=ctx)
+        cpu_count = multiprocessing.cpu_count()
+        _AUTO_MATCH_EXECUTOR = ProcessPoolExecutor(max_workers=cpu_count, mp_context=ctx)
     return _AUTO_MATCH_EXECUTOR
 
 
@@ -1960,12 +1963,16 @@ class ToolProviderManager:
         # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)
 
-        # Auto match-function: when env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE is set and this tool+mode
-        # is a trigger (e.g. managefunction+rename), run match-function in background to propagate
-        # name/tags/comments to other open programs. Skip when we're already inside that invocation.
-        if not norm_args.get(AUTO_MATCH_INVOCATION_KEY, False):
+        # Auto match-function: when env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE or header
+        # X-AgentDecompile-Auto-Match-Propagate is set and this tool+mode is a trigger (e.g. managefunction+rename),
+        # run match-function in background to propagate name/tags/comments to other open programs.
+        # Skip when we're already inside that invocation.
+        if not norm_args.get(AUTO_MATCH_INVOCATION_KEY):
             _run_auto_match = False
-            env_propagate = os.environ.get(_ENV_AUTO_MATCH_PROPAGATE, "").strip().lower() in ("1", "true", "yes")
+            _propagate_raw = get_current_request_auto_match_propagate()
+            if _propagate_raw is None:
+                _propagate_raw = os.environ.get(_ENV_AUTO_MATCH_PROPAGATE, "")
+            env_propagate = (_propagate_raw or "").strip().lower() in ("1", "true", "yes")
             if env_propagate and norm_name in _AUTO_MATCH_TRIGGER_MODES:
                 allowed_modes = _AUTO_MATCH_TRIGGER_MODES[norm_name]
                 mode_val = norm_args.get("mode") or norm_args.get("action") or ""
@@ -1991,9 +1998,12 @@ class ToolProviderManager:
                         if v is not None and str(v).strip():
                             func_id = str(v).strip()
                             break
-                    # Targets: AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS (comma list) or all other open programs in session
+                    # Targets: header X-AgentDecompile-Auto-Match-Target-Paths or env AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS (comma list) or all other open programs in session
                     target_paths: list[str] = []
-                    env_paths = os.environ.get(_ENV_AUTO_MATCH_TARGET_PATHS, "").strip()
+                    _target_paths_raw = get_current_request_auto_match_target_paths()
+                    if _target_paths_raw is None:
+                        _target_paths_raw = os.environ.get(_ENV_AUTO_MATCH_TARGET_PATHS, "")
+                    env_paths = (_target_paths_raw or "").strip()
                     if env_paths:
                         target_paths = [p.strip() for p in env_paths.split(",") if p.strip()]
                     else:
@@ -2020,7 +2030,7 @@ class ToolProviderManager:
                             logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
 
         # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
-        if not norm_args.get("autoprereqinvocation", False) and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
+        if not norm_args.get("autoprereqinvocation") and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
             try:
                 data = _json.loads(result[0].text)
                 markdown = render_tool_response(norm_name, data)

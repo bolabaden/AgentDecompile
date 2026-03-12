@@ -138,7 +138,7 @@ class ConfigManager:
             try:
                 listener.on_config_changed(category, name, old_value, new_value)
             except Exception as e:
-                logger.error(f"Error notifying config change listener: {e}")
+                logger.error("Error notifying config change listener: %s", e)
 
     def _get_option(self, category: str, name: str, default_value: Any = None) -> Any:
         """Get a configuration option value."""

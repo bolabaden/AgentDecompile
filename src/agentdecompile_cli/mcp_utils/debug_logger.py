@@ -45,7 +45,7 @@ class DebugLogger:
         if not cls._debug_enabled:
             return
         source_name = cls._source_name(source)
-        logger.info(f"[{prefix}] [{source_name}] {message}")
+        logger.info("[%s] [%s] %s", prefix, source_name, message)
 
     @staticmethod
     def debug(source: Any, message: str) -> None:

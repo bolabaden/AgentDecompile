@@ -542,7 +542,7 @@ def list_prompts() -> list[types.Prompt]:
             types.Prompt(
                 name=p["name"],
                 description=p.get("description"),
-                arguments=prompt_args if prompt_args else None,
+                arguments=prompt_args or None,
             ),
         )
     return prompts

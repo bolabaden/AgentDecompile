@@ -390,7 +390,7 @@ class PyGhidraContext:
                     raise ImportError(f"Failed to initialize program info for: {binary_path_str}")
                 self.programs[binary_path_str] = program_info
                 success_count += 1
-                logger.debug(f"Successfully opened program: {binary_path_str}")
+                logger.debug("Successfully opened program: %s", binary_path_str)
             except Exception as e:
                 # Log warning but continue - individual program failures shouldn't crash server
                 logger.warning(
@@ -428,7 +428,7 @@ class PyGhidraContext:
             available_progs: list[str] = list(self.programs.keys())
             raise ValueError(f"Binary {program_name} not found. Available binaries: {available_progs}")
 
-        logger.info(f"Deleting program: {program_name}")
+        logger.info("Deleting program: %s", program_name)
         try:
             _assert_type(program_info, ProgramInfo, "Program info")
             program_to_delete: GhidraProgram = program_info.program
@@ -479,11 +479,11 @@ class PyGhidraContext:
         # Check if program already exists at this location
         full_path: str = str(Path(ghidra_folder.pathname) / program_name)
         if self.programs.get(full_path) is not None:
-            logger.info(f"Opening existing program: {program_name}")
+            logger.info("Opening existing program: %s", program_name)
             program = self.programs[full_path].program
             program_info = self.programs[full_path]
         else:
-            logger.info(f"Importing new program: {program_name}")
+            logger.info("Importing new program: %s", program_name)
             program = self.project.importProgram(binary_path)
             _assert_type(program, GhidraProgram, "Program")
             program.name = program_name
@@ -509,7 +509,7 @@ class PyGhidraContext:
             self.analyze_program(program)
             self._init_chroma_collections_for_program(final_program_info)
 
-        logger.info(f"Program {program_name} is ready for use.")
+        logger.info("Program %s is ready for use.", program_name)
 
     @staticmethod
     def _create_folder_hierarchy(root_folder: DomainFolder, relative_path: Path) -> DomainFolder:
@@ -529,10 +529,10 @@ class PyGhidraContext:
             existing_folder: DomainFolder | None = current_folder.getFolder(part)
             if existing_folder is not None:
                 current_folder = existing_folder
-                logger.debug(f"Using existing folder: {part}")
+                logger.debug("Using existing folder: %s", part)
             else:
                 current_folder = current_folder.createFolder(part)
-                logger.debug(f"Created folder: {part}")
+                logger.debug("Created folder: %s", part)
 
         return current_folder
 
@@ -558,7 +558,7 @@ class PyGhidraContext:
         for p in resolved_paths:
             _assert_type(p, Path, "Path")
             if p.exists() and p.is_dir():
-                logger.info(f"Discovering files in directory: {p}")
+                logger.info("Discovering files in directory: %s", p)
                 for f in p.rglob("*"):
                     if f.is_file() and self._is_binary_file(f):
                         # Store the relative path (e.g., "bin" or "lib/subfolder")
@@ -630,7 +630,7 @@ class PyGhidraContext:
         try:
             result: concurrent.futures.Future | None = future.result()
             if result is not None:
-                logger.info(f"Background import task completed successfully. Result: {result}")
+                logger.info("Background import task completed successfully. Result: %s", result)
         except Exception as e:
             logger.error(
                 f"FATAL ERROR during background binary import: {e.__class__.__name__}: {e}",
@@ -754,7 +754,7 @@ class PyGhidraContext:
 
         try:
             collection = self.chroma_client.get_collection(name=collection_name)
-            logger.info(f"Collection '{collection_name}' exists; skipping ingest.")
+            logger.info("Collection '%s' exists; skipping ingest.", collection_name)
             if collection_suffix == "":
                 program_info.code_collection = collection
             else:
@@ -763,15 +763,15 @@ class PyGhidraContext:
         except Exception:
             pass  # Collection doesn't exist, will create below
 
-        logger.info(f"Creating new collection '{collection_name}'")
+        logger.info("Creating new collection '%s'", collection_name)
         if extractor is None:
-            logger.warning(f"No extractor provided for {collection_name}; skipping")
+            logger.warning("No extractor provided for %s; skipping", collection_name)
             return
 
         documents, ids, metadatas = extractor(program_info)
 
         if not documents:
-            logger.warning(f"No documents extracted for {collection_name}; skipping")
+            logger.warning("No documents extracted for %s; skipping", collection_name)
             return
 
         collection = self.chroma_client.create_collection(name=collection_name)
@@ -786,7 +786,7 @@ class PyGhidraContext:
             logger.error(f"Failed to add items to collection {collection_name}: {e.__class__.__name__}: {e}")
             return
 
-        logger.info(f"Collection '{collection_name}' initialized successfully")
+        logger.info("Collection '%s' initialized successfully", collection_name)
         if collection_suffix == "":
             program_info.code_collection = collection
         else:
@@ -889,7 +889,7 @@ class PyGhidraContext:
             future.result()
             logging.info("Asynchronous analysis finished successfully.")
         except Exception as e:
-            logging.exception(f"Asynchronous analysis failed with exception: {e}")
+            logging.exception("Asynchronous analysis failed with exception: %s", e)
             raise e
 
     def analyze_project(
@@ -914,7 +914,7 @@ class PyGhidraContext:
                     future.result()
                     logger.info("Analysis complete.")
                 except Exception as e:
-                    logger.error(f"Analysis completed with an exception: {e}")
+                    logger.error("Analysis completed with an exception: %s", e)
                 return None
             return future
         # No executor: just run synchronously
@@ -960,7 +960,7 @@ class PyGhidraContext:
                     logger.error(f"Analysis result is {type(result)}, expected DomainFile or GhidraProgram?")
                     continue
                 completed_count += 1
-                logger.info(f"Completed {completed_count}/{prog_count} programs")
+                logger.info("Completed %s/%s programs", completed_count, prog_count)
         else:
             for domain_file in domain_files:
                 self.analyze_program(
@@ -970,7 +970,7 @@ class PyGhidraContext:
                     verbose_analysis,
                 )
                 completed_count += 1
-                logger.info(f"Completed {completed_count}/{prog_count} programs")
+                logger.info("Completed %s/%s programs", completed_count, prog_count)
 
         logger.info("All programs analyzed.")
         # The chroma collections need to be initialized after analysis is complete
@@ -1025,19 +1025,19 @@ class PyGhidraContext:
                 logger.error(f"Failed to initialize program info for {df_or_prog.getName()}")
                 return df_or_prog
 
-        logger.info(f"Analyzing program: {program}")
+        logger.info("Analyzing program: %s", program)
 
         assert isinstance(program, GhidraProgram), "Program is not a GhidraProgram object"
 
         for gdt in self.gdts:
-            logger.info(f"Loading GDT: {gdt}")
+            logger.info("Loading GDT: %s", gdt)
             if not Path(gdt).exists():
                 raise FileNotFoundError(f"GDT Path not found {gdt}")
             self.apply_gdt(program, gdt)
 
         gdt_names: list[str] = [name for name in program.getDataTypeManager().getSourceArchives()]
         if len(gdt_names) > 0:
-            logger.debug(f"Using file gdts: {gdt_names}")
+            logger.debug("Using file gdts: %s", gdt_names)
 
         if verbose_analysis or self.verbose_analysis:
             monitor = ConsoleTaskMonitor()
@@ -1065,7 +1065,7 @@ class PyGhidraContext:
                     or {}
                 )
                 for k, v in analyzer_options.items():
-                    logger.info(f"Setting prog option:{k} with value:{v}")
+                    logger.info("Setting prog option:%s with value:%s", k, v)
                     self.set_analysis_option(program, k, v)
 
             if self.no_symbols:
@@ -1091,7 +1091,7 @@ class PyGhidraContext:
                 else:
                     logger.info(f"Loaded PDB: {'None' if pdb is None else pdb.getName()}")
 
-            logger.info(f"Starting Ghidra analysis of {program}...")
+            logger.info("Starting Ghidra analysis of %s...", program)
             try:
                 flat_api.analyzeAll(program)
                 if hasattr(GhidraProgramUtilities, "setAnalyzedFlag"):
@@ -1104,7 +1104,7 @@ class PyGhidraContext:
                 GhidraScriptUtil.releaseBundleHostReference()
                 self.project.save(program)
         else:
-            logger.info(f"Analysis already complete.. skipping {program}!")
+            logger.info("Analysis already complete.. skipping %s!", program)
 
         # Save program as gzfs
         if self.gzfs_path is not None:
@@ -1184,7 +1184,7 @@ class PyGhidraContext:
                     )
                 prog_options.setEnum(option_name, new_enum)
             case _:
-                logger.warning(f"option {option_type} set not supported, ignoring")
+                logger.warning("option %s set not supported, ignoring", option_type)
 
     def configure_symbols(
         self,
@@ -1204,7 +1204,7 @@ class PyGhidraContext:
         # which is more involved. For now, we'll focus on enabling the analyzers.
 
         for program_name, program in self.programs.items():
-            logger.info(f"Configuring symbols for {program_name}")
+            logger.info("Configuring symbols for %s", program_name)
             try:
                 if hasattr(
                     PdbUniversalAnalyzer,
@@ -1219,10 +1219,10 @@ class PyGhidraContext:
                 # The following is a placeholder for actual symbol loading logic
                 pdb_attr = PdbProgramAttributes(program)
                 if not pdb_attr.pdbLoaded:
-                    logger.warning(f"PDB not loaded for {program_name}. Manual loading might be required.")
+                    logger.warning("PDB not loaded for %s. Manual loading might be required.", program_name)
 
             except Exception as e:
-                logger.error(f"Failed to configure symbols for {program_name}: {e}")
+                logger.error("Failed to configure symbols for %s: %s", program_name, e)
 
     def apply_gdt(
         self,
