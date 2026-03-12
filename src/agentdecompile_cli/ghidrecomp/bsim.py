@@ -1,3 +1,10 @@
+"""BSim (Ghidra Version Tracking) function signature generation.
+
+Provides: has_bsim() (check if BSim is available), add_bsim_args_to_parser (CLI args),
+gen_bsim_sigs_for_program (generate XML signatures for a program). Used for
+function correlation and diffing across binaries. Requires Ghidra VT/BSim feature.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

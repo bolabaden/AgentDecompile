@@ -1,9 +1,9 @@
-"""Get Function Tool Provider – get-function.
+"""Get Function Tool Provider – get-function (file named dissect for “deep dissection”).
 
 All-in-one deep inspection of a single function. Returns decompilation,
 disassembly, comments, labels, callers, callees, cross-references, tags,
 bookmarks, stack frame / local variables, namespace, and memory block info
-in a single MCP tool call.
+in a single MCP tool call. MCP tool name is get-function; this module implements it.
 """
 
 from __future__ import annotations
@@ -212,8 +212,8 @@ class GetFunctionAioToolProvider(ToolProvider):
 
     def _decompile(self, func: Any, program: Any, timeout: int) -> str:
         try:
-            from ghidra.app.decompiler import DecompInterface, DecompileOptions
-            from ghidra.util.task import ConsoleTaskMonitor
+            from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             monitor = ConsoleTaskMonitor()
 

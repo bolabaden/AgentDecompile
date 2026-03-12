@@ -85,6 +85,7 @@ def _shared_connection_context(
     adapter_error: str | None = None,
     adapter_error_type: str | None = None,
 ) -> dict[str, Any]:
+    """Build a structured dict for shared-server connection errors and diagnostics (included in tool response)."""
     context: dict[str, Any] = {
         "mode": "shared-server",
         "connectionStage": stage,

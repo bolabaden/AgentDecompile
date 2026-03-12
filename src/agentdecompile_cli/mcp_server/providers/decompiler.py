@@ -132,7 +132,7 @@ class DecompilerToolProvider(ToolProvider):
         program: Any,
     ) -> tuple[DecompInterface, bool]:  # noqa: F821
         """Set up the decompiler interface, returning (decomp, owns_decomp)."""
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
 
         if session_decomp is None:
             decomp = DecompInterface()
@@ -203,7 +203,7 @@ class DecompilerToolProvider(ToolProvider):
         program: Any = None,
     ) -> dict[str, Any] | None:
         """Try decompilation again with a fresh DecompInterface."""
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
 
         try:
             retry = DecompInterface()

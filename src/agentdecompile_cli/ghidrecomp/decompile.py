@@ -1,3 +1,12 @@
+"""Decompilation entry point and batch setup for Ghidra.
+
+Provides: decompile() (main entry used by tools), setup_decompliers() (thread-local
+decompiler pool for batch CLI runs), decompile_func() (delegates to DecompileTool
+for consistency with MCP). File/name helpers (get_filename, get_md5_file_digest,
+gen_proj_bin_name_from_path) support project and output paths. Integrates with
+ghidrecomp.callgraph, sast, bsim, and tools.decompile_tool.
+"""
+
 from __future__ import annotations
 
 import concurrent.futures

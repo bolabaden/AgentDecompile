@@ -1,3 +1,11 @@
+"""Call graph generation and traversal for Ghidra programs.
+
+Provides: CallGraph (builder), get_calling/get_called (traversal), gen_callgraph (batch),
+gen_mermaid_url/_unwrap_mermaid (Mermaid output). Used by get-call-graph MCP tool and
+CLI --callgraphs. MAX_DEPTH/MAX_PATH_LEN and add_cg_args_to_parser support CLI usage.
+Delegates to tools.callgraph_tool.CallGraphTool for unified behavior.
+"""
+
 from __future__ import annotations
 
 import json
