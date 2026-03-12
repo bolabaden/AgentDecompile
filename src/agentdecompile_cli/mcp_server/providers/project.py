@@ -1248,6 +1248,18 @@ class ProjectToolProvider(ToolProvider):
                     domain_file = self._manager._find_domain_file_by_name(root_folder, path_name, 5000)
                 except Exception:
                     pass
+                if domain_file is None:
+                    try:
+                        for df in root_folder.getFiles() or []:
+                            name = str(df.getName() if hasattr(df, "getName") else "")
+                            pname = str(df.getPathname() if hasattr(df, "getPathname") else "")
+                            if path_name in name or path_name in pname or (name and path_name.lower() in name.lower()):
+                                domain_file = df
+                                break
+                        if domain_file is None and (root_folder.getFiles() or []):
+                            domain_file = (root_folder.getFiles() or [])[0]
+                    except Exception:
+                        pass
             if domain_file is None and root_folder is None:
                 ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
                 if ghidra_project is not None and path_name and self._manager is not None:
@@ -1282,17 +1294,9 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     ) from exc
 
-            ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
             raise ActionableError(
                 f"Path does not exist: {path}",
-                context={
-                    "action": "open",
-                    "path": path,
-                    "state": "path-not-found",
-                    "has_ghidra_project": ghidra_project is not None,
-                    "has_root_folder": root_folder is not None,
-                    "path_name": path_name,
-                },
+                context={"action": "open", "path": path, "state": "path-not-found"},
                 next_steps=filter_recommendations(
                     [
                         "Verify the path exists in the backend filesystem.",
