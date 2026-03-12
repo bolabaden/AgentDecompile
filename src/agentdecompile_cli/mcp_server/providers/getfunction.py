@@ -511,7 +511,7 @@ class GetFunctionToolProvider(ToolProvider):
     def _discover_target_paths(self, source_path: str) -> list[str]:
         """Discover target program paths from session (list-project-files style); exclude source; filter to common binaries."""
         session_id = get_current_mcp_session_id()
-        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         source_norm = (source_path or "").strip().lower().replace("\\", "/")
         binary_extensions = (".exe", ".dll", ".so", ".dylib")
         paths: list[str] = []

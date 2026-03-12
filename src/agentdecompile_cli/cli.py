@@ -588,7 +588,7 @@ def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, 
     return call_tool_name, resolved_payload
 
 
-async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
+async def _call(ctx: click.Context, tool: str | Tool, **kwargs: Any) -> None:
     """Call tool on the remote MCP server via HTTP client.
 
     The CLI is a pure HTTP client — it NEVER executes tools locally.  All tool
@@ -611,10 +611,10 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
     # Drop None values
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
-    result = await _call_raw(ctx, tool, payload)
+    result: Any = await _call_raw(ctx, tool, payload)
 
     # data is already a dict from AgentDecompileMcpClient._extract_result()
-    err_msg = _get_error_result_message(result)
+    err_msg: str | None = _get_error_result_message(result)
     if err_msg is not None:
         click.echo(err_msg, err=True)
         sys.exit(1)
@@ -2252,7 +2252,8 @@ def match_function(
 @main.command(
     "migrate-metadata",
     help="Bulk propagate function metadata from a source binary to others (match-function over all functions). "
-    "Uses match-function with no function identifier so the tool iterates all functions; discovers targets from the session if not given.",
+    "Uses match-function with no function identifier so the tool iterates all functions; discovers targets from the session if not given. "
+    "When using a remote server (--server-url), open the project in the same session first (e.g. tool-seq with open-project then this command).",
 )
 @click.option("-b", "--binary", "program_path", help="Source program path (programPath).")
 @click.option("--source-path", "program_path_alt", help="Alias for --binary.")
@@ -2280,7 +2281,11 @@ def migrate_metadata(
     propagatePrototype: bool,
     propagateBookmarks: bool,
 ) -> None:
-    """Run match-function over all functions in the source (bulk migration). No function identifier = iterate all."""
+    """Run match-function over all functions in the source (bulk migration). No function identifier = iterate all.
+
+    Sessions are isolated: the server session for this CLI run must already have a project open
+    (shared or local). Use tool-seq to run open-project then migrate-metadata in one connection.
+    """
     source = (program_path or program_path_alt or "").strip()
     payload: dict[str, Any] = {
         "propagateNames": propagateNames,
