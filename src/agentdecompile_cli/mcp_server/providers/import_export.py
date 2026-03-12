@@ -1059,43 +1059,84 @@ class ImportExportToolProvider(ToolProvider):
         exclusive = self._get_bool(args, "exclusive", default=False)
         program_path = self._get_str(args, "programpath", "program_path", "path").strip()
 
-        # If a specific program_path is provided, check if it looks like a shared repository path
+        # When program_path is provided, resolve DomainFile by path (shared or session) so checkout
+        # works for shared repo paths even when that program is not the active one.
+        domain_file = None
+        program_display_name = program_path or ""
         if program_path:
-            # Shared repository paths typically start with '/' or contain '/' separators
-            # and follow patterns like /K1/, /TSL/, /Other/, etc.
-            if program_path.startswith("/") or "/" in program_path:
-                # If no program is currently loaded, guide user to open-project first
-                if not self.program_info:
+            resolved = self._resolve_domain_file_for_checkout_status(program_path)
+            if resolved is not None:
+                domain_file, program_display_name = resolved
+            elif program_path.startswith("/") or "/" in program_path:
+                # Shared path but could not resolve: bring the file from the repo into the project
+                # via the project provider's _checkout_shared_program, then re-resolve.
+                session_id = get_current_mcp_session_id()
+                session = SESSION_CONTEXTS.get_or_create(session_id)
+                handle = session.project_handle if isinstance(session.project_handle, dict) else None
+                repo_adapter = handle.get("repository_adapter") if handle else None
+                project_provider = None
+                if self._manager is not None and hasattr(self._manager, "_get_project_provider"):
+                    project_provider = self._manager._get_project_provider()
+                if project_provider is not None and repo_adapter is not None and handle is not None and n(str(handle.get("mode", ""))) == "sharedserver":
+                    try:
+                        await project_provider._checkout_shared_program(repo_adapter, program_path, session_id)
+                        resolved = self._resolve_domain_file_for_checkout_status(program_path)
+                        if resolved is not None:
+                            domain_file, program_display_name = resolved
+                    except Exception as exc:
+                        return create_success_response(
+                            {
+                                "action": "checkout",
+                                "program": program_path,
+                                "exclusive": exclusive,
+                                "success": False,
+                                "reason": "shared-checkout-failed",
+                                "error": str(exc),
+                            },
+                        )
+                if domain_file is None:
                     return create_success_response(
                         {
                             "action": "checkout",
                             "program": program_path,
                             "exclusive": exclusive,
                             "success": False,
-                            "reason": "shared-path-requires-session",
-                            "error": "Checkout of shared repository files requires an active session with the shared Ghidra server. Call open-project with the shared server details first.",
+                            "reason": "path-not-resolved",
+                            "error": "Could not resolve program path in the current project. Ensure you have called open-project with the shared server (e.g. open-project --shared 1) so the repository is connected, then retry checkout-program with the same program_path.",
                             "nextSteps": [
-                                "Call `open-project` with `serverHost`, `serverPort`, `serverRepository`, and optional auth credentials.",
-                                "Then retry `checkout-program` with the same program_path.",
+                                "Call `open-project` with shared server details (serverHost, serverPort, serverRepository, credentials).",
+                                "Then retry `checkout-program` with program_path.",
                             ],
                         },
                     )
-                # If a program is already loaded, proceed with checkout on that program
 
-        self._require_program()
-        assert self.program_info is not None
-        program = self.program_info.program
+        # If we didn't resolve by path, use active program
+        if domain_file is None:
+            self._require_program()
+            assert self.program_info is not None
+            program = self.program_info.program
+            try:
+                domain_file = program.getDomainFile()
+                program_display_name = program.getName()
+            except Exception:
+                domain_file = None
+            if domain_file is None:
+                return create_success_response(
+                    {
+                        "action": "checkout",
+                        "program": program_display_name or program_path,
+                        "exclusive": exclusive,
+                        "success": False,
+                        "error": "No domain file associated with active program.",
+                    },
+                )
 
         try:
-            domain_file = program.getDomainFile()
-            if domain_file is None:
-                raise RuntimeError("No domain file associated with active program")
-
             if not domain_file.isVersioned():
                 return create_success_response(
                     {
                         "action": "checkout",
-                        "program": program.getName(),
+                        "program": program_display_name,
                         "success": False,
                         "already_private": True,
                         "versionControlEnabled": False,
@@ -1109,7 +1150,7 @@ class ImportExportToolProvider(ToolProvider):
                 return create_success_response(
                     {
                         "action": "checkout",
-                        "program": program.getName(),
+                        "program": program_display_name,
                         "success": True,
                         "already_checked_out": True,
                         "exclusive": domain_file.isCheckedOutExclusive(),
@@ -1126,7 +1167,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkout",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "exclusive": exclusive,
                     "success": success,
                     "is_checked_out": domain_file.isCheckedOut(),
@@ -1137,7 +1178,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkout",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "exclusive": exclusive,
                     "success": False,
                     "error": str(exc),
