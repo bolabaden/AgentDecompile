@@ -22,6 +22,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pyghidra" },
+    { name = "python-dotenv" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -63,6 +64,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.3.0" },
     { name = "pytest-sugar", marker = "extra == 'test'", specifier = ">=1.0.0" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "starlette", specifier = ">=0.52.1" },
     { name = "uvicorn", specifier = ">=0.41.0" },
 ]

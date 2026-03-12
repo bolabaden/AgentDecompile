@@ -402,7 +402,24 @@ Tool responses are returned as Markdown-formatted text by default. To receive ra
 
 Error responses for unresolvable program paths are returned as raw JSON (with `"success": false`) even in Markdown mode.
 
-## 5. Tool naming guidance
+## 5. Validate agdec-http (tool sweep + debug log)
+
+To test the agdec-http MCP server and confirm all tools are callable, use the unified CLI testing script. It runs `tools/list` and a tool-seq (open-project, list-project-files, get-current-program, list-functions, search-symbols, get-references, list-imports, list-exports, decompile-function) and writes NDJSON to a debug log (e.g. `debug-cd359b.log`).
+
+```powershell
+# Use URL from .cursor/mcp.json (agdec-http)
+uv run python helper_scripts/mcp_cli_testing.py agdec-http --mcp-config .cursor/mcp.json
+
+# Or pass server URL and (for shared server) credentials
+uv run python helper_scripts/mcp_cli_testing.py agdec-http --server-url http://127.0.0.1:8080/mcp --program-path /K1/k1_win_gog_swkotor.exe
+```
+
+For full workflow success with a shared server, the Ghidra repository must be reachable and `AGENT_DECOMPILE_GHIDRA_SERVER_*` (or `--ghidra-host`, `--username`, `--password`) must be set so `open-project` can connect. For a **local server with 9/9 pass**, either:
+
+- **Automated:** Set `GHIDRA_INSTALL_DIR` to your Ghidra install, then run `uv run python helper_scripts/run_live_agdec_http_test.py`. This starts the server, imports `tests/fixtures/test_x86_64`, runs the validation, and stops the server.
+- **Manual:** Start `agentdecompile-server -t streamable-http`, then run the script with `--server-url http://127.0.0.1:8080/mcp --bootstrap-import tests/fixtures/test_x86_64` (bootstrap imports the fixture and uses it for the tool-seq).
+
+## 6. Tool naming guidance
 
 - Prefer canonical tool names from [TOOLS_LIST.md](TOOLS_LIST.md).
 - Use `agentdecompile-cli tool --list-tools` to inspect the currently advertised set.
@@ -410,7 +427,7 @@ Error responses for unresolvable program paths are returned as raw JSON (with `"
 - Prefer `search-symbols` for new docs and workflows; `search-symbols-by-name` remains a compatibility alias.
 - Prefer `open-project` in raw tool mode and `open` in the convenience CLI command set.
 
-## 6. Common failure states
+## 7. Common failure states
 
 Typical tool errors include a `nextSteps` array. Follow those steps before broad retries.
 
@@ -449,7 +466,7 @@ Authentication and server errors follow the same shape:
 }
 ```
 
-## 7. Related docs
+## 8. Related docs
 
 - `README.md` for installation and transport overview.
 - `docs/MCP_AGENTDECOMPILE_USAGE.md` for MCP client configuration.

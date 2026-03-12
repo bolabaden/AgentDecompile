@@ -11,6 +11,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -28,7 +29,7 @@ class DataToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="get-data",
+                name=ToolName.GET_DATA.value,
                 description="View raw bytes or structured data at a specific memory address. Use this to inspect what is stored in memory (e.g., checking if an address contains an integer, a string, or uninitialized padding).",
                 inputSchema={
                     "type": "object",
@@ -57,7 +58,7 @@ class DataToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="apply-data-type",
+                name=ToolName.APPLY_DATA_TYPE.value,
                 description="Label a specific memory address as containing a certain data type (like 'int', 'char*', or a custom struct). This helps the decompiler produce cleaner code by understanding how the memory is being used.",
                 inputSchema={
                     "type": "object",

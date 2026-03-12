@@ -60,7 +60,7 @@ from mcp.types import (
 
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
-from agentdecompile_cli.registry import resolve_tool_name
+from agentdecompile_cli.registry import resolve_tool_name, ToolName
 
 if TYPE_CHECKING:
     from mcp.server.lowlevel.helper_types import ReadResourceContents
@@ -362,7 +362,7 @@ class AgentDecompileMcpClient:
 
         async with AgentDecompileMcpClient(host="127.0.0.1", port=8080) as client:
             tools = await client.list_tools()
-            result = await client.call_tool("get-functions", {"programPath": "..."})
+            result = await client.call_tool(ToolName.GET_FUNCTIONS.value, {"programPath": "..."})
     """
 
     def __init__(

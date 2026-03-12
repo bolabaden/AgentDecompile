@@ -11,6 +11,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
@@ -46,7 +47,7 @@ class DecompilerToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="decompile-function",
+                name=ToolName.DECOMPILE_FUNCTION.value,
                 description="Convert machine code representing a function into high-level, human-readable C-like pseudocode. Use this tool to easily read and understand what a function does without having to read assembly instructions.",
                 inputSchema={
                     "type": "object",

@@ -487,7 +487,7 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     steps: list[str] = []
-    if action == "open-project":
+    if action == ToolName.OPEN_PROJECT.value:
         steps.append("Project opened. Call `list-project-files` to see available programs in the project.")
         steps.append("Start with `list-functions` for function overview or `inspect-memory mode=blocks` for memory layout.")
     elif loaded is True:
@@ -1727,7 +1727,7 @@ def _render_project(data: dict[str, Any]) -> str:
     loaded = data.get("loaded")
     lines: list[str] = []
 
-    if action == "open-project":
+    if action == ToolName.OPEN_PROJECT.value:
         mode: str = data.get("mode", "")
         lines.append(_md_heading(2, "Program Opened"))
         lines.append("")

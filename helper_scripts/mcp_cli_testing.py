@@ -4,12 +4,15 @@ Unified MCP CLI testing utility combining three separate validators:
 - mcp_remote_matrix.py: CLI command matrix runner (--run, --print-cases)
 - validate_usage_md.py: UVX vs curl validation with full session testing
 - verify_uvx_curl_equiv.py: UVX vs curl equivalence with response key verification
+- agdec-http: Full tool sweep over agdec-http MCP server with debug logging
 
 Usage:
   python helper_scripts/mcp_cli_testing.py matrix --print-cases
   python helper_scripts/mcp_cli_testing.py matrix --run --server-url http://127.0.0.1:8081/
   python helper_scripts/mcp_cli_testing.py validate
   python helper_scripts/mcp_cli_testing.py verify
+  python helper_scripts/mcp_cli_testing.py agdec-http --server-url http://127.0.0.1:8080/mcp
+  python helper_scripts/mcp_cli_testing.py agdec-http --mcp-config .cursor/mcp.json
 """
 
 from __future__ import annotations
@@ -19,10 +22,16 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore[assignment]
 
 # ============================================================================
 # SHARED HELPERS
@@ -524,6 +533,296 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # ============================================================================
+# AGDEC-HTTP MODE: tool list + tool-seq with debug NDJSON logging
+# ============================================================================
+
+# Expected advertised tool count (streamable-http default per USAGE.md / test_e2e_local_terminal_contracts).
+# Server may advertise 37 or 38 depending on build/env (e.g. legacy or disabled tools).
+EXPECTED_ADVERTISED_TOOL_COUNT = 37
+EXPECTED_ADVERTISED_TOOL_COUNT_ALT = 38
+
+
+def _load_agdec_http_config(mcp_config_path: str | None) -> tuple[str, dict[str, str]]:
+    """Load agdec-http URL and headers from .cursor/mcp.json. Returns (url, headers)."""
+    path = (mcp_config_path or "").strip() or (Path.cwd() / ".cursor" / "mcp.json")
+    if not Path(path).exists():
+        return "", {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        servers = data.get("mcpServers") or {}
+        agdec = servers.get("agdec-http")
+        if not agdec or not isinstance(agdec, dict):
+            return "", {}
+        url = (agdec.get("url") or "").strip().rstrip("/")
+        if not url:
+            return "", {}
+        if not url.endswith("/mcp") and not url.endswith("/mcp/message"):
+            url = f"{url}/mcp" if not url.endswith("/mcp") else url
+        headers = dict(agdec.get("headers") or {})
+        return url, headers
+    except Exception:
+        return "", {}
+
+
+def _normalize_mcp_url(base: str) -> str:
+    """Ensure URL ends with /mcp for session endpoint; we'll POST to /mcp/message."""
+    base = (base or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if "/mcp/message" in base:
+        return base.split("/mcp/message")[0] + "/mcp"
+    if not base.endswith("/mcp"):
+        base = f"{base}/mcp"
+    return base
+
+
+def _agdec_http_session(
+    base_url: str,
+    extra_headers: dict[str, str] | None,
+    timeout: float,
+) -> tuple[str, dict[str, str]]:
+    """Initialize MCP session; return (session_id, headers)."""
+    if httpx is None:
+        raise RuntimeError("httpx is required for agdec-http mode. Install with: uv pip install httpx")
+    message_url = f"{base_url.rstrip('/')}/message"
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        **(extra_headers or {}),
+    }
+    init_payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "mcp_cli_testing-agdec-http", "version": "1.0"},
+        },
+    }
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(message_url, json=init_payload, headers=headers)
+        resp.raise_for_status()
+        sid = (resp.headers.get("mcp-session-id") or "").strip()
+    if sid:
+        headers["Mcp-Session-Id"] = sid
+    return sid, headers
+
+
+def _agdec_http_post(
+    base_url: str,
+    method: str,
+    params: dict[str, Any],
+    session_headers: dict[str, str],
+    request_id: int,
+    timeout: float,
+) -> dict[str, Any]:
+    """POST one JSON-RPC request to MCP message endpoint."""
+    if httpx is None:
+        raise RuntimeError("httpx is required")
+    message_url = f"{base_url.rstrip('/')}/message"
+    payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(message_url, json=payload, headers=session_headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _append_debug_log(log_path: str, payload: dict[str, Any]) -> None:
+    """Append one NDJSON line to the debug log file."""
+    payload.setdefault("timestamp", int(time.time() * 1000))
+    line = json.dumps(payload, ensure_ascii=False) + "\n"
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def cmd_agdec_http(args: argparse.Namespace) -> int:
+    """Run tool list + tool-seq against agdec-http MCP server and log to debug log file."""
+    if httpx is None:
+        print("agdec-http mode requires httpx. Install with: uv pip install httpx")
+        return 2
+
+    server_url = (args.server_url or "").strip()
+    mcp_config = (args.mcp_config or "").strip()
+    log_path = (args.log_file or "").strip() or "debug-cd359b.log"
+    program_path = (args.program_path or "").strip() or "/K1/k1_win_gog_swkotor.exe"
+    timeout = float(args.timeout or 120)
+    continue_on_error = getattr(args, "continue_on_error", True)
+    extra_headers: dict[str, str] = {}
+
+    if not server_url and mcp_config:
+        server_url, extra_headers = _load_agdec_http_config(mcp_config)
+    elif not server_url:
+        server_url = (os.getenv("AGENT_DECOMPILE_MCP_SERVER_URL") or os.getenv("AGENTDECOMPILE_MCP_SERVER_URL") or "").strip()
+        if not server_url:
+            config_url, config_headers = _load_agdec_http_config(None)
+            if config_url:
+                server_url = config_url
+                extra_headers = config_headers
+
+    base_url = _normalize_mcp_url(server_url)
+    if not base_url:
+        print("Missing server URL. Set AGENT_DECOMPILE_MCP_SERVER_URL or pass --server-url or --mcp-config .cursor/mcp.json")
+        return 2
+
+    session_id = "cd359b"
+    run_id = getattr(args, "run_id", "agdec-http-sweep")
+
+    try:
+        sid, session_headers = _agdec_http_session(base_url, extra_headers, timeout)
+    except Exception as e:
+        _append_debug_log(log_path, {
+            "sessionId": session_id,
+            "runId": run_id,
+            "hypothesisId": "H1",
+            "location": "agdec-http:init",
+            "message": "MCP initialize failed",
+            "data": {"error": str(e), "base_url": base_url},
+        })
+        print(f"INIT_FAILED: {e}")
+        return 1
+
+    request_id = 10
+    # H1: tools/list returns expected count
+    try:
+        list_resp = _agdec_http_post(base_url, "tools/list", {}, session_headers, request_id, timeout)
+        request_id += 1
+        tools = (list_resp.get("result") or {}).get("tools") or []
+        tool_names = [t.get("name") for t in tools if isinstance(t, dict) and t.get("name")]
+        count = len(tool_names)
+        count_ok = count in (EXPECTED_ADVERTISED_TOOL_COUNT, EXPECTED_ADVERTISED_TOOL_COUNT_ALT)
+        _append_debug_log(log_path, {
+            "sessionId": session_id,
+            "runId": run_id,
+            "hypothesisId": "H1",
+            "location": "agdec-http:tools/list",
+            "message": "tools/list count",
+            "data": {"count": count, "expected": EXPECTED_ADVERTISED_TOOL_COUNT, "ok": count_ok, "tool_names_sample": tool_names[:5]},
+        })
+        print(f"tools/list: {count} tools (expected {EXPECTED_ADVERTISED_TOOL_COUNT} or {EXPECTED_ADVERTISED_TOOL_COUNT_ALT})")
+    except Exception as e:
+        _append_debug_log(log_path, {
+            "sessionId": session_id,
+            "runId": run_id,
+            "hypothesisId": "H1",
+            "location": "agdec-http:tools/list",
+            "message": "tools/list failed",
+            "data": {"error": str(e)},
+        })
+        print(f"tools/list FAILED: {e}")
+        return 1
+
+    bootstrap_import = (getattr(args, "bootstrap_import", None) or "").strip()
+    if bootstrap_import:
+        resolved_bootstrap = Path(bootstrap_import).resolve()
+        if not resolved_bootstrap.exists():
+            print(f"Bootstrap path does not exist: {resolved_bootstrap}")
+            return 2
+        program_path = resolved_bootstrap.name
+        # No shared-server credentials when bootstrapping a local import
+        host = ""
+        port = 0
+        username = ""
+        password = ""
+    else:
+        host = (args.ghidra_host or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or "").strip()
+        port = int(args.ghidra_port or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "13100") or "13100")
+        username = (args.username or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or "").strip()
+        password = (args.password or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or "").strip()
+
+    open_args: dict[str, Any] = {"path": program_path, "format": "json"}
+    if host and port and username and password:
+        open_args["serverHost"] = host
+        open_args["serverPort"] = port
+        open_args["serverUsername"] = username
+        open_args["serverPassword"] = password
+
+    if bootstrap_import:
+        resolved_bootstrap = Path(bootstrap_import).resolve()
+        steps = [
+            ("import_binary", "import-binary", {"path": str(resolved_bootstrap), "format": "json"}),
+            ("list_project_files", "list-project-files", {"format": "json"}),
+            ("get_current_program", "get-current-program", {"programPath": program_path, "format": "json"}),
+            ("list_functions", "list-functions", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("search_symbols", "search-symbols", {"programPath": program_path, "query": "main", "limit": 5, "format": "json"}),
+            ("get_references", "get-references", {"programPath": program_path, "target": "entry", "direction": "to", "limit": 5, "format": "json"}),
+            ("list_imports", "list-imports", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("list_exports", "list-exports", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("decompile_function", "decompile-function", {"programPath": program_path, "functionIdentifier": "entry", "limit": 20, "format": "json"}),
+        ]
+    else:
+        steps = [
+            ("open_project", "open-project", open_args),
+            ("list_project_files", "list-project-files", {"format": "json"}),
+            ("get_current_program", "get-current-program", {"programPath": program_path, "format": "json"}),
+            ("list_functions", "list-functions", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("search_symbols", "search-symbols", {"programPath": program_path, "query": "main", "limit": 5, "format": "json"}),
+            ("get_references", "get-references", {"programPath": program_path, "target": "WinMain", "direction": "to", "limit": 5, "format": "json"}),
+            ("list_imports", "list-imports", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("list_exports", "list-exports", {"programPath": program_path, "limit": 5, "format": "json"}),
+            ("decompile_function", "decompile-function", {"programPath": program_path, "functionIdentifier": "WinMain", "limit": 20, "format": "json"}),
+        ]
+
+    failed = 0
+    for step_name, tool_name, tool_args in steps:
+        try:
+            call_resp = _agdec_http_post(
+                base_url, "tools/call",
+                {"name": tool_name, "arguments": tool_args},
+                session_headers, request_id, timeout,
+            )
+            request_id += 1
+            is_rpc_error = "error" in call_resp
+            content = (call_resp.get("result") or {}).get("content") or []
+            text_parts = [c.get("text", "") for c in content if isinstance(c, dict)]
+            text_preview = (text_parts[0][:200] + "..." if text_parts and len(text_parts[0]) > 200 else (text_parts[0] if text_parts else ""))
+            # Application-level success: tool can return 200 with content {"success": false, "error": "..."}
+            app_success = True
+            if text_parts:
+                try:
+                    parsed = json.loads(text_parts[0])
+                    if isinstance(parsed, dict) and parsed.get("success") is False:
+                        app_success = False
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            step_ok = not is_rpc_error and app_success
+            _append_debug_log(log_path, {
+                "sessionId": session_id,
+                "runId": run_id,
+                "hypothesisId": "H2",
+                "location": f"agdec-http:tools/call:{tool_name}",
+                "message": step_name,
+                "data": {"tool": tool_name, "success": step_ok, "rpc_ok": not is_rpc_error, "app_success": app_success, "text_preview": str(text_preview)[:300]},
+            })
+            if not step_ok:
+                failed += 1
+                if is_rpc_error:
+                    print(f"  FAIL {tool_name}: {call_resp.get('error', {})}")
+                else:
+                    print(f"  FAIL {tool_name}: application success=false (see log)")
+                if not continue_on_error:
+                    return 1
+            else:
+                print(f"  OK   {tool_name}")
+        except Exception as e:
+            failed += 1
+            _append_debug_log(log_path, {
+                "sessionId": session_id,
+                "runId": run_id,
+                "hypothesisId": "H2",
+                "location": f"agdec-http:tools/call:{tool_name}",
+                "message": step_name + " exception",
+                "data": {"tool": tool_name, "error": str(e)},
+            })
+            print(f"  FAIL {tool_name}: {e}")
+            if not continue_on_error:
+                return 1
+
+    print(f"Log written to {log_path}. Summary: {len(steps) - failed}/{len(steps)} steps passed.")
+    return 0 if failed == 0 else 1
+
+
+# ============================================================================
 # MAIN CLI
 # ============================================================================
 
@@ -615,6 +914,67 @@ def main(argv: list[str] | None = None) -> int:
         help="Ghidra shared-server password (defaults to AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD)",
     )
     verify_parser.set_defaults(func=cmd_verify)
+
+    # agdec-http subcommand: tool list + tool-seq with debug logging
+    agdec_parser = subparsers.add_parser(
+        "agdec-http",
+        help="Test agdec-http MCP server: list tools + run tool-seq, log to NDJSON (e.g. debug-cd359b.log)",
+    )
+    agdec_parser.add_argument(
+        "--server-url",
+        default="",
+        help="MCP server base URL (e.g. http://127.0.0.1:8080/mcp). Overridden by --mcp-config if URL present.",
+    )
+    agdec_parser.add_argument(
+        "--mcp-config",
+        default="",
+        help="Path to .cursor/mcp.json; agdec-http url and headers used if --server-url not set",
+    )
+    agdec_parser.add_argument(
+        "--log-file",
+        default="debug-cd359b.log",
+        help="NDJSON log path (default: debug-cd359b.log)",
+    )
+    agdec_parser.add_argument(
+        "--program-path",
+        default="",
+        help="Program path for tool calls (default: /K1/k1_win_gog_swkotor.exe for shared server)",
+    )
+    agdec_parser.add_argument(
+        "--bootstrap-import",
+        default="",
+        help="Local file path to import first (e.g. tests/fixtures/test_x86_64); program_path becomes basename for rest of steps",
+    )
+    agdec_parser.add_argument("--timeout", type=float, default=120, help="HTTP timeout per request")
+    agdec_parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        default=True,
+        help="Continue tool-seq after a step fails (default: True)",
+    )
+    agdec_parser.add_argument(
+        "--no-continue-on-error",
+        action="store_false",
+        dest="continue_on_error",
+        help="Stop on first tool failure",
+    )
+    agdec_parser.add_argument(
+        "--ghidra-host",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", ""),
+        help="Ghidra shared-server host for open-project",
+    )
+    agdec_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
+    agdec_parser.add_argument(
+        "--username",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", ""),
+        help="Ghidra shared-server username",
+    )
+    agdec_parser.add_argument(
+        "--password",
+        default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", ""),
+        help="Ghidra shared-server password",
+    )
+    agdec_parser.set_defaults(func=cmd_agdec_http)
 
     args = parser.parse_args(argv or sys.argv[1:])
     if not hasattr(args, "func"):

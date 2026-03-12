@@ -12,6 +12,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -49,7 +50,7 @@ class DataFlowToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="analyze-data-flow",
+                name=ToolName.ANALYZE_DATA_FLOW.value,
                 description="Track the flow of data through registers and memory starting from a specific address. Use 'backward' to see where a value came from (e.g. tracking user input to a vulnerability), 'forward' to see where a value goes, or 'variable_accesses' to find reads/writes to a variable.",
                 inputSchema={
                     "type": "object",

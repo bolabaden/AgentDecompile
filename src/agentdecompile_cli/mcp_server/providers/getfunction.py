@@ -16,6 +16,7 @@ from typing import Any, ClassVar, cast
 from mcp import types
 
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -59,7 +60,7 @@ class GetFunctionToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="manage-function",
+                name=ToolName.MANAGE_FUNCTION.value,
                 description="Change attributes of an existing function to improve analysis. Use this when you understand what a function does and want to update its name, its input arguments (prototype), the type of value it returns, or its calling convention (how it receives arguments). You can also create a new function or delete an existing one.",
                 inputSchema={
                     "type": "object",
@@ -82,7 +83,7 @@ class GetFunctionToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="manage-function-tags",
+                name=ToolName.MANAGE_FUNCTION_TAGS.value,
                 description="Label a function with simple string tags (like 'crypto', 'network', 'vulnerable') to easily group or find it later. Use this to organize the reverse engineering workload.",
                 inputSchema={
                     "type": "object",
@@ -98,7 +99,7 @@ class GetFunctionToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="match-function",
+                name=ToolName.MATCH_FUNCTION.value,
                 description="Find other functions in the binary that look or behave similarly to a target function. Use this to find cloned functions, shared library code, or to discover groups of functions that share common traits like the same number of arguments or similar callers/callees.",
                 inputSchema={
                     "type": "object",
