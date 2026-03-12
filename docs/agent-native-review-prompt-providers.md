@@ -2,7 +2,7 @@
 
 ## Summary
 
-The `_PROMPTS` in `prompt_providers.py` drive nine reverse-engineering subagent workflows. **All described actions are agent-achievable** via existing MCP tools (`search-strings`, `list-functions`, `list-cross-references`, `decompile-function`, `get-functions`, `execute-script`, `manage-comments`, `manage-bookmarks`, `manage-function-tags`, `rename-function`, `set-function-prototype`, `manage-data-types`, `manage-structures`, `apply-data-type`, `list-project-files`, `get-call-graph`, `search-everything`, etc.). **Bridge Builder** now states that cross-program `match-function` is not yet implemented and instructs the agent to use an achievable workflow: correlate by name/signature with `list-functions` / `search-symbols` on both binaries, then propagate annotations via `rename-function`, `set-function-prototype`, `manage-comments`, `manage-bookmarks`, `manage-function-tags`. Data Architect, Exhaustive Librarian, Scout (Step 4), and Diver (Step 4) explicitly reference `apply-data-type`, `set-function-prototype`, `search-everything`, and `get-call-graph` where relevant. No GUI-only workflows; all steps are MCP-tool or `execute-script` based.
+The `_PROMPTS` in `prompt_providers.py` drive nine reverse-engineering subagent workflows. **All described actions are agent-achievable** via existing MCP tools (`search-strings`, `list-functions`, `list-cross-references`, `decompile-function`, `get-functions`, `execute-script`, `manage-comments`, `manage-bookmarks`, `manage-function-tags`, `rename-function`, `set-function-prototype`, `manage-data-types`, `manage-structures`, `apply-data-type`, `list-project-files`, `get-call-graph`, `search-everything`, `match-function`, etc.). **Bridge Builder** uses **cross-program `match-function`** with `targetProgramPaths` to find equivalent functions and optionally propagate names, tags, and comments; it falls back to correlating by name/signature with `list-functions` / `search-symbols` when needed. Data Architect, Exhaustive Librarian, Scout (Step 4), and Diver (Step 4) explicitly reference `apply-data-type`, `set-function-prototype`, `search-everything`, and `get-call-graph` where relevant. No GUI-only workflows; all steps are MCP-tool or `execute-script` based.
 
 **Verdict: RESOLVED** — Bridge Builder and tool references have been updated for full agent-native parity.
 
@@ -18,7 +18,7 @@ The `_PROMPTS` in `prompt_providers.py` drive nine reverse-engineering subagent 
 | Top-Down | Entry points → decompile → call graph | (generic) | list-functions, search-symbols, decompile-function, get-functions, get-call-graph | ✅ |
 | Data Architect | Create/extend types, apply to vars/sigs | execute-script, apply-data-type, set-function-prototype | execute-script, manage-data-types, manage-structures, apply-data-type, set-function-prototype | ✅ |
 | Exhaustive Librarian | Comments, bookmarks, tags, signatures | set-function-prototype, manage-comments, manage-bookmarks, manage-function-tags | Same + rename-function | ✅ |
-| Bridge Builder | Cross-binary parity via correlation (match-function N/A) | list-project-files, list-functions, search-symbols, rename-function, set-function-prototype, manage-comments, manage-bookmarks, manage-function-tags | All listed; cross-binary match-function documented as not implemented | ✅ |
+| Bridge Builder | Cross-binary parity via match-function + propagation | list-project-files, match-function (targetProgramPaths), list-functions, search-symbols, rename-function, set-function-prototype, manage-comments, manage-bookmarks, manage-function-tags | match-function with targetProgramPaths; propagateNames/Tags/Comments; fallback correlation | ✅ |
 | Convergence Orchestrator | Multi-pass compare/resolve | (same as Scout/Diver/Top-Down/Bottom-Up) | All above tools | ✅ |
 | Iterative Verifier | Re-verify prior findings | (generic) | list-functions, decompile-function, get-references | ✅ |
 
@@ -28,10 +28,9 @@ The `_PROMPTS` in `prompt_providers.py` drive nine reverse-engineering subagent 
 
 ### Critical — ✅ Fixed
 
-1. **Bridge Builder: cross-binary `match-function` not implemented**
+1. **Bridge Builder: cross-binary `match-function`**
    - **Location**: `prompt_providers.py` (Bridge Builder prompt).
-   - **Was**: Prompt instructed use of `match-function` for cross-binary matching, which the MCP tool rejects.
-   - **Resolution**: Prompt now states that cross-binary `match-function` is not yet implemented and describes the achievable workflow: verify both binaries with `list-project-files`; use `list-functions` or `search-symbols` on source and target (switching `programPath`) to correlate by name/signature; propagate annotations on the target via `rename-function`, `set-function-prototype`, `manage-comments`, `manage-bookmarks`, `manage-function-tags`. Description also notes "(cross-binary match-function not yet implemented)."
+   - **Status**: Cross-program `match-function` is **implemented**. The prompt instructs the agent to use `match-function` with `programPath` (source), `functionIdentifier`, and `targetProgramPaths` (target binary path(s)), with `propagateNames`, `propagateTags`, and `propagateComments` as needed. Fallback workflow (correlate by name/signature with `list-functions` / `search-symbols`, then propagate via rename/set-prototype/comments/bookmarks/tags) remains for edge cases.
 
 ### Warnings — ✅ Fixed
 
