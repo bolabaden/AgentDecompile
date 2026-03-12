@@ -402,3 +402,7 @@ vendor/
 tests/tmp_test_project/
 volumes/
 docs/generated/
+*.gbf
+*.ps
+*.lock~
+*.lock
