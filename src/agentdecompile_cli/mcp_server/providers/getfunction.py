@@ -16,18 +16,18 @@ from typing import Any, ClassVar, cast
 from mcp import types
 
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # pyright: ignore[reportCallIssue]
 class _FunctionMatchFeature:
     function: Any
     name: str
@@ -39,7 +39,7 @@ class _FunctionMatchFeature:
     callees: frozenset[str]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # pyright: ignore[reportCallIssue]
 class _FunctionMatchIndex:
     function_count: int
     features: list[_FunctionMatchFeature]
@@ -75,7 +75,10 @@ class GetFunctionToolProvider(ToolProvider):
                             "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"],
                         },
                         "newName": {"type": "string", "description": "If mode is 'rename', the new name you want to give the function."},
-                        "prototype": {"type": "string", "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)')."},
+                        "prototype": {
+                            "type": "string",
+                            "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)').",
+                        },
                         "callingConvention": {"type": "string", "description": "If mode is 'set_calling_convention', the new convention (e.g., '__stdcall', '__fastcall')."},
                         "returnType": {"type": "string", "description": "If mode is 'set_return_type', the new return data type (e.g. 'int', 'void')."},
                         "address": {"type": "string", "description": "If mode is 'create', the memory address where the new function should start."},
@@ -92,7 +95,11 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "Path to the program."},
                         "function": {"type": "string", "description": "The function name or address to tag."},
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function."},
-                        "mode": {"type": "string", "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), or 'search' (find functions by tag).", "enum": ["list", "add", "remove", "search"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), or 'search' (find functions by tag).",
+                            "enum": ["list", "add", "remove", "search"],
+                        },
                         "tag": {"type": "string", "description": "The specific tag to add, remove, or search for (e.g. 'encryption')."},
                         "tagName": {"type": "string", "description": "Alternative parameter name for 'tag'."},
                     },
@@ -114,10 +121,22 @@ class GetFunctionToolProvider(ToolProvider):
                             "items": {"type": "string"},
                             "description": "Paths to target programs to find the equivalent function in. When provided, cross-program matching runs (primary use). Omit for single-program modes.",
                         },
-                        "minSimilarity": {"type": "number", "default": 0.7, "description": "Minimum similarity 0–1 (or 0–100). Name match = 1.0, signature-only = 0.7. Default 0.7."},
-                        "propagateNames": {"type": "boolean", "default": False, "description": "If true, set the matched target function's name to the source function's name."},
+                        "minSimilarity": {
+                            "type": "number",
+                            "default": 0.7,
+                            "description": "Minimum similarity 0–1 (or 0–100). Name match = 1.0, signature-only = 0.7. Default 0.7.",
+                        },
+                        "propagateNames": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, set the matched target function's name to the source function's name.",
+                        },
                         "propagateTags": {"type": "boolean", "default": False, "description": "If true, copy source function's tags to the matched target function."},
-                        "propagateComments": {"type": "boolean", "default": False, "description": "If true, copy source function's plate/pre comment to the matched target function."},
+                        "propagateComments": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, copy source function's plate/pre comment to the matched target function.",
+                        },
                         "mode": {
                             "type": "string",
                             "enum": ["similar", "callers", "callees", "signature"],
@@ -131,7 +150,10 @@ class GetFunctionToolProvider(ToolProvider):
             ),
         ]
 
-    async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_manage(
+        self,
+        args: dict[str, Any],
+    ) -> list[types.TextContent]:
         self._require_program()
         action = self._require_str(args, "mode", "action", "operation", name="mode")
         func_id = self._get_address_or_symbol(args)
@@ -179,7 +201,13 @@ class GetFunctionToolProvider(ToolProvider):
             func_id=func_id,
         )
 
-    async def _handle_rename(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_rename(
+        self,
+        args: dict[str, Any],
+        program: Any,
+        func: Any,
+        func_id: str,
+    ) -> list[types.TextContent]:
         new_name = self._require_str(args, "newname", "name", name="newName")
 
         def _rename_function() -> None:
@@ -197,7 +225,13 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_prototype(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_set_prototype(
+        self,
+        args: dict[str, Any],
+        program: Any,
+        func: Any,
+        func_id: str,
+    ) -> list[types.TextContent]:
         proto = self._require_str(args, "prototype", "signature", name="prototype")
 
         def _set_prototype() -> None:
@@ -213,7 +247,13 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_calling_convention(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_set_calling_convention(
+        self,
+        args: dict[str, Any],
+        program: Any,
+        func: Any,
+        func_id: str,
+    ) -> list[types.TextContent]:
         cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
 
         def _set_calling_convention() -> None:
@@ -229,7 +269,13 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_return_type(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_set_return_type(
+        self,
+        args: dict[str, Any],
+        program: Any,
+        func: Any,
+        func_id: str,
+    ) -> list[types.TextContent]:
         rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
@@ -345,10 +391,14 @@ class GetFunctionToolProvider(ToolProvider):
 
         raise ValueError(f"Unknown tag action: {action}")
 
-    def _get_match_index(self, program: Any, fm: Any) -> tuple[_FunctionMatchIndex, bool]:
-        cache_key = id(program)
-        function_count = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
-        cached = self._MATCH_INDEX_CACHE.get(cache_key)
+    def _get_match_index(
+        self,
+        program: Any,
+        fm: Any,
+    ) -> tuple[_FunctionMatchIndex, bool]:
+        cache_key: int = id(program)
+        function_count: int = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
+        cached: _FunctionMatchIndex | None = self._MATCH_INDEX_CACHE.get(cache_key)
         if cached is not None and cached.function_count == function_count:
             return cached, True
 
@@ -368,14 +418,14 @@ class GetFunctionToolProvider(ToolProvider):
                 callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
                 addr_str = str(func.getEntryPoint())
                 feature = _FunctionMatchFeature(
-                    function=func,
-                    name=func.getName(),
-                    address=addr_str,
-                    signature=str(func.getSignature()),
-                    param_count=func.getParameterCount(),
-                    return_type=str(func.getReturnType()),
-                    callers=callers,
-                    callees=callees,
+                    function=func,  # pyright: ignore[reportCallIssue]
+                    name=func.getName(),  # pyright: ignore[reportCallIssue]
+                    address=addr_str,  # pyright: ignore[reportCallIssue]
+                    signature=str(func.getSignature()),  # pyright: ignore[reportCallIssue]
+                    param_count=func.getParameterCount(),  # pyright: ignore[reportCallIssue]
+                    return_type=str(func.getReturnType()),  # pyright: ignore[reportCallIssue]
+                    callers=callers,  # pyright: ignore[reportCallIssue]
+                    callees=callees,  # pyright: ignore[reportCallIssue]
                 )
                 features.append(feature)
                 by_identity[addr_str] = feature
@@ -388,12 +438,12 @@ class GetFunctionToolProvider(ToolProvider):
             capture.add_metadata(indexedFunctions=len(features))
 
         index = _FunctionMatchIndex(
-            function_count=function_count,
-            features=features,
-            by_identity=by_identity,
-            by_signature=dict(by_signature),
-            by_caller={name: set(addrs) for name, addrs in by_caller.items()},
-            by_callee={name: set(addrs) for name, addrs in by_callee.items()},
+            function_count=function_count,  # pyright: ignore[reportCallIssue]
+            features=features,  # pyright: ignore[reportCallIssue]
+            by_identity=by_identity,  # pyright: ignore[reportCallIssue]
+            by_signature=dict(by_signature),  # pyright: ignore[reportCallIssue]
+            by_caller={name: set(addrs) for name, addrs in by_caller.items()},  # pyright: ignore[reportCallIssue]
+            by_callee={name: set(addrs) for name, addrs in by_callee.items()},  # pyright: ignore[reportCallIssue]
         )
         self._MATCH_INDEX_CACHE[cache_key] = index
         return index, False
@@ -424,8 +474,7 @@ class GetFunctionToolProvider(ToolProvider):
         manager = getattr(self, "_manager", None)
         if manager is None:
             raise ValueError(
-                "Cross-program matching requires a session with program resolution. "
-                "Ensure open-project or import-binary has been used so target programs can be opened."
+                "Cross-program matching requires a session with program resolution. Ensure open-project or import-binary has been used so target programs can be opened."
             )
 
         source_name = source_func.getName()
@@ -445,15 +494,11 @@ class GetFunctionToolProvider(ToolProvider):
                 target_info = await manager.get_or_open_program(session_id, target_path)
             except Exception as e:
                 errors.append(f"{target_path}: {e}")
-                results_per_target.append(
-                    {"targetProgramPath": target_path, "matched": None, "error": str(e)}
-                )
+                results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": str(e)})
                 continue
             if target_info is None:
                 errors.append(f"{target_path}: could not open program")
-                results_per_target.append(
-                    {"targetProgramPath": target_path, "matched": None, "error": "Could not open program"}
-                )
+                results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": "Could not open program"})
                 continue
 
             target_program = target_info.program
@@ -493,8 +538,10 @@ class GetFunctionToolProvider(ToolProvider):
             }
 
             if propagate_names and best_feature.name != source_name:
+
                 def _rename() -> None:
                     from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
                     target_func.setName(source_name, SourceType.USER_DEFINED)
 
                 self._run_program_transaction(target_program, "match-function-rename", _rename)
@@ -505,6 +552,7 @@ class GetFunctionToolProvider(ToolProvider):
                 existing = {t.getName() for t in target_func.getTags()}
                 to_add = [t for t in source_tags if t not in existing]
                 if to_add:
+
                     def _add_tags() -> None:
                         for tag in to_add:
                             target_func.addTag(tag)
@@ -515,6 +563,7 @@ class GetFunctionToolProvider(ToolProvider):
             if propagate_comments:
                 try:
                     from ghidra.program.model.listing import CodeUnit  # pyright: ignore[reportMissingModuleSource]
+
                     source_listing = source_program.getListing()
                     target_listing = target_program.getListing()
                     source_entry = source_func.getEntryPoint()
@@ -523,6 +572,7 @@ class GetFunctionToolProvider(ToolProvider):
                         try:
                             comment = source_listing.getComment(ctype, source_entry)
                             if comment and str(comment).strip():
+
                                 def _set_comment() -> None:
                                     target_listing.setComment(target_entry, ctype, comment)
 
@@ -624,10 +674,7 @@ class GetFunctionToolProvider(ToolProvider):
             func_addr = str(func.getEntryPoint())
             assert match_index is not None
             candidates = [feature for feature in match_index.by_signature.get((param_count, ret), []) if feature.address != func_addr]
-            similar = [
-                {"name": feature.name, "address": feature.address, "signature": feature.signature}
-                for feature in candidates[:max_results]
-            ]
+            similar = [{"name": feature.name, "address": feature.address, "signature": feature.signature} for feature in candidates[:max_results]]
             return create_success_response(
                 {
                     "function": func.getName(),

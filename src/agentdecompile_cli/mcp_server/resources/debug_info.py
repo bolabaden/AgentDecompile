@@ -467,7 +467,12 @@ class DebugInfoResource(ResourceProvider):
         current_program_probe: dict[str, Any] | None,
         list_project_files: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        """Build version-control (checkout/checkin) section for debug-info: tools doc + status probe."""
+        """Build version-control (checkout/checkin) section for debug-info: tools doc + status probe.
+
+        Checkout/checkin state is expressed completely here so that reading agentdecompile://debug-info
+        gives full visibility: whether version control applies, current program's checkout state,
+        and which tools to call (checkout-program, checkin-program, checkout-status).
+        """
         session_id = get_current_mcp_session_id()
         snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=5, tool_history_limit=5)
         project_handle = snapshot.get("projectHandle")
@@ -476,9 +481,17 @@ class DebugInfoResource(ResourceProvider):
         is_shared = isinstance(project_handle, dict) and mode_str == "sharedserver"
 
         result: dict[str, Any] = {
+            "resourceUri": RESOURCE_URI_DEBUG_INFO,
             "toolsDocumentation": _VERSION_CONTROL_TOOLS_DOC,
+            "toolNames": {
+                "checkout": "checkout-program",
+                "checkin": "checkin-program",
+                "status": "checkout-status",
+                "manageFilesAlias": "manage-files (mode=checkout | mode=uncheckout)",
+            },
             "applicable": is_shared,
             "note": "Checkout/checkin apply only when connected to a shared Ghidra Server repository (open-project with serverHost/serverPort). Local projects do not use version control." if not is_shared else None,
+            "currentCheckoutState": None,
             "checkoutStatusProbe": None,
         }
 
@@ -515,6 +528,30 @@ class DebugInfoResource(ResourceProvider):
                 "response": probe.get("response"),
                 "error": probe.get("error"),
             }
+            # Express checkout/checkin state completely at top level for agentdecompile://debug-info consumers
+            resp = probe.get("response") if isinstance(probe.get("response"), dict) else None
+            if probe.get("success") and resp and resp.get("action") == "checkout_status":
+                result["currentCheckoutState"] = {
+                    "programPath": program_path,
+                    "program": resp.get("program"),
+                    "is_versioned": resp.get("is_versioned"),
+                    "is_checked_out": resp.get("is_checked_out"),
+                    "is_exclusive": resp.get("is_exclusive"),
+                    "modified_since_checkout": resp.get("modified_since_checkout"),
+                    "can_checkout": resp.get("can_checkout"),
+                    "can_checkin": resp.get("can_checkin"),
+                    "latest_version": resp.get("latest_version"),
+                    "current_version": resp.get("current_version"),
+                    "checkout_status": resp.get("checkout_status"),
+                    "versionControlEnabled": resp.get("versionControlEnabled"),
+                    "note": resp.get("note"),
+                }
+            elif not probe.get("success") or probe.get("error"):
+                result["currentCheckoutState"] = {
+                    "programPath": program_path,
+                    "error": probe.get("error"),
+                    "probeSuccess": probe.get("success"),
+                }
         return result
 
     def _get_metadata(self) -> dict:
