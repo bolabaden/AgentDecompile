@@ -8,6 +8,7 @@ import os
 import sys
 import time
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -156,17 +157,22 @@ class DebugInfoResource(ResourceProvider):
                 "attempted": False,
                 "success": False,
                 "error": "tool_provider_manager unavailable",
+                "attemptedAt": self._iso_now(),
             }
 
-        start_time = time.time()
+        start_epoch = time.time()
+        attempted_at = self._iso_from_epoch(start_epoch)
         payload = dict(arguments or {})
         payload.setdefault("format", "json")
-        logger.info("DebugInfoResource: calling %s with args=%s", tool_name, self._sanitize_sensitive(payload))
+        sanitized_payload = self._sanitize_sensitive(payload)
+        logger.info("DebugInfoResource: calling %s with args=%s", tool_name, sanitized_payload)
         try:
             response = await self.tool_provider_manager.call_tool(tool_name, payload)
+            raw_response_text = self._extract_tool_response_text(response)
             parsed = self._parse_tool_response(response)
             success = self._tool_response_succeeded(parsed)
-            elapsed = round(time.time() - start_time, 3)
+            completed_epoch = time.time()
+            elapsed = round(completed_epoch - start_epoch, 3)
             logger.info(
                 "DebugInfoResource: tool %s completed success=%s in %.3fs",
                 tool_name,
@@ -177,20 +183,34 @@ class DebugInfoResource(ResourceProvider):
                 "tool": tool_name,
                 "attempted": True,
                 "success": success,
+                "attemptedAt": attempted_at,
+                "completedAt": self._iso_from_epoch(completed_epoch),
                 "durationSeconds": elapsed,
-                "arguments": self._sanitize_sensitive(payload),
+                "arguments": sanitized_payload,
+                "rawResponseText": raw_response_text,
                 "response": parsed,
+                "failureDetails": self._build_failure_details(parsed) if not success else None,
             }
         except Exception as exc:
-            elapsed = round(time.time() - start_time, 3)
+            completed_epoch = time.time()
+            elapsed = round(completed_epoch - start_epoch, 3)
             logger.error("DebugInfoResource: tool %s failed after %.3fs: %s", tool_name, elapsed, exc, exc_info=True)
             return {
                 "tool": tool_name,
                 "attempted": True,
                 "success": False,
+                "attemptedAt": attempted_at,
+                "completedAt": self._iso_from_epoch(completed_epoch),
                 "durationSeconds": elapsed,
-                "arguments": self._sanitize_sensitive(payload),
+                "arguments": sanitized_payload,
                 "error": str(exc),
+                "failureDetails": {
+                    "summary": str(exc),
+                    "location": {
+                        "tool": tool_name,
+                        "resource": RESOURCE_URI_DEBUG_INFO,
+                    },
+                },
             }
 
     async def _force_open_project(self, requested_uri: str) -> dict[str, Any]:
@@ -336,6 +356,18 @@ class DebugInfoResource(ResourceProvider):
             return {"rawText": merged}
 
     @staticmethod
+    def _extract_tool_response_text(response: Any) -> str:
+        if not isinstance(response, list):
+            return str(response)
+
+        text_parts: list[str] = []
+        for item in response:
+            text = getattr(item, "text", None)
+            if isinstance(text, str) and text:
+                text_parts.append(text)
+        return "\n".join(text_parts)
+
+    @staticmethod
     def _tool_response_succeeded(parsed: Any) -> bool:
         if isinstance(parsed, dict):
             if parsed.get("success") is False:
@@ -343,6 +375,35 @@ class DebugInfoResource(ResourceProvider):
             if parsed.get("error"):
                 return False
         return True
+
+    @staticmethod
+    def _iso_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _iso_from_epoch(timestamp: float) -> str:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+    @classmethod
+    def _build_failure_details(cls, parsed: Any) -> dict[str, Any] | None:
+        if not isinstance(parsed, dict):
+            return None
+
+        raw_context = parsed.get("context")
+        context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+        summary = parsed.get("error") or parsed.get("message") or "tool call failed"
+        return {
+            "summary": summary,
+            "where": {
+                "provider": context.get("provider") or parsed.get("provider"),
+                "handler": context.get("handler") or parsed.get("handler"),
+                "tool": context.get("canonicalToolName") or context.get("tool") or parsed.get("tool"),
+                "connectionStage": context.get("connectionStage") or parsed.get("connectionStage"),
+                "mode": context.get("mode") or parsed.get("mode"),
+                "requestedPath": context.get("requestedPath") or parsed.get("requestedPath"),
+            },
+            "returned": cls._sanitize_sensitive(parsed),
+        }
 
     @classmethod
     def _sanitize_sensitive(cls, value: Any) -> Any:

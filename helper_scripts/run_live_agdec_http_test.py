@@ -28,7 +28,7 @@ def _load_env() -> None:
             if "=" in line:
                 key, _, value = line.partition("=")
                 key, value = key.strip(), value.strip()
-                if key and key not in os.environ:
+                if key:
                     # Remove surrounding quotes if present
                     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
                         value = value[1:-1]
@@ -76,7 +76,7 @@ def main() -> int:
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
     server_url = f"{base_url}/mcp"
-    project_path = REPO_ROOT / "tmp" / "live_agdec_test"
+    project_path = REPO_ROOT / "tmp" / f"live_agdec_test_{port}"
     project_path.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
@@ -109,20 +109,23 @@ def main() -> int:
         "live_agdec_test",
     ]
     print(f"Starting server on {base_url} ...")
+    # Do not use PIPE for stdout/stderr or the buffer can fill and block the server.
     process = subprocess.Popen(
         cmd,
         cwd=str(REPO_ROOT),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        stdout=None,
+        stderr=None,
     )
     try:
-        if not wait_for_server(base_url, process, timeout=180.0):
-            out, err = process.communicate(timeout=5)
-            print("Server failed to become ready.")
-            print("STDOUT:", (out or "")[-1500:])
-            print("STDERR:", (err or "")[-1500:])
+        if not wait_for_server(base_url, process, timeout=300.0):
+            process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            print("Server failed to become ready within 300s. Run the server manually and use --server-url.")
             return 1
         print("Server ready. Running agdec-http validation ...")
         run_cmd = [
@@ -142,10 +145,10 @@ def main() -> int:
     finally:
         process.terminate()
         try:
-            process.communicate(timeout=15)
+            process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.communicate(timeout=5)
+            process.wait(timeout=5)
         print("Server stopped.")
 
 

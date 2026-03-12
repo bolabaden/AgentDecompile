@@ -24,6 +24,7 @@ import json as _json
 import logging
 import os
 import re
+import time
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -681,7 +682,10 @@ class ToolProvider:
                 context=_merge_context(
                     {
                         "tool": to_snake_case(resolve_tool_name(name) or name),
+                        "canonicalToolName": resolve_tool_name(name) or name,
                         "provider": self.__class__.__name__,
+                        "handler": handler_method_name,
+                        "errorTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     },
                     extra_context,
                 ),
