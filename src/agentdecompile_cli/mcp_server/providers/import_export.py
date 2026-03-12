@@ -967,10 +967,14 @@ class ImportExportToolProvider(ToolProvider):
                 },
             )
 
-        # If a specific program_path is provided, check if it looks like a shared repository path
+        # When program_path is provided, resolve domain file by path so we check in the requested file, not the active one
+        domain_file = None
+        program_display_name = program_path or ""
         if program_path:
-            if program_path.startswith("/") or "/" in program_path:
-                # If no program is currently loaded, guide user to open-project first
+            resolved = self._resolve_domain_file_for_checkout_status(program_path)
+            if resolved is not None:
+                domain_file, program_display_name = resolved
+            elif program_path.startswith("/") or "/" in program_path:
                 if not self.program_info:
                     return create_success_response(
                         {
@@ -987,17 +991,28 @@ class ImportExportToolProvider(ToolProvider):
                             ],
                         },
                     )
-                # If a program is already loaded, proceed with checkin on that program
+            if domain_file is None and program_path:
+                return create_success_response(
+                    {
+                        "action": "checkin",
+                        "program": program_path,
+                        "comment": comment,
+                        "keep_checked_out": keep_checked_out,
+                        "success": False,
+                        "error": f"Program path '{program_path}' could not be resolved. Call open-project and checkout-program first, then retry checkin-program with the same program_path.",
+                    },
+                )
 
-        self._require_program()
-        assert self.program_info is not None, "Program info should be available after _require_program()"
-        program = self.program_info.program
+        if domain_file is None:
+            self._require_program()
+            assert self.program_info is not None, "Program info should be available after _require_program()"
+            program = self.program_info.program
+            domain_file = program.getDomainFile()
+            program_display_name = program.getName()
 
         try:
             from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
-
-            domain_file = program.getDomainFile()
             if domain_file is None:
                 raise RuntimeError("No domain file associated with active program")
 
@@ -1007,7 +1022,7 @@ class ImportExportToolProvider(ToolProvider):
                 return create_success_response(
                     {
                         "action": "checkin",
-                        "program": program.getName(),
+                        "program": program_display_name,
                         "comment": comment,
                         "keep_checked_out": keep_checked_out,
                         "success": True,
@@ -1036,7 +1051,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkin",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "comment": comment,
                     "keep_checked_out": keep_checked_out,
                     "version": domain_file.getLatestVersion(),
@@ -1047,7 +1062,7 @@ class ImportExportToolProvider(ToolProvider):
             return create_success_response(
                 {
                     "action": "checkin",
-                    "program": program.getName(),
+                    "program": program_display_name,
                     "comment": comment,
                     "keep_checked_out": keep_checked_out,
                     "success": False,
@@ -1235,29 +1250,45 @@ class ImportExportToolProvider(ToolProvider):
         domain_file = None
         program_display_name = program_path or ""
         if program_path:
-            if program_path.startswith("/") or "/" in program_path:
-                if not self.program_info:
-                    return create_success_response(
-                        {
-                            "action": "checkout_status",
-                            "program": program_path,
-                            "is_versioned": True,
-                            "is_checked_out": False,
-                            "is_exclusive": False,
-                            "modified_since_checkout": False,
-                            "can_checkout": True,
-                            "can_checkin": False,
-                            "versionControlEnabled": True,
-                            "note": "Program path indicates shared repository. Status check requires active session. Call open-project first.",
-                            "nextSteps": [
-                                "Call `open-project` with shared server credentials.",
-                                "Retry `checkout-status` after opening the shared repository.",
-                            ],
-                        },
-                    )
             resolved = self._resolve_domain_file_for_checkout_status(program_path)
             if resolved is not None:
                 domain_file, program_display_name = resolved
+            elif program_path.startswith("/") or "/" in program_path:
+                # Shared path: try same as checkout-program — bring file into project then re-resolve
+                session_id = get_current_mcp_session_id()
+                session = SESSION_CONTEXTS.get_or_create(session_id)
+                handle = session.project_handle if isinstance(session.project_handle, dict) else None
+                repo_adapter = handle.get("repository_adapter") if handle else None
+                project_provider = None
+                if self._manager is not None and hasattr(self._manager, "_get_project_provider"):
+                    project_provider = self._manager._get_project_provider()
+                if project_provider is not None and repo_adapter is not None and handle is not None and n(str(handle.get("mode", ""))) == "sharedserver":
+                    try:
+                        await project_provider._checkout_shared_program(repo_adapter, program_path, session_id)
+                        resolved = self._resolve_domain_file_for_checkout_status(program_path)
+                        if resolved is not None:
+                            domain_file, program_display_name = resolved
+                    except Exception:
+                        pass
+            if domain_file is None and (program_path.startswith("/") or "/" in program_path) and not self.program_info:
+                return create_success_response(
+                    {
+                        "action": "checkout_status",
+                        "program": program_path,
+                        "is_versioned": True,
+                        "is_checked_out": False,
+                        "is_exclusive": False,
+                        "modified_since_checkout": False,
+                        "can_checkout": True,
+                        "can_checkin": False,
+                        "versionControlEnabled": True,
+                        "note": "Program path indicates shared repository. Could not open or resolve. Call open-project first.",
+                        "nextSteps": [
+                            "Call `open-project` with shared server credentials.",
+                            "Retry `checkout-status` after opening the shared repository.",
+                        ],
+                    },
+                )
 
         # If we didn't resolve by path, use active program only when path was not provided or path matches active
         if domain_file is None:
