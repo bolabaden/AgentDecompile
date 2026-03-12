@@ -45,6 +45,20 @@ from agentdecompile_cli.registry import Tool
 logger = logging.getLogger(__name__)
 
 
+def _detail_limits(result_count: int) -> tuple[int | None, int | None, int]:
+    """Return (max_callers, max_callees, max_instructions) for get-function enrichment.
+
+    Fewer results get more detail; many results get tighter caps to keep output usable.
+    """
+    if result_count <= 1:
+        return (None, None, 2000)
+    if result_count <= 10:
+        return (50, 50, 500)
+    if result_count <= 50:
+        return (20, 20, 200)
+    return (5, 5, 80)
+
+
 # ---------------------------------------------------------------------------
 # Match-function index: per-program feature set for similarity and call-graph lookup
 # ---------------------------------------------------------------------------
@@ -88,6 +102,7 @@ class GetFunctionToolProvider(ToolProvider):
         "managefunction": "_handle_manage",
         "managefunctiontags": "_handle_tags",
         "matchfunction": "_handle_match",
+        "migratemetadata": "_handle_migrate_metadata",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -186,6 +201,38 @@ class GetFunctionToolProvider(ToolProvider):
                             "description": "Single-program only: 'similar', 'callers', 'callees', or 'signature'. Ignored when targetProgramPaths is provided.",
                         },
                         "maxResults": {"type": "integer", "default": 100, "description": "Single-program mode: number of matched functions to return."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name=Tool.MIGRATE_METADATA.value,
+                description="Bulk propagate function metadata from a source binary to others: runs match-function over all functions in the source. Use when you want to migrate names, tags, comments, prototype, and bookmarks from one binary to one or more target binaries (e.g. different builds). Optional targetProgramPaths; if omitted, targets are discovered from the session. Open a project in the session first (open-project or import-binary).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Path to a source program (optional)."},
+                        "targetProgramPaths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Paths to target programs to propagate metadata to. If omitted, other open programs in the session are used.",
+                        },
+                        "minSimilarity": {
+                            "type": "number",
+                            "default": 0.7,
+                            "description": "Minimum similarity 0–1 (or 0–100) for matching. Default 0.7.",
+                        },
+                        "limit": {"type": "integer", "description": "Cap number of functions to process (for testing). Omit to process all."},
+                        "includeExternals": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Include external functions in the migration. Default true.",
+                        },
+                        "propagateNames": {"type": "boolean", "default": True, "description": "Propagate function names to matched targets."},
+                        "propagateTags": {"type": "boolean", "default": True, "description": "Propagate function tags."},
+                        "propagateComments": {"type": "boolean", "default": True, "description": "Propagate all comment types."},
+                        "propagatePrototype": {"type": "boolean", "default": True, "description": "Propagate function signature (return type and parameters)."},
+                        "propagateBookmarks": {"type": "boolean", "default": True, "description": "Propagate bookmarks at function entry."},
                     },
                     "required": [],
                 },
@@ -561,6 +608,7 @@ class GetFunctionToolProvider(ToolProvider):
         propagate_comments: bool,
         propagate_prototype: bool = False,
         propagate_bookmarks: bool = False,
+        detail_result_count: int | None = None,
     ) -> list[types.TextContent]:
         """Match source function to equivalent functions in target programs; optionally propagate name, tags, comments, prototype, bookmarks."""
         session_id = get_current_mcp_session_id()
@@ -764,13 +812,23 @@ class GetFunctionToolProvider(ToolProvider):
                 gf_name = (matched_info.get("name") or matched_info.get("address") or "").strip()
                 if gf_name:
                     try:
+                        result_count = (
+                            detail_result_count if detail_result_count is not None else len(target_paths)
+                        )
+                        max_callers, max_callees, max_instructions = _detail_limits(result_count)
+                        gf_payload: dict[str, Any] = {
+                            "programPath": target_path,
+                            "function": gf_name,
+                            "format": "json",
+                        }
+                        if max_callers is not None:
+                            gf_payload["maxCallers"] = max_callers
+                        if max_callees is not None:
+                            gf_payload["maxCallees"] = max_callees
+                        gf_payload["maxInstructions"] = max_instructions
                         gf_resp = await manager.call_tool(
                             "get-function",
-                            {
-                                "programPath": target_path,
-                                "function": gf_name,
-                                "format": "json",
-                            },
+                            gf_payload,
                         )
                         if gf_resp and isinstance(gf_resp[0], types.TextContent) and gf_resp[0].text:
                             parsed = json.loads(gf_resp[0].text)
@@ -815,10 +873,16 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
+    async def _handle_migrate_metadata(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Bulk metadata migration: delegate to match-function with no functionIdentifier so it iterates all functions."""
+        # Omit any function identifier so _handle_match always takes the bulk path
+        bulk_args: dict[str, Any] = {k: v for k, v in args.items() if n(k) not in ("functionidentifier", "function", "addressorsymbol", "address")}
+        return await self._handle_match(bulk_args)
+
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Entry for match-function: cross-program (targetProgramPaths set) or single-program (similar/callers/callees/signature)."""
         self._require_program()
-        raw_targets = args.get(n("targetprogrampaths"))
+        raw_targets: list[str] | str | None = args.get(n("targetprogrampaths"))
         target_paths: list[str] = []
         if raw_targets is not None:
             if isinstance(raw_targets, list):
@@ -827,8 +891,8 @@ class GetFunctionToolProvider(ToolProvider):
                 target_paths = [str(raw_targets).strip()]
         # Cross-program: single function or all functions (when no functionIdentifier given)
         assert self.program_info is not None
-        program = self.program_info.program
-        source_path = (
+        program: Any = self.program_info.program
+        source_path: str = (
             self._get_str(args, "programpath", "programpath", default="")
             or getattr(self.program_info, "file_path", None)
             or getattr(self.program_info, "path", None)
@@ -836,13 +900,13 @@ class GetFunctionToolProvider(ToolProvider):
         )
         source_path = str(source_path).strip() if source_path else ""
         # Resolve targets: from args or discover from session (so bulk works without targetProgramPaths)
-        resolved_targets = target_paths if target_paths else self._discover_target_paths(source_path or "unknown")
+        resolved_targets: list[str] = target_paths if target_paths else self._discover_target_paths(source_path or "unknown")
 
         if resolved_targets:
-            func_id = self._get_address_or_symbol(args)
+            func_id: str = self._get_address_or_symbol(args)
             if func_id:
                 # Single function: existing behavior
-                func = self._resolve_function(func_id)
+                func: Any | None = self._resolve_function(func_id)
                 if func is None:
                     raise ValueError(f"Function not found: {func_id}")
                 min_sim = self._normalize_min_similarity(args)
@@ -861,16 +925,17 @@ class GetFunctionToolProvider(ToolProvider):
                     propagate_comments,
                     propagate_prototype,
                     propagate_bookmarks,
+                    detail_result_count=None,
                 )
 
             # No functionIdentifier: iterate all functions (bulk migration)
-            targets = resolved_targets
-            include_externals = self._get_bool(args, "includeexternals", "includeexternals", default=True)
-            limit = self._get_int(args, "limit", "maxfunctions", "maxcount", default=None)
+            targets: list[str] = resolved_targets
+            include_externals: bool = self._get_bool(args, "includeexternals", "includeexternals", default=True)
+            limit: int | None = self._get_int(args, "limit", "maxfunctions", "maxcount", default=None)
             # Treat limit<=0 as no limit (process all functions)
             if limit is not None and limit <= 0:
                 limit = None
-            identifiers = self._list_source_function_identifiers(program, include_externals, limit)
+            identifiers: list[str] = self._list_source_function_identifiers(program, include_externals, limit)
             logger.info(
                 "match-function bulk: source_path=%s target_count=%d identifier_count=%d limit=%s",
                 source_path,
@@ -890,23 +955,23 @@ class GetFunctionToolProvider(ToolProvider):
                     },
                 )
             min_sim = self._normalize_min_similarity(args)
-            propagate_names = self._get_bool(args, "propagatenames", "propagatename", default=True)
-            propagate_tags = self._get_bool(args, "propagatetags", "propagatetag", default=True)
-            propagate_comments = self._get_bool(args, "propagatecomments", "propagatecomment", default=True)
-            propagate_prototype = self._get_bool(args, "propagateprototype", "propagatesignature", default=True)
-            propagate_bookmarks = self._get_bool(args, "propagatebookmarks", default=True)
+            propagate_names: bool = self._get_bool(args, "propagatenames", "propagatename", default=True)
+            propagate_tags: bool = self._get_bool(args, "propagatetags", "propagatetag", default=True)
+            propagate_comments: bool = self._get_bool(args, "propagatecomments", "propagatecomment", default=True)
+            propagate_prototype: bool = self._get_bool(args, "propagateprototype", "propagatesignature", default=True)
+            propagate_bookmarks: bool = self._get_bool(args, "propagatebookmarks", default=True)
             results_by_function: list[dict[str, Any]] = []
-            errors_count = 0
+            errors_count: int = 0
             matches_per_target: dict[str, int] = {t: 0 for t in targets}
-            progress_interval = 1000
+            progress_interval: int = 1000
             for idx, ident in enumerate(identifiers):
                 if progress_interval and (idx + 1) % progress_interval == 0:
                     logger.info("match-function bulk progress: %d/%d", idx + 1, len(identifiers))
-                func = self._resolve_function(ident)
+                func: Any | None = self._resolve_function(ident)
                 if func is None:
                     continue
                 try:
-                    one_resp = await self._handle_match_cross_program(
+                    one_resp: list[types.TextContent] | None = await self._handle_match_cross_program(
                         func,
                         program,
                         targets,
@@ -916,6 +981,7 @@ class GetFunctionToolProvider(ToolProvider):
                         propagate_comments,
                         propagate_prototype,
                         propagate_bookmarks,
+                        detail_result_count=len(identifiers) * len(targets),
                     )
                 except Exception as e:
                     errors_count += 1
@@ -931,7 +997,7 @@ class GetFunctionToolProvider(ToolProvider):
                 if not one_resp or not isinstance(one_resp[0], types.TextContent):
                     continue
                 try:
-                    data = json.loads(one_resp[0].text)
+                    data: dict[str, Any] = json.loads(one_resp[0].text)
                 except (json.JSONDecodeError, TypeError):
                     continue
                 one_results = data.get("results") or []

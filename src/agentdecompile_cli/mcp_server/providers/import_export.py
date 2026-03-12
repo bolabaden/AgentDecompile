@@ -49,6 +49,22 @@ class ImportExportToolProvider(ToolProvider):
         "listprocessors": "_handle_list_processors",
     }
 
+    def _is_analysis_complete(self, program: Any) -> bool:
+        """Return True if program analysis is complete; safe for ProgramDB and headless."""
+        try:
+            get_state = getattr(program, "getAnalysisState", None)
+            if get_state is not None:
+                state = get_state()
+                if state is not None and hasattr(state, "isDone"):
+                    return bool(state.isDone())
+        except Exception:
+            pass
+        try:
+            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
+            return bool(GhidraProgramUtilities.isAnalyzed(program))
+        except Exception:
+            return False
+
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
@@ -703,7 +719,7 @@ class ImportExportToolProvider(ToolProvider):
                                 ],
                                 "results": results,
                                 "properties": {
-                                    "analysisComplete": program.getAnalysisState().isDone(),
+                                    "analysisComplete": self._is_analysis_complete(program),
                                     "generatedAt": now,
                                     "resultsCount": len(results),
                                 },
