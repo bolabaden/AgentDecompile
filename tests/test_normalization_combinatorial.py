@@ -13,11 +13,11 @@ import pytest
 
 from agentdecompile_cli.executor import DynamicToolExecutor
 from agentdecompile_cli.registry import ToolRegistry
-from agentdecompile_cli.registry import TOOLS, ToolName, get_tool_params
+from agentdecompile_cli.registry import TOOLS, Tool, get_tool_params
 from tests.helpers import assert_mapping_invariants, assert_string_invariants
 
 # Tools that have params (for parametrized tests that need tool_name string + params).
-_TOOLS_WITH_PARAMS: list[str] = [t.value for t in ToolName if get_tool_params(t)]
+_TOOLS_WITH_PARAMS: list[str] = [t.value for t in Tool if get_tool_params(t)]
 
 pytestmark = pytest.mark.unit
 
@@ -76,7 +76,7 @@ def _pick_param_subset(
     return rng.sample(params, k=count)
 
 
-class TestCombinatorialToolNameResolution:
+class TestCombinatorialToolResolution:
     @pytest.mark.parametrize("tool_name", TOOLS)
     def test_dynamic_resolve_accepts_noisy_tool_variants(self, tool_name: str):
         executor = DynamicToolExecutor()

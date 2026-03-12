@@ -20,7 +20,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class BookmarkToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.MANAGE_BOOKMARKS.value,
+                name=Tool.MANAGE_BOOKMARKS.value,
                 description="Create, read, search, or delete bookmarks. A bookmark is a simple saved location in the binary, useful for returning to an important address later and marking an area as a 'Note', 'Warning', 'Bug', 'TODO', or 'Analysis' item.",
                 inputSchema={
                     "type": "object",

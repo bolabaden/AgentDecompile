@@ -37,7 +37,7 @@ except Exception:
     Settings = None  # type: ignore[assignment]
 
 from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
@@ -1950,7 +1950,7 @@ def init_agentdecompile_context(
             async with client:
                 for path in bin_paths:
                     try:
-                        await client.call_tool(ToolName.OPEN_PROJECT.value, {"path": str(path.resolve()), "runAnalysis": True})
+                        await client.call_tool(Tool.OPEN_PROJECT.value, {"path": str(path.resolve()), "runAnalysis": True})
                         sys.stderr.write(f"Imported: {path}\n")
                     except Exception as e:
                         sys.stderr.write(f"Import failed for {path}: {e}\n")

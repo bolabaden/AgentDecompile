@@ -25,6 +25,7 @@ from urllib.parse import urlparse, urlunparse
 from mcp import types
 
 from agentdecompile_cli.registry import (
+    Tool,
     normalize_identifier,
     resolve_tool_name,
     tool_registry,
@@ -765,7 +766,8 @@ class DynamicToolExecutor:
             canonical_tool_name = resolved
 
         parsed_args: dict[str, Any] = {}
-        expected_params: list[str] = self._registry.get_tool_params(canonical_tool_name)
+        tool = Tool.from_string(canonical_tool_name)
+        expected_params: list[str] = tool.params if tool is not None else self._registry.get_tool_params(canonical_tool_name)
 
         for param_name in expected_params:
             # Try all possible variations of the parameter name
@@ -948,7 +950,8 @@ class DynamicToolExecutor:
         parsed_args: dict[str, Any],
     ) -> None:
         """Validate arguments dynamically based on tool requirements: all required params present, then type/constraint checks."""
-        normalized_tool_name = normalize_identifier(canonical_tool_name)
+        tool = Tool.from_string(canonical_tool_name)
+        normalized_tool_name = tool.normalized if tool is not None else normalize_identifier(canonical_tool_name)
         required_params = self._get_required_params_for_tool(normalized_tool_name)
         normalized_present = {normalize_identifier(param_name) for param_name, value in parsed_args.items() if value is not None}
 

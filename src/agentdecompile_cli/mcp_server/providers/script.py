@@ -20,7 +20,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ScriptToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.EXECUTE_SCRIPT.value,
+                name=Tool.EXECUTE_SCRIPT.value,
                 description=(
                     "Run an unrestricted Python script directly inside the Ghidra environment. "
                     "Use this tool as a last resort or for advanced bulk processing tasks when no other existing tool provides the required capability. "

@@ -20,7 +20,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class VtableToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.ANALYZE_VTABLES.value,
+                name=Tool.ANALYZE_VTABLES.value,
                 description="Find and examine virtual function tables (vtables) belonging to C++ classes. A vtable is an array of function pointers used for dynamic dispatch in object-oriented programs. Use this to rebuild class inheritance or find virtual methods of an object.",
                 inputSchema={
                     "type": "object",

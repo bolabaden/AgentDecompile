@@ -37,7 +37,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     n,
     recommend_tool,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     ...
@@ -162,7 +162,7 @@ class ProjectToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.OPEN_PROJECT.value,
+                name=Tool.OPEN_PROJECT.value,
                 description="Open a local .gpr project or connect to a shared Ghidra repository server. Use import-binary for local binaries.",
                 inputSchema={
                     "type": "object",
@@ -181,7 +181,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.SVR_ADMIN.value,
+                name=Tool.SVR_ADMIN.value,
                 description="Run Ghidra server administration commands via the bundled svrAdmin script with full argument passthrough.",
                 inputSchema={
                     "type": "object",
@@ -220,7 +220,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.LIST_PROJECT_FILES.value,
+                name=Tool.LIST_PROJECT_FILES.value,
                 description="List project files.",
                 inputSchema={
                     "type": "object",
@@ -235,7 +235,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.SYNC_PROJECT.value,
+                name=Tool.SYNC_PROJECT.value,
                 description="Sync with local or shared repository. Supports pull, push, and bidirectional modes between local projects and shared Ghidra server repositories.",
                 inputSchema={
                     "type": "object",
@@ -260,7 +260,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.MANAGE_FILES.value,
+                name=Tool.MANAGE_FILES.value,
                 description="Manage project files and open programs.",
                 inputSchema={
                     "type": "object",
@@ -320,7 +320,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.REMOVE_PROGRAM_BINARY.value,
+                name=Tool.REMOVE_PROGRAM_BINARY.value,
                 description="Remove a program from the current Ghidra project (shared repository or local project). This uses Ghidra's DomainFile API and does not delete source binaries from the host filesystem.",
                 inputSchema={
                     "type": "object",
@@ -337,22 +337,22 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name=ToolName.GET_CURRENT_ADDRESS.value,
+                name=Tool.GET_CURRENT_ADDRESS.value,
                 description="Get current address (GUI-only, headless-safe)",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name=ToolName.GET_CURRENT_FUNCTION.value,
+                name=Tool.GET_CURRENT_FUNCTION.value,
                 description="Get current function (GUI-only, headless-safe)",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name=ToolName.OPEN_PROGRAM_IN_CODE_BROWSER.value,
+                name=Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value,
                 description="Open program in Code Browser (GUI-only)",
                 inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
             ),
             types.Tool(
-                name=ToolName.GET_CURRENT_PROGRAM.value,
+                name=Tool.GET_CURRENT_PROGRAM.value,
                 description="Retrieve metadata for the currently active program, including name, path, language, compiler, and analysis status.",
                 inputSchema={
                     "type": "object",
@@ -1212,7 +1212,7 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1307,7 +1307,7 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1728,7 +1728,7 @@ class ProjectToolProvider(ToolProvider):
 
     async def _handle_filesystem_operation_blocked(self, args: dict[str, Any]) -> list[types.TextContent]:
         operation = self._get_str(args, "mode", "action", "operation", default="unknown")
-        manage_files_tool = recommend_tool("manage-files")
+        manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value)
         if manage_files_tool:
             steps = [
                 f"Use `{manage_files_tool}` `mode=list`, `mode=import`, or `mode=export` for filesystem operations.",
@@ -1752,7 +1752,7 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
         if not file_path:
-            manage_files_tool = recommend_tool("manage-files")
+            manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value)
             if manage_files_tool:
                 steps = [
                     f"Call `{manage_files_tool}` with `mode=import` and `path` pointing to an existing file or directory.",
@@ -1971,9 +1971,9 @@ class ProjectToolProvider(ToolProvider):
         max_results: int = self._get_int(args, "maxresults", default=200)
         base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
         if not base_path.exists():
-            manage_files_tool = recommend_tool("manage-files", "list-project-files")
+            manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value)
             steps = [
-                "Run `{}` `mode=list` on the parent directory to discover valid paths.".format(manage_files_tool or "list-project-files"),
+                "Run `{}` `mode=list` on the parent directory to discover valid paths.".format(manage_files_tool or Tool.LIST_PROJECT_FILES.value),
                 "Retry with an existing directory path.",
             ]
             raise ActionableError(
@@ -2036,7 +2036,7 @@ class ProjectToolProvider(ToolProvider):
             )
         new_name: str | None = self._get_str(args, "newname")
         if not new_name:
-            manage_files_tool = recommend_tool("manage-files")
+            manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value)
             steps = ["Provide `newName` and retry `{}` with `mode=rename`.".format(manage_files_tool or "rename operation")]
             raise ActionableError(
                 "newName is required for rename",

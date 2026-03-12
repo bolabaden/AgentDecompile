@@ -15,7 +15,7 @@ from agentdecompile_cli.registry import (
     TOOLS,
     TOOL_PARAMS as _TOOL_PARAMS_ENUM,
     ResourceUri,
-    ToolName,
+    Tool,
     build_tool_payload,
     get_tool_params,
     to_camel_case_key,
@@ -30,12 +30,12 @@ __all__ = [
     "TOOLS",
     "TOOL_PARAMS",
     "ResourceUri",
-    "ToolName",
+    "Tool",
     "build_tool_payload",
     "get_tool_params",
     "to_camel_case_key",
 ]
 
 # Backward-compat: str-keyed view of TOOL_PARAMS for code that does TOOL_PARAMS.get("open-project").
-# Registry holds dict[ToolName, list[str]]; we expose dict[str, list[str]] here.
+# Registry holds dict[Tool, list[str]]; we expose dict[str, list[str]] here.
 TOOL_PARAMS: dict[str, list[str]] = {t.value: list(p) for t, p in _TOOL_PARAMS_ENUM.items()}

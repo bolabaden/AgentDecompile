@@ -7,7 +7,7 @@ import pytest
 from agentdecompile_cli.cli import _build_svr_admin_payload, _get_error_result_message
 from agentdecompile_cli.registry import (
     TOOLS,
-    ToolName,
+    Tool,
     build_tool_payload,
     get_tool_params,
     to_camel_case_key,
@@ -110,7 +110,7 @@ class TestToolsSchema:
     def test_tool_params_has_get_data_params(self):
         assert "programPath" in get_tool_params("get-data")
         assert "addressOrSymbol" in get_tool_params("get-data")
-        tool_params_str = {t.value: get_tool_params(t) for t in ToolName}
+        tool_params_str = {t.value: get_tool_params(t) for t in Tool}
         assert isinstance(tool_params_str, dict)
         assert_mapping_invariants(tool_params_str)
 

@@ -17,7 +17,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class MemoryToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=ToolName.INSPECT_MEMORY.value,
+                name=Tool.INSPECT_MEMORY.value,
                 description="Look at how the binary's memory is divided up and what data it contains. Use this to find segments like '.text' (code) or '.data' (global variables), or to read chunks of raw bytes to inspect what's inside.",
                 inputSchema={
                     "type": "object",
@@ -62,7 +62,7 @@ class MemoryToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name=ToolName.READ_BYTES.value,
+                name=Tool.READ_BYTES.value,
                 description="Easier shortcut for 'inspect-memory mode=read'. Directly reads raw binary bytes starting from a memory address.",
                 inputSchema={
                     "type": "object",

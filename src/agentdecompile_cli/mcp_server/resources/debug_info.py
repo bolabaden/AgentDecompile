@@ -33,7 +33,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     get_current_mcp_session_id,
     get_current_request_project_path_override,
 )
-from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, ToolName
+from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, Tool
 
 from .programs import ProgramListResource
 from .static_analysis import StaticAnalysisResultsResource
@@ -75,7 +75,7 @@ _VERSION_CONTROL_TOOLS_DOC = {
             "when": "To see if a program is checked out before editing or to confirm state after checkout/checkin.",
         },
         {
-            "name": "manage-files",
+            "name": Tool.MANAGE_FILES.value,
             "description": "Unified file operations; use mode=checkout or mode=uncheckout as alternatives to checkout-program / checkin-program.",
             "parameters": ["mode", "programPath", "path", "exclusive", "keep", "force"],
             "modesRelevantToVersionControl": ["checkout", "uncheckout", "unhijack"],
@@ -148,11 +148,11 @@ class DebugInfoResource(ResourceProvider):
 
         try:
             list_project_files = await self._safe_tool_call(
-                ToolName.LIST_PROJECT_FILES.value,
+                Tool.LIST_PROJECT_FILES.value,
                 {"folder": "/", "maxResults": 250, "format": "json"},
             )
             current_program = await self._safe_tool_call(
-                ToolName.GET_CURRENT_PROGRAM.value,
+                Tool.GET_CURRENT_PROGRAM.value,
                 {"format": "json"},
             )
             legacy_programs = await self._safe_load_json_resource(self._programs_resource, _LEGACY_PROGRAMS_URI)
@@ -277,7 +277,7 @@ class DebugInfoResource(ResourceProvider):
             source,
             self._sanitize_sensitive(open_args),
         )
-        result = await self._safe_tool_call(ToolName.OPEN_PROJECT.value, open_args)
+        result = await self._safe_tool_call(Tool.OPEN_PROJECT.value, open_args)
         result["requestedResourceUri"] = requested_uri
         result["argumentSource"] = source
         return result
@@ -458,7 +458,7 @@ class DebugInfoResource(ResourceProvider):
             "where": {
                 "provider": context.get("provider") or parsed.get("provider"),
                 "handler": context.get("handler") or parsed.get("handler"),
-                "tool": context.get("canonicalToolName") or context.get("tool") or parsed.get("tool"),
+                "tool": context.get("canonicalTool") or context.get("tool") or parsed.get("tool"),
                 "connectionStage": context.get("connectionStage") or parsed.get("connectionStage"),
                 "mode": context.get("mode") or parsed.get("mode"),
                 "requestedPath": context.get("requestedPath") or parsed.get("requestedPath"),
@@ -545,7 +545,7 @@ class DebugInfoResource(ResourceProvider):
 
         if program_path and is_shared:
             probe = await self._safe_tool_call(
-                ToolName.CHECKOUT_STATUS.value,
+                Tool.CHECKOUT_STATUS.value,
                 {"programPath": program_path, "format": "json"},
             )
             result["checkoutStatusProbe"] = {
