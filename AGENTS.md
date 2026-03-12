@@ -27,6 +27,13 @@ unset AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY
 
 To run in **proxy mode** (forward to a remote MCP backend), use **agentdecompile-proxy** and set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` (or pass `--backend-url`).
 
+**Auto match-function propagation** (optional):
+
+- **`AGENTDECOMPILE_AUTO_MATCH_PROPAGATE`**: When set to `1` or `true`, after function-modifying tools (`rename-function`, `manage-function` with rename/set_prototype/set_return_type/set_calling_convention, `manage-comments` with set/post/eol/etc., `manage-function-tags` with add/remove), the server automatically runs match-function for the modified function to configured target binaries, propagating names, tags, all comment types, prototype, and bookmarks, and checks in target programs (minimizing lock time when it checked them out). For **local .gpr projects**, propagation runs in a **child process** (ProcessPoolExecutor, spawn) so the main MCP process is not blocked; for shared-server or other sessions it runs in-process.
+- **`AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS`**: Optional comma-separated list of target program paths for auto propagation. If unset, other open programs in the session are used as targets.
+
+**Checkin all**: Call **checkin-program** with no `programPath` (or omit the parameter) to check in every open program in the session that is checked out and can be checked in, so changes are not left locked.
+
 ### Running the MCP server locally
 
 ```bash

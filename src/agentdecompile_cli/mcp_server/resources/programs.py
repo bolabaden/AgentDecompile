@@ -1,4 +1,9 @@
-"""Program List Resource Provider - Python MCP resource implementation."""
+"""Program List Resource Provider - ghidra://programs.
+
+Reads the current session's project binaries (from SessionContext) and returns
+a JSON list of program paths/names. Used by DebugInfoResource and by clients
+that need to see open programs without calling list-project-files or get-current-program.
+"""
 
 from __future__ import annotations
 

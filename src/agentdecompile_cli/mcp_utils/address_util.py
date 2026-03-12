@@ -1,4 +1,10 @@
-"""Address utility helpers for formatting, parsing, and symbol resolution."""
+"""Address utility helpers for Ghidra addresses and symbols.
+
+Used by tool providers to: format addresses for JSON (0x-prefix hex), parse user-supplied
+address strings (with or without 0x), validate addresses, and resolve symbols/labels
+to addresses. All address formatting should go through AddressUtil.format_address for
+consistency across tools.
+"""
 
 from __future__ import annotations
 

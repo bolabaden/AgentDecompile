@@ -1,6 +1,10 @@
 """Universal search provider - search-everything.
 
-Searches across string-bearing analysis data.
+Single tool that searches across many scopes (strings, symbols, functions,
+comments, bookmarks, constants, data types, structures, imports/exports, etc.)
+in one or more programs. Query can be literal or regex; scope and programPath
+narrow the search. Used for discovery when the user has a keyword or pattern
+but does not know which tool to call.
 """
 
 from __future__ import annotations

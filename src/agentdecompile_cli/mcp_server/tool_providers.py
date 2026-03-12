@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import multiprocessing
 import os
 import re
 import time
 
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -43,6 +45,7 @@ from agentdecompile_cli.registry import (
     DISABLED_GUI_ONLY_TOOLS,
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
+    ToolName,
     is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
@@ -65,6 +68,31 @@ DEFAULT_MAX_INSTRUCTIONS = 2000000
 DEFAULT_SAMPLES_PER_CONSTANT = 5
 DEFAULT_MAX_ENTRIES = 200
 DEFAULT_TIMEOUT_SECONDS = 60
+
+# Auto match-function propagation (env-driven). When the user renames/sets prototype/tags/comments
+# on a function, we can optionally run match-function to other binaries; args must not be re-entered.
+AUTO_MATCH_INVOCATION_KEY = "automatchinvocation"
+_ENV_AUTO_MATCH_PROPAGATE = "AGENTDECOMPILE_AUTO_MATCH_PROPAGATE"
+_ENV_AUTO_MATCH_TARGET_PATHS = "AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS"
+# Map normalized tool name → set of modes that trigger auto-match (e.g. managefunction + rename)
+_AUTO_MATCH_TRIGGER_MODES: dict[str, frozenset[str]] = {
+    "managefunction": frozenset({"rename", "setprototype", "setreturntype", "callingconvention", "setcallingconvention"}),
+    "managecomments": frozenset({"set", "post", "eol", "pre", "plate", "repeatable"}),
+    "managefunctiontags": frozenset({"add", "remove", "set"}),
+}
+
+# ProcessPoolExecutor for auto match-function (child process, does not block main). Spawn context so child gets fresh interpreter (no JVM fork).
+_AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
+
+
+def _get_auto_match_executor() -> ProcessPoolExecutor:
+    """Create or return the ProcessPoolExecutor for auto-match (spawn, max_workers=2)."""
+    global _AUTO_MATCH_EXECUTOR
+    if _AUTO_MATCH_EXECUTOR is None:
+        ctx = multiprocessing.get_context("spawn")
+        _AUTO_MATCH_EXECUTOR = ProcessPoolExecutor(max_workers=2, mp_context=ctx)
+    return _AUTO_MATCH_EXECUTOR
+
 
 # ---------------------------------------------------------------------------
 # Canonical normalize – ``re.sub(r'[^a-z]', '', s.lower())``.
@@ -350,6 +378,7 @@ def _merge_context(
 
 
 def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] | None:
+    """Merge base and extra recommendation steps, deduplicated and trimmed; return None if empty."""
     seen: set[str] = set()
     merged: list[str] = []
     for step in base or []:
@@ -368,6 +397,7 @@ def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] |
 
 
 def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] | None]:
+    """Map common error phrases to (context dict, recommended next steps). Used by create_error_response."""
     lowered = msg.lower()
 
     if "unknown tool" in lowered:
@@ -643,12 +673,14 @@ class ToolProvider:
 
         handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] = getattr(self, handler_method_name)
 
-        # Normalize ALL argument keys – the ONE place normalization happens.
+        # Normalize ALL argument keys here – the single place normalization happens so handlers
+        # always see lowercase a-z keys (e.g. programpath, function, mode).
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
         auto_prereq_invocation: bool = self._get_bool(norm_args, "autoprereqinvocation", default=False)
 
-        # Tool-specific parameter synonym bridging from TOOLS_LIST.md.
-        # Note: alias_map returns dict[str, set[str]] from TOOL_PARAM_ALIASES
+        # Apply tool-specific parameter aliases: if the client sent a synonym (e.g. "action"
+        # instead of "mode"), copy the value to the canonical key so _get_str(args, "mode", "action")
+        # finds it. alias_map comes from registry TOOL_PARAM_ALIASES per tool.
         alias_map: dict[str, set[str]] | None = TOOL_PARAM_ALIASES.get(norm_name)
         if alias_map:
             for key, value in list(norm_args.items()):
@@ -693,6 +725,7 @@ class ToolProvider:
 
     @staticmethod
     def _extract_path_hint_from_context(context: dict[str, Any] | None, args: dict[str, Any] | None) -> str | None:
+        """Extract a directory path from error context or args (e.g. for suggesting list-project-files with a path)."""
         context_path = ""
         if isinstance(context, dict):
             value = context.get("path")
@@ -723,6 +756,10 @@ class ToolProvider:
         context: dict[str, Any] | None,
         args: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        """Turn 'Suggested Next Steps' text into a list of {tool, arguments, trigger} to run for error context.
+
+        Parses phrases like 'Call `list-project-files`' or 'Call `get-current-program`' and optional path hints.
+        """
         plan: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         path_hint = self._extract_path_hint_from_context(context, args)
@@ -766,6 +803,7 @@ class ToolProvider:
         return plan
 
     async def _run_prerequisite_call(self, tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
+        """Run a single prerequisite tool (e.g. list_tools or list-project-files) and return a result dict for error context."""
         if tool_name == "list_tools":
             tools = self._manager.list_tools() if self._manager is not None else []
             return {
@@ -820,7 +858,8 @@ class ToolProvider:
         results: list[dict[str, Any]] = []
         for entry in plan:
             tool_name = str(entry.get("tool", "")).strip()
-            tool_args = entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {}
+            raw_args = entry.get("arguments")
+            tool_args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
             trigger = str(entry.get("trigger", "")).strip()
             result = await self._run_prerequisite_call(tool_name, tool_args)
             result["trigger"] = trigger
@@ -1036,6 +1075,11 @@ class ToolProvider:
     # ------------------------------------------------------------------
 
     def _require_program(self) -> None:
+        """Ensure a program is loaded for this request; raise ActionableError with next_steps if not.
+
+        program_info is set by the manager from SessionContext (active or programPath) before
+        dispatching to the handler; if still None here, the client must open a program first.
+        """
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
             raise ActionableError(
                 "No program loaded",
@@ -1377,8 +1421,8 @@ class ToolProviderManager:
             DataToolProvider,
             DataTypeToolProvider,
             DecompilerToolProvider,
-            GetFunctionAioToolProvider,
             FunctionToolProvider,
+            GetFunctionAioToolProvider,
             GetFunctionToolProvider,
             ImportExportToolProvider,
             MemoryToolProvider,
@@ -1459,7 +1503,8 @@ class ToolProviderManager:
 
         open_args: dict[str, Any] = {
             "serverhost": host,
-            "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip() or "13100",
+            "serverport": os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))).strip()
+            or "13100",
             "serverusername": os.getenv(
                 "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
                 os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", "")),
@@ -1605,6 +1650,7 @@ class ToolProviderManager:
         session_id: str,
         requested_program_key: str,
     ) -> ProgramInfo | None:
+        """Resolve and activate a program by path: cache → shared checkout → bootstrap → local path."""
         existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if existing is not None:
             return existing
@@ -1646,21 +1692,25 @@ class ToolProviderManager:
         existing = SESSION_CONTEXTS.get_program_info(session_id, program_path)
         if existing is not None:
             return existing
+        # Remember current active program so we can restore it after opening the requested one
         saved_key = SESSION_CONTEXTS.get_active_program_key(session_id)
         saved_info = SESSION_CONTEXTS.get_active_program_info(session_id)
         activated = await self._activate_requested_program(session_id, program_path)
         if activated is None:
             return None
         if saved_key and saved_info:
+            # Restore previous active program so this call didn't change the session's "current" program
             SESSION_CONTEXTS.set_active_program_info(session_id, saved_key, saved_info)
             self.set_program_info(saved_info)
         return activated
 
     def list_tools(self) -> list[types.Tool]:
+        """Build the MCP tools/list response: merge all providers' tools, then return only ADVERTISED_TOOLS with normalized params and format option."""
         provider_tools: list[types.Tool] = []
         for p in self.providers:
             provider_tools.extend(p.list_tools())
 
+        # One tool per normalized name (first provider wins if duplicate)
         by_norm: dict[str, types.Tool] = {}
         for tool in provider_tools:
             by_norm.setdefault(n(tool.name), tool)
@@ -1710,6 +1760,7 @@ class ToolProviderManager:
                 if is_required:
                     advertised_required.append(to_snake_case(param))
 
+            # Build schema from canonical params + provider schema; add format (markdown/json) for response formatting
             advertised_tools.append(
                 types.Tool(
                     name=to_snake_case(canonical_name),
@@ -1730,11 +1781,22 @@ class ToolProviderManager:
         arguments: dict[str, Any],
         program_info: ProgramInfo | None = None,
     ) -> list[types.TextContent]:
+        """Resolve tool name and program, find provider, set provider's program_info, then delegate to provider.call_tool.
+
+        Flow:
+          (1) Resolve tool name (alias → canonical).
+          (2) Reject GUI-only tools in headless.
+          (3) Record in session tool history.
+          (4) Find provider (direct or via TOOL_ALIASES).
+          (5) Resolve program: from args (programPath/binary/path), else session active, else manager default.
+          (6) If a program was requested but not open, try _activate_requested_program (open-project/import).
+          (7) Set provider's program_info and call provider.call_tool; optionally apply markdown formatting.
+        """
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
         resolved_name: str = resolve_tool_name(name) or name
-        tool_enum = resolve_tool_name_enum(name)
+        tool_enum: ToolName | None = resolve_tool_name_enum(name)
         if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
                 ActionableError(
@@ -1787,6 +1849,7 @@ class ToolProviderManager:
 
         norm_args = {n(k): v for k, v in (arguments or {}).items()}
 
+        # Resolve which program this tool runs against: explicit arg wins, then session active, then manager default
         requested_program_key: str | None = None
         for key in ("programpath", "binary", "binaryname", "path"):
             value = norm_args.get(key)
@@ -1799,6 +1862,7 @@ class ToolProviderManager:
 
         requested_program_info = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 
+        # If client asked for a program by path but we don't have it open, try to open it (open-project/import)
         if requested_program_key and requested_program_info is None:
             requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
 
@@ -1857,6 +1921,64 @@ class ToolProviderManager:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
 
         result = await provider.call_tool(name, arguments)
+
+        # Auto match-function propagation: after function-modifying tools, optionally run match-function
+        # internally (env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE). Recursion guard: skip when this call
+        # is the internal match-function invocation.
+        if not norm_args.get(AUTO_MATCH_INVOCATION_KEY, False):
+            _run_auto_match = False
+            env_propagate = os.environ.get(_ENV_AUTO_MATCH_PROPAGATE, "").strip().lower() in ("1", "true", "yes")
+            if env_propagate and norm_name in _AUTO_MATCH_TRIGGER_MODES:
+                allowed_modes = _AUTO_MATCH_TRIGGER_MODES[norm_name]
+                mode_val = norm_args.get("mode") or norm_args.get("action") or ""
+                mode_str = (str(mode_val).strip().lower() if mode_val is not None else "") or ""
+                mode_norm = n(mode_str) if mode_str else ""
+                if mode_norm in allowed_modes:
+                    _run_auto_match = True
+            if _run_auto_match and result and isinstance(result[0], types.TextContent):
+                try:
+                    parsed = _json.loads(result[0].text)
+                    tool_success = parsed.get("success", True) is not False and "error" not in (parsed.get("error") or "")
+                except Exception:
+                    tool_success = True
+                if tool_success and effective_program_info is not None:
+                    current_path = getattr(effective_program_info, "file_path", None) or getattr(effective_program_info, "path", None)
+                    if current_path is not None:
+                        current_path_str = str(current_path).strip()
+                    else:
+                        current_path_str = SESSION_CONTEXTS.get_active_program_key(session_id) or ""
+                    func_id = None
+                    for key in ("function", "functionidentifier", "addressorsymbol", "address"):
+                        v = norm_args.get(n(key))
+                        if v is not None and str(v).strip():
+                            func_id = str(v).strip()
+                            break
+                    target_paths: list[str] = []
+                    env_paths = os.environ.get(_ENV_AUTO_MATCH_TARGET_PATHS, "").strip()
+                    if env_paths:
+                        target_paths = [p.strip() for p in env_paths.split(",") if p.strip()]
+                    else:
+                        session_ctx = SESSION_CONTEXTS.get_or_create(session_id)
+                        for path_key in session_ctx.open_programs or {}:
+                            if path_key != current_path_str:
+                                target_paths.append(path_key)
+                    if func_id and target_paths:
+                        match_args: dict[str, Any] = {
+                            "programPath": current_path_str,
+                            "functionIdentifier": func_id,
+                            "targetProgramPaths": target_paths,
+                            "propagateNames": True,
+                            "propagateTags": True,
+                            "propagateComments": True,
+                            "propagatePrototype": True,
+                            "propagateBookmarks": True,
+                            "format": "json",
+                            "__auto_match_invocation": True,
+                        }
+                        try:
+                            await self.call_tool("match-function", match_args, program_info=effective_program_info)
+                        except Exception as auto_match_exc:
+                            logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
 
         # Apply markdown formatting unless the caller explicitly requests JSON or
         # this is an internal auto-prerequisite invocation.

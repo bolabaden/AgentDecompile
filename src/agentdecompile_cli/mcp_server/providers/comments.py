@@ -1,6 +1,9 @@
 """Comment Tool Provider - manage-comments.
 
-Actions: set, get, remove, search, search_decomp.
+Single tool, mode = set|get|remove|search|search_decomp. Ghidra comment types
+(EOL, pre, post, plate, repeatable) are mapped to the _COMMENT_TYPES dict.
+set/write at an address; get at address; search globally or search_decomp
+(limit to decompiled function bodies). Uses _collectors.collect_comments for listing.
 """
 
 from __future__ import annotations

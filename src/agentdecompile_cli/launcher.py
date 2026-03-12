@@ -70,6 +70,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helper utilities for common launcher patterns
 # ---------------------------------------------------------------------------
+# _assert_type: consistent type checks for Program/DomainFile/etc. with clear errors.
+# _ensure_directory: mkdir(parents=True, exist_ok=True) and return Path for chaining.
 
 
 def _assert_type(obj: Any, expected_type: type, name: str) -> None:

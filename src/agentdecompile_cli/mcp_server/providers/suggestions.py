@@ -1,6 +1,8 @@
-"""Suggestion Tool Provider - get-suggestions.
+"""Suggestion Tool Provider - get-suggestions (tool name 'suggest').
 
-Provides analysis suggestions based on current function context.
+  - suggestionType: comment_type, comment_text, function_name, function_tags, variable_name, data_type.
+  - addressOrSymbol / functionIdentifier define the context; variableName used for variable_name suggestions.
+  - maxContext, includeCallers, includeCallees control how much surrounding context is fed to the suggestion engine. Suggestions are advisory only (no automatic edits).
 """
 
 from __future__ import annotations

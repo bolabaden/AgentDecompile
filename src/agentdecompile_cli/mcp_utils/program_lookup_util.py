@@ -1,4 +1,10 @@
-"""Program lookup and validation utilities with user-friendly errors."""
+"""Program lookup and validation utilities with user-friendly errors.
+
+Resolves programPath (or program name) to a Ghidra Program from a list of open
+programs. Matching order: exact path (domain pathname) > exact name > partial name.
+Used by ToolProviders when they need to open a program by path; the list of
+available programs comes from SessionContext or ProjectManager.
+"""
 
 from __future__ import annotations
 

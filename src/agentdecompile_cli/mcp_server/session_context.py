@@ -54,12 +54,13 @@ def _get_grace_period() -> int:
 
 
 def get_current_mcp_session_id() -> str:
+    """Return the current MCP session ID for this request (used by tools to find SessionContext)."""
     session_id = CURRENT_MCP_SESSION_ID.get()
     if session_id and session_id != "default":
         return session_id
 
     # Fallback: derive from MCP SDK request context when transport wrappers do
-    # not propagate CURRENT_MCP_SESSION_ID.
+    # not propagate CURRENT_MCP_SESSION_ID (e.g. some streamable-HTTP paths).
     try:
         from mcp.server.lowlevel.server import request_ctx
 
@@ -79,6 +80,11 @@ def get_current_mcp_session_id() -> str:
 
 @dataclass
 class SessionContext:
+    """Per-MCP-session state: open programs, active program, project handle, tool history.
+
+    Keys in open_programs are program paths (as used by tools). active_program_key
+    is the path of the "current" program when the client does not pass programPath.
+    """
     session_id: str
     project_handle: Any | None = None
     open_programs: dict[str, ProgramInfo] = field(default_factory=dict)

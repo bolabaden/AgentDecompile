@@ -1,4 +1,9 @@
-"""Configuration-aware debug logging helpers."""
+"""Configuration-aware debug logging helpers.
+
+DebugLogger is a static helper: set_debug_enabled(True/False) then call debug(),
+timing(), etc. Messages are only emitted when debug is enabled; _source_name
+produces a stable label (class name or type name) for log prefixes.
+"""
 
 from __future__ import annotations
 

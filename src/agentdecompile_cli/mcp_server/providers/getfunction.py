@@ -1,6 +1,20 @@
 """GetFunction Tool Provider - manage-function, manage-function-tags, match-function.
 
-Covers function modification, tagging, and matching/comparison.
+This provider implements three tools:
+
+  - manage-function: Rename, set prototype/return type/calling convention, create, or delete
+    a function. Used when the user or agent has identified what a function does and wants
+    to persist that knowledge (name, signature) into the program.
+  - manage-function-tags: Attach string tags to functions (e.g. 'crypto', 'network') for
+    organization and search. Modes: list, add, remove, search.
+  - match-function: Cross-program or single-program function matching. Primary use: given
+    a source function and target program paths, find the equivalent function in each target
+    (by signature/name similarity) and optionally propagate name, tags, comments, prototype,
+    bookmarks. Single-program modes: similar, callers, callees, signature (no targets).
+
+Match-function builds an in-memory index (_FunctionMatchIndex) keyed by signature and
+call graph so that candidates can be ranked by similarity; the index is cached per program
+to avoid recomputing on repeated calls.
 """
 
 from __future__ import annotations
@@ -27,8 +41,13 @@ from agentdecompile_cli.registry import ToolName
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Match-function index: per-program feature set for similarity and call-graph lookup
+# ---------------------------------------------------------------------------
+
 @dataclass(slots=True)  # pyright: ignore[reportCallIssue]
 class _FunctionMatchFeature:
+    """One function's extracted features for matching (signature, callers, callees)."""
     function: Any
     name: str
     address: str
@@ -41,6 +60,12 @@ class _FunctionMatchFeature:
 
 @dataclass(slots=True)  # pyright: ignore[reportCallIssue]
 class _FunctionMatchIndex:
+    """In-memory index of all functions in a program for match-function.
+
+    Indexed by: identity (name/addr), (param_count, return_type), caller names,
+    callee names. Built once per program and cached in _MATCH_INDEX_CACHE so
+    repeated match calls (e.g. same program, different source function) are fast.
+    """
     function_count: int
     features: list[_FunctionMatchFeature]
     by_identity: dict[str, _FunctionMatchFeature]
@@ -108,7 +133,7 @@ class GetFunctionToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=ToolName.MATCH_FUNCTION.value,
-                description="Match functions across different builds or versions of a binary (cross-program matching). Primary use: give a source function and one or more target program paths; the tool finds the equivalent function in each target by signature (and optional name) and can propagate names, tags, and comments. Use without targetProgramPaths for single-program modes: similar, callers, callees, signature.",
+                description="Match functions across different builds or versions of a binary (cross-program matching). Primary use: give a source function and one or more target program paths; the tool finds the equivalent function in each target by signature (and optional name) and can propagate names, tags, all comment types (plate/pre/post/eol/repeatable), prototype (signature), and bookmarks. Use without targetProgramPaths for single-program modes: similar, callers, callees, signature.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -135,7 +160,17 @@ class GetFunctionToolProvider(ToolProvider):
                         "propagateComments": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, copy source function's plate/pre comment to the matched target function.",
+                            "description": "If true, copy all comment types (plate, pre, post, eol, repeatable) at the source function entry to the matched target.",
+                        },
+                        "propagatePrototype": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, set the matched target function's signature (return type and parameters) to the source function's prototype.",
+                        },
+                        "propagateBookmarks": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, copy bookmarks at the source function entry to the matched target function entry.",
                         },
                         "mode": {
                             "type": "string",
@@ -396,6 +431,13 @@ class GetFunctionToolProvider(ToolProvider):
         program: Any,
         fm: Any,
     ) -> tuple[_FunctionMatchIndex, bool]:
+        """Build or return cached match index for this program.
+
+        The index maps: identity (addr) → feature; (param_count, return_type) → list of features;
+        caller name → set of addrs; callee name → set of addrs. Used to rank candidates by
+        signature and call-graph similarity. Cache is keyed by program id; we invalidate when
+        function count changes (e.g. after analysis or import).
+        """
         cache_key: int = id(program)
         function_count: int = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
         cached: _FunctionMatchIndex | None = self._MATCH_INDEX_CACHE.get(cache_key)
@@ -414,6 +456,7 @@ class GetFunctionToolProvider(ToolProvider):
             by_callee: dict[str, set[str]] = defaultdict(set)
 
             for func in fm.getFunctions(True):
+                # Call graph sets used for similarity: more shared callers/callees => higher match score
                 callers = frozenset(c.getName() for c in func.getCallingFunctions(None))
                 callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
                 addr_str = str(func.getEntryPoint())
@@ -468,8 +511,10 @@ class GetFunctionToolProvider(ToolProvider):
         propagate_names: bool,
         propagate_tags: bool,
         propagate_comments: bool,
+        propagate_prototype: bool = False,
+        propagate_bookmarks: bool = False,
     ) -> list[types.TextContent]:
-        """Match source function to equivalent functions in target programs; optionally propagate name/tags/comments."""
+        """Match source function to equivalent functions in target programs; optionally propagate name, tags, comments, prototype, bookmarks."""
         session_id = get_current_mcp_session_id()
         manager = getattr(self, "_manager", None)
         if manager is None:
@@ -502,6 +547,21 @@ class GetFunctionToolProvider(ToolProvider):
                 continue
 
             target_program = target_info.program
+            domain_file = target_program.getDomainFile()
+            is_versioned = domain_file.isVersioned() if domain_file else False
+            we_did_checkout = False
+            did_propagate = False
+            if is_versioned and domain_file is not None and not domain_file.isCheckedOut():
+                try:
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    domain_file.checkout(False, TaskMonitor.DUMMY)
+                    we_did_checkout = True
+                except Exception as e:
+                    errors.append(f"{target_path}: checkout failed: {e}")
+                    results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": f"Checkout failed: {e}"})
+                    continue
+
             target_fm = self._get_function_manager(target_program)
             target_index, _ = self._get_match_index(target_program, target_fm)
 
@@ -523,6 +583,21 @@ class GetFunctionToolProvider(ToolProvider):
                         "message": "No match meeting minSimilarity",
                     }
                 )
+                if is_versioned and domain_file is not None and we_did_checkout:
+                    try:
+                        from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                        class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
+                            def getComment(self) -> str:  # noqa: N802
+                                return "Auto match-function propagation"
+                            def keepCheckedOut(self) -> bool:  # noqa: N802
+                                return False
+                            def createKeepFile(self) -> bool:  # noqa: N802
+                                return False
+                        domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
+                    except Exception as e:
+                        logger.warning("Checkin after no-match (target %s) failed: %s", target_path, e)
                 continue
 
             target_func = best_feature.function
@@ -546,6 +621,19 @@ class GetFunctionToolProvider(ToolProvider):
 
                 self._run_program_transaction(target_program, "match-function-rename", _rename)
                 entry["propagated"].append("name")
+                did_propagate = True
+
+            if propagate_prototype:
+                target_sig = str(target_func.getSignature())
+                if source_sig != target_sig:
+                    try:
+                        def _set_proto() -> None:
+                            target_func.setSignature(source_sig)
+                        self._run_program_transaction(target_program, "match-function-prototype", _set_proto)
+                        entry["propagated"].append("prototype")
+                        did_propagate = True
+                    except Exception as e:
+                        logger.debug("Propagate prototype skipped for %s: %s", target_path, e)
 
             if propagate_tags:
                 source_tags = [t.getName() for t in source_func.getTags()]
@@ -559,6 +647,7 @@ class GetFunctionToolProvider(ToolProvider):
 
                     self._run_program_transaction(target_program, "match-function-tags", _add_tags)
                     entry["propagated"].extend(to_add)
+                    did_propagate = True
 
             if propagate_comments:
                 try:
@@ -568,23 +657,73 @@ class GetFunctionToolProvider(ToolProvider):
                     target_listing = target_program.getListing()
                     source_entry = source_func.getEntryPoint()
                     target_entry = target_func.getEntryPoint()
-                    for ctype in (CodeUnit.PLATE_COMMENT, CodeUnit.PRE_COMMENT):
+                    comment_types = (
+                        CodeUnit.PLATE_COMMENT,
+                        CodeUnit.PRE_COMMENT,
+                        CodeUnit.POST_COMMENT,
+                        CodeUnit.EOL_COMMENT,
+                        CodeUnit.REPEATABLE_COMMENT,
+                    )
+                    for ctype in comment_types:
                         try:
                             comment = source_listing.getComment(ctype, source_entry)
                             if comment and str(comment).strip():
+                                _comment = comment
 
                                 def _set_comment() -> None:
-                                    target_listing.setComment(target_entry, ctype, comment)
+                                    target_listing.setComment(target_entry, ctype, _comment)
 
                                 self._run_program_transaction(target_program, "match-function-comment", _set_comment)
                                 entry["propagated"].append("comment")
-                                break
+                                did_propagate = True
                         except Exception:
                             continue
                 except Exception as e:
                     logger.debug("Propagate comments skipped: %s", e)
 
+            if propagate_bookmarks:
+                try:
+                    source_bm_mgr = source_program.getBookmarkManager()
+                    source_entry = source_func.getEntryPoint()
+                    target_entry = target_func.getEntryPoint()
+                    source_bms = list(source_bm_mgr.getBookmarks(source_entry)) if hasattr(source_bm_mgr, "getBookmarks") else []
+                    if not source_bms and hasattr(source_bm_mgr, "getBookmarksIterator"):
+                        for bm in source_bm_mgr.getBookmarksIterator():
+                            if bm.getAddress().equals(source_entry):
+                                source_bms.append(bm)
+                    bm_data = [(bm.getTypeString(), bm.getCategory(), bm.getComment() or "") for bm in source_bms]
+                    if bm_data:
+
+                        def _set_bookmarks() -> None:
+                            tgt_mgr = target_program.getBookmarkManager()
+                            for bm_type, bm_cat, bm_comment in bm_data:
+                                tgt_mgr.setBookmark(target_entry, bm_type, bm_cat, bm_comment)
+
+                        self._run_program_transaction(target_program, "match-function-bookmarks", _set_bookmarks)
+                        entry["propagated"].append("bookmarks")
+                        did_propagate = True
+                except Exception as e:
+                    logger.debug("Propagate bookmarks skipped: %s", e)
+
             results_per_target.append(entry)
+
+            if is_versioned and domain_file is not None and (we_did_checkout or did_propagate):
+                try:
+                    from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    keep_out = not we_did_checkout and did_propagate
+
+                    class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
+                        def getComment(self) -> str:  # noqa: N802
+                            return "Auto match-function propagation"
+                        def keepCheckedOut(self) -> bool:  # noqa: N802
+                            return keep_out
+                        def createKeepFile(self) -> bool:  # noqa: N802
+                            return False
+                    domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
+                except Exception as e:
+                    logger.warning("Checkin after propagation (target %s) failed: %s", target_path, e)
 
         return create_success_response(
             {
@@ -600,6 +739,7 @@ class GetFunctionToolProvider(ToolProvider):
         )
 
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Entry for match-function: cross-program (targetProgramPaths set) or single-program (similar/callers/callees/signature)."""
         self._require_program()
         raw_targets = args.get(n("targetprogrampaths"))
         target_paths: list[str] = []
@@ -608,6 +748,7 @@ class GetFunctionToolProvider(ToolProvider):
                 target_paths = [str(x).strip() for x in raw_targets if x and str(x).strip()]
             elif str(raw_targets).strip():
                 target_paths = [str(raw_targets).strip()]
+        # Cross-program: find equivalent function in each target and optionally propagate name/tags/comments
         if target_paths:
             func_id = self._require_address_or_symbol(args)
             func = self._resolve_function(func_id)
@@ -618,6 +759,8 @@ class GetFunctionToolProvider(ToolProvider):
             propagate_names = self._get_bool(args, "propagatenames", "propagatename", default=False)
             propagate_tags = self._get_bool(args, "propagatetags", "propagatetag", default=False)
             propagate_comments = self._get_bool(args, "propagatecomments", "propagatecomment", default=False)
+            propagate_prototype = self._get_bool(args, "propagateprototype", "propagatesignature", default=False)
+            propagate_bookmarks = self._get_bool(args, "propagatebookmarks", default=False)
             return await self._handle_match_cross_program(
                 func,
                 self.program_info.program,
@@ -626,7 +769,10 @@ class GetFunctionToolProvider(ToolProvider):
                 propagate_names,
                 propagate_tags,
                 propagate_comments,
+                propagate_prototype,
+                propagate_bookmarks,
             )
+        # Single-program: similar (rank by signature + call graph), callers, callees, or signature-only
         func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")
         max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)

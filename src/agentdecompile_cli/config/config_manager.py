@@ -1,6 +1,8 @@
 """Configuration manager for AgentDecompile Python implementation.
 
-Provides configuration management for headless operation, .
+Loads and persists server and project options (port, host, timeouts, analysis
+settings) from a config file or defaults. Used by the launcher and server to
+configure the MCP HTTP endpoint and Ghidra analysis behavior.
 """
 
 from __future__ import annotations

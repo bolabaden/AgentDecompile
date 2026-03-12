@@ -1,4 +1,10 @@
-"""Memory utility helpers for safe reads and block inspection."""
+"""Memory utility helpers for safe reads and block inspection.
+
+Used by inspect-memory/read-bytes and other providers to: read bytes at an
+address with bounds checking (contains), convert Java byte arrays to Python
+bytes, and format hex dumps. MemoryUtil.read_memory_bytes is the safe entry
+point when the provider cannot assume getBytes/getByte always succeeds.
+"""
 
 from __future__ import annotations
 
@@ -50,13 +56,12 @@ class MemoryUtil:
             if not memory.contains(address):
                 return None
 
-            # Create a byte array to hold the data
+            # Ghidra getBytes expects a Java byte[]; create one via jpype, then convert result to Python bytes
             import jpype
 
             JByte = jpype.JClass("java.lang.Byte")
             buf = JByte[length]  # type: ignore
 
-            # Read the bytes
             n = memory.getBytes(address, buf)
             if n <= 0:
                 return b""

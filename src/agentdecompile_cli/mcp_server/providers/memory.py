@@ -1,6 +1,8 @@
-"""Memory Tool Provider - inspect-memory.
+"""Memory Tool Provider - inspect-memory, read-bytes.
 
-Modes: blocks, read, data_at, data_items, segments.
+  - inspect-memory: mode = blocks (memory map), read (raw bytes at address), data_at
+    (typed data at address), data_items (list of defined data), segments (alias for blocks).
+  - read-bytes: Convenience handler that delegates to inspect-memory with mode=read.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ class MemoryToolProvider(ToolProvider):
 
     @staticmethod
     def _set_forwarded_if_missing(forwarded: dict[str, Any], key: str, value: Any) -> None:
-        """Set ``key`` when absent and ``value`` is non-empty."""
+        """Set ``key`` in forwarded when it is absent and ``value`` is non-empty (for read-bytes→inspect-memory param mapping)."""
         if key in forwarded and forwarded.get(key) is not None:
             return
         if value is None:
@@ -76,6 +78,7 @@ class MemoryToolProvider(ToolProvider):
         ]
 
     async def _handle_read_bytes(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Normalize read-bytes params (binaryName→programPath, address→addressOrSymbol, size→length) and delegate to inspect-memory mode=read."""
         forwarded = dict(args)
         forwarded.setdefault("mode", "read")
 
@@ -87,6 +90,7 @@ class MemoryToolProvider(ToolProvider):
         return await self._handle(forwarded)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Dispatch to blocks/read/data_at/data_items handler; segments is an alias for blocks."""
         self._require_program()
         mode = self._get_str(args, "mode", default="blocks")
         assert self.program_info is not None, "program_info should be set after _require_program()"
@@ -109,6 +113,7 @@ class MemoryToolProvider(ToolProvider):
         )
 
     async def _handle_blocks(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+        """Return memory map: each block has name, start, end, size, r/w/x permissions, initialized flag."""
         blocks = []
         for blk in memory.getBlocks():
             blocks.append(
@@ -156,13 +161,14 @@ class MemoryToolProvider(ToolProvider):
         )
 
     async def _handle_data_at(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+        """Return the defined data at this address: type, length, value, label. Exact address first, then containing."""
         addr_str = self._require_address_or_symbol(args)
         addr = self._resolve_address(addr_str, program=program)
 
         listing = self._get_listing(program)
         data = listing.getDataAt(addr)
         if data is None:
-            # Try getDataContaining
+            # Address might be inside a larger structure; getDataContaining finds the parent data
             data = listing.getDataContaining(addr)
 
         if data is not None:
@@ -185,6 +191,7 @@ class MemoryToolProvider(ToolProvider):
         )
 
     async def _handle_data_items(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+        """List all memory locations that have a data type applied (getDefinedData), paginated."""
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         listing = self._get_listing(program)

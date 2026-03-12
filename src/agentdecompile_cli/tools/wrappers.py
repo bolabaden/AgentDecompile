@@ -1,4 +1,12 @@
-"""Comprehensive tool implementations for AgentDecompile."""
+"""Ghidra API wrapper used by MCP tool providers.
+
+GhidraTools wraps a ProgramInfo and exposes methods that tool providers call to
+perform Ghidra operations: find_function, get_all_functions, decompile_function,
+get_call_graph, list strings, search code, manage symbols, etc. All provider
+handlers that need to touch the program go through this class (or through
+program_info.program / program_info.decompiler directly for simple cases).
+Models (DecompiledFunction, SymbolInfo, etc.) are in agentdecompile_cli.models.
+"""
 
 from __future__ import annotations
 
@@ -76,10 +84,14 @@ def handle_exceptions(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class GhidraTools:
-    """Comprehensive tool handler for Ghidra MCP tools"""
+    """Wrapper around a single program's Ghidra APIs for use by tool providers.
+
+    Holds program, decompiler, and exposes find_function, decompile_function,
+    get_all_functions, list_strings, search_code, symbol/comment/bookmark helpers, etc.
+    """
 
     def __init__(self, program_info: ProgramInfo):
-        """Initialize with a Ghidra ProgramInfo object"""
+        """Initialize with the session's ProgramInfo (program + decompiler + metadata)."""
         self.program_info: ProgramInfo = program_info
         self.program: GhidraProgram = program_info.program
         self.decompiler: GhidraDecompInterface = program_info.decompiler

@@ -473,10 +473,15 @@ def _run_async_execution(launcher: AgentDecompileLauncher, project_manager: Proj
 
 
 def main():
-    """Main entry point for mcp-agentdecompile command."""
+    """Main entry point for mcp-agentdecompile command.
+
+    Flow: parse args → resolve backend URL → if URL given, connect mode (stdio bridge only);
+    else spawn PyGhidra + local server, then run stdio bridge to that server.
+    """
     parser = _setup_main_argument_parser()
     args = parser.parse_args()
 
+    # Resolve backend: --server-url wins; else --host/--port or env vars (connect mode)
     backend_url: str | None = resolve_backend_url(
         args.server_url,
         args.host,

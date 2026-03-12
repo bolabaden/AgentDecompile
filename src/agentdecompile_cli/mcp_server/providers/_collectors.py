@@ -1,3 +1,12 @@
+"""Shared data collectors used by multiple tool providers.
+
+These functions iterate over Ghidra APIs (FunctionManager, Listing, SymbolTable,
+etc.) and return lists or dicts of serializable data. Used by list-functions,
+manage-symbols, search-everything, manage-comments, and others to avoid duplicating
+iteration and mapping logic. iter_items() normalizes Java iterators and Python
+iterables to a single yield-based interface.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,8 +1,15 @@
-"""Compatibility module mirrored in launcher.py as the primary implementation.
-This file is kept for backward-compatibility.
-Prefer importing from agentdecompile_cli.launcher.
+"""Compatibility shim for Ghidra project context (ProgramInfo, PyGhidraContext).
 
-Original context: Ghidra project context (ProgramInfo, PyGhidraContext).
+This module is mirrored in launcher.py as the primary implementation. It is kept
+here so that existing imports like ``from agentdecompile_cli.context import PyGhidraContext``
+continue to work. New code should prefer ``from agentdecompile_cli.launcher import ...``.
+
+What lives here:
+  - ProgramInfo: Dataclass holding a loaded program, its FlatProgramAPI, decompiler,
+    metadata, and Chroma collections (code/strings) when available.
+  - PyGhidraContext: Manages a Ghidra project (create/open), program import/analysis,
+    symbol setup, GDT application, and Chroma semantic collections. Used by the
+    headless analysis workflow; the MCP server uses ProjectManager + launcher instead.
 """
 
 from __future__ import annotations

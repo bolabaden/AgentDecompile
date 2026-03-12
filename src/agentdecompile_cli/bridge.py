@@ -539,6 +539,9 @@ def _session_message_with_id(msg: SessionMessage, new_id: int | str) -> SessionM
     return SessionMessage(message=new_msg, metadata=msg.metadata)
 
 
+# The MCP SDK sometimes sends responses with id:0 instead of the request's id.
+# We record request ids as they go out and rewrite response id to the matching
+# request id so the client can correlate responses with requests.
 class _IdFixReadStream:
     """Wraps the stdio read stream and records JSON-RPC request ids so responses
     with id:0 can be rewritten to match (see _IdFixWriteStream).

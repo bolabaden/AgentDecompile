@@ -79,6 +79,8 @@ def _pagination_footer(data: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+# Tools that may be disabled via AGENTDECOMPILE_DISABLE_TOOLS etc.; if disabled,
+# we omit "Suggested Next Steps" lines that mention them so the client isn't told to use unavailable tools.
 _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
     normalize_identifier("annotate-function"),
     normalize_identifier(ToolName.GET_FUNCTIONS.value),
@@ -548,7 +550,7 @@ def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
     # Cross-program success: suggest verifying matches and propagating further
     elif mode == "cross-program" and results:
         steps.append("Use `decompile-function` with `programPath` set to each target and `functionIdentifier` set to the matched function to compare implementations.")
-        steps.append("To propagate more annotations, re-run `match-function` with `propagateNames`, `propagateTags`, or `propagateComments` set to true.")
+        steps.append("To propagate more annotations, re-run `match-function` with `propagateNames`, `propagateTags`, `propagateComments`, `propagatePrototype`, or `propagateBookmarks` set to true.")
         steps.append("Use `manage-function-tags` on matched functions to group them by subsystem or purpose.")
     # Single-program successful matches
     elif results:
@@ -743,10 +745,13 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
 # ---------------------------------------------------------------------------
 # Per-tool custom renderers
 # ---------------------------------------------------------------------------
+# Each _render_* function takes the tool's JSON response dict and returns a single
+# markdown string. Used when format != "json" so the client sees readable output
+# instead of raw JSON. Tools without a custom renderer fall back to _render_generic.
 
 
 def _render_execute_script(data: dict[str, Any]) -> str:
-    """Render execute-script response as rich markdown."""
+    """Render execute-script response: status, combined stdout/stderr, and return value as code blocks."""
     lines: list[str] = []
     lines.append(_md_heading(2, "Script Execution Result"))
     lines.append("")
@@ -1822,16 +1827,17 @@ def _render_suggestions(data: dict[str, Any]) -> str:
 
 
 def _render_data(data: dict[str, Any]) -> str:
+    """Render get-data or apply-data-type response: address, type, value, optional hex/ascii dump."""
     lines: list[str] = []
     if data.get("success") is not None and "address" in data and "dataType" in data:
-        # apply-data-type response
+        # apply-data-type success: address + type applied
         lines.append(_md_heading(2, "Data Type Applied"))
         lines.append("")
         lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
         lines.append(_md_bold_kv("Type", _md_code_inline(data.get("dataType", ""))))
         return "\n".join(lines)
 
-    # get-data response
+    # get-data response: address, optional type/value/length, optional raw bytes block
     lines.append(_md_heading(2, "Data At Address"))
     lines.append("")
     lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
@@ -1857,7 +1863,11 @@ def _render_data(data: dict[str, Any]) -> str:
 
 
 def _render_error(data: dict[str, Any]) -> str:
-    """Render an error response as readable markdown."""
+    """Render an error response as readable markdown.
+
+    Shows error message, optional state/tool, then any context keys (connection, auth,
+    server reachable, etc.) and a 'How to Fix' list from nextSteps when present.
+    """
     lines: list[str] = []
     lines.append(_md_heading(2, "Error"))
     lines.append("")
@@ -1911,12 +1921,13 @@ def _render_error(data: dict[str, Any]) -> str:
 def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
     """Smart generic renderer for tools without a custom renderer.
 
-    Detects pagination envelopes, single items, and error responses,
-    and renders them appropriately.
+    Detects: (1) pagination envelope (results + total/hasMore) → table + footer;
+    (2) single key-value payload → bold key: value; (3) nested lists/dicts → subheadings
+    and tables. Title comes from mode/action or normalized tool name.
     """
     lines: list[str] = []
 
-    # Title from mode/action or tool name
+    # Title from mode/action or tool name so the user knows which tool produced this
     mode = data.get("mode", data.get("action", data.get("operation", "")))
     title = tool_name.replace("-", " ").title()
     if mode:
@@ -2051,7 +2062,7 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     Returns:
         A markdown string suitable for returning as TextContent.text.
     """
-    # Check for error responses first
+    # Errors are always rendered with _render_error so the user sees a clear message
     if data.get("success") is False:
         body: str = _render_error(data)
     else:
@@ -2064,7 +2075,8 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         else:
             body = _render_generic(data, normalized_tool_name)
 
-    # Append About This Tool / Next Steps section
+    # When we have guidance for this tool, append "About This Tool" and "Suggested Next Steps"
+    # (filtered so we don't recommend tools disabled via env)
     guidance: tuple[str, Callable[[dict[str, Any]], list[str]]] | None = TOOL_GUIDANCE.get(normalized_tool_name)
     lines: list[str] = [body]
 

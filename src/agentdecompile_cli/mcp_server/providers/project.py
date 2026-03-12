@@ -1,6 +1,11 @@
-"""Project Tool Provider - open, list-project-files.
+"""Project Tool Provider - open-project, list-project-files, import/export, checkout/checkin, etc.
 
-Handles project and program management operations.
+Handles project and program lifecycle: open-project (local or shared Ghidra server),
+analyze-program, list-project-files, import-binary, delete/remove program binary,
+checkout-program, checkin-program, checkout-status, sync-project. Also export and
+open-in-code-browser. Session state (open programs, active program) is stored in
+SessionContext keyed by MCP session ID; project_handle may be a local ProjectManager
+or a shared-server adapter.
 """
 
 from __future__ import annotations

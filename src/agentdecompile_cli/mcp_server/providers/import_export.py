@@ -1,6 +1,12 @@
-"""Import/Export Tool Provider - import-binary, export, analyze-program, etc.
+"""Import/Export Tool Provider - import-binary, export, analyze-program, checkin/checkout, etc.
 
-Handles binary import, export, analysis control, and processor management.
+  - import-binary: Load a file or folder into the project (language/compiler optional; analyzeAfterImport, enableVersionControl).
+  - export: Write C/C++/gzf/sarif/xml/html from the project (createHeader, includeTypes, includeGlobals, tags filter).
+  - analyze-program: Run or re-run Ghidra auto-analysis on an already-imported program.
+  - changeprocessor / listprocessors: Processor/language and compiler-spec management.
+  - checkin-program / checkout-program / checkout-status: Version-control operations for shared projects.
+
+Session context (SESSION_CONTEXTS, get_current_mcp_session_id) is used to resolve the project and program for these operations.
 """
 
 from __future__ import annotations
@@ -102,11 +108,11 @@ class ImportExportToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=ToolName.CHECKIN_PROGRAM.value,
-                description="If you are using a shared/version-controlled Ghidra Server project, use this to commit your changes directly to the server, preserving your work as a new version.",
+                description="If you are using a shared/version-controlled Ghidra Server project, use this to commit your changes directly to the server, preserving your work as a new version. Omit program_path to check in every open program that is checked out and can be checked in (checkin all).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "program_path": {"type": "string", "description": "Your local version of the file you intend to push upstream."},
+                        "program_path": {"type": "string", "description": "Your local version of the file you intend to push upstream. Omit to check in all open programs that are checked out."},
                         "comment": {"type": "string", "description": "The commit message for history tracking."},
                         "keep_checked_out": {"type": "boolean", "default": False, "description": "Whether to retain an exclusive file lock after pushing the changes."},
                         "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown", "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended."},
@@ -880,9 +886,65 @@ class ImportExportToolProvider(ToolProvider):
         return create_success_response({"action": "change_processor", "language": language, "compiler": compiler or "(default)", "success": False})
 
     async def _handle_checkin(self, args: dict[str, Any]) -> list[types.TextContent]:
-        program_path = self._get_str(args, "programpath", "program_path", "path").strip()
+        program_path = self._get_str(args, "programpath", "program_path", "path", default="").strip()
         comment = self._get_str(args, "comment", "message", default="AgentDecompile checkin")
         keep_checked_out = self._get_bool(args, "keepcheckedout", default=False)
+
+        # Zero-arg: check in all open programs that are versioned and can be checked in
+        if not program_path:
+            session_id = get_current_mcp_session_id()
+            session = SESSION_CONTEXTS.get_or_create(session_id)
+            results: list[dict[str, Any]] = []
+            all_ok = True
+            try:
+                from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                checkin_comment = comment or "Checkin all changes"
+                for path_key, info in (session.open_programs or {}).items():
+                    prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                    if prog is None:
+                        results.append({"programPath": path_key, "success": False, "error": "No program handle"})
+                        all_ok = False
+                        continue
+                    domain_file = prog.getDomainFile()
+                    if domain_file is None or not domain_file.isVersioned() or not domain_file.canCheckin():
+                        continue
+                    try:
+                        _keep = keep_checked_out
+
+                        class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
+                            def getComment(self) -> str:  # noqa: N802
+                                return checkin_comment
+                            def keepCheckedOut(self) -> bool:  # noqa: N802
+                                return _keep
+                            def createKeepFile(self) -> bool:  # noqa: N802
+                                return False
+                        domain_file.checkin(_SimpleCheckinHandler(), TaskMonitor.DUMMY)
+                        results.append({"programPath": path_key, "success": True})
+                    except Exception as e:
+                        results.append({"programPath": path_key, "success": False, "error": str(e)})
+                        all_ok = False
+            except Exception as e:
+                return create_success_response(
+                    {
+                        "action": "checkin",
+                        "mode": "checkin_all",
+                        "success": False,
+                        "error": str(e),
+                        "results": [],
+                    },
+                )
+            return create_success_response(
+                {
+                    "action": "checkin",
+                    "mode": "checkin_all",
+                    "comment": checkin_comment,
+                    "success": all_ok,
+                    "results": results,
+                    "count": len(results),
+                },
+            )
 
         # If a specific program_path is provided, check if it looks like a shared repository path
         if program_path:

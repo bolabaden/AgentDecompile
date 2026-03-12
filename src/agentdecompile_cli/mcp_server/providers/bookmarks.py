@@ -1,7 +1,9 @@
 """Bookmark Tool Provider – manage-bookmarks.
 
-Actions: set/add, get/list/search, remove, remove_all, categories.
-All normalization handled by base ``ToolProvider``.
+Mode = set (add bookmark at address), get (at address), search (globally), remove,
+remove_all, categories (list bookmark categories). Bookmarks persist in the Ghidra
+project and can be used to flag interesting addresses (e.g. Note, Warning, Bug, TODO).
+Uses _collectors.collect_bookmarks for listing. All normalization is in base ToolProvider.
 """
 
 from __future__ import annotations
@@ -60,11 +62,13 @@ class BookmarkToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Route to the correct sub-handler based on mode (set/get/remove/categories/etc.)."""
         self._require_program()
         mode = self._get_str(args, "mode", "action", "operation")
         if not mode:
             raise ValueError("mode is required")
 
+        # Map normalized mode to handler; aliases (add→set, list→get) share the same handler
         return await self._dispatch_handler(
             args,
             mode,
@@ -84,6 +88,7 @@ class BookmarkToolProvider(ToolProvider):
         )
 
     def _require_explicit_remove_all_intent(self, args: dict[str, Any]) -> None:
+        """Enforce safety: clear-all requires confirmRemoveAll=true and exact token to avoid accidental wipe."""
         confirmed = self._get_bool(args, "confirmremoveall", "allowdestructive", "force", default=False)
         token = self._get_str(args, "removealltoken", "confirmationtoken", "safetytoken")
         if not confirmed or token != "REMOVE_ALL_BOOKMARKS":
@@ -92,8 +97,10 @@ class BookmarkToolProvider(ToolProvider):
             )
 
     async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Create one bookmark or a batch; single bookmark uses addressOrSymbol + type/category/comment."""
         bookmarks = self._get_list(args, "bookmarks")
         if bookmarks and isinstance(bookmarks[0], dict):
+            # Batch: each element is a dict with addressOrSymbol, type, category, comment
             results = []
             for bm in bookmarks:
                 results.append(await self._add_single(bm))
@@ -106,6 +113,7 @@ class BookmarkToolProvider(ToolProvider):
                 },
             )
 
+        # Single bookmark: require address; type/category/comment are optional (defaults: Note, AgentDecompile, "")
         addr = self._require_address_or_symbol(args)
         result = await self._add_single(
             {
@@ -118,6 +126,7 @@ class BookmarkToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _add_single(self, bm: dict[str, Any]) -> dict[str, Any]:
+        """Resolve address, then set a bookmark via BookmarkManager inside a program transaction."""
         norm: dict[str, Any] = {n(k): v for k, v in bm.items()}
         addr_str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
         if not addr_str:
@@ -134,7 +143,7 @@ class BookmarkToolProvider(ToolProvider):
 
         try:
             bm_mgr = program.getBookmarkManager()
-
+            # Wrap in transaction so the change is undoable and persisted with the program
             def _set_bookmark() -> None:
                 bm_mgr.setBookmark(address, bm_type, category, comment)
 
@@ -206,16 +215,19 @@ class BookmarkToolProvider(ToolProvider):
         )
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
-        search = self._get_str(args, "searchText", "search", "query", "pattern")
-        offset, limit = self._get_pagination_params(args, default_limit=100)
-        bm_type = self._get_str(args, "type")
-        category = self._get_str(args, "category")
+        """List/search bookmarks with optional filter by type, category, or text in comment; paginated."""
+        search: str = self._get_str(args, "searchText", "search", "query", "pattern")
+        offset: int = self._get_pagination_params(args, default_limit=100)[0]
+        limit: int = self._get_pagination_params(args, default_limit=100)[1]
+        bm_type: str = self._get_str(args, "type")
+        category: str = self._get_str(args, "category")
         try:
             assert self.program_info is not None  # for type checker
-            all_bookmarks = collect_bookmarks(self.program_info.program)
-            filtered = [row for row in all_bookmarks if (not bm_type or row.get("type") == bm_type) and (not category or row.get("category") == category) and (not search or search.lower() in str(row.get("comment", "")).lower())]
-            results = filtered[offset : offset + limit]
-            matched_count = len(filtered)
+            all_bookmarks: list[dict[str, Any]] = collect_bookmarks(self.program_info.program)
+            # Apply optional filters: type exact match, category exact match, search substring in comment
+            filtered: list[dict[str, Any]] = [row for row in all_bookmarks if (not bm_type or row.get("type") == bm_type) and (not category or row.get("category") == category) and (not search or search.lower() in str(row.get("comment", "")).lower())]
+            results: list[dict[str, Any]] = filtered[offset : offset + limit]
+            matched_count: int = len(filtered)
 
             return self._create_paginated_response(results, offset, limit, total=matched_count, mode="search")
         except Exception:

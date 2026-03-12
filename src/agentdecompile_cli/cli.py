@@ -73,6 +73,7 @@ _DEFAULT_OUTPUT_FORMAT = "text"
 
 
 def _configure_runtime_logging(verbose: bool) -> None:
+    """Set log level and HTTP log verbosity from --verbose; stderr only, no file logging."""
     root_logger = logging.getLogger()
     if not root_logger.handlers:
         logging.basicConfig(
@@ -91,9 +92,10 @@ def _configure_runtime_logging(verbose: bool) -> None:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-# Canonical tools that already have curated command wrappers.
-# Dynamic command registration keeps these callable but hidden from top-level help
-# to avoid duplicate/alias noise in command listings.
+# Tools that have dedicated Click subcommands (e.g. decompile, callgraph, xref).
+# They are still registered as dynamic tools for tool-seq, but we hide them from
+# top-level "agentdecompile-cli --help" to avoid duplicate/alias noise; their
+# behavior is exposed via the curated commands instead.
 _TOOLS_WITH_CURATED_COMMANDS: frozenset[ToolName] = frozenset(
     {
         ToolName.ANALYZE_DATA_FLOW,

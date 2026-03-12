@@ -1,4 +1,14 @@
-"""Debug Info Resource Provider - Python MCP implementation."""
+"""Debug Info Resource Provider - Python MCP implementation.
+
+Exposes MCP resources that clients can read via resources/read:
+  - agentdecompile://debug-info: Combined debug/session info (server uptime, session ID,
+    open programs, auth context, version control workflow docs, profiling paths, etc.).
+  - ghidra://programs: List of open programs (delegates to ProgramListResource).
+  - ghidra://static-analysis-results: Static analysis summary (delegates to StaticAnalysisResultsResource).
+
+Used by IDEs and agents to show "current state" without calling a tool. Legacy URIs
+(ghidra://agentdecompile-debug-info, etc.) are supported for backward compatibility.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +36,7 @@ from .static_analysis import StaticAnalysisResultsResource
 
 logger = logging.getLogger(__name__)
 
+# Legacy URIs still accepted so existing clients keep working
 _LEGACY_PROGRAMS_URI = "ghidra://programs"
 _LEGACY_STATIC_ANALYSIS_URI = "ghidra://static-analysis-results"
 _LEGACY_DEBUG_INFO_URI = "ghidra://agentdecompile-debug-info"
@@ -71,7 +82,12 @@ _VERSION_CONTROL_TOOLS_DOC = {
 
 
 class DebugInfoResource(ResourceProvider):
-    """MCP resource provider for comprehensive debug information."""
+    """MCP resource provider for comprehensive debug information.
+
+    Serves agentdecompile://debug-info (and legacy URIs) with session state, open programs,
+    auth context, version-control workflow docs, and profiling info. Delegates programs
+    and static-analysis sub-resources to ProgramListResource and StaticAnalysisResultsResource.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

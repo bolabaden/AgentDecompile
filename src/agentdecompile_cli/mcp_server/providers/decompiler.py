@@ -1,6 +1,8 @@
-"""Decompiler Tool Provider - decompile (get-functions with decompile view).
+"""Decompiler Tool Provider - decompile-function.
 
-Provides decompilation of functions via DecompInterface or DecompileTool.
+Single tool: decompile-function. Resolves the function by name or address, then
+decompiles via DecompileTool (if available) or the program's DecompInterface.
+Returns C-like pseudocode and metadata. Timeout is configurable; default 60s.
 """
 
 from __future__ import annotations
