@@ -130,50 +130,38 @@ class GetFunctionAioToolProvider(ToolProvider):
         entry = target.getEntryPoint()
         body = target.getBody()
 
+        # --- Metadata (includes counts for convenience) ---
+        metadata = self._collect_metadata(target)
+        callers_list = self._collect_callers(target, max_callers)
+        callees_list = self._collect_callees(target, max_callees)
+        metadata["callerCount"] = len(callers_list)
+        metadata["calleeCount"] = len(callees_list)
+
         result: dict[str, Any] = {
             "tool": Tool.GET_FUNCTION.value,
             "name": target.getName(),
             "address": str(entry),
             "signature": str(target.getSignature()),
+            "metadata": metadata,
+            "namespace": self._collect_namespace(target),
+            "decompilation": self._decompile(target, program, timeout),
+            "disassembly": self._disassemble(target, program, max_instructions),
+            "comments": self._collect_all_comments(target, program, body),
+            "labels": self._collect_labels(program, body),
+            "callers": callers_list,
+            "callees": callees_list,
+            "crossReferences": self._collect_xrefs(program, entry, max_refs),
+            "outboundReferences": self._collect_outbound_refs(program, body, max_refs),
+            "tags": collect_function_tags(target),
+            "bookmarks": self._collect_bookmarks(program, body),
+            "stackFrame": self._collect_stack_frame(target),
+            "memoryBlock": self._collect_memory_block(program, entry) or {},
         }
-
-        # --- Metadata ---
-        result["metadata"] = self._collect_metadata(target)
-
-        # --- Namespace ---
-        result["namespace"] = self._collect_namespace(target)
-
-        # --- Decompilation ---
-        result["decompilation"] = self._decompile(target, program, timeout)
-
-        # --- Disassembly ---
-        result["disassembly"] = self._disassemble(target, program, max_instructions)
-
-        # --- Comments (all types across function body) ---
-        result["comments"] = self._collect_all_comments(target, program, body)
-
-        # --- Labels / symbols inside function body ---
-        result["labels"] = self._collect_labels(program, body)
-
-        # --- Callers & callees ---
-        result["callers"] = self._collect_callers(target, max_callers)
-        result["callees"] = self._collect_callees(target, max_callees)
-
-        # --- Inbound cross-references ---
-        result["crossReferences"] = self._collect_xrefs(program, entry, max_refs)
-
-        # --- Tags ---
-        result["tags"] = collect_function_tags(target)
-
-        # --- Bookmarks inside function body ---
-        result["bookmarks"] = self._collect_bookmarks(program, body)
-
-        # --- Stack frame / local variables ---
-        result["stackFrame"] = self._collect_stack_frame(target)
-
-        # --- Memory block info ---
-        result["memoryBlock"] = self._collect_memory_block(program, entry)
-
+        result["sectionsIncluded"] = [
+            "metadata", "namespace", "decompilation", "disassembly", "comments",
+            "labels", "callers", "callees", "crossReferences", "outboundReferences",
+            "tags", "bookmarks", "stackFrame", "memoryBlock",
+        ]
         return create_success_response(result)
 
     # ------------------------------------------------------------------
@@ -399,6 +387,37 @@ class GetFunctionAioToolProvider(ToolProvider):
         return refs
 
     @staticmethod
+    def _collect_outbound_refs(program: Any, body: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
+        """Outbound cross-references from code inside the function body to other addresses."""
+        if body is None:
+            return []
+        ref_mgr: Any = program.getReferenceManager()
+        listing = program.getListing()
+        refs: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        it = listing.getCodeUnits(body, True)
+        while it.hasNext() and (max_refs is None or len(refs) < max_refs):
+            cu = it.next()
+            from_addr = cu.getAddress()
+            for ref in ref_mgr.getReferencesFrom(from_addr):
+                if max_refs is not None and len(refs) >= max_refs:
+                    return refs
+                key = (str(from_addr), str(ref.getToAddress()))
+                if key in seen:
+                    continue
+                seen.add(key)
+                refs.append(
+                    {
+                        "fromAddress": str(ref.getFromAddress()),
+                        "toAddress": str(ref.getToAddress()),
+                        "type": str(ref.getReferenceType()),
+                        "isCall": bool(ref.getReferenceType().isCall()) if hasattr(ref.getReferenceType(), "isCall") else False,
+                        "isData": bool(ref.getReferenceType().isData()) if hasattr(ref.getReferenceType(), "isData") else False,
+                    },
+                )
+        return refs
+
+    @staticmethod
     def _collect_bookmarks(program: Any, body: Any) -> list[dict[str, Any]]:
         """Bookmarks within the function's address range."""
         bm_mgr: Any = program.getBookmarkManager()
@@ -427,7 +446,14 @@ class GetFunctionAioToolProvider(ToolProvider):
         """Stack frame layout: local variables, parameters, and frame size."""
         frame: Any = func.getStackFrame()
         if frame is None:
-            return {"variables": [], "frameSize": 0}
+            return {
+                "variables": [],
+                "frameSize": 0,
+                "parameterOffset": None,
+                "returnAddressOffset": None,
+                "localSize": None,
+                "parameterSize": None,
+            }
         variables: list[dict[str, Any]] = []
         for var in islice(frame.getStackVariables(), max_variables):
             if max_variables is not None and len(variables) >= max_variables:
