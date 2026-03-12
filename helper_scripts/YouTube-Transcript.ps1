@@ -37,6 +37,10 @@
     .\YouTube-Transcript.ps1 -Url "https://www.youtube.com/watch?v=..." -OutDir .\out -Video -Subs -ExtractFrames -Interval 5 -FrameSize 720p
     # Video + subs + frames at 720p to save space
 
+.EXAMPLE
+    .\YouTube-Transcript.ps1 -Vtt "C:\path\to\Ghidra Rant 1.en.vtt" -BuildWiki -WikiMdPath "C:\path\to\Ghidra-Rant-1-Wiki.md"
+    # Build frame→VTT mapping JSON, run strict checks, and update the wiki MD (requires frames and wiki .md; run from agentdecompile repo)
+
 .NOTES
     Preferred: run with PowerShell 7 (pwsh.exe) for best performance and logging.
     Example: pwsh -NoProfile -File .\YouTube-Transcript.ps1 -Url "..." -Video -Subs -ExtractFrames -Interval 3
@@ -90,6 +94,12 @@ param(
 
     [Parameter(HelpMessage = 'Path to existing VTT file for transcript-only or frame extraction with existing video.')]
     [string]$Vtt = '',
+
+    [Parameter(HelpMessage = 'Build frame→VTT mapping JSON, run strict checks, and update the wiki Markdown. Requires VTT and frames (use -ExtractFrames or ensure frames exist beside VTT). Optional: -WikiMdPath for wiki .md path.')]
+    [switch]$BuildWiki,
+
+    [Parameter(HelpMessage = 'Path to wiki Markdown file (when -BuildWiki). Default: same dir as VTT, name like "Title-Wiki.md".')]
+    [string]$WikiMdPath = '',
 
     [Parameter()]
     [switch]$Interactive
@@ -1029,13 +1039,65 @@ function Invoke-NonInteractive {
         $results += $framesDir
     }
 
+    if ($BuildWiki) {
+        if (-not $vttPath -or -not (Test-Path -LiteralPath $vttPath)) {
+            Fail 'BuildWiki requires a VTT file. Provide -Vtt or use -Url with -Subs.'
+        }
+        $vttDir = Split-Path -Parent $vttPath
+        if (-not [System.IO.Path]::IsPathRooted($vttDir)) { $vttDir = (Resolve-Path $vttDir).Path }
+        $framesDirForWiki = if ($framesDir) {
+            if (-not [System.IO.Path]::IsPathRooted($framesDir)) { (Resolve-Path $framesDir).Path } else { $framesDir }
+        } else {
+            $d = Join-Path $vttDir 'frames'
+            if (-not [System.IO.Path]::IsPathRooted($d)) { $d = (Join-Path (Get-Location) $d) }
+            $d
+        }
+        $mdPathForWiki = if ($WikiMdPath -and $WikiMdPath.Trim()) {
+            $p = $WikiMdPath.Trim().Trim('"')
+            if (-not [System.IO.Path]::IsPathRooted($p)) { $p = Join-Path (Get-Location) $p }
+            $p
+        } else {
+            $mdName = ($baseName -replace '\s+', '-') + '-Wiki.md'
+            Join-Path $vttDir $mdName
+        }
+        $jsonPathForWiki = Join-Path (Split-Path -Parent $mdPathForWiki) 'frame_to_vtt_mapping.json'
+        $repoRoot = (Get-Item $PSScriptRoot).Parent.FullName
+        $pythonScript = Join-Path $repoRoot 'docs\from_video\build_frame_vtt_mapping.py'
+        if (-not (Test-Path -LiteralPath $pythonScript)) {
+            Fail ("BuildWiki requires the repo Python script at: {0}. Run from the agentdecompile repo or ensure the file exists." -f $pythonScript)
+        }
+        if (-not (Test-Path -LiteralPath $framesDirForWiki) -or -not (Get-ChildItem -Path $framesDirForWiki -Filter 'frame_*.png' -File -ErrorAction SilentlyContinue)) {
+            Fail ("BuildWiki requires frame PNGs in: {0}. Use -ExtractFrames first or ensure frames exist." -f $framesDirForWiki)
+        }
+        if (-not (Test-Path -LiteralPath $mdPathForWiki)) {
+            Fail ("BuildWiki requires an existing wiki Markdown file: {0}. Create it or set -WikiMdPath." -f $mdPathForWiki)
+        }
+        Write-Log -Level 'STEP' -Message 'Building frame→VTT mapping (JSON + strict checks) and updating wiki Markdown...'
+        $vttPathAbs = if (-not [System.IO.Path]::IsPathRooted($vttPath)) { (Resolve-Path $vttPath).Path } else { $vttPath }
+        $mdPathAbs = if (-not [System.IO.Path]::IsPathRooted($mdPathForWiki)) { (Resolve-Path $mdPathForWiki).Path } else { $mdPathForWiki }
+        $jsonPathAbs = if (-not [System.IO.Path]::IsPathRooted($jsonPathForWiki)) { (Join-Path (Get-Location) $jsonPathForWiki) } else { $jsonPathForWiki }
+        $framesDirAbs = if (-not [System.IO.Path]::IsPathRooted($framesDirForWiki)) { (Resolve-Path $framesDirForWiki).Path } else { $framesDirForWiki }
+        Push-Location $repoRoot
+        try {
+            & uv run python docs/from_video/build_frame_vtt_mapping.py --vtt $vttPathAbs --md $mdPathAbs --frames-dir $framesDirAbs --out $jsonPathAbs --update-md
+            if ($LASTEXITCODE -ne 0) {
+                Fail 'BuildWiki Python script failed. Fix VTT, frames, and wiki MD then retry.'
+            }
+        } finally {
+            Pop-Location
+        }
+        $results += $jsonPathAbs
+        $results += $mdPathForWiki
+        Write-Log -Level 'SUCCESS' -Message ('BuildWiki: wrote mapping and updated MD: {0}' -f $mdPathForWiki)
+    }
+
     Write-Log -Level 'SUCCESS' -Message 'Done. Created:'
     $results | ForEach-Object { Write-Log -Level 'SUCCESS' -Message ("  {0}" -f $_) }
 }
 
 # --- Entry ---
 # If any non-interactive option is set, run CLI (except -Interactive alone)
-$hasNonInteractive = $Url -or $Vtt -or $Video -or $Subs -or $Transcript -or $ExtractFrames -or $FrameVideoPath
+$hasNonInteractive = $Url -or $Vtt -or $Video -or $Subs -or $Transcript -or $ExtractFrames -or $FrameVideoPath -or $BuildWiki
 if ($Interactive -and -not $hasNonInteractive) {
     Show-Interactive
 } elseif ($hasNonInteractive) {
