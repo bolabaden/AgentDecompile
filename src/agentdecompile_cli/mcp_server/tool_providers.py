@@ -907,13 +907,13 @@ class ToolProvider:
         return default
 
     @staticmethod
-    def _get_int(args: dict[str, Any], *keys: str, default: int | None = 0) -> int:
-        """First value that coerces to int for any of the given keys (normalized)."""
+    def _get_int(args: dict[str, Any], *keys: str, default: int | None = 0) -> int | None:
+        """First value that coerces to int for any of the given keys (normalized). Returns default when no key present (default can be None)."""
         for k in keys:
             v = args.get(n(k))
             if v is not None:
                 return _coerce_int(v, 0 if default is None else default)
-        return 0 if default is None else default
+        return default
 
     @staticmethod
     def _get_bool(args: dict[str, Any], *keys: str, default: bool | None = False) -> bool:
