@@ -155,6 +155,22 @@ def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
     """
     normalized: str = (fmt or "shell").strip().lower()
 
+    # MCP tool result shape: {content: [{type: "text", text: "..."}], isError: bool}
+    # Use the pre-rendered text so newlines are preserved (avoid repr showing literal \n).
+    if isinstance(data, dict):
+        content = data.get("content")
+        if (
+            isinstance(content, list)
+            and content
+            and isinstance(content[0], dict)
+            and content[0].get("text") is not None
+        ):
+            text = content[0]["text"]
+            if isinstance(text, str):
+                text = text.replace("\\n", "\n")
+                if normalized in ("markdown", "shell", "text"):
+                    return text
+
     if normalized == "json":
         return _json.dumps(data, indent=2)
 

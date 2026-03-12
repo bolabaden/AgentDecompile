@@ -708,6 +708,70 @@ async def _execute_tool_call(
         sys.exit(1)
 
 
+async def _migrate_metadata_then_checkin(ctx: click.Context, match_payload: dict[str, Any]) -> None:
+    """Run match-function (migrate-metadata) then checkin-program in the same session."""
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    match_payload = dict(match_payload)
+    match_payload.setdefault("format", "markdown")
+    call_name, safe_match = _resolve_tool_call_target(Tool.MATCH_FUNCTION.value, match_payload)
+    if tool_registry.is_valid_tool(call_name):
+        call_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_name))
+        safe_match = tool_registry.parse_arguments(safe_match, call_name)
+    call_name = to_snake_case(call_name)
+    checkin_payload: dict[str, Any] = {"comment": "migrate-metadata checkin", "format": "markdown"}
+    call_name2, safe_checkin = _resolve_tool_call_target(Tool.CHECKIN_PROGRAM.value, checkin_payload)
+    if tool_registry.is_valid_tool(call_name2):
+        call_name2 = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_name2))
+        safe_checkin = tool_registry.parse_arguments(safe_checkin, call_name2)
+    call_name2 = to_snake_case(call_name2)
+    client = _client(ctx)
+    try:
+        async with client:
+            result1 = await _execute_tool_call(ctx, call_name, safe_match, client_override=client)
+            err1 = _get_error_result_message(result1)
+            if err1 is not None:
+                click.echo(err1, err=True)
+                sys.exit(1)
+            click.echo(format_output(result1, _fmt(ctx)))
+            result2 = await _execute_tool_call(ctx, call_name2, safe_checkin, client_override=client)
+            err2 = _get_error_result_message(result2)
+            if err2 is not None:
+                click.echo(err2, err=True)
+                sys.exit(1)
+            click.echo(format_output(result2, _fmt(ctx)))
+            # Verify: call checkout-status for each target so user sees state
+            target_paths = safe_match.get("targetProgramPaths") or safe_match.get("target_program_paths")
+            if isinstance(target_paths, str):
+                target_paths = [target_paths]
+            if isinstance(target_paths, list) and target_paths:
+                status_name, status_payload_base = _resolve_tool_call_target(
+                    Tool.CHECKOUT_STATUS.value, {"format": "markdown"}
+                )
+                if tool_registry.is_valid_tool(status_name):
+                    status_name = to_snake_case(
+                        tool_registry.get_display_name(tool_registry.canonicalize_tool_name(status_name))
+                    )
+                for tpath in target_paths:
+                    if not isinstance(tpath, str) or not tpath.strip():
+                        continue
+                    status_payload = {**status_payload_base, "programPath": tpath.strip()}
+                    status_payload = tool_registry.parse_arguments(status_payload, Tool.CHECKOUT_STATUS.value)
+                    try:
+                        status_result = await _execute_tool_call(
+                            ctx, status_name, status_payload, client_override=client
+                        )
+                        click.echo(format_output(status_result, _fmt(ctx)))
+                    except Exception:
+                        pass
+    except ServerNotRunningError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
 def _parse_tool_payload(arguments: str) -> dict[str, Any]:
     """Parse CLI JSON argument payload for generic tool commands.
 
@@ -2269,6 +2333,12 @@ def match_function(
 @click.option("--propagate-comments/--no-propagate-comments", "propagateComments", default=True)
 @click.option("--propagate-prototype/--no-propagate-prototype", "propagatePrototype", default=True)
 @click.option("--propagate-bookmarks/--no-propagate-bookmarks", "propagateBookmarks", default=True)
+@click.option(
+    "--checkin",
+    "do_checkin",
+    is_flag=True,
+    help="After propagation, check in all modified target programs (same as checkin-program with no path; uses same session).",
+)
 @click.pass_context
 def migrate_metadata(
     ctx: click.Context,
@@ -2283,11 +2353,13 @@ def migrate_metadata(
     propagateComments: bool,
     propagatePrototype: bool,
     propagateBookmarks: bool,
+    do_checkin: bool,
 ) -> None:
     """Run match-function over all functions in the source (bulk migration). No function identifier = iterate all.
 
     Sessions are isolated: the server session for this CLI run must already have a project open
     (shared or local). Use tool-seq to run open-project then migrate-metadata in one connection.
+    Use --checkin to check in all open programs after propagation (same session).
     """
     source = (program_path or program_path_alt or "").strip()
     payload: dict[str, Any] = {
@@ -2305,8 +2377,10 @@ def migrate_metadata(
         payload["targetProgramPaths"] = list(target_program_paths) if len(target_program_paths) != 1 else target_program_paths[0]
     if limit is not None:
         payload["limit"] = limit
-    # Omit functionIdentifier so match-function iterates all functions
-    _run_async(_call(ctx, Tool.MATCH_FUNCTION.value, **payload))
+    if do_checkin:
+        _run_async(_migrate_metadata_then_checkin(ctx, payload))
+    else:
+        _run_async(_call(ctx, Tool.MATCH_FUNCTION.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3300,26 +3374,27 @@ def suggest_cmd(
 # ---------------------------------------------------------------------------
 
 
-@main.command("checkin", help="Checkin program (checkin-program)")
-@click.option("-b", "--binary", "program_path", required=True)
-@click.option("-m", "--message", required=True)
+@main.command(
+    "checkin",
+    help="Checkin program (checkin-program). Omit --binary to check in every open program that is checked out (checkin all).",
+)
+@click.option("-b", "--binary", "program_path", default=None, help="Program path to check in. Omit to check in all open programs that can be checked in.")
+@click.option("-m", "--message", "comment", default=None, help="Checkin comment (default: 'AgentDecompile checkin').")
 @click.option("--keep-checked-out", "keepCheckedOut", is_flag=True)
 @click.pass_context
 def checkin(
     ctx: click.Context,
-    program_path: str,
-    message: str,
+    program_path: str | None,
+    comment: str | None,
     keep_checked_out: bool,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "checkin-program",
-            programPath=program_path,
-            message=message,
-            keepCheckedOut=keep_checked_out,
-        ),
-    )
+    payload: dict[str, Any] = {"keepCheckedOut": keep_checked_out}
+    if comment is not None:
+        payload["comment"] = comment
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path.strip()
+    # Omit programPath to check in all open programs (checkin all)
+    _run_async(_call(ctx, Tool.CHECKIN_PROGRAM.value, **payload))
 
 
 @main.command("analyze", help="Run auto-analysis (analyze-program)")
