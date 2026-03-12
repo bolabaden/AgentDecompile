@@ -229,6 +229,8 @@ class AgentDecompileMcpProxyServer:
                         "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY": ["X-Ghidra-Repository", "X-Agent-Server-Repository"],
                         "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME": ["Authorization", "X-Agent-Server-Username"],
                         "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": ["Authorization", "X-Agent-Server-Password"],
+                        "AGENTDECOMPILE_AUTO_MATCH_PROPAGATE": ["X-AgentDecompile-Auto-Match-Propagate"],
+                        "AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS": ["X-AgentDecompile-Auto-Match-Target-Paths"],
                     },
                     "transport_headers": {
                         "content-type": "application/json",
@@ -291,6 +293,8 @@ class AgentDecompileMcpProxyServer:
                 "x-agent-server-username",
                 "x-agent-server-password",
                 "x-agent-server-repository",
+                "x-agentdecompile-auto-match-propagate",
+                "x-agentdecompile-auto-match-target-paths",
             }
             for key_b, value_b in scope.get("headers", []):
                 key = key_b.decode("latin1").lower()

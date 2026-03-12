@@ -182,4 +182,4 @@ class SchemaBuilder:
 
     def build(self) -> dict[str, Any]:
         """Build the final schema."""
-        return SchemaUtil.create_schema(self._properties, self._required if self._required else None)
+        return SchemaUtil.create_schema(self._properties, self._required or None)

@@ -138,7 +138,7 @@ class StringToolProvider(ToolProvider):
                     return create_success_response(results.model_dump())
                 return create_success_response({"query": query, "results": results})
             except Exception as e:
-                logger.warning(f"search-code semantic/literal backend unavailable, using fallback search: {e}")
+                logger.warning("search-code semantic/literal backend unavailable, using fallback search: %s", e)
 
         assert self.program_info is not None, "Program info is required for search-code"
         program = self.program_info.program

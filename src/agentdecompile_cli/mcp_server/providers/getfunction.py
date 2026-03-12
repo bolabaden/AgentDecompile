@@ -375,8 +375,7 @@ class GetFunctionToolProvider(ToolProvider):
             fm = self._get_function_manager(program)
             all_tags = set()
             for func in fm.getFunctions(True):
-                for t in func.getTags():
-                    all_tags.add(t.getName())
+                all_tags.update(t.getName() for t in func.getTags())
             return create_success_response({"action": "list", "tags": sorted(all_tags), "count": len(all_tags)})
 
         func = self._resolve_function(func_id, program=program)
@@ -475,7 +474,7 @@ class GetFunctionToolProvider(ToolProvider):
                 )
                 features.append(feature)
                 by_identity[addr_str] = feature
-                by_signature[(feature.param_count, feature.return_type)].append(feature)
+                by_signature[feature.param_count, feature.return_type].append(feature)
                 for caller in callers:
                     by_caller[caller].add(addr_str)
                 for callee in callees:
@@ -744,7 +743,7 @@ class GetFunctionToolProvider(ToolProvider):
                 "minSimilarity": min_similarity,
                 "results": results_per_target,
                 "count": len(results_per_target),
-                "errors": errors if errors else None,
+                "errors": errors or None,
             },
         )
 

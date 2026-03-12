@@ -53,7 +53,7 @@ class ProgramListResource(ResourceProvider):
         if not self._is_programs_uri(uri_text):
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        logger.info(f"ProgramListResource: reading resource for URI {uri}")
+        logger.info("ProgramListResource: reading resource for URI %s", uri)
 
         try:
             session_id = get_current_mcp_session_id()
@@ -106,6 +106,6 @@ class ProgramListResource(ResourceProvider):
 
             return json.dumps({"programs": programs})
         except Exception as e:
-            logger.error(f"ProgramListResource: Error reading resource: {e}", exc_info=True)
+            logger.error("ProgramListResource: Error reading resource: %s", e, exc_info=True)
             # Return empty list + error message so clients get a valid JSON response instead of a raised exception
             return json.dumps({"programs": [], "error": str(e)})

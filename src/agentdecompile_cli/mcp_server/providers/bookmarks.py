@@ -245,8 +245,7 @@ class BookmarkToolProvider(ToolProvider):
             assert self.program_info is not None  # for type checker
             bm_mgr = self.program_info.program.getBookmarkManager()
             cats = set()
-            for bm in bm_mgr.getBookmarksIterator():
-                cats.add(bm.getCategory())
+            cats.update(bm.getCategory() for bm in bm_mgr.getBookmarksIterator())
             return create_success_response(
                 {
                     "categories": sorted(cats),

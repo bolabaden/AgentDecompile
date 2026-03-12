@@ -586,7 +586,7 @@ class ImportExportToolProvider(ToolProvider):
                                     },
                                 )
                     except Exception as e:
-                        logger.debug(f"Error collecting external references: {e}")
+                        logger.debug("Error collecting external references: %s", e)
 
                     # Collect bookmarks
                     try:
@@ -614,7 +614,7 @@ class ImportExportToolProvider(ToolProvider):
                                         },
                                     )
                     except Exception as e:
-                        logger.debug(f"Error collecting bookmarks: {e}")
+                        logger.debug("Error collecting bookmarks: %s", e)
 
                     # Collect analysis warnings (thunk/external functions)
                     try:
@@ -657,7 +657,7 @@ class ImportExportToolProvider(ToolProvider):
                                     },
                                 )
                     except Exception as e:
-                        logger.debug(f"Error collecting function analysis: {e}")
+                        logger.debug("Error collecting function analysis: %s", e)
 
                     now = datetime.utcnow().isoformat() + "Z"
                     sarif_doc = {
@@ -722,7 +722,7 @@ class ImportExportToolProvider(ToolProvider):
                         },
                     )
                 except Exception as exc:
-                    logger.error(f"Error generating SARIF report: {exc}")
+                    logger.error("Error generating SARIF report: %s", exc)
                     return create_success_response(
                         {
                             "action": "export",

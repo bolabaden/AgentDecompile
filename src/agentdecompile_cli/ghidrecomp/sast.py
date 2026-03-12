@@ -254,8 +254,6 @@ def generate_sast_summary(
     Returns:
         Dictionary containing scan metrics and statistics
     """
-    import os
-
     from datetime import datetime
 
     # Temporary dict to track findings by file
@@ -263,7 +261,7 @@ def generate_sast_summary(
 
     # Count files scanned from filesystem if base_directory is provided
     files_scanned = 0
-    if base_directory and os.path.exists(base_directory):
+    if base_directory and Path(base_directory).exists():
         files_scanned = len([f for f in Path(base_directory).glob("*.c") if f.is_file()])
 
     summary = {
@@ -281,12 +279,12 @@ def generate_sast_summary(
     }
 
     for sarif_path in sarif_paths:
-        if not os.path.exists(sarif_path):
+        if not Path(sarif_path).exists():
             print(f"Warning: SARIF file not found: {sarif_path}")
             continue
 
         try:
-            with open(sarif_path) as f:
+            with Path(sarif_path).open() as f:
                 sarif_data = json.load(f)
         except (json.JSONDecodeError, Exception) as e:
             print(f"Warning: Failed to parse SARIF file {sarif_path}: {e}")
@@ -366,7 +364,7 @@ def merge_sarif_files(output_path: str, input_paths: Sequence[str]) -> None:
 
     for input_path in input_paths:
         try:
-            with open(input_path) as f:
+            with Path(input_path).open() as f:
                 sarif = json.load(f)
 
             # Add all runs from this SARIF
@@ -378,7 +376,7 @@ def merge_sarif_files(output_path: str, input_paths: Sequence[str]) -> None:
             continue
 
     # Write merged output
-    with open(output_path, "w") as f:
+    with Path(output_path).open("w") as f:
         json.dump(merged, f, indent=2)
 
     print(f"Merged {len(input_paths)} SARIF files into {output_path}")

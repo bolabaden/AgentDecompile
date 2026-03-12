@@ -129,7 +129,7 @@ class ResourceProviderManager:
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
-        logger.info(f"ResourceProviderManager: Attempting to read resource: {uri}")
+        logger.info("ResourceProviderManager: Attempting to read resource: %s", uri)
         logger.info(f"  Current program_info: {self.program_info}")
         logger.info(f"  Registered providers: {[p.__class__.__name__ for p in self.providers]}")
         attempted_providers = []
@@ -140,12 +140,12 @@ class ResourceProviderManager:
             attempted_providers.append(provider_name)
 
             try:
-                logger.info(f"  Trying provider: {provider_name}")
+                logger.info("  Trying provider: %s", provider_name)
                 result: str = await provider.read_resource(uri)
                 logger.info(f"  Provider {provider_name} succeeded, returned {len(result)} bytes")
                 return result
             except NotImplementedError as e:
-                logger.debug(f"  Provider {provider_name} does not handle this URI: {e}")
+                logger.debug("  Provider %s does not handle this URI: %s", provider_name, e)
                 continue
             except Exception as e:
                 logger.error(f"  Provider {provider_name} raised exception: {type(e).__name__}: {e}", exc_info=True)

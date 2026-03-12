@@ -851,7 +851,7 @@ def _get_explicit_enabled_tools() -> set[str] | None:
         tool = tool.strip()
         if tool:
             enabled.add(normalize_identifier(tool))
-    return enabled if enabled else None
+    return enabled or None
 
 
 def _build_advertised_tools() -> list[str]:
