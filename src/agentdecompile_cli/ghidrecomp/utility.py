@@ -1,3 +1,10 @@
+"""Ghidra program utility helpers: analysis, PDB/symbol server, save/load.
+
+Provides: analyze_program (run Ghidra analyzers), get_pdb/set_pdb/set_remote_pdbs/
+setup_symbol_server (symbol server and PDB), apply_gdt, save_program_as_gzf.
+Used by launcher and batch CLI; some functions are pyghidra extensions.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
