@@ -38,6 +38,37 @@ _SUPPORTED_URIS = frozenset(
     }
 )
 
+_VERSION_CONTROL_TOOLS_DOC = {
+    "summary": "Checkout and checkin apply when the project is connected to a shared Ghidra Server repository. Use checkout before modifying a program; use checkin to commit changes.",
+    "tools": [
+        {
+            "name": "checkout-program",
+            "description": "Check out a versioned program from the shared repository so it can be modified. Required before making changes when using a version-controlled project.",
+            "parameters": ["program_path", "exclusive"],
+            "when": "Before editing (rename, comments, tags, prototype, etc.) a program that lives in the shared repo.",
+        },
+        {
+            "name": "checkin-program",
+            "description": "Commit local changes to the shared repository, creating a new version. Use after checkout and edits.",
+            "parameters": ["program_path", "comment", "keep_checked_out"],
+            "when": "After making changes to a checked-out program; comment is the commit message.",
+        },
+        {
+            "name": "checkout-status",
+            "description": "Query whether a program is versioned, checked out, by whom, and if it has local modifications.",
+            "parameters": ["program_path"],
+            "when": "To see if a program is checked out before editing or to confirm state after checkout/checkin.",
+        },
+        {
+            "name": "manage-files",
+            "description": "Unified file operations; use mode=checkout or mode=uncheckout as alternatives to checkout-program / checkin-program.",
+            "parameters": ["mode", "programPath", "path", "exclusive", "keep", "force"],
+            "modesRelevantToVersionControl": ["checkout", "uncheckout", "unhijack"],
+        },
+    ],
+    "workflow": "1. open-project (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment=\"Description of changes\".",
+}
+
 
 class DebugInfoResource(ResourceProvider):
     """MCP resource provider for comprehensive debug information."""
@@ -104,6 +135,7 @@ class DebugInfoResource(ResourceProvider):
             )
             legacy_programs = await self._safe_load_json_resource(self._programs_resource, _LEGACY_PROGRAMS_URI)
             legacy_static_analysis = await self._safe_load_json_resource(self._static_analysis_resource, _LEGACY_STATIC_ANALYSIS_URI)
+            version_control = await self._get_version_control_state(current_program, list_project_files)
 
             debug_info = {
                 "metadata": self._get_metadata(),
@@ -113,6 +145,7 @@ class DebugInfoResource(ResourceProvider):
                 "runtime": self._get_runtime_state(),
                 "session": self._get_session_state(),
                 "project": self._get_project_state(list_project_files),
+                "versionControl": version_control,
                 "programCatalog": legacy_programs,
                 "program": self._get_program_state(current_program),
                 "analysis": self._get_analysis_state(legacy_static_analysis),
@@ -134,6 +167,7 @@ class DebugInfoResource(ResourceProvider):
                 "runtime": self._get_runtime_state(),
                 "session": self._get_session_state(),
                 "project": {"status": "error"},
+                "versionControl": {"status": "error", "error": str(e), "toolsDocumentation": _VERSION_CONTROL_TOOLS_DOC},
                 "program": {"status": "error"},
                 "analysis": {"status": "error"},
                 "profiling": {"status": "error"},
@@ -427,6 +461,61 @@ class DebugInfoResource(ResourceProvider):
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)
+
+    async def _get_version_control_state(
+        self,
+        current_program_probe: dict[str, Any] | None,
+        list_project_files: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build version-control (checkout/checkin) section for debug-info: tools doc + status probe."""
+        session_id = get_current_mcp_session_id()
+        snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=5, tool_history_limit=5)
+        project_handle = snapshot.get("projectHandle")
+        active_key = snapshot.get("activeProgramKey")
+        mode_str = str((project_handle.get("mode") if isinstance(project_handle, dict) else None) or "").strip().lower().replace("-", "")
+        is_shared = isinstance(project_handle, dict) and mode_str == "sharedserver"
+
+        result: dict[str, Any] = {
+            "toolsDocumentation": _VERSION_CONTROL_TOOLS_DOC,
+            "applicable": is_shared,
+            "note": "Checkout/checkin apply only when connected to a shared Ghidra Server repository (open-project with serverHost/serverPort). Local projects do not use version control." if not is_shared else None,
+            "checkoutStatusProbe": None,
+        }
+
+        program_path: str | None = None
+        if active_key and str(active_key).strip():
+            program_path = str(active_key).strip()
+        if not program_path and isinstance(current_program_probe, dict):
+            resp = current_program_probe.get("response") if isinstance(current_program_probe.get("response"), dict) else None
+            if resp and resp.get("success") is not False:
+                name = resp.get("name") or resp.get("programName")
+                path = resp.get("path") or resp.get("programPath") or resp.get("filePath")
+                if path and str(path).strip():
+                    program_path = str(path).strip()
+                elif name and is_shared and isinstance(list_project_files, dict):
+                    raw_response = list_project_files.get("response")
+                    listing = raw_response if isinstance(raw_response, dict) else list_project_files
+                    files = (listing.get("files") or (listing.get("projectListing") or {}).get("files") or []) if isinstance(listing, dict) else []
+                    for item in files if isinstance(files, list) else []:
+                        if not isinstance(item, dict):
+                            continue
+                        if str(item.get("name") or item.get("path") or "").strip() == str(name).strip():
+                            program_path = str(item.get("path") or item.get("name") or "").strip()
+                            break
+
+        if program_path and is_shared:
+            probe = await self._safe_tool_call(
+                ToolName.CHECKOUT_STATUS.value,
+                {"programPath": program_path, "format": "json"},
+            )
+            result["checkoutStatusProbe"] = {
+                "programPath": program_path,
+                "attempted": probe.get("attempted"),
+                "success": probe.get("success"),
+                "response": probe.get("response"),
+                "error": probe.get("error"),
+            }
+        return result
 
     def _get_metadata(self) -> dict:
         """Get metadata about the debug info itself."""
