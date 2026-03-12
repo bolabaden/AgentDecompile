@@ -4054,7 +4054,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                             if not prepared_arguments.get("path"):
                                 prepared_arguments["path"] = str(v).strip()
 
-                explicit_program = _extract_program_argument(prepared_arguments)
+                explicit_program: Any | None = _extract_program_argument(prepared_arguments)
                 if explicit_program is not None:
                     _set_cached_program(ctx, explicit_program)
 
