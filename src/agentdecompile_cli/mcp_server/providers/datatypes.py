@@ -1,6 +1,8 @@
 """Data Types Tool Provider - manage-data-types.
 
-Actions: archives, list, by_string, apply.
+Single tool, mode = archives (list type libraries), list (types in category),
+by_string (parse C-style type string), apply (set type at address). Used to
+improve decompilation when variables are undefined or show as raw numbers.
 """
 
 from __future__ import annotations

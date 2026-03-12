@@ -1,6 +1,9 @@
 """Vtable Tool Provider - analyze-vtables.
 
-Modes: analyze, callers, containing.
+- mode=analyze: List function pointers in a specific vtable (addressOrSymbol + maxEntries).
+- mode=containing: Scan the program for arrays that look like vtables.
+- mode=callers: Find code that references a given vtable.
+- _handle builds shared kwargs (listing, memory, fm, addr_str, offset, max_results) and dispatches to _handle_containing / _handle_analyze / _handle_callers.
 """
 
 from __future__ import annotations
@@ -11,13 +14,13 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_MAX_ENTRIES,
     DEFAULT_PAGE_LIMIT,
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +49,11 @@ class VtableToolProvider(ToolProvider):
                             "default": 200,
                             "description": "When analyzing a specific vtable, the maximum number of pointers to parse before stopping.",
                         },
-                        "limit": {"type": "integer", "default": 100, "description": "Number of vtable results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of vtable results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                     },
                     "required": [],
                 },
@@ -56,8 +63,8 @@ class VtableToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
-
         assert self.program_info is not None  # for type checker
+        # Shared context for all mode handlers: program, listing, memory, fm, address string, pagination
         return await self._dispatch_handler(
             args,
             mode,
@@ -88,7 +95,7 @@ class VtableToolProvider(ToolProvider):
         offset: int,
         max_results: int,
     ) -> list[types.TextContent]:
-        # Find vtables in the program by scanning for pointer arrays
+        # Scan all defined data; keep items whose type name suggests a vtable (user- or analyzer-named)
         all_results: list[dict[str, Any]] = []
         for data in listing.getDefinedData(True):
             dt = data.getDataType()
@@ -102,7 +109,7 @@ class VtableToolProvider(ToolProvider):
                         "size": data.getLength(),
                     },
                 )
-        paginated, has_more = self._paginate_results(all_results, offset, max_results)
+        paginated, _ = self._paginate_results(all_results, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="containing")
 
     async def _handle_analyze(
@@ -122,7 +129,7 @@ class VtableToolProvider(ToolProvider):
 
         addr = self._resolve_address(addr_str, program=program)
 
-        # Read vtable entries (pointers to functions)
+        # Walk vtable slot-by-slot: read pointer-sized bytes, resolve to address, look up function
         entries = []
         ptr_size = program.getDefaultPointerSize()
         for i in range(max_entries):
@@ -130,12 +137,11 @@ class VtableToolProvider(ToolProvider):
             try:
                 buf = bytearray(ptr_size)
                 memory.getBytes(entry_addr, buf)
-                # Interpret as pointer
                 ptr_val = int.from_bytes(buf, byteorder="little")
                 target_addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(ptr_val)
                 func = fm.getFunctionAt(target_addr)
+                # First slot can be null (e.g. offset-to-top); after that, null usually means end of vtable
                 if func is None and i > 0:
-                    # End of vtable
                     break
                 entries.append(
                     {
@@ -175,7 +181,7 @@ class VtableToolProvider(ToolProvider):
 
         addr = self._resolve_address(addr_str, program=program)
 
-        # Find references to vtable entries
+        # Who references this vtable address? (code that loads or uses the vtable pointer)
         ref_mgr = program.getReferenceManager()
         all_callers = []
         for ref in ref_mgr.getReferencesTo(addr):

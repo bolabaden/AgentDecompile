@@ -1,4 +1,11 @@
-"""MCP resource provider abstractions and manager."""
+"""MCP resource provider abstractions and manager.
+
+ResourceProvider is the base for resources exposed via MCP resources/list and
+resources/read. ResourceProviderManager registers providers (e.g. DebugInfoResource),
+forwards program_opened/program_closed, and dispatches read_resource by URI.
+Resources are used to expose debug/session info or static analysis results to
+the client without going through a tool call.
+"""
 
 from __future__ import annotations
 
@@ -67,9 +74,11 @@ class ResourceProviderManager:
     def _init_providers(self) -> None:
         """Initialize all resource providers."""
         from agentdecompile_cli.mcp_server.resources import DebugInfoResource
+        from agentdecompile_cli.mcp_server.resources.analysis_dump import AnalysisDumpResource
 
         self.providers = [
             DebugInfoResource(),
+            AnalysisDumpResource(),
         ]
 
         if self.tool_provider_manager is not None:

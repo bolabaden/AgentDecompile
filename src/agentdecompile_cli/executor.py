@@ -107,10 +107,11 @@ def resolve_backend_url(
     default_host: str = "127.0.0.1",
     default_port: int = 8080,
 ) -> str | None:
-    """Resolve backend URL for connect mode.
+    """Resolve backend URL for connect mode (stdio bridge talking to existing server).
 
-    Priority: explicit server_url > env URL > host+port (cli or env).
-    Returns None if no connect-mode option is set.
+    Priority: explicit server_url > env URL > host+port (CLI args or env).
+    Returns None if no connect-mode option is set (so __main__ will spawn local server).
+    Result is always a full URL with path /mcp/message when missing.
     """
     if server_url and server_url.strip():
         return server_url.strip()

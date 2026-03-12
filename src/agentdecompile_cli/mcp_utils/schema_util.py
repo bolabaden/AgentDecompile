@@ -1,4 +1,10 @@
-"""Schema utility helpers for MCP JSON schema creation."""
+"""Schema utility helpers for MCP JSON schema creation.
+
+SchemaUtil builds MCP tool inputSchema property dicts (string, boolean, integer,
+enum, etc.) with optional default/enum/items. Used by providers that construct
+schemas programmatically instead of inline dicts. _UNSET is the sentinel for
+"no default" so we can distinguish default=None from omitted.
+"""
 
 from __future__ import annotations
 

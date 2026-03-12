@@ -1,7 +1,9 @@
 """Data Flow Tool Provider - analyze-data-flow.
 
-Directions: backward, forward, variable_accesses.
-Uses DecompInterface with P-code analysis.
+  - direction=backward: Where a value at the given address came from (e.g. user input → vulnerability).
+  - direction=forward: Where a value at the given address flows to.
+  - direction=variable_accesses: Reads/writes to a variable at the given address.
+  - Uses Ghidra DecompInterface and P-code analysis; _empty_response builds a consistent empty-result payload for errors or no-data cases.
 """
 
 from __future__ import annotations

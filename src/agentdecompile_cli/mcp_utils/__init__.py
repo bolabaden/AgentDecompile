@@ -1,6 +1,12 @@
-"""MCP Utilities for AgentDecompile Python implementation.
+"""MCP utilities used by tool providers and the server.
 
-These utilities provide Python equivalents for the MCP server.
+  - AddressUtil: Format/parse/validate Ghidra addresses (0x-prefix hex).
+  - ProgramLookupUtil: Resolve programPath to Program from open programs list.
+  - SymbolUtil: Symbol name/address resolution and formatting.
+  - MemoryUtil: Read bytes, inspect memory at address.
+  - SchemaUtil / SchemaBuilder: Build MCP JSON schema for tool parameters.
+  - DebugLogger: Conditional debug logging.
+  - AgentDecompileInternalServiceRegistry: Internal service lookup (if used).
 """
 
 from .address_util import AddressUtil

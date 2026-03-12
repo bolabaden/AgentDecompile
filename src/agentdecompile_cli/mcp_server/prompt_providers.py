@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Prompt definitions
 # ---------------------------------------------------------------------------
+# Each prompt has: name (MCP identifier), title, description, arguments (for prompts/get),
+# and messages (list of {role, text} with {placeholders} filled from arguments).
+# Used by multi-subagent workflows: client calls prompts/list then prompts/get with
+# name + arguments; the returned messages drive the subagent's initial task.
 
 _PROMPTS: list[dict[str, Any]] = [
     # 1. Scout – Broad Sweep
@@ -337,7 +341,7 @@ _PROMPTS: list[dict[str, Any]] = [
         "description": (
             "Ports analysis from one binary to another (e.g. game v1 to v2, or "
             "different platform builds). Use match-function with targetProgramPaths for "
-            "cross-program matching; optionally propagate names, comments, and tags. "
+            "cross-program matching; optionally propagate names, tags, comments, prototype, and bookmarks. "
             "Fallback: correlate by name/signature with list-functions/search-symbols and "
             "propagate via rename-function, set-function-prototype, manage-comments, manage-bookmarks, manage-function-tags."
         ),
@@ -359,15 +363,15 @@ _PROMPTS: list[dict[str, Any]] = [
                     "2. Use `match-function` with `programPath` set to the source binary, "
                     "`functionIdentifier` (or `function`) set to the function to match, and "
                     "`targetProgramPaths` set to the target binary path(s). Set `propagateNames`, "
-                    "`propagateTags`, and `propagateComments` to true to port names, tags, and "
-                    "comments. If a function is not found by match-function, correlate by name/signature "
+                    "`propagateTags`, `propagateComments`, `propagatePrototype`, and `propagateBookmarks` to true to port "
+                    "names, tags, all comment types, prototype, and bookmarks. If a function is not found by match-function, correlate by name/signature "
                     "with `list-functions` or `search-symbols` (switching `programPath`) and propagate "
                     "via `rename-function`, `set-function-prototype`, `manage-comments`, `manage-bookmarks`, "
                     "`manage-function-tags` on the target.\n"
                     "3. Focus on the core routines already analysed in the source binary.\n\n"
                     "## Approach\n"
                     "- Prefer `match-function` with `targetProgramPaths=[target]` and "
-                    "`propagateNames=true` (and `propagateTags`/`propagateComments` as needed) to "
+                    "`propagateNames=true` (and `propagateTags`, `propagateComments`, `propagatePrototype`, `propagateBookmarks` as needed) to "
                     "find and annotate the same function in the target.\n"
                     "- List functions in the source related to the subsystem (`list-functions` or "
                     "`search-symbols` with `programPath` set to source). For any not matched by "
@@ -514,7 +518,11 @@ def _render_messages(
     prompt_def: dict[str, Any],
     arguments: dict[str, str] | None,
 ) -> list[types.PromptMessage]:
-    """Render prompt messages with parameter substitution."""
+    """Render prompt messages with parameter substitution.
+
+    Fills {program_path}, {analysis_target}, {keyword_clause}, etc. in each message text.
+    Defaults are applied so prompts still render when the client omits optional args.
+    """
     args = dict(arguments or {})
     args.setdefault("program_path", "/path/to/binary")
     args.setdefault("analysis_target", "target subsystem")

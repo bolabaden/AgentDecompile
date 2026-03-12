@@ -1,7 +1,11 @@
-"""Python MCP Server implementation.
+"""Python MCP Server implementation (FastAPI + Streamable HTTP).
 
-This module provides a complete MCP server implementation using the Python MCP SDK,
-maintaining 1:1 API compatibility.
+This module wires the MCP Python SDK (Server, StreamableHTTPSessionManager) to FastAPI
+so that AgentDecompile can be reached over HTTP (e.g. by the stdio bridge or external clients).
+Flow: HTTP request → StreamableHTTPSessionManager handles MCP protocol → server routes
+tools/list, tools/call, resources/*, prompts/* → ToolProviderManager / ResourceProviderManager.
+Session and auth context are set per-request so tools and resources see the correct
+program/session. Standalone server entry point is launcher.start() (see launcher.py).
 """
 
 from __future__ import annotations

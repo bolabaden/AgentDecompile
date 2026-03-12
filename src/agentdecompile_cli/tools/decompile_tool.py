@@ -32,7 +32,12 @@ if TYPE_CHECKING:
 
 
 class DecompileTool:
-    """Unified Decompile tool handling both MCP and CLI interfaces."""
+    """Unified Decompile tool handling both MCP and CLI interfaces.
+
+    MCP path: decompile_function_for_mcp(name_or_addr, timeout) → DecompiledFunction.
+    CLI path: decompile_function_for_cli(func, decompilers, thread_id, timeout, monitor) for batch runs.
+    Both use the same program + decompiler; the decompiler may come from program_info or be passed in.
+    """
 
     def __init__(self, program_info: ProgramInfo | None = None, decompiler: GhidraDecompInterface | None = None):
         self.program_info = program_info
@@ -75,7 +80,6 @@ class DecompileTool:
         if not self.program or not self.decompiler:
             raise ValueError("Program and decompiler must be set")
 
-        # Find the function
         func = self._resolve_function(function_name_or_address)
         if not func:
             raise ValueError(f"Function not found: {function_name_or_address}")

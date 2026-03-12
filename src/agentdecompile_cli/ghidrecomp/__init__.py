@@ -1,3 +1,10 @@
+"""Ghidra-focused helpers: decompilation, call graph, and SAST.
+
+  - decompile: Decompilation entry point used by tools.
+  - callgraph: CallGraph, get_calling, get_called, gen_callgraph (Mermaid).
+  - sast: Semgrep/CodeQL scans, SARIF merge, C preprocess for analysis.
+"""
+
 from __future__ import annotations
 
 # Expose API

@@ -1,7 +1,9 @@
 """Structure Tool Provider - manage-structures.
 
-Actions: parse, validate, create, add_field, modify_field, modify_from_c,
-         info, list, apply, delete, parse_header.
+Single tool, mode = parse (C header text → struct), validate, create, add_field,
+modify_field, modify_from_c, info, list, apply (apply struct at address), delete,
+parse_header. Uses _collectors collect_structures / collect_structure_fields.
+Structures define memory layout so the decompiler can show field names instead of offsets.
 """
 
 from __future__ import annotations

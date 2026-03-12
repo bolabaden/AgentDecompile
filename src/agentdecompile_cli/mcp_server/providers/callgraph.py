@@ -1,6 +1,8 @@
-"""Call Graph Tool Provider - get-call-graph.
+"""Call Graph Tool Provider - get-call-graph (and gen-call-graph alias).
 
-Modes: graph, tree, callers, callees, callers_decomp, common_callers.
+  - mode: graph (visual flow), tree, callers (who calls this), callees (what this calls), callers_decomp (with decompiled snippets), common_callers (compare two functions).
+  - direction: 'calling' → callers, 'called' → callees; mode can be inferred from direction.
+  - Uses tools/callgraph_tool.CallGraphTool; lazily instantiated per provider via _get_callgraph_tool().
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ class CallGraphToolProvider(ToolProvider):
         self._callgraph_tool = None
 
     def _get_callgraph_tool(self):
+        """Lazy-init CallGraphTool so we only load it when a call-graph tool is actually used."""
         if self._callgraph_tool is None:
             try:
                 from agentdecompile_cli.tools.callgraph_tool import CallGraphTool
@@ -85,11 +88,10 @@ class CallGraphToolProvider(ToolProvider):
 
         mode_explicit = self._get_str(args, "mode", "action", "operation")
         direction_raw = self._get_str(args, "direction", default="calling")
-        # Normalize direction aliases: callers→calling, callees→called
         _dir_aliases = {"callers": "calling", "callees": "called", "up": "calling", "down": "called"}
         direction = _dir_aliases.get(n(direction_raw), direction_raw)
 
-        # Infer mode from direction when not explicitly set
+        # If caller didn't set mode, derive it from direction so "direction: called" → mode "callees"
         if mode_explicit:
             mode = mode_explicit
         else:
@@ -106,7 +108,7 @@ class CallGraphToolProvider(ToolProvider):
         max_nodes = self._get_int(args, "maxnodes", default=250)
         second = self._get_str(args, "secondfunction")
 
-        # Try the real CallGraphTool first
+        # Prefer full CallGraphTool (graph/tree, timeouts, condense); fall back to Ghidra API if unavailable
         cg = self._get_callgraph_tool()
         if cg is not None:
             try:
@@ -144,7 +146,7 @@ class CallGraphToolProvider(ToolProvider):
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
 
-            # Use dispatch table to map modes to handlers for clarity
+            # Multiple mode names can map to same handler (e.g. callers_decomp → _handle_callers)
             return await self._dispatch_handler(
                 args,
                 mode,
@@ -182,6 +184,7 @@ class CallGraphToolProvider(ToolProvider):
 
         mode = self._get_str(args, "mode", default="callers")
         mode_n = n(mode)
+        # common_callers: intersect callers of func with callers of second function
         if mode_n in ("commoncallers", "common_callers") and second:
             second_func = self._resolve_function(second, program=program)
             if second_func:

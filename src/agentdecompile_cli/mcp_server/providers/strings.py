@@ -1,6 +1,11 @@
-"""Strings Tool Provider - manage-strings.
+"""Strings Tool Provider - manage-strings, list-strings, search-strings, search-code.
 
-Modes: list, search, count.
+  - manage-strings: mode = list (enumerate strings), search (query/regex), count.
+  - list-strings: Enumerate all defined strings (minLength, pagination, optional includeReferencingFunctions).
+  - search-strings: Search strings by query; delegates to manage-strings or list logic.
+  - search-code: Search in decompiled/source-like code (different from raw string listing).
+
+Uses _collectors.collect_strings for listing; optional xref lookup for referencing functions.
 """
 
 from __future__ import annotations

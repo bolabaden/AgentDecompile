@@ -1,6 +1,9 @@
-"""Cross References Tool Provider - get-references.
+"""Cross References Tool Provider - get-references, list-cross-references.
 
-Modes: to, from, both, function, referencers_decomp, import, thunk.
+  - get-references: Find references to/from an address. Mode = to (who references this),
+    from (what this references), both, function (refs within a function), referencers_decomp,
+    import, thunk. Paginated via limit/offset.
+  - list-cross-references: Alias that delegates to get-references with same semantics.
 """
 
 from __future__ import annotations

@@ -1,6 +1,11 @@
-"""Symbol Tool Provider - manage-symbols, search-symbols-by-name.
+"""Symbol Tool Provider - manage-symbols, search-symbols, list-imports, list-exports, create-label.
 
-Modes: symbols, classes, namespaces, imports, exports, create_label, count, rename_data, demangle.
+  - manage-symbols: mode = symbols|classes|namespaces|imports|exports|create_label|count|
+    rename_data|demangle. List/search/rename symbols; filterDefaultNames skips auto-generated
+    names like FUN_00101000.
+  - search-symbols (search-symbols-by-name): Query symbols by name/pattern.
+  - list-imports / list-exports: Aliases that delegate to manage-symbols with mode imports/exports.
+  - create-label: Alias for manage-symbols mode create_label.
 """
 
 from __future__ import annotations

@@ -1,6 +1,9 @@
 """Data Tool Provider - get-data, apply-data-type.
 
-Handles raw data viewing and type application at addresses.
+  - get-data: Read raw bytes or interpreted data at an address (with optional length).
+    Returns hex dump and/or structured view depending on existing data type.
+  - apply-data-type: Set or change the data type at an address (e.g. define as string,
+    struct, pointer). Used to improve listing and decompilation accuracy.
 """
 
 from __future__ import annotations

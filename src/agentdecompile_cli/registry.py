@@ -1,8 +1,17 @@
 """Unified tool registry - schema definitions, normalization, and ToolRegistry class.
 
-Merged from tools_schema.py and tool_registry.py.
-Single source of truth for all tool names, parameter schemas, normalization helpers,
-and the ToolRegistry that parses and validates arguments.
+Merged from tools_schema.py and tool_registry.py. Single source of truth for:
+  - Tool names: ToolName enum (canonical kebab-case); TOOLS list for advertisement.
+  - Parameter schemas: TOOL_PARAMS, TOOL_PARAM_ALIASES (e.g. mode/action/operation).
+  - Normalization: normalize_identifier() strips non-alpha and lowercases so that
+    "program-path", "programPath", and "program_path" all match the same param.
+  - Resolution: resolve_tool_name() / resolve_tool_name_enum() map input to ToolName.
+  - Resource URIs: RESOURCE_URIS, RESOURCE_URI_DEBUG_INFO, etc. for read_resource.
+
+Tool execution flow: CLI or MCP client sends tool name + args → registry normalizes
+tool name and param keys → ToolProviderManager dispatches to provider HANDLERS →
+handlers use _get_* / _require_* with normalized keys. Do not add provider-local
+normalization; keep it all here.
 """
 
 from __future__ import annotations
@@ -821,6 +830,12 @@ def _get_explicit_enabled_tools() -> set[str] | None:
 
 
 def _build_advertised_tools() -> list[str]:
+    """Build the list of tool names to advertise in MCP tools/list (and CLI).
+
+    Priority: AGENTDECOMPILE_ENABLE_TOOLS (if set) → exact list to expose.
+    Otherwise: start from all canonical tools, remove disabled, then either hide
+    _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
+    """
     canonical_visible = [t.value for t in ToolName if t not in DISABLED_GUI_ONLY_TOOLS]
     hidden_set = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
     disabled_set = _get_disabled_tools()
@@ -953,6 +968,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
     if aliased is not None:
         return aliased
 
+    # Strip common prefixes/suffixes (e.g. "agentdecompile", "tool") so noisy names still resolve
     stripped: str = norm
     changed: bool = True
     while changed and stripped:

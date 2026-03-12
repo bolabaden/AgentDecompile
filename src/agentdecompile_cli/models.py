@@ -1,3 +1,10 @@
+"""Pydantic models for MCP tool responses and internal data structures.
+
+These models are the canonical shapes for: decompiled function (name, code, signature),
+program info, exports/imports, strings, symbols, call graph, search results, etc.
+Used by tool providers and GhidraTools to build consistent JSON responses.
+"""
+
 from __future__ import annotations
 
 from enum import Enum

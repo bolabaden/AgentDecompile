@@ -1,4 +1,9 @@
-"""Static Analysis Results Resource Provider - Python MCP implementation."""
+"""Static Analysis Results Resource Provider - ghidra://static-analysis-results.
+
+Returns static analysis results for the current program as a SARIF 2.1.0 JSON report.
+Used by IDEs/tools that consume SARIF for security or quality dashboards. When no
+program is loaded, returns an empty SARIF report so the client always gets valid JSON.
+"""
 
 from __future__ import annotations
 

@@ -1,6 +1,12 @@
 """Function Tool Provider - list-functions, get-functions.
 
-Lists and retrieves function information with pagination, filtering.
+  - list-functions: Enumerate functions in the program with optional name-pattern filter,
+    includeExternals flag, and pagination (offset/limit). Uses collect_functions from
+    _collectors for a single pass over the function manager.
+  - get-functions: Detailed view of one or more functions. Accepts a single 'function'
+    or a 'functions' array for batch. Modes: info, decompile, disassemble, calls (or
+    all). Decompilation goes through the program's DecompInterface; results are
+    formatted for MCP consumption.
 """
 
 from __future__ import annotations
@@ -147,9 +153,10 @@ class FunctionToolProvider(ToolProvider):
         return data if isinstance(data, dict) else {}
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Get detailed views (info/decompile/disassemble/calls) for one or more functions. Batch via 'functions' array."""
         self._require_program()
 
-        # Collect all function identifiers (single or batch)
+        # Collect all function identifiers: 'functions' array, or single 'function' / 'addressOrSymbol' / etc.
         func_ids: list[str] = []
         raw_functions = self._get_list(args, "functions")
         if raw_functions:

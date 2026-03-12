@@ -1,4 +1,10 @@
-"""Symbol utility helpers for validation, grouping, and relevance sorting."""
+"""Symbol utility helpers for validation, grouping, and relevance sorting.
+
+Used by tool providers (e.g. manage-symbols, search-symbols) to: detect
+Ghidra-generated default names (FUN_*, LAB_*, SUB_*, etc.), filter symbol
+lists to user-defined names only, and get human-readable symbol type names.
+DEFAULT_SYMBOL_PATTERNS / COMPILED_DEFAULT_SYMBOL_PATTERNS drive is_default_symbol_name.
+"""
 
 from __future__ import annotations
 
