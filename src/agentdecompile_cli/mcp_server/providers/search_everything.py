@@ -1018,7 +1018,7 @@ class SearchEverythingToolProvider(ToolProvider):
         elif result_type == "function_parameter":
             next_tools = [
                 {"tool": ToolName.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": "manage-function", "args": {"name": function_name, "mode": "info"}},
+                {"tool": ToolName.GET_FUNCTIONS.value, "args": {"identifier": function_name}},
             ]
         elif result_type == "function_tag":
             next_tools = [{"tool": ToolName.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]

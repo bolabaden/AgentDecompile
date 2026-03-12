@@ -529,7 +529,7 @@ def _next_steps_data(data: dict[str, Any]) -> list[str]:
 
 def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
     return [
-        "The suggest tool provides AI-suggested names/types — review and apply with `manage-function mode=rename`.",
+        "The suggest tool provides AI-suggested names/types — review and apply with `rename-function` or `set-function-prototype`.",
         "Use `manage-comments` to document your naming decisions.",
     ]
 
