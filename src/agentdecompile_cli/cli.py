@@ -500,18 +500,14 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
     return open_attempts
 
 
-async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_name: str, payload: dict[str, Any]) -> Any | None:
-    if tool_name != "list_project_files":
-        return None
-    if any(key in payload for key in ("path", "folder", "programPath", "program_path", "binary", "binaryName", "binary_name")):
-        return None
-
+def _build_shared_open_payload(ctx: click.Context) -> dict[str, Any] | None:
+    """Build open-project (shared) payload from global opts; None if no host."""
     shared_defaults = _shared_server_defaults(ctx)
     shared_host = str(shared_defaults["host"] or "").strip()
     if not shared_host:
         return None
-
     open_payload: dict[str, Any] = {
+        "shared": True,
         "serverHost": shared_host,
         "serverPort": int(shared_defaults["port"]),
         "format": "json",
@@ -522,10 +518,30 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         open_payload["serverPassword"] = str(shared_defaults["password"])
     if str(shared_defaults["repository"] or "").strip():
         open_payload["path"] = str(shared_defaults["repository"])
+        open_payload["repositoryName"] = str(shared_defaults["repository"])
+    return open_payload
 
-    open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
-    if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
-        return open_result
+
+async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_name: str, payload: dict[str, Any]) -> Any | None:
+    if tool_name == "list_project_files":
+        if any(key in payload for key in ("path", "folder", "programPath", "program_path", "binary", "binaryName", "binary_name")):
+            return None
+        open_payload = _build_shared_open_payload(ctx)
+        if not open_payload:
+            return None
+        open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+        if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
+            return open_result
+        return None
+    if tool_name == "match_function":
+        # So standalone migrate-metadata works: open shared project first when credentials present.
+        open_payload = _build_shared_open_payload(ctx)
+        if not open_payload:
+            return None
+        open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+        if _get_error_result_message(open_result):
+            return open_result
+        return None  # proceed with match-function call
     return None
 
 
