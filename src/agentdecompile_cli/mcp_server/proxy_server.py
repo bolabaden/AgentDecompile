@@ -1,8 +1,10 @@
 """Local MCP proxy server for forwarding to a remote MCP backend.
 
 This server exposes a local streamable HTTP MCP endpoint and forwards all
-tools/resources/prompts to another MCP server. It does not require PyGhidra
-or local JVM startup.
+tools/resources/prompts to another MCP server (e.g. agentdecompile-server).
+It does not require PyGhidra or local JVM startup; use agentdecompile-proxy
+when the backend runs elsewhere. Session state is kept locally and bridged
+via stdio/HTTP to the backend.
 """
 
 from __future__ import annotations
@@ -13,16 +15,19 @@ import socket
 import threading
 import time
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
-from agentdecompile_cli.mcp_server.auth import AuthConfig, AuthMiddleware
-from agentdecompile_cli.registry import ToolName
+from agentdecompile_cli.mcp_server.auth import AuthMiddleware
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
+from agentdecompile_cli.registry import ToolName
+
+if TYPE_CHECKING:
+    from agentdecompile_cli.mcp_server.auth import AuthConfig
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +122,7 @@ class AgentDecompileMcpProxyServer:
         self.app: FastAPI = FastAPI(
             title=self.config.name,
             version=self.config.version,
-            description=(
-                "AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. "
-                "MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
-            ),
+            description=("AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."),
             docs_url="/docs",
             redoc_url="/redoc",
             openapi_url="/openapi.json",
@@ -148,8 +150,11 @@ class AgentDecompileMcpProxyServer:
         }
 
     def _setup_routes(self) -> None:
+        """Register FastAPI routes: startup/shutdown for MCP session manager and bridge, health, API info, and MCP path stubs."""
+
         @self.app.on_event("startup")
         async def _startup_session_manager() -> None:
+            # Bridge uses StreamableHTTPSessionManager; enter its context so MCP sessions can be created
             self._session_manager_cm = self._session_manager.run()
             await self._session_manager_cm.__aenter__()
             SESSION_CONTEXTS.start_reaper()
@@ -254,11 +259,7 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP Streamable HTTP proxy endpoint",
-                description=(
-                    "Canonical MCP streamable-HTTP proxy endpoint. "
-                    "Use POST for JSON-RPC methods and forward all calls to the configured backend URL. "
-                    "Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
-                ),
+                description=("Canonical MCP streamable-HTTP proxy endpoint. Use POST for JSON-RPC methods and forward all calls to the configured backend URL. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"proxy_mcp_streamable_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -269,11 +270,7 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility proxy endpoint",
-                description=(
-                    "Compatibility MCP proxy endpoint for clients that target /mcp/message. "
-                    "Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware "
-                    "before FastAPI routing."
-                ),
+                description=("Compatibility MCP proxy endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"proxy_mcp_message_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -332,7 +329,8 @@ class AgentDecompileMcpProxyServer:
             new_sids = post_sessions - pre_sessions
             if new_sids and (user_agent or remote_addr):
                 fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
-                    user_agent=user_agent, remote_addr=remote_addr,
+                    user_agent=user_agent,
+                    remote_addr=remote_addr,
                 )
                 for new_sid in new_sids:
                     SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)

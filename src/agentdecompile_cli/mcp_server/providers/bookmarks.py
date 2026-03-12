@@ -14,13 +14,13 @@ from typing import Any, ClassVar
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import collect_bookmarks
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,7 @@ class BookmarkToolProvider(ToolProvider):
 
         try:
             bm_mgr = program.getBookmarkManager()
+
             # Wrap in transaction so the change is undoable and persisted with the program
             def _set_bookmark() -> None:
                 bm_mgr.setBookmark(address, bm_type, category, comment)

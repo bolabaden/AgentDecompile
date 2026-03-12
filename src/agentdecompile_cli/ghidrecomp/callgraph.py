@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -17,6 +16,8 @@ MAX_PATH_LEN = 50
 
 # needed for ghidra python vscode autocomplete
 if TYPE_CHECKING:
+    import argparse
+
     from ghidra.program.model.address import AddressRange as GhidraAddressRange, AddressRangeIterator as GhidraAddressRangeIterator
     from ghidra.program.model.listing import Function as GhidraFunction, Program as GhidraProgram
     from ghidra.program.model.symbol import (

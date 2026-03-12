@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 # needed for ghidra python vscode autocomplete
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import ghidra
 
     from ghidra_builtins import *  # noqa: F403

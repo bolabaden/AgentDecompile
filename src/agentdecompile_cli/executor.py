@@ -19,27 +19,32 @@ import os
 import re
 import sys
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
 from mcp import types
 
 from agentdecompile_cli.registry import (
-    ToolRegistry,
     normalize_identifier,
     resolve_tool_name,
     tool_registry,
 )
+
+if TYPE_CHECKING:
+    from agentdecompile_cli.registry import (
+        ToolRegistry,
+    )
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Response helpers (formerly responses.py – that file never existed on disk)
 # ---------------------------------------------------------------------------
+# Single place for MCP TextContent wrappers: success = JSON object, error = JSON with success: false + error message.
 
 
 def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
-    """Create a standardized MCP success response."""
+    """Create a standardized MCP success response (single TextContent with JSON body)."""
     return [types.TextContent(type="text", text=_json.dumps(data))]
 
 
@@ -73,7 +78,11 @@ def build_backend_url(host: str, port: int, use_tls: bool = False) -> str:
 
 
 def normalize_backend_url(value: str) -> str:
-    """Normalize a backend URL or host[:port] into a full MCP message endpoint URL."""
+    """Normalize a backend URL or host[:port] into a full MCP message endpoint URL.
+
+    Ensures scheme (http/https), netloc, and path: empty path → /mcp/message;
+    /mcp or /mcp/message left as-is; other paths get /mcp/message appended.
+    """
     raw = value.strip()
     if not raw:
         raise ValueError("Backend URL cannot be empty")
@@ -87,6 +96,7 @@ def normalize_backend_url(value: str) -> str:
     if not parsed.netloc:
         raise ValueError("Backend URL must include a host")
     path = (parsed.path or "").rstrip("/")
+    # Default to /mcp/message; accept /mcp or /mcp/message; otherwise append so host:port works
     if not path or path == "":
         path = "/mcp/message"
     elif path not in {"/mcp", "/mcp/message"} and not path.endswith("/mcp/message"):
@@ -119,6 +129,7 @@ def resolve_backend_url(
         val = os.getenv(key)
         if val and val.strip():
             return val.strip()
+    # No full URL: build from host + port (CLI args or env; multiple env names for compatibility)
     h = host or os.getenv(env_host_key) or os.getenv("AGENT_DECOMPILE_SERVER_HOST") or os.getenv("AGENTDECOMPILE_SERVER_HOST")
     p = port
     if p is None:
@@ -136,7 +147,8 @@ def resolve_backend_url(
 def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
     """Format data for human-readable output.
 
-    fmt: 'shell' (default) | 'json' | 'markdown' | 'xml' | legacy aliases ('text', 'table')
+    fmt: 'shell' (default) | 'json' | 'markdown' | 'xml' | legacy aliases ('text', 'table').
+    Used by CLI commands to present tool results in the requested format.
     """
     normalized: str = (fmt or "shell").strip().lower()
 
@@ -248,7 +260,10 @@ def run_async(coro: Any) -> Any:
 
 
 def handle_command_error(error: BaseException) -> None:
-    """Handle CLI errors and display user-friendly messages to stderr."""
+    """Handle CLI errors and display user-friendly messages to stderr.
+
+    Order: connection-related → CancelledError → noisy MCP/async patterns → known client exceptions → generic message.
+    """
     error_msg = str(error)
     if isinstance(error, (ConnectionRefusedError, ConnectionError, OSError)) or "ConnectError" in error_msg or "connection refused" in error_msg.lower() or "all connection attempts failed" in error_msg.lower():
         show_connection_error()
@@ -398,7 +413,7 @@ def extract_json_from_response(response_text: str) -> dict[str, Any] | None:
 def build_http_url(base_url: str, endpoint: str) -> str:
     """Build a complete HTTP URL from base URL and endpoint path.
 
-    Ensures proper URL construction by adding/removing slashes as needed.
+    Ensures exactly one slash between base and endpoint (base gets trailing /, endpoint loses leading /).
 
     Args:
         base_url: The base URL (e.g., "http://localhost:8080")
@@ -687,18 +702,18 @@ class DynamicToolExecutor:
             Tool execution result as list of TextContent
         """
         try:
-            # Step 1: Resolve tool name dynamically
+            # Step 1: Resolve tool name (alias / casing / separators → canonical kebab-case)
             canonical_name: str | None = self._resolve_tool_name(tool_name)
             if not canonical_name or not canonical_name.strip():
                 raise ValueError(f"Unknown tool: {tool_name}")
 
-            # Step 2: Parse arguments dynamically
+            # Step 2: Map raw args to canonical param names (camelCase/snake/kebab + normalized fallback)
             parsed_args = self._parse_arguments_dynamically(canonical_name, raw_arguments)
 
-            # Step 3: Validate arguments dynamically
+            # Step 3: Ensure required params present and types acceptable
             self._validate_arguments_dynamically(canonical_name, parsed_args)
 
-            # Step 4: Execute tool dynamically
+            # Step 4: Delegate to registry/backend (HTTP or in-process) and return TextContent list
             result = self._execute_tool_dynamically(canonical_name, parsed_args, context)
 
             return result
@@ -806,7 +821,7 @@ class DynamicToolExecutor:
         if kebab_case != param_name.lower():
             variations.append(kebab_case)
 
-        # Handle special cases from the schemas
+        # Common schema param names and their common aliases (so CLI/agents can pass short names)
         if param_name == "addressOrSymbol":
             variations.extend(["address", "symbol", "addr"])
         elif param_name == "programPath":
@@ -831,7 +846,7 @@ class DynamicToolExecutor:
         if value is None:
             return None
 
-        # Check array parameters first
+        # Check array parameters first (keep list as-is; non-list may be single item passed through)
         if self._is_array_parameter(param_name):
             return value if isinstance(value, list) else value
 
@@ -932,7 +947,7 @@ class DynamicToolExecutor:
         canonical_tool_name: str,
         parsed_args: dict[str, Any],
     ) -> None:
-        """Validate arguments dynamically based on tool requirements."""
+        """Validate arguments dynamically based on tool requirements: all required params present, then type/constraint checks."""
         normalized_tool_name = normalize_identifier(canonical_tool_name)
         required_params = self._get_required_params_for_tool(normalized_tool_name)
         normalized_present = {normalize_identifier(param_name) for param_name, value in parsed_args.items() if value is not None}
@@ -945,7 +960,7 @@ class DynamicToolExecutor:
         self._validate_parameter_constraints(parsed_args)
 
     def _get_required_params_for_tool(self, normalized_tool_name: str) -> list[str]:
-        """Get the list of required parameters for a tool."""
+        """Get the list of required parameters for a tool (alpha-only normalized name → list of param names)."""
         required_params_map: dict[str, list[str]] = {
             "analyzedataflow": ["programpath"],
             "analyzeprogram": ["programpath"],
@@ -993,7 +1008,10 @@ class DynamicToolExecutor:
         parsed_args: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> list[types.TextContent]:
-        """Execute tool dynamically based on tool type and available context."""
+        """Execute tool dynamically based on tool type and available context.
+
+        Priority: ghidra_tools (full in-process) → program_info (program only) → placeholder (e.g. CLI connect mode).
+        """
         context = {} if context is None else context
 
         if "ghidra_tools" in context:

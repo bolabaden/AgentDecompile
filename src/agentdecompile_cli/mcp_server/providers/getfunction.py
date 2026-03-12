@@ -45,9 +45,11 @@ logger = logging.getLogger(__name__)
 # Match-function index: per-program feature set for similarity and call-graph lookup
 # ---------------------------------------------------------------------------
 
+
 @dataclass(slots=True)  # pyright: ignore[reportCallIssue]
 class _FunctionMatchFeature:
     """One function's extracted features for matching (signature, callers, callees)."""
+
     function: Any
     name: str
     address: str
@@ -66,6 +68,7 @@ class _FunctionMatchIndex:
     callee names. Built once per program and cached in _MATCH_INDEX_CACHE so
     repeated match calls (e.g. same program, different source function) are fast.
     """
+
     function_count: int
     features: list[_FunctionMatchFeature]
     by_identity: dict[str, _FunctionMatchFeature]
@@ -211,14 +214,14 @@ class GetFunctionToolProvider(ToolProvider):
             func = self._run_program_transaction(program, "create-function", _create_function)
             return create_success_response({"action": "create", "address": str(addr), "name": func.getName(), "success": True})
 
-        # For other actions, ensure function specified
+        # All other actions need an existing function (rename, set_prototype, delete, etc.)
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
         func = self._resolve_function(func_id, program=program)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
-        # Dispatch remaining actions to dedicated handlers to reduce inline branching
+        # Dispatch to per-action handlers (rename, set_prototype, set_calling_convention, etc.)
         return await self._dispatch_handler(
             args,
             action,
@@ -518,9 +521,7 @@ class GetFunctionToolProvider(ToolProvider):
         session_id = get_current_mcp_session_id()
         manager = getattr(self, "_manager", None)
         if manager is None:
-            raise ValueError(
-                "Cross-program matching requires a session with program resolution. Ensure open-project or import-binary has been used so target programs can be opened."
-            )
+            raise ValueError("Cross-program matching requires a session with program resolution. Ensure open-project or import-binary has been used so target programs can be opened.")
 
         source_name = source_func.getName()
         source_param_count = source_func.getParameterCount()
@@ -569,6 +570,7 @@ class GetFunctionToolProvider(ToolProvider):
             best_feature: _FunctionMatchFeature | None = None
             best_score = 0.0
             for feat in candidates:
+                # Name match = 1.0; same signature (param_count, return_type) but different name = 0.7
                 score = 1.0 if feat.name == source_name else 0.7
                 if score >= min_similarity and score > best_score:
                     best_score = score
@@ -581,7 +583,7 @@ class GetFunctionToolProvider(ToolProvider):
                         "matched": None,
                         "candidatesBySignature": len(candidates),
                         "message": "No match meeting minSimilarity",
-                    }
+                    },
                 )
                 if is_versioned and domain_file is not None and we_did_checkout:
                     try:
@@ -591,10 +593,13 @@ class GetFunctionToolProvider(ToolProvider):
                         class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
                             def getComment(self) -> str:  # noqa: N802
                                 return "Auto match-function propagation"
+
                             def keepCheckedOut(self) -> bool:  # noqa: N802
                                 return False
+
                             def createKeepFile(self) -> bool:  # noqa: N802
                                 return False
+
                         domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
                     except Exception as e:
                         logger.warning("Checkin after no-match (target %s) failed: %s", target_path, e)
@@ -627,8 +632,10 @@ class GetFunctionToolProvider(ToolProvider):
                 target_sig = str(target_func.getSignature())
                 if source_sig != target_sig:
                     try:
+
                         def _set_proto() -> None:
                             target_func.setSignature(source_sig)
+
                         self._run_program_transaction(target_program, "match-function-prototype", _set_proto)
                         entry["propagated"].append("prototype")
                         did_propagate = True
@@ -717,10 +724,13 @@ class GetFunctionToolProvider(ToolProvider):
                     class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
                         def getComment(self) -> str:  # noqa: N802
                             return "Auto match-function propagation"
+
                         def keepCheckedOut(self) -> bool:  # noqa: N802
                             return keep_out
+
                         def createKeepFile(self) -> bool:  # noqa: N802
                             return False
+
                     domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
                 except Exception as e:
                     logger.warning("Checkin after propagation (target %s) failed: %s", target_path, e)
@@ -735,7 +745,7 @@ class GetFunctionToolProvider(ToolProvider):
                 "results": results_per_target,
                 "count": len(results_per_target),
                 "errors": errors if errors else None,
-            }
+            },
         )
 
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:

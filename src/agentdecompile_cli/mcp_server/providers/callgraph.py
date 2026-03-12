@@ -1,8 +1,8 @@
 """Call Graph Tool Provider - get-call-graph (and gen-call-graph alias).
 
-  - mode: graph (visual flow), tree, callers (who calls this), callees (what this calls), callers_decomp (with decompiled snippets), common_callers (compare two functions).
-  - direction: 'calling' → callers, 'called' → callees; mode can be inferred from direction.
-  - Uses tools/callgraph_tool.CallGraphTool; lazily instantiated per provider via _get_callgraph_tool().
+- mode: graph (visual flow), tree, callers (who calls this), callees (what this calls), callers_decomp (with decompiled snippets), common_callers (compare two functions).
+- direction: 'calling' → callers, 'called' → callees; mode can be inferred from direction.
+- Uses tools/callgraph_tool.CallGraphTool; lazily instantiated per provider via _get_callgraph_tool().
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 

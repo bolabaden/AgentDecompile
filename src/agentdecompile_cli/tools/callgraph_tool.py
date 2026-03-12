@@ -9,7 +9,6 @@ Provides a single, consistent interface for callgraph generation.
 
 from __future__ import annotations
 
-import argparse
 import base64
 import re
 import sys
@@ -24,6 +23,8 @@ from agentdecompile_cli.models import (
 )
 
 if TYPE_CHECKING:
+    import argparse
+
     from agentdecompile_cli.launcher import ProgramInfo
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
         Function as GhidraFunction,

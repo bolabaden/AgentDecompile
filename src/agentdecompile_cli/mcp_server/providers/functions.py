@@ -1,12 +1,12 @@
 """Function Tool Provider - list-functions, get-functions.
 
-  - list-functions: Enumerate functions in the program with optional name-pattern filter,
-    includeExternals flag, and pagination (offset/limit). Uses collect_functions from
-    _collectors for a single pass over the function manager.
-  - get-functions: Detailed view of one or more functions. Accepts a single 'function'
-    or a 'functions' array for batch. Modes: info, decompile, disassemble, calls (or
-    all). Decompilation goes through the program's DecompInterface; results are
-    formatted for MCP consumption.
+- list-functions: Enumerate functions in the program with optional name-pattern filter,
+  includeExternals flag, and pagination (offset/limit). Uses collect_functions from
+  _collectors for a single pass over the function manager.
+- get-functions: Detailed view of one or more functions. Accepts a single 'function'
+  or a 'functions' array for batch. Modes: info, decompile, disassemble, calls (or
+  all). Decompilation goes through the program's DecompInterface; results are
+  formatted for MCP consumption.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from typing import Any, ClassVar
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +254,7 @@ class FunctionToolProvider(ToolProvider):
                                 "decompile": self._response_to_payload(decompile_resp),
                                 "disassemble": self._response_to_payload(disassemble_resp),
                             },
-                        }
+                        },
                     )
                 else:
                     single_resp = await self._dispatch_handler(
@@ -284,7 +284,7 @@ class FunctionToolProvider(ToolProvider):
                 "count": len(batch_results),
                 "results": batch_results,
                 "errors": errors,
-            }
+            },
         )
 
     async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:

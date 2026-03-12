@@ -14,11 +14,11 @@ from typing import Any, cast
 from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_data_type_archives
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class DataTypeToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
-
+        # Pattern 1 dispatch: get handler by action, then call with args
         dispatch = {
             "archives": self._archives,
             "list": self._list,

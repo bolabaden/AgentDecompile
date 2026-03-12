@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import argparse
-
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import argparse
+
+    from collections.abc import Sequence
+
     import ghidra
 
+    from ghidra.features.bsim.query.description import DescriptionManager
     from ghidra_builtins import *
 
 
@@ -108,7 +110,6 @@ def gen_bsim_sigs_for_program(
     # see Ghidra/Features/BSim/ghidra_scripts/GenerateSignatures.py
 
     from ghidra.features.bsim.query import FunctionDatabase, GenSignatures
-    from ghidra.features.bsim.query.description import DescriptionManager
     from ghidra.framework.protocol.ghidra import GhidraURL
     from ghidra.program.model.address import AddressSet
     from ghidra.util.task import ConsoleTaskMonitor

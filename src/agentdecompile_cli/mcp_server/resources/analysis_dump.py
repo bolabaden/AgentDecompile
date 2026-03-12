@@ -9,19 +9,20 @@ from __future__ import annotations
 
 import json
 import logging
+
 from typing import Any
 
 from mcp import types
 from pydantic import AnyUrl
 
+from agentdecompile_cli.mcp_server.providers._collectors import (
+    _COMMENT_TYPES,
+    iter_items,
+)
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
-)
-from agentdecompile_cli.mcp_server.providers._collectors import (
-    iter_items,
-    _COMMENT_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,12 +39,14 @@ def _collect_bookmarks_fast(program: Any) -> list[dict[str, Any]]:
         if it is None:
             return out
         for bm in iter_items(it):
-            out.append({
-                "a": str(bm.getAddress()),
-                "t": str(bm.getTypeString()),
-                "c": str(bm.getCategory()),
-                "m": str(bm.getComment() or ""),
-            })
+            out.append(
+                {
+                    "a": str(bm.getAddress()),
+                    "t": str(bm.getTypeString()),
+                    "c": str(bm.getCategory()),
+                    "m": str(bm.getComment() or ""),
+                },
+            )
     except Exception as e:
         logger.debug("analysis_dump bookmarks: %s", e)
     return out
@@ -56,13 +59,15 @@ def _collect_symbols_fast(program: Any) -> list[dict[str, Any]]:
         st = program.getSymbolTable()
         it = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
         for sym in iter_items(it):
-            out.append({
-                "n": str(sym.getName()),
-                "a": str(sym.getAddress()),
-                "y": str(sym.getSymbolType()),
-                "p": str(sym.getParentNamespace()),
-                "s": str(sym.getSource()),
-            })
+            out.append(
+                {
+                    "n": str(sym.getName()),
+                    "a": str(sym.getAddress()),
+                    "y": str(sym.getSymbolType()),
+                    "p": str(sym.getParentNamespace()),
+                    "s": str(sym.getSource()),
+                },
+            )
     except Exception as e:
         logger.debug("analysis_dump symbols: %s", e)
     return out
@@ -86,13 +91,15 @@ def _collect_comments_fast(program: Any) -> list[dict[str, Any]]:
                 txt = cu.getComment(ctype_code)
                 if not txt:
                     continue
-                out.append({
-                    "a": str(addr),
-                    "k": ctype_name,
-                    "t": str(txt),
-                    "f": fn_name,
-                    "fa": fn_addr,
-                })
+                out.append(
+                    {
+                        "a": str(addr),
+                        "k": ctype_name,
+                        "t": str(txt),
+                        "f": fn_name,
+                        "fa": fn_addr,
+                    },
+                )
     except Exception as e:
         logger.debug("analysis_dump comments: %s", e)
     return out
@@ -106,16 +113,18 @@ def _collect_functions_fast(program: Any) -> list[dict[str, Any]]:
         for func in fm.getFunctions(True):
             body = func.getBody()
             naddr = body.getNumAddresses() if body else 0
-            out.append({
-                "n": str(func.getName()),
-                "a": str(func.getEntryPoint()),
-                "s": str(func.getSignature()),
-                "z": int(naddr),
-                "e": bool(func.isExternal()),
-                "k": bool(func.isThunk()),
-                "p": int(func.getParameterCount()),
-                "r": str(func.getReturnType()),
-            })
+            out.append(
+                {
+                    "n": str(func.getName()),
+                    "a": str(func.getEntryPoint()),
+                    "s": str(func.getSignature()),
+                    "z": int(naddr),
+                    "e": bool(func.isExternal()),
+                    "k": bool(func.isThunk()),
+                    "p": int(func.getParameterCount()),
+                    "r": str(func.getReturnType()),
+                },
+            )
     except Exception as e:
         logger.debug("analysis_dump functions: %s", e)
     return out
@@ -203,7 +212,23 @@ class AnalysisDumpResource(ResourceProvider):
             session_id = get_current_mcp_session_id()
             programs = _collect_programs_from_session(session_id)
             payload = {
-                "keyLegend": {"a": "address", "n": "name", "t": "type/comment", "c": "category", "m": "comment", "y": "symbolType", "p": "path/params/parentNamespace", "s": "signature/source", "z": "size", "e": "isExternal", "k": "kind/isThunk", "r": "returnType", "v": "value", "f": "function", "fa": "functionAddress"},
+                "keyLegend": {
+                    "a": "address",
+                    "n": "name",
+                    "t": "type/comment",
+                    "c": "category",
+                    "m": "comment",
+                    "y": "symbolType",
+                    "p": "path/params/parentNamespace",
+                    "s": "signature/source",
+                    "z": "size",
+                    "e": "isExternal",
+                    "k": "kind/isThunk",
+                    "r": "returnType",
+                    "v": "value",
+                    "f": "function",
+                    "fa": "functionAddress",
+                },
                 "programs": programs,
                 "bookmarks": [],
                 "symbols": [],
@@ -228,7 +253,12 @@ class AnalysisDumpResource(ResourceProvider):
         programs = _collect_programs_from_session(session_id)
         logger.info(
             "analysis-dump read: bookmarks=%s symbols=%s comments=%s functions=%s dataTypes=%s strings=%s",
-            len(bookmarks), len(symbols), len(comments), len(functions), len(data_types), len(strings),
+            len(bookmarks),
+            len(symbols),
+            len(comments),
+            len(functions),
+            len(data_types),
+            len(strings),
         )
 
         payload = {

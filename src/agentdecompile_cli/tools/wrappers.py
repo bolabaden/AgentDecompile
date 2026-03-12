@@ -15,10 +15,9 @@ import logging
 import re
 import sys
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from agentdecompile_cli.ghidrecomp.callgraph import _unwrap_mermaid, gen_mermaid_url
+from agentdecompile_cli.ghidrecomp.callgraph import _unwrap_mermaid, gen_mermaid_url, get_called, get_calling
 from agentdecompile_cli.models import (
     BytesReadResult,
     CallGraphDirection,
@@ -35,10 +34,14 @@ from agentdecompile_cli.models import (
     StringSearchResult,
     SymbolInfo,
 )
+from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
+)
 from jpype import JByte
 
 if TYPE_CHECKING:
-    from agentdecompile_cli.ghidrecomp.callgraph import get_called, get_calling
+    from collections.abc import Callable
+
     from agentdecompile_cli.launcher import ProgramInfo
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
         DecompInterface as GhidraDecompInterface,
@@ -57,9 +60,6 @@ if TYPE_CHECKING:
         ReferenceManager as GhidraReferenceManager,
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
-    )
-    from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
-        ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
 
     # Type alias for convenience

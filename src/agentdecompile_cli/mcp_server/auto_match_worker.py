@@ -102,7 +102,10 @@ def run_auto_match_subprocess(
     result: dict[str, Any] = {"success": False, "error": None, "results": [], "count": 0}
     logger.info(
         "auto_match_subprocess project=%s source=%s function=%s targets=%s",
-        project_name, source_program_path, function_identifier, len(target_program_paths),
+        project_name,
+        source_program_path,
+        function_identifier,
+        len(target_program_paths),
     )
     try:
         from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
@@ -267,6 +270,7 @@ def run_auto_match_subprocess(
                                     comment = source_listing.getComment(ctype, source_entry)
                                     if comment and str(comment).strip():
                                         _comment = comment  # Capture for closure; _set_comment runs in transaction later
+
                                         def _set_comment() -> None:
                                             target_listing.setComment(target_entry_addr, ctype, _comment)
 

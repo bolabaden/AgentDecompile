@@ -10,6 +10,7 @@ or a shared-server adapter.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -18,14 +19,12 @@ import socket
 import subprocess
 import sys
 import time
-import json
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -38,6 +37,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     n,
     recommend_tool,
 )
+from agentdecompile_cli.registry import ToolName
 
 if TYPE_CHECKING:
     ...
@@ -371,7 +371,7 @@ class ProjectToolProvider(ToolProvider):
         to a Linux backend where ``Path.resolve()`` would produce nonsense
         like ``/ghidra/C:/foo/bar``.
         """
-        if sys.platform != "win32" and re.match(r'^[A-Za-z]:[/\\]', path):
+        if sys.platform != "win32" and re.match(r"^[A-Za-z]:[/\\]", path):
             return True
         return False
 
@@ -410,7 +410,8 @@ class ProjectToolProvider(ToolProvider):
                     "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT",
                     os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")),
                 ),
-            ).strip() or "13100",
+            ).strip()
+            or "13100",
         )
         shared_args.setdefault(
             "serverusername",
@@ -528,7 +529,10 @@ class ProjectToolProvider(ToolProvider):
         path = self._get_str(args, "path", "programpath", "filepath")
         logger.info(
             "[open-project] dispatcher: shared=%s, server_host=%r, path=%r, raw_args_keys=%s",
-            shared_mode_requested, server_host, path, list(args.keys()) if isinstance(args, dict) else "N/A",
+            shared_mode_requested,
+            server_host,
+            path,
+            list(args.keys()) if isinstance(args, dict) else "N/A",
         )
 
         # Explicit shared server mode
@@ -682,7 +686,7 @@ class ProjectToolProvider(ToolProvider):
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "success": result.returncode == 0,
-            }
+            },
         )
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -725,7 +729,11 @@ class ProjectToolProvider(ToolProvider):
         server_reachable = False
         logger.info(
             "[connect-shared-project] resolved: host=%s, port=%d, username=%s, path=%r, auth=%s",
-            server_host, server_port, server_username or "(none)", path, auth_provided,
+            server_host,
+            server_port,
+            server_username or "(none)",
+            path,
+            auth_provided,
         )
 
         try:
@@ -824,11 +832,7 @@ class ProjectToolProvider(ToolProvider):
                 adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (
-                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting "
-                            f"to the repository server. Wrapper exception: {exc_text}. "
-                            f"Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
-                        ),
+                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -848,11 +852,7 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     ) from exc
                 raise ActionableError(
-                    (
-                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. "
-                        f"Wrapper exception: {exc_text}."
-                        + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
-                    ),
+                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -876,10 +876,7 @@ class ProjectToolProvider(ToolProvider):
                 message = adapter_error or "unknown authentication/connection failure"
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (
-                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting "
-                            f"to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."
-                        ),
+                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -898,10 +895,7 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     )
                 raise ActionableError(
-                    (
-                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. "
-                        f"Adapter reported {adapter_error_type or 'unknown'}: {message}."
-                    ),
+                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -928,10 +922,7 @@ class ProjectToolProvider(ToolProvider):
             adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
             if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                 raise ActionableError(
-                    (
-                        f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. "
-                        f"Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
-                    ),
+                    (f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
                     context=_shared_connection_context(
                         stage="repository-list",
                         server_host=server_host,
@@ -950,11 +941,7 @@ class ProjectToolProvider(ToolProvider):
                     ],
                 ) from exc
             raise ActionableError(
-                (
-                    f"Repository server connection failed for {server_host}:{server_port} while listing repositories. "
-                    f"Wrapper exception: {exc_text}."
-                    + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
-                ),
+                (f"Repository server connection failed for {server_host}:{server_port} while listing repositories. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
                 context=_shared_connection_context(
                     stage="repository-list",
                     server_host=server_host,
@@ -1054,10 +1041,7 @@ class ProjectToolProvider(ToolProvider):
                 exc_text = str(exc)
                 if auth_provided:
                     raise ActionableError(
-                        (
-                            f"Authentication failed while opening repository '{repository_name}'. "
-                            f"Wrapper exception: {exc_text}."
-                        ),
+                        (f"Authentication failed while opening repository '{repository_name}'. Wrapper exception: {exc_text}."),
                         context=_shared_connection_context(
                             stage="repository-open",
                             server_host=server_host,
@@ -1193,7 +1177,9 @@ class ProjectToolProvider(ToolProvider):
                 "programs": binaries,
                 "checkedOutProgram": checked_out_program,
                 "checkoutError": checkout_error,
-                "message": ((f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")),
+                "message": (
+                    (f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")
+                ),
             },
         )
 
@@ -1217,8 +1203,7 @@ class ProjectToolProvider(ToolProvider):
         # something like "/cwd/C:/Users/..." on Linux).
         if self._is_foreign_os_path(path):
             raise ActionableError(
-                f"The path '{path}' is a Windows filesystem path but this backend runs on {sys.platform}. "
-                "Local Windows paths are not accessible from the remote server.",
+                f"The path '{path}' is a Windows filesystem path but this backend runs on {sys.platform}. Local Windows paths are not accessible from the remote server.",
                 context={"action": "open", "path": path, "state": "path-not-found", "reason": "foreign-os-path"},
                 next_steps=filter_recommendations(
                     [
@@ -1226,7 +1211,7 @@ class ProjectToolProvider(ToolProvider):
                         "Retry with an absolute path visible to the backend runtime.",
                         "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
                         "Retry with an absolute path that exists in the backend filesystem.",
-                    ]
+                    ],
                 ),
             )
 
@@ -1318,7 +1303,7 @@ class ProjectToolProvider(ToolProvider):
                         "Retry with an absolute path visible to the backend runtime.",
                         "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool("manage-files", "list-project-files") or "list-project-files"),
                         "Retry with an absolute path that exists in the backend filesystem.",
-                    ]
+                    ],
                 ),
             )
 
@@ -2494,7 +2479,7 @@ class ProjectToolProvider(ToolProvider):
                         "name": program.getName() if hasattr(program, "getName") else entry.name,
                         "type": "Program",
                         "sourcePath": str(entry),
-                    }
+                    },
                 )
             except Exception as exc:
                 errors.append({"path": str(entry), "error": str(exc)})
@@ -3609,10 +3594,12 @@ class ProjectToolProvider(ToolProvider):
         program_path: str = self._require_str(args, "programpath", "binaryname", "binary", name="programPath")
         confirm = self._get_bool(args, "confirm", default=False)
         if not confirm:
-            return create_success_response({
-                "success": False,
-                "error": "Confirmation required: set confirm=true to remove the program from the repository.",
-            })
+            return create_success_response(
+                {
+                    "success": False,
+                    "error": "Confirmation required: set confirm=true to remove the program from the repository.",
+                },
+            )
 
         shared_result = self._remove_shared_repository_item(program_path)
         if shared_result is not None:

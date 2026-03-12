@@ -13,12 +13,12 @@ from typing import Any
 
 from mcp import types
 
-from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.registry import ToolName
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ class DecompilerToolProvider(ToolProvider):
         self._decomp_tool: DecompileTool | None = None  # noqa: F821
 
     def _get_decomp_tool(self) -> DecompileTool | None:  # noqa: F821
+        """Lazy-init DecompileTool so we only load it when decompile-function is actually called."""
         if self._decomp_tool is None:
             try:
                 from agentdecompile_cli.tools.decompile_tool import DecompileTool
@@ -73,7 +74,7 @@ class DecompilerToolProvider(ToolProvider):
 
         timeout: int = self._get_int(args, "timeout", default=DEFAULT_TIMEOUT_SECONDS)
 
-        # Try DecompileTool first
+        # Prefer unified DecompileTool (MCP/CLI); fall back to program's DecompInterface if unavailable
         dt = self._get_decomp_tool()
         if dt is not None:
             try:
@@ -82,9 +83,9 @@ class DecompilerToolProvider(ToolProvider):
                     result = result.model_dump()
                 return create_success_response(result)
             except Exception as e:
-                logger.warning(f"DecompileTool failed: {e.__class__.__name__}: {e}")
+                logger.warning("DecompileTool failed: %s: %s", e.__class__.__name__, e)
 
-        # Fallback: use Ghidra API directly
+        # Fallback: use Ghidra API directly (DecompInterface on program)
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         target_func = self._resolve_function(func_id, program=program)

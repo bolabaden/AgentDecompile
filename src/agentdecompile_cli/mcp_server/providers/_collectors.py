@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import logging
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
+# Ghidra CodeUnit comment type (name, code): eol=end-of-line, pre/post=block, plate=header, repeatable=ref
 _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
     ("eol", 0),
     ("pre", 1),
@@ -26,6 +29,7 @@ _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
 
 
 def iter_items(source: Any):
+    """Yield items from a Java iterator (hasNext/next) or Python iterable so providers can use one loop style."""
     if source is None:
         return
     if hasattr(source, "hasNext") and hasattr(source, "next"):
@@ -37,6 +41,7 @@ def iter_items(source: Any):
 
 
 def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
+    """Collect all comment types (eol, pre, post, plate, repeatable) at the function's entry point."""
     listing = program.getListing()
     address = func.getEntryPoint()
     comments: dict[str, str] = {}
@@ -51,6 +56,7 @@ def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
 
 
 def collect_function_tags(func: Any) -> list[str]:
+    """Return list of tag names attached to this function (e.g. crypto, network)."""
     values: list[str] = []
     for tag in list(func.getTags()):
         tag_name = str(tag.getName() or "")
@@ -60,6 +66,7 @@ def collect_function_tags(func: Any) -> list[str]:
 
 
 def collect_function_call_counts(func: Any) -> dict[str, int]:
+    """Return callerCount and calleeCount for a function (number of callers and called functions)."""
     caller_count = 0
     callee_count = 0
     try:
@@ -74,6 +81,7 @@ def collect_function_call_counts(func: Any) -> dict[str, int]:
 
 
 def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    """Single pass over all functions: name, address, signature, params, comments, tags, caller/callee counts. Used by list-functions and others."""
     fm = program.getFunctionManager()
     results: list[dict[str, Any]] = []
     for func in fm.getFunctions(True):
@@ -110,6 +118,7 @@ def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[st
 
 
 def collect_bookmarks(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    """Single pass over bookmarks: address, type, category, comment. Used by manage-bookmarks list/search."""
     bm_mgr = program.getBookmarkManager()
     results: list[dict[str, Any]] = []
     for bm in iter_items(bm_mgr.getBookmarksIterator()):

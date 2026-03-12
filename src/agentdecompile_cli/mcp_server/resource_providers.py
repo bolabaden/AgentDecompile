@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import logging
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mcp import types
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-from agentdecompile_cli.launcher import ProgramInfo
+    from mcp import types
+
+    from agentdecompile_cli.launcher import ProgramInfo
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +74,7 @@ class ResourceProviderManager:
         self._init_providers()
 
     def _init_providers(self) -> None:
-        """Initialize all resource providers."""
+        """Register built-in resource providers: debug info (ghidra://debug-info) and analysis dump (ghidra://analysis-dump)."""
         from agentdecompile_cli.mcp_server.resources import DebugInfoResource
         from agentdecompile_cli.mcp_server.resources.analysis_dump import AnalysisDumpResource
 
@@ -81,6 +83,7 @@ class ResourceProviderManager:
             AnalysisDumpResource(),
         ]
 
+        # Wire manager and runtime context into providers if already set (e.g. by server startup)
         if self.tool_provider_manager is not None:
             self._for_each_provider(lambda provider: provider.set_tool_provider_manager(self.tool_provider_manager))
         if self.runtime_context:
