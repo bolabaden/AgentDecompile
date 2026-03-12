@@ -104,6 +104,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
 - For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
+- For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
 
 ## MCP server debugging & self-healing
 
