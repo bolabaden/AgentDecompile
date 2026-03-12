@@ -12,6 +12,7 @@ from typing import Any, cast
 from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_data_type_archives
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -26,7 +27,7 @@ class DataTypeToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="manage-data-types",
+                name=ToolName.MANAGE_DATA_TYPES.value,
                 description="List, parse, or apply standard C data types (like 'int', 'char*', 'FILE*', or struct names) to raw memory addresses. This enables the decompiler to see what variables mean. Use this when variables show up as 'undefined' or a raw number, but you know they are holding a specific structure or pointer type.",
                 inputSchema={
                     "type": "object",

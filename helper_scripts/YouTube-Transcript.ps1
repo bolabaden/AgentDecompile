@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Download YouTube video as MP4, captions as VTT, generate transcripts, and optionally extract PNG frames (default 1080p).
+    Download YouTube video as MKV (best quality, no re-encode), captions as VTT, generate transcripts, and optionally extract PNG frames (default 1080p).
     Standalone script: no dependency on this repo. Requires yt-dlp on PATH.
 
 .DESCRIPTION
     Run interactively (default) or with parameters. Supports:
-    - Download video (MP4)
+    - Download video (MKV; native resolution/bitrate, no re-encoding for best frame quality)
     - Download captions (VTT)
     - Plain transcript (VTT -> .txt, no timestamps)
     - Timestamped transcript (VTT -> .txt with [HH:MM:SS] every N seconds)
-    - Frame extraction (video -> PNG frames at every interval; default 1080p, configurable via -FrameSize or -FrameWidth/-FrameHeight)
+    - Frame extraction (video -> PNG frames at every interval; default native resolution for best readability, or -FrameSize 1080p/720p/4k)
     Frame extraction needs a video source: use -Video to download, or -FrameVideoPath with path to video file (or directory containing it).
     Use -FramesOutDir to choose where frame PNGs are written (default: frames subfolder beside the VTT).
 
@@ -27,10 +27,10 @@
 
 .EXAMPLE
     .\YouTube-Transcript.ps1 -Url "https://www.youtube.com/watch?v=..." -OutDir .\out -Video -Subs -ExtractFrames -Interval 5
-    # Download video/subs and extract PNG frames every 5 seconds at 1080p (default)
+    # Download video/subs and extract PNG frames every 5s at native resolution (default, best readability)
 
 .EXAMPLE
-    .\YouTube-Transcript.ps1 -Url "https://www.youtube.com/watch?v=..." -OutDir .\out -Subs -ExtractFrames -Interval 5 -FrameVideoPath "C:\videos\my.mp4" -FramesOutDir "C:\output\frames"
+    .\YouTube-Transcript.ps1 -Url "https://www.youtube.com/watch?v=..." -OutDir .\out -Subs -ExtractFrames -Interval 5 -FrameVideoPath "C:\videos\my.mkv" -FramesOutDir "C:\output\frames"
     # Subs + frames from existing video file; frames written to custom folder
 
 .EXAMPLE
@@ -78,9 +78,9 @@ param(
     [Parameter(HelpMessage = 'Directory where frame PNGs are written. Default: frames subfolder beside the VTT file.')]
     [string]$FramesOutDir = '',
 
-    [Parameter(HelpMessage = 'Output resolution for extracted frames: 720p, 1080p, 4k, or source (no scaling). Default: 1080p.')]
+    [Parameter(HelpMessage = 'Output resolution for extracted frames: source (native, best readability), 720p, 1080p, or 4k. Default: source.')]
     [ValidateSet('720p', '1080p', '4k', 'source')]
-    [string]$FrameSize = '1080p',
+    [string]$FrameSize = 'source',
 
     [Parameter(HelpMessage = 'Explicit frame width (overrides -FrameSize when set with -FrameHeight).')]
     [int]$FrameWidth = 0,
@@ -321,10 +321,11 @@ function Get-SafeBaseName {
     $Name.Trim().TrimEnd('.')
 }
 
-# --- Download video (MP4): native resolution, best bitrate ---
-# Format: best video + best audio (any container), sorted by resolution then bitrate.
-# Merge to MP4; when re-encoding (e.g. VP9->H264) use high quality (CRF 18).
-# Resolution/bitrate mapping for re-encode: CRF 18 approximates high quality across resolutions.
+# --- Download video: native resolution, best bitrate, NO re-encode ---
+# yt-dlp without --format-sort-force can pick 360p/144p (extractor preference overrides -S).
+# We require height>=720 so we never get 144p/360p when higher exists; --format-sort-force
+# makes -S res,br actually define "best". Merge to MKV with -c copy (no re-encode).
+# Refs: https://github.com/yt-dlp/yt-dlp/issues/10859, https://github.com/yt-dlp/yt-dlp/issues/2259
 function Invoke-DownloadVideo {
     param([string]$YtDlp, [string]$Url, [string]$OutDir)
     Write-Log -Level 'STEP' -Message 'Fetching video metadata (dump-json)...'
@@ -341,17 +342,17 @@ function Invoke-DownloadVideo {
     }
     if (-not $info -or -not $info.title) { Fail 'Could not get video title from URL after retries. Check URL and network, then try again.' }
     $title = Get-SafeBaseName $info.title
-    $outPath = Join-Path $OutDir "$title.mp4"
+    $outPath = Join-Path $OutDir "$title.mkv"
     if (Test-Path -LiteralPath $outPath) {
         Write-Log -Level 'INFO' -Message ("Output file already exists; will overwrite (default): {0}" -f $outPath)
     }
-    Write-Log -Level 'INFO' -Message ("Downloading video (native resolution, best bitrate) -> {0}" -f $outPath)
+    Write-Log -Level 'INFO' -Message ("Downloading video (720p+ required, best by res then br, no re-encode) -> {0}" -f $outPath)
     $tmpl = Join-Path $OutDir '%(title)s.%(ext)s'
-    # Best video + best audio by resolution then bitrate; merge to MP4. Re-encode to H264 at high quality when needed (e.g. VP9).
-    $format = 'bestvideo+bestaudio'
-    $sortArgs = @('-S', 'res,br')
-    $mergeArgs = @('--merge-output-format', 'mp4')
-    $ppaArgs = @('--postprocessor-args', 'ffmpeg:-c:v libx264 -crf 18 -preset medium -c:a aac -b:a 192k')
+    # Require height>=720 so we never get 360p/144p; fallback to bestvideo+bestaudio only if no 720p+ exists.
+    $format = 'bestvideo[height>=720]+bestaudio/bestvideo+bestaudio'
+    $sortArgs = @('--format-sort-force', '-S', 'res,br')
+    $mergeArgs = @('--merge-output-format', 'mkv')
+    $ppaArgs = @('--postprocessor-args', 'ffmpeg:-c copy')
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -638,7 +639,7 @@ $ScaleFilterLanczosSuffix = ':flags=lanczos'
 
 function Get-FrameScaleFilter {
     param(
-        [string]$FrameSizePreset = '1080p',
+        [string]$FrameSizePreset = 'source',
         [int]$Width = 0,
         [int]$Height = 0
     )
@@ -668,7 +669,7 @@ function Export-FramesAtInterval {
         [string]$VttPath,
         [int]$IntervalSec = 3,
         [string]$FramesOutDirOverride = '',
-        [string]$ScaleFilter = 'scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos'
+        [string]$ScaleFilter = ''
     )
     if (-not (Test-Path -LiteralPath $VideoPath)) {
         Fail ("Video file not found for frame extraction: {0}. Use -Video to download it, or -FrameVideoPath with the path to your video file." -f $VideoPath)
@@ -710,6 +711,11 @@ function Export-FramesAtInterval {
     Write-Log -Level 'INFO' -Message ("Frame extraction output dir: {0}" -f $framesDir)
     $durStr = $durationSec.ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture)
     Write-Log -Level 'INFO' -Message ("Interval: {0}s | Duration: {1}s | Expected frames: {2} (seek-per-frame for speed)" -f $IntervalSec, $durStr, $expected)
+    if (-not $ScaleFilter) {
+        Write-Log -Level 'INFO' -Message 'Resolution: native (no scaling) for best readability.'
+    } else {
+        Write-Log -Level 'INFO' -Message ("Resolution: scaled (filter: {0})" -f $ScaleFilter)
+    }
     Write-Log -Level 'STEP' -Message 'Extracting frames (one per timestamp; -ss before -i for fast seek)...'
 
     $createdCount = 0

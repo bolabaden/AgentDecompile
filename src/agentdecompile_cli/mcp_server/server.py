@@ -23,7 +23,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
 from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOLS, get_tool_params
+from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOL_ALIASES, TOOLS, ToolName, get_tool_params
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
     AuthConfig,
@@ -180,7 +180,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 3,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": "open-project",
+                                    "name": ToolName.OPEN_PROJECT.value,
                                     "arguments": {
                                         "path": "/K1/k1_win_gog_swkotor.exe",
                                         "serverHost": "<ghidra-host>",
@@ -199,7 +199,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 4,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": "get-references",
+                                    "name": ToolName.GET_REFERENCES.value,
                                     "arguments": {
                                         "programPath": "/K1/k1_win_gog_swkotor.exe",
                                         "target": "WinMain",
@@ -225,7 +225,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                 "value": {
                                     "jsonrpc": "2.0",
                                     "id": 2,
-                                    "result": {"tools": [{"name": "open-project"}]},
+                                    "result": {"tools": [{"name": ToolName.OPEN_PROJECT.value}]},
                                 },
                             },
                             "error": {

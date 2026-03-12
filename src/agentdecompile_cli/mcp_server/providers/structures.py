@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structure_fields,
     collect_structures,
@@ -51,7 +52,7 @@ class StructureToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="manage-structures",
+                name=ToolName.MANAGE_STRUCTURES.value,
                 description="Create, list, apply, parse, and edit complex data structures (like C structs and unions) to map out memory layouts.",
                 inputSchema={
                     "type": "object",

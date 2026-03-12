@@ -18,6 +18,7 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_function_comments,
     collect_function_tags,
 )
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
@@ -37,7 +38,7 @@ class DissectFunctionToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="dissect-function",
+                name=ToolName.DISSECT_FUNCTION.value,
                 description=(
                     "Deep, all-in-one inspection of a single function. "
                     "Returns every available detail in one call: decompiled C code, "

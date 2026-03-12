@@ -14,6 +14,7 @@ from typing import Any
 from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_strings
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -34,7 +35,7 @@ class StringToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="manage-strings",
+                name=ToolName.MANAGE_STRINGS.value,
                 description="Search, filter, list, and measure literal text strings embedded in the compiled program's data segments.",
                 inputSchema={
                     "type": "object",
@@ -51,7 +52,7 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="list-strings",
+                name=ToolName.LIST_STRINGS.value,
                 description="Dump all recognized text strings found in the current program's memory.",
                 inputSchema={
                     "type": "object",
@@ -66,7 +67,7 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="search-strings",
+                name=ToolName.SEARCH_STRINGS.value,
                 description="Search the program's defined strings for a specific text pattern.",
                 inputSchema={
                     "type": "object",
@@ -82,7 +83,7 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="search-code",
+                name=ToolName.SEARCH_CODE.value,
                 description="Scan all function names across the entire program looking for a specific text string.",
                 inputSchema={
                     "type": "object",

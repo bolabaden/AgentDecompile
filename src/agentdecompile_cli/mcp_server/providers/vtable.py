@@ -11,6 +11,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.tool_providers import (
     DEFAULT_MAX_ENTRIES,
     DEFAULT_PAGE_LIMIT,
@@ -27,7 +28,7 @@ class VtableToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="analyze-vtables",
+                name=ToolName.ANALYZE_VTABLES.value,
                 description="Find and examine virtual function tables (vtables) belonging to C++ classes. A vtable is an array of function pointers used for dynamic dispatch in object-oriented programs. Use this to rebuild class inheritance or find virtual methods of an object.",
                 inputSchema={
                     "type": "object",

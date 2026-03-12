@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
+from agentdecompile_cli.registry import ToolName
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -152,7 +153,7 @@ class ProjectToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name="open-project",
+                name=ToolName.OPEN_PROJECT.value,
                 description="Open a local .gpr project or connect to a shared Ghidra repository server. Use import-binary for local binaries.",
                 inputSchema={
                     "type": "object",
@@ -171,7 +172,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="svr-admin",
+                name=ToolName.SVR_ADMIN.value,
                 description="Run Ghidra server administration commands via the bundled svrAdmin script with full argument passthrough.",
                 inputSchema={
                     "type": "object",
@@ -210,7 +211,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="list-project-files",
+                name=ToolName.LIST_PROJECT_FILES.value,
                 description="List project files.",
                 inputSchema={
                     "type": "object",
@@ -225,7 +226,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="sync-project",
+                name=ToolName.SYNC_PROJECT.value,
                 description="Sync with local or shared repository. Supports pull, push, and bidirectional modes between local projects and shared Ghidra server repositories.",
                 inputSchema={
                     "type": "object",
@@ -250,7 +251,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="manage-files",
+                name=ToolName.MANAGE_FILES.value,
                 description="Manage project files and open programs.",
                 inputSchema={
                     "type": "object",
@@ -310,7 +311,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="remove-program-binary",
+                name=ToolName.REMOVE_PROGRAM_BINARY.value,
                 description="Remove a program from the current Ghidra project (shared repository or local project). This uses Ghidra's DomainFile API and does not delete source binaries from the host filesystem.",
                 inputSchema={
                     "type": "object",
@@ -327,22 +328,22 @@ class ProjectToolProvider(ToolProvider):
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name="get-current-address",
+                name=ToolName.GET_CURRENT_ADDRESS.value,
                 description="Get current address (GUI-only, headless-safe)",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name="get-current-function",
+                name=ToolName.GET_CURRENT_FUNCTION.value,
                 description="Get current function (GUI-only, headless-safe)",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
             types.Tool(
-                name="open-program-in-code-browser",
+                name=ToolName.OPEN_PROGRAM_IN_CODE_BROWSER.value,
                 description="Open program in Code Browser (GUI-only)",
                 inputSchema={"type": "object", "properties": {"programPath": {"type": "string"}}, "required": []},
             ),
             types.Tool(
-                name="get-current-program",
+                name=ToolName.GET_CURRENT_PROGRAM.value,
                 description="Retrieve metadata for the currently active program, including name, path, language, compiler, and analysis status.",
                 inputSchema={
                     "type": "object",

@@ -45,6 +45,7 @@ from agentdecompile_cli.registry import (
     is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
+    resolve_tool_name_enum,
     to_snake_case,
 )
 
@@ -1706,7 +1707,8 @@ class ToolProviderManager:
             self.set_program_info(program_info)
 
         resolved_name: str = resolve_tool_name(name) or name
-        if resolved_name in DISABLED_GUI_ONLY_TOOLS:
+        tool_enum = resolve_tool_name_enum(name)
+        if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
             return create_error_response(
                 ActionableError(
                     f"Tool '{resolved_name}' is disabled (GUI-only). TODO: add capability-gated GUI enablement.",

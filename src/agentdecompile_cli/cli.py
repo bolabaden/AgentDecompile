@@ -497,7 +497,7 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
     if str(shared_defaults["repository"] or "").strip():
         open_payload["path"] = str(shared_defaults["repository"])
 
-    open_result = await client.call_tool("open-project", open_payload)
+    open_result = await client.call_tool(ToolName.OPEN_PROJECT.value, open_payload)
     if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
         return open_result
     return None
@@ -531,7 +531,7 @@ async def _maybe_preopen_requested_program(
 async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> tuple[bool, Any | None]:
     """Try to open a program with the given payload."""
     try:
-        open_result = await client.call_tool("open-project", {**open_payload, "format": "json"})
+        open_result = await client.call_tool(ToolName.OPEN_PROJECT.value, {**open_payload, "format": "json"})
         if _get_error_result_message(open_result):
             return False, open_result
     except Exception:
@@ -1552,7 +1552,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # Open the cached program
                     await _call_raw(
                         ctx,
-                        "open-project",
+                        ToolName.OPEN_PROJECT.value,
                         {"path": cached_prog, "local": True},
                     )
                     # Retry resource read
@@ -3576,7 +3576,7 @@ def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
     _run_async(
         _call(
             ctx,
-            "open-project",
+            ToolName.OPEN_PROJECT.value,
             path=resolved_path,
             analyzeAfterImport=not no_analyze,
         ),
