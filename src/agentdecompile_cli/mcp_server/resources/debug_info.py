@@ -28,7 +28,11 @@ from pydantic import AnyUrl
 from agentdecompile_cli.mcp_server.auth import get_current_auth_context
 from agentdecompile_cli.mcp_server.profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
-from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS, get_current_mcp_session_id
+from agentdecompile_cli.mcp_server.session_context import (
+    SESSION_CONTEXTS,
+    get_current_mcp_session_id,
+    get_current_request_project_path_override,
+)
 from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, ToolName
 
 from .programs import ProgramListResource
@@ -279,6 +283,11 @@ class DebugInfoResource(ResourceProvider):
         return result
 
     def _build_open_project_arguments(self) -> tuple[dict[str, Any], str]:
+        # Per-request override from proxy (X-AgentDecompile-Project-Path) so proxy env takes effect
+        request_gpr = get_current_request_project_path_override()
+        if request_gpr:
+            return ({"path": request_gpr}, "request-header:gpr")
+
         session_id = get_current_mcp_session_id()
         session_snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=10, tool_history_limit=5)
         project_handle = session_snapshot.get("projectHandle")

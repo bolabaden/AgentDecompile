@@ -717,6 +717,27 @@ class AgentDecompileStdioBridge:
         """Return forwarded HTTP headers for one frontend session."""
         return dict(self._streamable_http_headers.get(session_id, {}))
 
+    @staticmethod
+    def _proxy_project_path_headers() -> dict[str, str]:
+        """Build X-AgentDecompile-Project-Path from proxy env so backend uses configured project.
+
+        When agentdecompile-proxy runs with AGENTDECOMPILE_PROJECT_PATH and optionally
+        AGENTDECOMPILE_PROJECT_NAME, these are sent to the backend so debug-info and
+        open-project use the right .gpr path instead of the backend default (e.g. my_project.gpr).
+        Enables multiple proxy sessions to target different projects via env.
+        """
+        path_val = os.environ.get("AGENTDECOMPILE_PROJECT_PATH", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_PATH", "").strip()
+        if not path_val:
+            return {}
+        path = Path(path_val).expanduser()
+        if path.suffix.lower() == ".gpr":
+            return {"X-AgentDecompile-Project-Path": str(path)}
+        name_val = os.environ.get("AGENTDECOMPILE_PROJECT_NAME", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "").strip()
+        name = name_val or "my_project"
+        if not name.endswith(".gpr"):
+            name = f"{name}.gpr"
+        return {"X-AgentDecompile-Project-Path": str(path / name)}
+
     def _current_frontend_session_id(self) -> str:
         sid = get_current_mcp_session_id()
         if sid and sid != "default":
@@ -765,7 +786,11 @@ class AgentDecompileStdioBridge:
             if backend is not None:
                 await backend.close()
 
-            backend = RawMcpHttpBackend(self.url, extra_headers=self._get_streamable_http_headers(sid))
+            merged_headers = {
+                **self._get_streamable_http_headers(sid),
+                **self._proxy_project_path_headers(),
+            }
+            backend = RawMcpHttpBackend(self.url, extra_headers=merged_headers)
             await backend.initialize()
             self._backends[sid] = backend
             sys.stderr.write(f"Backend session established to {self.url} (frontend session: {sid})\n")

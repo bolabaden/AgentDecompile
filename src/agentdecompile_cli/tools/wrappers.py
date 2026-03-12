@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
     )
-    from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]  # noqa: TC004
         ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
 

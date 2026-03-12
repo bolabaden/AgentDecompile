@@ -1403,7 +1403,7 @@ class ToolProvider:
         pass
 
     def cleanup(self) -> None:
-        pass
+        """Override to release provider-specific resources (e.g. caches, handles); default no-op."""
 
 
 # ---------------------------------------------------------------------------
@@ -1416,7 +1416,7 @@ class ToolProviderManager:
 
     def __init__(self) -> None:
         self.providers: list[ToolProvider] = []
-        self._tool_map: dict[str, ToolProvider] = {}
+        self._tool_map: dict[str, ToolProvider] = {}  # normalized tool name → provider; filled by _register()
         self.program_info: ProgramInfo | None = None
         self.ghidra_project: Any | None = None  # GhidraProject from PyGhidraContext
         self._on_program_info_changed: Callable[[ProgramInfo], None] | None = None
@@ -1433,7 +1433,7 @@ class ToolProviderManager:
             self._tool_map[n(tool.name)] = provider
 
     def register_all_providers(self) -> None:
-        """Import and register every concrete provider."""
+        """Import and register every concrete provider; called at server startup so _tool_map has all HANDLERS."""
         from agentdecompile_cli.mcp_server.providers import (
             BookmarkToolProvider,
             CallGraphToolProvider,
@@ -1849,7 +1849,7 @@ class ToolProviderManager:
         # Follow alias chain: if the resolved name maps to an alias target, look that up
         if provider is None:
             alias_target: str | None = TOOL_ALIASES.get(norm_name)
-            if alias_target:
+            if alias_target and alias_target.strip():
                 alias_norm = n(alias_target)
                 provider = self._tool_map.get(alias_norm)
                 if provider is not None:
@@ -1957,6 +1957,7 @@ class ToolProviderManager:
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
 
+        # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)
 
         # Auto match-function: when env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE is set and this tool+mode
@@ -2018,8 +2019,7 @@ class ToolProviderManager:
                         except Exception as auto_match_exc:
                             logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
 
-        # Apply markdown formatting unless the caller explicitly requests JSON or
-        # this is an internal auto-prerequisite invocation.
+        # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
         if not norm_args.get("autoprereqinvocation", False) and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
             try:
                 data = _json.loads(result[0].text)
@@ -2031,8 +2031,8 @@ class ToolProviderManager:
         return result
 
     def program_opened(self, program_info_or_path: ProgramInfo | os.PathLike | str) -> None:
+        """Notify all providers that a program was opened; accept path string or ProgramInfo/PathLike."""
         if isinstance(program_info_or_path, str):
-            # String case: notify providers of program path
             for p in self.providers:
                 p.program_opened(program_info_or_path)
         else:
@@ -2057,10 +2057,12 @@ class ToolProviderManager:
                 self.set_program_info(pi)
 
     def program_closed(self, program_path: str) -> None:
+        """Notify all providers that a program was closed so they can clear cached state."""
         for p in self.providers:
             p.program_closed(program_path)
 
     def cleanup(self) -> None:
+        """Call cleanup() on all providers; exceptions are swallowed so one failure does not block others."""
         for p in self.providers:
             try:
                 p.cleanup()

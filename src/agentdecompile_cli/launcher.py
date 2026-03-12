@@ -47,14 +47,14 @@ if TYPE_CHECKING:
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        DomainFile,
+        DomainFile,  # noqa: TC004
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function,
-        Program as GhidraProgram,
+        Program as GhidraProgram,  # noqa: TC004
     )
 
     from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: F401
