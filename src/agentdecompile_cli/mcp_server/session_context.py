@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 CURRENT_MCP_SESSION_ID: ContextVar[str] = ContextVar("current_mcp_session_id", default="default")
 
+# Per-request project path override (e.g. from proxy X-AgentDecompile-Project-Path header).
+# When set, debug_info and open-project flows use this path instead of runtime_context.
+CURRENT_REQUEST_PROJECT_PATH_OVERRIDE: ContextVar[str | None] = ContextVar("current_request_project_path_override", default=None)
+
 # Default grace period in seconds.  Overridden by AGENTDECOMPILE_SESSION_GRACE_PERIOD
 _DEFAULT_GRACE_PERIOD: int = 300
 # How frequently the reaper thread checks for expired entries (seconds)
@@ -53,9 +57,14 @@ def _get_grace_period() -> int:
     return _DEFAULT_GRACE_PERIOD
 
 
+def get_current_request_project_path_override() -> str | None:
+    """Return the current request's project path override (from proxy header), if any."""
+    return CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.get()
+
+
 def get_current_mcp_session_id() -> str:
     """Return the current MCP session ID for this request (used by tools to find SessionContext)."""
-    session_id = CURRENT_MCP_SESSION_ID.get()
+    session_id: str | None = CURRENT_MCP_SESSION_ID.get()
     if session_id and session_id != "default":
         return session_id
 
@@ -103,6 +112,7 @@ class SessionContext:
         self.last_activity = time.monotonic()
 
     def get_active_program_info(self) -> ProgramInfo | None:
+        """Return the ProgramInfo for the session's active program key, or None if none set."""
         if not self.active_program_key:
             return None
         return self.open_programs.get(self.active_program_key)
@@ -118,8 +128,14 @@ class _GraceEntry:
 
 
 class SessionContextStore:
+    """In-memory store of MCP sessions: active sessions, grace-period evictees, and client fingerprints.
+
+    Single process-wide instance (SESSION_CONTEXTS). Thread-safe via _lock.
+    Reaper thread purges expired grace entries and optionally idle sessions.
+    """
+
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock: threading.RLock = threading.RLock()
         self._sessions: dict[str, SessionContext] = {}
         self._last_session_with_binaries: str | None = None
         # Grace-period: evicted sessions kept for reconnection
@@ -128,7 +144,7 @@ class SessionContextStore:
         self._fingerprint_map: dict[str, str] = {}
         # Background reaper
         self._reaper: threading.Thread | None = None
-        self._reaper_stop = threading.Event()
+        self._reaper_stop: threading.Event = threading.Event()
 
     # ------------------------------------------------------------------
     # Lifecycle helpers

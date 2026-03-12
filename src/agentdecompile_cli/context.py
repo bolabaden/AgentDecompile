@@ -42,14 +42,14 @@ if TYPE_CHECKING:
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        DomainFile,
+        DomainFile,  # noqa: TC004
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         Function,
-        Program,
+        Program,  # noqa: TC004
     )
 
 # Configure logging

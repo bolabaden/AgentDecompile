@@ -34,7 +34,11 @@ from agentdecompile_cli.mcp_server.auth import (
     parse_basic_auth,
 )
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
-from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
+from agentdecompile_cli.mcp_server.session_context import (
+    CURRENT_MCP_SESSION_ID,
+    CURRENT_REQUEST_PROJECT_PATH_OVERRIDE,
+    SESSION_CONTEXTS,
+)
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, ToolName, get_tool_params
@@ -666,6 +670,7 @@ class PythonMcpServer:
             session_id = "default"
             user_agent = ""
             remote_addr = ""
+            project_path_override: str | None = None
             if scope.get("type") == "http":
                 for key_b, value_b in scope.get("headers", []):
                     header_name = key_b.decode("latin1").lower()
@@ -675,6 +680,8 @@ class PythonMcpServer:
                             session_id = value
                     elif header_name == "user-agent":
                         user_agent = value_b.decode("latin1", errors="replace")
+                    elif header_name == "x-agentdecompile-project-path":
+                        project_path_override = value_b.decode("latin1").strip() or None
                 client_info = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
@@ -690,10 +697,15 @@ class PythonMcpServer:
                     auth_token = CURRENT_AUTH_CONTEXT.set(header_auth_ctx)
 
             token = CURRENT_MCP_SESSION_ID.set(session_id)
+            project_path_token = None
+            if project_path_override:
+                project_path_token = CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.set(project_path_override)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
+                if project_path_token is not None:
+                    CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.reset(project_path_token)
                 if auth_token is not None:
                     CURRENT_AUTH_CONTEXT.reset(auth_token)
 
