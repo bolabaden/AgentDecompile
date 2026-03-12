@@ -1134,6 +1134,20 @@ class ProjectToolProvider(ToolProvider):
         )
         SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
 
+        # Ensure a Ghidra project exists so _checkout_shared_program has project_data for versioned checkout
+        if self._manager is not None and getattr(self._manager, "ghidra_project", None) is None:
+            try:
+                import tempfile
+                from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                shared_project_dir = Path(tempfile.gettempdir()) / "agentdecompile_shared" / repository_name.replace(os.sep, "_")
+                shared_project_dir.mkdir(parents=True, exist_ok=True)
+                project_name = "shared"
+                ghidra_project = GhidraProject.createProject(str(shared_project_dir), project_name, False)
+                self._manager.ghidra_project = ghidra_project
+                logger.info("[connect-shared-project] created transient project at %s for versioned checkout", shared_project_dir)
+            except Exception as exc:
+                logger.warning("[connect-shared-project] could not create transient project for checkout: %s", exc)
+
         checked_out_program: str | None = None
         checkout_error: str | None = None
         if checkout_program_path:
