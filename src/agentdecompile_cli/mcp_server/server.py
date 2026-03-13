@@ -744,10 +744,17 @@ class PythonMcpServer:
                 if message.get("type") == "http.response.start" and not response_start_sent[0]:
                     response_start_sent[0] = True
                     headers: list[tuple[bytes, bytes]] = list(message.get("headers", []))
-                    # Add or overwrite so client receives the session id we use (e.g. "default")
                     key_lower = b"mcp-session-id"
+                    existing_sid: bytes | None = None
+                    for k, v in headers:
+                        if k.lower() == key_lower:
+                            existing_sid = v
+                            break
+                    # Prefer SDK-provided session ID (e.g. new UUID) so client can resend it; else echo request id
                     headers = [(k, v) for k, v in headers if k.lower() != key_lower]
-                    headers.append((key_lower, session_id_for_response.encode("latin1")))
+                    headers.append(
+                        (key_lower, (existing_sid if existing_sid else session_id_for_response.encode("latin1")))
+                    )
                     message = {**message, "headers": headers}
                 await send(message)
 

@@ -204,8 +204,9 @@ class RawMcpHttpBackend:
             "Accept": "application/json, text/event-stream",
         }
         h.update(self._extra_headers)
-        if self._session_id:
-            h["Mcp-Session-Id"] = self._session_id
+        # Always send a session ID so servers that require it (e.g. behind some proxies) accept the request.
+        # Use "default" when we have none yet; server may return a new one in response headers.
+        h["Mcp-Session-Id"] = self._session_id or "default"
         return h
 
     @staticmethod
