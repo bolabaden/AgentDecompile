@@ -44,6 +44,7 @@ from agentdecompile_cli.executor import (
     format_output,
     get_client,
     handle_command_error,
+    normalize_backend_url,
     resolve_backend_url,
     run_async,
 )
@@ -170,7 +171,17 @@ def _client(ctx: click.Context) -> Any:
         opts.get("host"),
         opts.get("port"),
     )
-    extra_headers = _shared_request_headers(ctx)
+    extra_headers = dict(_shared_request_headers(ctx) or {})
+    # Send persisted session id so second invocation reuses same server session (two-command persistence)
+    state = _load_cli_state()
+    scope = _cache_scope_key(ctx)
+    backends = state.get("backends") if isinstance(state, dict) else None
+    if isinstance(backends, dict):
+        entry = backends.get(scope)
+        if isinstance(entry, dict):
+            sid = entry.get("session_id")
+            if isinstance(sid, str) and sid.strip():
+                extra_headers["Mcp-Session-Id"] = sid.strip()
     if url:
         return get_client(url=url, extra_headers=extra_headers)
     return get_client(
@@ -740,7 +751,9 @@ async def _execute_tool_call(
             if preopen_error is not None:
                 return preopen_error
             first = await client_override.call_tool(call_tool_name, payload)
-            return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
+            result = await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
+            _persist_session_id(ctx, client_override)
+            return result
 
         client = _client(ctx)
         async with client:
@@ -751,7 +764,9 @@ async def _execute_tool_call(
             if preopen_error is not None:
                 return preopen_error
             first = await client.call_tool(call_tool_name, payload)
-            return await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
+            result = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
+            _persist_session_id(ctx, client)
+            return result
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
@@ -891,7 +906,10 @@ def _cache_scope_key(ctx: click.Context) -> str:
         opts.get("port"),
     )
     if url:
-        return url.rstrip("/")
+        try:
+            return normalize_backend_url(url)
+        except Exception:
+            return url.rstrip("/")
     return f"http://{opts.get('host', '127.0.0.1')}:{opts.get('port', 8080)}"
 
 
@@ -915,6 +933,28 @@ def _set_cached_program(ctx: click.Context, program: str) -> None:
     if not isinstance(entry, dict):
         entry = {}
     entry["last_program"] = program.strip()
+    backends[scope] = entry
+    state["backends"] = backends
+    _save_cli_state(state)
+
+
+def _persist_session_id(ctx: click.Context, client: Any) -> None:
+    """Persist MCP session id from client so next CLI invocation reuses the same server session."""
+    get_sid = getattr(client, "get_session_id", None)
+    if not callable(get_sid):
+        return
+    sid = get_sid()
+    if not isinstance(sid, str) or not sid.strip():
+        return
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        backends = {}
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry["session_id"] = sid.strip()
     backends[scope] = entry
     state["backends"] = backends
     _save_cli_state(state)
