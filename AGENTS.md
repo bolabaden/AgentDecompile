@@ -93,7 +93,8 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned User Preferences
 
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
-- After fixing an issue, continue with the original task without asking for confirmation; take initiative automatically.
+- After fixing an issue, continue with the task without asking; run and verify, and if still broken fix and rerun until functional.
+- Fix the underlying behavior so the same user commands work unchanged; do not only improve error messages or documentation.
 - Use the MCP server tools (e.g. user-agdec-http) for agentdecompile workflows rather than the CLI when both are available.
 - Default to markdown (not JSON) for tool output; scale output detail by result count (few results = full detail, many = trimmed).
 - Prefer supporting Ghidra server auth via headers or CLI args when possible, not only via process environment.
@@ -107,6 +108,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
 - For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
+- CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used.
 
 ## MCP server debugging & self-healing
 

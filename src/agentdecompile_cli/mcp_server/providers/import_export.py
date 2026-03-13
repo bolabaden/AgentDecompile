@@ -1117,10 +1117,10 @@ class ImportExportToolProvider(ToolProvider):
                             "exclusive": exclusive,
                             "success": False,
                             "reason": "path-not-resolved",
-                            "error": "Could not resolve program path in the current project. Ensure you have called open-project with the shared server (e.g. open-project --shared 1) so the repository is connected, then retry checkout-program with the same program_path.",
+                            "error": "Could not resolve program path in the current project. Each CLI run uses a new session, so open-project in a previous run does not apply. Either (1) pass the same --ghidra-server-host, --server-repository, etc. when calling checkout-program so the CLI opens the shared project first in this session, or (2) use tool-seq in one run: open-project then checkout-program.",
                             "nextSteps": [
-                                "Call `open-project` with shared server details (serverHost, serverPort, serverRepository, credentials).",
-                                "Then retry `checkout-program` with program_path.",
+                                "Same session: run one command with server options, e.g. `... --ghidra-server-host HOST --server-repository REPO tool checkout-program '{\"programPath\": \"/K1/...\"}'` so open-project runs first in this session.",
+                                "Or use tool-seq: `tool-seq '[{\"name\": \"open-project\", \"arguments\": {\"path\": \"Odyssey\"}}, {\"name\": \"checkout-program\", \"arguments\": {\"programPath\": \"/K1/k1_win_gog_swkotor.exe\"}}]'` with server URL and ghidra-server-* options.",
                             ],
                         },
                     )

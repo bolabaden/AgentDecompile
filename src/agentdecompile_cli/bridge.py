@@ -458,6 +458,12 @@ class AgentDecompileMcpClient:
             raise ClientError("Not connected")
         return backend
 
+    def get_session_id(self) -> str | None:
+        """Return the current MCP session id from the last response (for CLI persistence across invocations)."""
+        if self._backend is None:
+            return None
+        return getattr(self._backend, "_session_id", None) or None
+
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""
         if isinstance(result, dict):

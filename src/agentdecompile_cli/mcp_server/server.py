@@ -305,14 +305,16 @@ def _auth_context_from_scope_headers(
     if scope.get("type") != "http":
         return None
 
-    auth_header = ""
-    target_host = ""
-    target_port_str = ""
-    target_repo = ""
-    agent_username = ""
-    agent_password = ""
-    agent_repo = ""
+    auth_header: str = ""
+    target_host: str = ""
+    target_port_str: str = ""
+    target_repo: str = ""
+    agent_username: str = ""
+    agent_password: str = ""
+    agent_repo: str = ""
 
+    key_b: bytes
+    value_b: bytes
     for key_b, value_b in scope.get("headers", []):
         key = key_b.decode("latin1").lower()
         val = value_b.decode("latin1").strip()
@@ -334,8 +336,8 @@ def _auth_context_from_scope_headers(
     if not target_repo and agent_repo:
         target_repo = agent_repo
 
-    username = ""
-    password = ""
+    username: str = ""
+    password: str = ""
     if auth_header.lower().startswith("basic "):
         try:
             username, password = parse_basic_auth(auth_header)
@@ -346,14 +348,14 @@ def _auth_context_from_scope_headers(
         password = agent_password
 
     try:
-        server_port = int(target_port_str)
+        server_port: int = int(target_port_str)
     except (TypeError, ValueError):
         server_port = auth_config.default_server_port if auth_config is not None else 13100
 
-    server_host = target_host or ((auth_config.default_server_host or "") if auth_config is not None else "")
-    repository = target_repo or ((auth_config.default_repository or "") if auth_config is not None else "")
+    server_host: str = target_host or ((auth_config.default_server_host or "") if auth_config is not None else "")
+    repository: str = target_repo or ((auth_config.default_repository or "") if auth_config is not None else "")
 
-    if not any([server_host, username, password, repository]):
+    if not any((server_host, username, password, repository)):
         return None
 
     return AuthContext(
@@ -425,7 +427,7 @@ class PythonMcpServer:
             json_response=True,
             stateless=False,
         )
-        self._session_manager_cm = None
+        self._session_manager_cm: Any | None = None
 
         # Setup routes
         self._setup_routes()
@@ -504,11 +506,11 @@ class PythonMcpServer:
     def _setup_routes(self) -> None:
         """Setup FastAPI routes for MCP communication.
 
-        Uses an outer ASGI middleware to intercept ``/mcp`` and
-        ``/mcp/message`` *before* Starlette's router so that all HTTP
-        methods (POST, GET, DELETE) arrive at the MCP session handler
-        with ``path="/"`` as the SDK expects.  Every other path
-        (``/docs``, ``/redoc``, ``/openapi.json``, ``/health``) falls
+        Uses an outer ASGI middleware to intercept ``/mcp`` and ``/mcp/message`` *before*
+        Starlette's router so that all HTTP methods (POST, GET, DELETE) arrive at
+        the MCP session handler with ``path="/"`` as the SDK expects.
+        
+        Every other path (``/docs``, ``/redoc``, ``/openapi.json``, ``/health``) falls
         through to FastAPI's normal router.
         """
 
@@ -672,7 +674,9 @@ class PythonMcpServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility endpoint",
-                description=("Compatibility MCP endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
+                description=(
+                    "Compatibility MCP endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                ),
                 operation_id=f"mcp_message_{method.lower()}",
                 openapi_extra=_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -731,8 +735,24 @@ class PythonMcpServer:
                 auto_match_propagate_token = CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.set(auto_match_propagate)
             if auto_match_target_paths is not None:
                 auto_match_target_paths_token = CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.set(auto_match_target_paths)
+
+            # Inject mcp-session-id in response so CLI can persist and resend it (two-command session persistence)
+            session_id_for_response: str = session_id
+            response_start_sent: list[bool] = [False]
+
+            async def send_wrapper(message: dict[str, Any]) -> None:
+                if message.get("type") == "http.response.start" and not response_start_sent[0]:
+                    response_start_sent[0] = True
+                    headers: list[tuple[bytes, bytes]] = list(message.get("headers", []))
+                    # Add or overwrite so client receives the session id we use (e.g. "default")
+                    key_lower = b"mcp-session-id"
+                    headers = [(k, v) for k, v in headers if k.lower() != key_lower]
+                    headers.append((key_lower, session_id_for_response.encode("latin1")))
+                    message = {**message, "headers": headers}
+                await send(message)
+
             try:
-                await mcp_handle(scope, receive, send)
+                await mcp_handle(scope, receive, send_wrapper)  # pyright: ignore[reportArgumentType]
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
                 if project_path_token is not None:
@@ -768,9 +788,9 @@ class PythonMcpServer:
 
         # Wrap the entire FastAPI app with an outer middleware that
         # intercepts MCP paths before Starlette's router sees them.
-        inner_app = self.app  # the FastAPI ASGI app itself
-        mcp_paths = self._MCP_PATHS
-        session_manager = self._session_manager
+        inner_app: FastAPI = self.app  # the FastAPI ASGI app itself
+        mcp_paths: frozenset[str] = self._MCP_PATHS
+        session_manager: StreamableHTTPSessionManager = self._session_manager
 
         class _MCPRoutingMiddleware:
             """ASGI middleware: route /mcp and /mcp/message to the MCP handler.
@@ -795,6 +815,8 @@ class PythonMcpServer:
                 the stale header so the SDK creates a fresh transport.
                 """
                 raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
+                key_b: bytes
+                value_b: bytes
                 for key_b, value_b in raw_headers:
                     if key_b.lower() == b"mcp-session-id":
                         sid = value_b.decode("latin1", errors="replace").strip()
@@ -815,12 +837,17 @@ class PythonMcpServer:
                         break
                 return scope
 
-            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+            async def __call__(
+                self,
+                scope: dict[str, Any],
+                receive: Any,
+                send: Any,
+            ) -> None:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
                         scope = self._handle_stale_session(scope)
-                        rewritten = {**scope, "path": "/"}
+                        rewritten: dict[str, Any] = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
                 await inner_app(scope, receive, send)

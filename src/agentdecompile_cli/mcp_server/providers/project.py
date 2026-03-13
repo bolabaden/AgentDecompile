@@ -40,8 +40,9 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
-    ...
     from abc import ABC, abstractmethod
+
+    from ghidra.framework.store import CheckoutType  # pyright: ignore[reportMissingModuleSource]
 
     class ProjectData(ABC):
         @abstractmethod
@@ -66,6 +67,8 @@ if TYPE_CHECKING:
         def getVersion(self): ...
         @abstractmethod
         def openDatabase(self, folderPath: str, itemName: str, version: int, monitor: Any) -> Any: ...
+        @abstractmethod
+        def checkout(self, folderPath: str, itemName: str, checkoutType: CheckoutType, programPath: str) -> Any: ...
 
 
 logger = logging.getLogger(__name__)
@@ -229,7 +232,11 @@ class ProjectToolProvider(ToolProvider):
                         "binary": {"type": "string", "description": "Program path."},
                         "folder": {"type": "string", "default": "/", "description": "Project folder."},
                         "path": {"type": "string", "description": "Filesystem path (non-project mode)."},
-                        "maxResults": {"type": "integer", "default": 100, "description": "Number of project file results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "maxResults": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of project file results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                     },
                     "required": [],
                 },
@@ -252,7 +259,11 @@ class ProjectToolProvider(ToolProvider):
                         "destinationPath": {"type": "string", "description": "Destination path."},
                         "destinationFolder": {"type": "string", "description": "Destination folder."},
                         "recursive": {"type": "boolean", "default": True, "description": "Include subfolders."},
-                        "maxResults": {"type": "integer", "default": 100000, "description": "Total number of items to return in a full listing. Default covers entire large projects; do not reduce this unless the user explicitly wants a partial list."},
+                        "maxResults": {
+                            "type": "integer",
+                            "default": 100000,
+                            "description": "Total number of items to return in a full listing. Default covers entire large projects; do not reduce this unless the user explicitly wants a partial list.",
+                        },
                         "force": {"type": "boolean", "default": False, "description": "Overwrite conflicts."},
                         "dryRun": {"type": "boolean", "default": False, "description": "Simulate only."},
                     },
@@ -312,7 +323,11 @@ class ProjectToolProvider(ToolProvider):
                         "exclusive": {"type": "boolean", "default": False, "description": "Exclusive checkout."},
                         "recursive": {"type": "boolean", "default": False, "description": "Recursive mode."},
                         "dryRun": {"type": "boolean", "default": False, "description": "Simulate only."},
-                        "maxResults": {"type": "integer", "default": 200, "description": "Number of results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "maxResults": {
+                            "type": "integer",
+                            "default": 200,
+                            "description": "Number of results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                         "maxDepth": {"type": "integer", "default": 16, "description": "Max depth."},
                         "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import (optional, defaults to true)."},
                     },
@@ -833,7 +848,9 @@ class ProjectToolProvider(ToolProvider):
                 adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
+                        (
+                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
+                        ),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -853,7 +870,10 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     ) from exc
                 raise ActionableError(
-                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
+                    (
+                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Wrapper exception: {exc_text}."
+                        + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
+                    ),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -877,7 +897,9 @@ class ProjectToolProvider(ToolProvider):
                 message = adapter_error or "unknown authentication/connection failure"
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
+                        (
+                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."
+                        ),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -896,7 +918,9 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     )
                 raise ActionableError(
-                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
+                    (
+                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Adapter reported {adapter_error_type or 'unknown'}: {message}."
+                    ),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -917,13 +941,17 @@ class ProjectToolProvider(ToolProvider):
         try:
             logger.info("[connect-shared-project] Listing repository names...")
             repository_names_raw = server_adapter.getRepositoryNames() or []
-            logger.info("[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else [])
+            logger.info(
+                "[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else []
+            )
         except Exception as exc:
             exc_text = str(exc)
             adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
             if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                 raise ActionableError(
-                    (f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
+                    (
+                        f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
+                    ),
                     context=_shared_connection_context(
                         stage="repository-list",
                         server_host=server_host,
@@ -942,7 +970,10 @@ class ProjectToolProvider(ToolProvider):
                     ],
                 ) from exc
             raise ActionableError(
-                (f"Repository server connection failed for {server_host}:{server_port} while listing repositories. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
+                (
+                    f"Repository server connection failed for {server_host}:{server_port} while listing repositories. Wrapper exception: {exc_text}."
+                    + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
+                ),
                 context=_shared_connection_context(
                     stage="repository-list",
                     server_host=server_host,
@@ -1138,7 +1169,9 @@ class ProjectToolProvider(ToolProvider):
         if self._manager is not None and getattr(self._manager, "ghidra_project", None) is None:
             try:
                 import tempfile
+
                 from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
                 shared_project_dir = Path(tempfile.gettempdir()) / "agentdecompile_shared" / repository_name.replace(os.sep, "_")
                 shared_project_dir.mkdir(parents=True, exist_ok=True)
                 project_name = "shared"
@@ -1193,7 +1226,12 @@ class ProjectToolProvider(ToolProvider):
                 "checkedOutProgram": checked_out_program,
                 "checkoutError": checkout_error,
                 "message": (
-                    (f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")
+                    (
+                        f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
+                        if repository_created
+                        else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
+                    )
+                    + (f" Checked out: {checked_out_program}" if checked_out_program else "")
                 ),
             },
         )
@@ -1226,7 +1264,9 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(
+                            recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value
+                        ),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1321,7 +1361,9 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(
+                            recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value
+                        ),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1648,14 +1690,32 @@ class ProjectToolProvider(ToolProvider):
             "path": requested_program,
         }
 
-        server_host = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
+        server_host = (
+            self._get_str(args, "serverhost", "ghidraserverhost")
+            or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
+        )
         if server_host:
             open_args["serverhost"] = server_host
-            open_args["serverport"] = self._get_int(args, "serverport", "ghidraserverport", default=int(os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))) or "13100"))
-            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
-            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
+            open_args["serverport"] = self._get_int(
+                args,
+                "serverport",
+                "ghidraserverport",
+                default=int(
+                    os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))) or "13100"
+                ),
+            )
+            open_args["serverusername"] = (
+                self._get_str(args, "serverusername", "ghidraserverusername")
+                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
+            )
+            open_args["serverpassword"] = (
+                self._get_str(args, "serverpassword", "ghidraserverpassword")
+                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
+            )
             repository_name: str | None = (
-                self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip() or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
+                self._get_str(args, "repositoryname", "ghidraserverrepository")
+                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
+                or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
             )
             if repository_name:
                 open_args["repositoryname"] = repository_name
@@ -2365,7 +2425,9 @@ class ProjectToolProvider(ToolProvider):
                 "repository": repository_name,
                 "serverHost": resolved.get("serverhost", ""),
                 "localMode": True,
-                "note": ("Shared project pulled to local. Session is now operating in local mode. Call switch-project(mode='shared') at any time to reconnect to the shared server."),
+                "note": (
+                    "Shared project pulled to local. Session is now operating in local mode. Call switch-project(mode='shared') at any time to reconnect to the shared server."
+                ),
                 "syncSummary": {
                     "requested": sync_data.get("requested", 0),
                     "transferred": sync_data.get("transferred", 0),
@@ -3357,6 +3419,7 @@ class ProjectToolProvider(ToolProvider):
             if domain_file is None and hasattr(repository_adapter, "checkout"):
                 try:
                     from ghidra.framework.store import CheckoutType  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
                     checkout_type = CheckoutType.NORMAL
                     status = repository_adapter.checkout(folder_path, item_name, checkout_type, program_path)
                     if status is not None:
