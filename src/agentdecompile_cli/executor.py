@@ -97,10 +97,10 @@ def normalize_backend_url(value: str) -> str:
     if not parsed.netloc:
         raise ValueError("Backend URL must include a host")
     path = (parsed.path or "").rstrip("/")
-    # Default to /mcp/message; accept /mcp or /mcp/message; otherwise append so host:port works
-    if not path or path == "":
+    # Always use /mcp/message as canonical MCP endpoint (single path for session persistence and proxies)
+    if not path or path == "" or path == "/mcp":
         path = "/mcp/message"
-    elif path not in {"/mcp", "/mcp/message"} and not path.endswith("/mcp/message"):
+    elif path != "/mcp/message" and not path.endswith("/mcp/message"):
         path = f"{path}/mcp/message"
     return urlunparse(parsed._replace(path=path))
 
