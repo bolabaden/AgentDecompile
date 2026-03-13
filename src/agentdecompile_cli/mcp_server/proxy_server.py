@@ -298,6 +298,7 @@ class AgentDecompileMcpProxyServer:
 
             allowed_headers = {
                 "authorization",
+                "mcp-session-id",
                 "x-ghidra-server-host",
                 "x-ghidra-server-port",
                 "x-ghidra-repository",
