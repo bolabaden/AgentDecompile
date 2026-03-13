@@ -740,7 +740,7 @@ async def _execute_tool_call(
     client_override: Any | None = None,
 ) -> Any:
     """Execute the actual tool call with error handling and recovery."""
-    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+    from agentdecompile_cli.bridge import ClientError, ServerNotRunningError  # noqa: PLC0415
 
     try:
         if client_override is not None:
@@ -771,6 +771,8 @@ async def _execute_tool_call(
         click.echo(str(exc), err=True)
         sys.exit(1)
     except Exception as exc:
+        if isinstance(exc, ClientError) and "400" in str(exc):
+            _clear_persisted_session_id(ctx)
         click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
         sys.exit(1)
 
@@ -955,6 +957,23 @@ def _persist_session_id(ctx: click.Context, client: Any) -> None:
     if not isinstance(entry, dict):
         entry = {}
     entry["session_id"] = sid.strip()
+    backends[scope] = entry
+    state["backends"] = backends
+    _save_cli_state(state)
+
+
+def _clear_persisted_session_id(ctx: click.Context) -> None:
+    """Clear persisted MCP session id for this backend scope (e.g. after 400 so next run does not send stale id)."""
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        return
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict) or "session_id" not in entry:
+        return
+    entry = dict(entry)
+    entry.pop("session_id", None)
     backends[scope] = entry
     state["backends"] = backends
     _save_cli_state(state)

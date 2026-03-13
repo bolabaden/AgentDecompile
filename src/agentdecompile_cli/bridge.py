@@ -42,7 +42,7 @@ except ImportError:
     BrokenResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
     ClosedResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
 
-from httpx import AsyncClient, Timeout
+from httpx import AsyncClient, HTTPStatusError, Timeout
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
@@ -235,6 +235,7 @@ class RawMcpHttpBackend:
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST a JSON-RPC envelope and return the parsed response dict."""
+        had_session_id = bool(self._session_id)
         try:
             resp = await self._client.post(self._url, json=body, headers=self._headers())
         except Exception:
@@ -255,7 +256,32 @@ class RawMcpHttpBackend:
             if sid:
                 self._session_id = sid
 
-        resp.raise_for_status()
+        # On 400, retry once without session id (stale id can cause server to reject)
+        if resp.status_code == 400 and had_session_id:
+            self._session_id = None
+            resp = await self._client.post(self._url, json=body, headers=self._headers())
+            sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+            if sid:
+                self._session_id = sid
+
+        try:
+            resp.raise_for_status()
+        except HTTPStatusError as e:
+            body_str = e.response.text or ""
+            try:
+                data = e.response.json()
+                if isinstance(data, dict) and "error" in data:
+                    err = data["error"]
+                    body_str = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                elif isinstance(data, dict) and "message" in data:
+                    body_str = str(data["message"])
+            except Exception:
+                pass
+            if len(body_str) > 500:
+                body_str = body_str[:500] + "..."
+            raise ClientError(
+                f"Client error '{e.response.status_code} {e.response.reason_phrase}' for url {e.request.url}: {body_str}",
+            ) from e
 
         ct = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" in ct:
