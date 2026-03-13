@@ -710,7 +710,9 @@ class ProjectToolProvider(ToolProvider):
         session_id: str = get_current_mcp_session_id()
         # Log incoming args (redact password)
         _safe_args = {k: ("***" if "password" in k.lower() else v) for k, v in (args if isinstance(args, dict) else {}).items()}
-        logger.info("[connect-shared-project] session=%s, incoming args=%s", session_id, _safe_args)
+        # Security: do not log full session id (log redacted hint only)
+        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
+        logger.info("[connect-shared-project] session=%s, incoming args=%s", _sid_hint, _safe_args)
 
         # Populate defaults from HTTP auth context (set by AuthMiddleware when the
         # client authenticates via Authorization + optional X-Ghidra-* headers).

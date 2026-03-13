@@ -53,9 +53,15 @@ uv run agentdecompile-cli --server-url http://127.0.0.1:8080 tool-seq \
     {"name":"list-functions","arguments":{"programPath":"binaryname","limit":10}}]'
 ```
 
+### Session and proxy behavior
+
+- **Session id:** The server (or proxy) assigns an MCP session id at initialization and returns it in response headers (`mcp-session-id`). Clients must send it on all subsequent requests (MCP Streamable HTTP spec).
+- **CLI persistence:** The CLI persists the session id per normalized backend URL (in `.agentdecompile/cli_state.json`) and sends it on later invocations when the same `--server-url` is used, so `open-project` in one run and `checkout-program` in a second run can reuse the same server session.
+- **Proxy forwarding:** Proxies (e.g. agentdecompile-proxy) must forward the client's `mcp-session-id` header to the backend so the same logical session is used end-to-end. Without that, the backend sees a new session each request and shared-project state from a previous `open-project` is not available.
+
 ### Session state caveat
 
-Each CLI invocation creates a new MCP session. Programs loaded in one session are not available in the next. Use `tool-seq` to chain multiple tool calls (open, analyze, list, decompile) within a single session. Alternatively, pass binaries as positional arguments to `agentdecompile-server` so they are imported at startup.
+CLI reuses the same server session across invocations when the same `--server-url` is used, provided the server (or proxy) forwards the session id. If you use a proxy, ensure it forwards `mcp-session-id` to the backend. Programs loaded in one session are available in the next run only when the session is preserved. Use `tool-seq` to chain multiple tool calls (open, analyze, list, decompile) within a single run, or pass binaries as positional arguments to `agentdecompile-server` so they are imported at startup.
 
 ### Lint, test, build
 

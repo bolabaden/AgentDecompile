@@ -1892,7 +1892,9 @@ class ToolProviderManager:
                     ],
                 ),
             )
-        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, session_id)
+        # Security: do not log full session id (log redacted hint only)
+        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
+        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, _sid_hint)
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
         norm_name: str = n(resolved_name)
