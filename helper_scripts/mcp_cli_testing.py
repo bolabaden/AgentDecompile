@@ -756,7 +756,7 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
         ]
     else:
         steps = [
-            ("open_project", "open", open_args),
+            ("open", "open", open_args),
             ("list_project_files", "list-project-files", {"format": "json"}),
             ("get_current_program", "get-current-program", {"programPath": program_path, "format": "json"}),
             ("list_functions", "list-functions", {"programPath": program_path, "limit": 5, "format": "json"}),

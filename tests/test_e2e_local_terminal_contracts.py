@@ -71,7 +71,7 @@ DEFAULT_HTTP_ADVERTISED_TOOLS = frozenset([
     "list_strings",
     "manage_function_tags",
     "match_function",
-    "open_project",
+    "open",
     "read_bytes",
     "remove_program_binary",
     "search_code",
@@ -311,7 +311,7 @@ def test_live_local_default_advertised_tool_surface_matches_terminal_contract(
     assert len(tool_names) == 37
     assert "manage-comments" not in tool_name_set
     assert "switch-project" not in tool_name_set
-    assert "open_project" in tool_name_set
+    assert "open" in tool_name_set
     assert "import_binary" in tool_name_set
     assert "sync_project" in tool_name_set
     assert "change_processor" in tool_name_set
@@ -827,4 +827,4 @@ def test_cli_alias_open_project_resolves(
     result = cli_contract_snapshot["alias_op_result"]
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"alias open failed:\n{output}"
-    assert "open_project" in output or "open" in output
+    assert "open" in output or "open" in output

@@ -1264,7 +1264,7 @@ class TestToolsListProtocol:
             "list_cross_references", "list_exports", "list_functions",
             "list_imports", "list_processors", "list_project_files",
             "list_strings", "manage_function_tags", "match_function",
-            "open_project", "read_bytes", "remove_program_binary",
+            "open", "read_bytes", "remove_program_binary",
             "search_code", "search_constants", "search_everything",
             "search_strings", "search_symbols", "sync_project",
         }

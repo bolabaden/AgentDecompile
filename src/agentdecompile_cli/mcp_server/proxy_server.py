@@ -110,7 +110,7 @@ def _proxy_mcp_post_openapi_extra() -> dict[str, Any]:
                                 "id": 2,
                                 "method": "tools/call",
                                 "params": {
-                                    "name": Tool.OPEN_PROJECT.value,
+                                    "name": Tool.OPEN.value,
                                     "arguments": {
                                         "path": "/K1/k1_win_gog_swkotor.exe",
                                         "format": "json",

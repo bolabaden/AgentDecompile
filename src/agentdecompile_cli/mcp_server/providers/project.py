@@ -148,7 +148,7 @@ def _shared_auth_failed(adapter_error_type: str | None, adapter_error: str | Non
 
 class ProjectToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {
-        "openproject": "_handle_open_project",
+        "open": "_handle_open_project",
         "listprojectfiles": "_handle_list",
         "syncproject": "_handle_sync_project",
         "syncsharedproject": "_handle_sync_project",  # backward compat alias
@@ -170,7 +170,7 @@ class ProjectToolProvider(ToolProvider):
     def list_tools(self) -> list[types.Tool]:
         return [
             types.Tool(
-                name=Tool.OPEN_PROJECT.value,
+                name=Tool.OPEN.value,
                 description="Open a local .gpr project or connect to a shared Ghidra repository server. Use import-binary for local binaries.",
                 inputSchema={
                     "type": "object",
@@ -1785,7 +1785,7 @@ class ProjectToolProvider(ToolProvider):
             operation,
             {
                 "open": "_handle_open",
-                "openproject": "_handle_open",
+                "open": "_handle_open",
                 "changeprocessor": "_handle_change_processor",
                 "import": "_handle_import",
                 "export": "_handle_export",

@@ -190,7 +190,7 @@ class TestToolEnum:
 
     def test_resolve_tool_name_enum_canonical(self):
         """resolve_tool_name_enum returns enum for canonical kebab-case names."""
-        assert resolve_tool_name_enum("open") == Tool.OPEN_PROJECT
+        assert resolve_tool_name_enum("open") == Tool.OPEN
         assert resolve_tool_name_enum("get-functions") == Tool.GET_FUNCTIONS
         assert resolve_tool_name_enum("manage-bookmarks") == Tool.MANAGE_BOOKMARKS
 
@@ -203,7 +203,7 @@ class TestToolEnum:
 
     def test_resolve_tool_name_enum_variants(self):
         """resolve_tool_name_enum accepts case/separator variants."""
-        assert resolve_tool_name_enum("Open_Project") == Tool.OPEN_PROJECT
+        assert resolve_tool_name_enum("Open_Project") == Tool.OPEN
         assert resolve_tool_name_enum("GETFUNCTIONS") == Tool.GET_FUNCTIONS
 
     def test_resolve_tool_name_enum_unknown_returns_none(self):
@@ -214,22 +214,22 @@ class TestToolEnum:
     def test_get_tool_params_accepts_enum(self):
         """get_tool_params accepts Tool enum."""
         assert "programPath" in get_tool_params(Tool.GET_DATA)
-        assert "path" in get_tool_params(Tool.OPEN_PROJECT)
+        assert "path" in get_tool_params(Tool.OPEN)
 
     def test_tool_from_string(self):
         """Tool.from_string matches resolve_tool_name_enum."""
-        assert Tool.from_string("open") == Tool.OPEN_PROJECT
+        assert Tool.from_string("open") == Tool.OPEN
         assert Tool.from_string("get-symbols") == Tool.MANAGE_SYMBOLS
         assert Tool.from_string("unknown-tool") is None
 
     def test_tool_params_property(self):
         """Tool.params returns same as get_tool_params(tool)."""
         assert "programPath" in Tool.GET_DATA.params
-        assert "path" in Tool.OPEN_PROJECT.params
+        assert "path" in Tool.OPEN.params
 
     def test_tool_normalized_property(self):
         """Tool.normalized is alpha-only lowercase."""
-        assert Tool.OPEN_PROJECT.normalized == "openproject"
+        assert Tool.OPEN.normalized == "open"
         assert Tool.GET_FUNCTIONS.normalized == "getfunctions"
 
     def test_tool_is_gui_only_disabled(self):

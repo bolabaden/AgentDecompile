@@ -357,7 +357,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - **`ghidra.framework.model.ProjectData`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html)
   - `getFile(String path)` → `DomainFile`
   - `getFolder(String path)` → `DomainFolder`
-- **PyGhidra**: `with pyghidra.open_project(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
+- **PyGhidra**: `with pyghidra.open(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 ### `create-label`
 
 **Description**: Legacy compatibility forward. Use `create-label`.

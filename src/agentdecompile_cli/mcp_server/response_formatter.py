@@ -496,7 +496,7 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     steps: list[str] = []
-    if action == Tool.OPEN_PROJECT.value:
+    if action == Tool.OPEN.value:
         steps.append("Project opened. Call `list-project-files` to see available programs in the project.")
         steps.append("Start with `list-functions` for function overview or `inspect-memory mode=blocks` for memory layout.")
     elif loaded is True:
@@ -707,7 +707,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         "Lists available processor definitions.",
         _next_steps_import_export,
     ),
-    "openproject": (
+    "open": (
         "Opens a binary or Ghidra project for analysis.",
         _next_steps_project,
     ),
@@ -1747,7 +1747,7 @@ def _render_project(data: dict[str, Any]) -> str:
     loaded = data.get("loaded")
     lines: list[str] = []
 
-    if action == Tool.OPEN_PROJECT.value:
+    if action == Tool.OPEN.value:
         mode: str = data.get("mode", "")
         lines.append(_md_heading(2, "Program Opened"))
         lines.append("")
@@ -2218,7 +2218,7 @@ TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "checkinprogram": _render_import_export,
     "changeprocessor": _render_import_export,
     "listprocessors": _render_import_export,
-    "openproject": _render_project,
+    "open": _render_project,
     "getcurrentprogram": _render_project,
     "listprojectfiles": _render_project,
     "managefiles": _render_project,

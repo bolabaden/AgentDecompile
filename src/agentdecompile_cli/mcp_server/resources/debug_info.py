@@ -277,7 +277,7 @@ class DebugInfoResource(ResourceProvider):
             source,
             self._sanitize_sensitive(open_args),
         )
-        result = await self._safe_tool_call(Tool.OPEN_PROJECT.value, open_args)
+        result = await self._safe_tool_call(Tool.OPEN.value, open_args)
         result["requestedResourceUri"] = requested_uri
         result["argumentSource"] = source
         return result
