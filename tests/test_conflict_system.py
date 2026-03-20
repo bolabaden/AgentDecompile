@@ -20,7 +20,6 @@ from mcp import types
 
 from tests.helpers import parse_single_text_content_json
 
-
 # ---------------------------------------------------------------------------
 # Conflict store
 # ---------------------------------------------------------------------------
@@ -131,6 +130,7 @@ async def test_resolve_overwrite_calls_manager_and_removes() -> None:
         async def fake_call_tool(self: Any, name: str, arguments: dict[str, Any], **kwargs: Any) -> list[types.TextContent]:
             call_record.append((name, dict(arguments)))
             from agentdecompile_cli.mcp_server.tool_providers import create_success_response
+
             return create_success_response({"mode": "rename_data", "success": True})
 
         provider._manager = type("Manager", (), {"call_tool": fake_call_tool})()  # pyright: ignore[reportAttributeAccessIssue]
@@ -144,11 +144,7 @@ async def test_resolve_overwrite_calls_manager_and_removes() -> None:
         assert len(call_record) == 1
         assert call_record[0][0] == "manage-symbols"
         assert call_record[0][1].get("newName") == "baz" or call_record[0][1].get("newname") == "baz"
-        assert "__force_apply_conflict_id" in call_record[0][1] or any(
-            "force" in str(k).lower()
-            and "conflict" in str(k).lower()
-            for k in call_record[0][1]
-        )
+        assert "__force_apply_conflict_id" in call_record[0][1] or any("force" in str(k).lower() and "conflict" in str(k).lower() for k in call_record[0][1])
         assert conflict_get(session_id, conflict_id) is None
     finally:
         CURRENT_MCP_SESSION_ID.reset(token)
