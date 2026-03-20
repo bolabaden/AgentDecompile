@@ -23,23 +23,23 @@ from typing import Any
 import click
 import httpx
 import pytest
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import AnyUrl
 
-from agentdecompile_cli import cli as cli_module
-import agentdecompile_cli.launcher as launcher_module
-from agentdecompile_cli import bridge as bridge_module
+import agentdecompile_cli.project_manager as project_manager_module
+
+from agentdecompile_cli import bridge as bridge_module, cli as cli_module
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.executor import normalize_backend_url
-from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 from agentdecompile_cli.mcp_server.providers import project as project_provider_module
+from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
+from agentdecompile_cli.mcp_server.server import PythonMcpServer, ServerConfig
 from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS
 from agentdecompile_cli.registry import tool_registry
-from agentdecompile_cli.mcp_server.server import PythonMcpServer, ServerConfig
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HTTP_TIMEOUT = 30.0
@@ -133,7 +133,7 @@ async def test_import_binary_handler_prefers_path_before_filepath(monkeypatch: p
         def cleanup(self) -> None:
             return None
 
-    monkeypatch.setattr(launcher_module, "ProjectManager", _FakeManager)
+    monkeypatch.setattr(project_manager_module, "ProjectManager", _FakeManager)
 
     response = await provider._handle_import(
         {

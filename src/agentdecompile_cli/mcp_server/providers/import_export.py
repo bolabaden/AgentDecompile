@@ -412,7 +412,7 @@ class ImportExportToolProvider(ToolProvider):
                     except Exception as exc:
                         errors.append({"path": str(item), "error": str(exc)})
             else:
-                from agentdecompile_cli.launcher import ProjectManager
+                from agentdecompile_cli.project_manager import ProjectManager
 
                 manager = ProjectManager()
                 try:
