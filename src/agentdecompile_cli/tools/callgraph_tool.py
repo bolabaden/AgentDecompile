@@ -223,24 +223,28 @@ class CallGraphTool:
         return results
 
     def _resolve_function(self, name_or_address: str) -> GhidraFunction | None:
-        """Resolve function by name or address."""
+        """Resolve function by name or address. Supports both thunk and IAT addresses."""
         if not self.program:
             return None
 
-        # Try to find by address first
-        try:
-            addr = self.program.getAddressFactory().getAddress(name_or_address)
-            func = self.program.getFunctionManager().getFunctionAt(addr)
-            if func:
-                return func
-        except:
-            pass
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
-        # Try to find by name
-        funcs = list(self.program.getFunctionManager().getFunctions(True))
-        for func in funcs:
-            if func.getName(True) == name_or_address:
+        # Resolve to address (symbol or hex); prefer thunk when given an IAT slot
+        addr = AddressUtil.resolve_address_or_symbol_prefer_thunk(self.program, name_or_address)
+        if addr is not None:
+            fm = self.program.getFunctionManager()
+            func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+            if func is not None:
                 return func
+
+        # Try by name (e.g. "CreateFileA")
+        try:
+            funcs = list(self.program.getFunctionManager().getFunctions(True))
+            for func in funcs:
+                if func.getName(True) == name_or_address:
+                    return func
+        except Exception:
+            pass
 
         return None
 

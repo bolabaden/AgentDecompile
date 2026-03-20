@@ -126,6 +126,52 @@ class AddressUtil:
         return AddressUtil.parse_address(program, input_str)
 
     @staticmethod
+    def resolve_iat_to_thunk(program: GhidraProgram, address: GhidraAddress) -> GhidraAddress | None:
+        """If the given address is an IAT slot (data holding a pointer to a thunk/external), return that thunk address.
+
+        Used so list-cross-references and get-call-graph accept both IAT addresses (e.g. 0x48f1fc)
+        and thunk addresses (e.g. CreateFileA @ 0x004011fc). When the user passes an IAT address,
+        we resolve to the thunk so queries use the same logical target.
+
+        Args:
+            program: The Ghidra program
+            address: The address that might be an IAT slot
+
+        Returns:
+            The thunk/external address the IAT points to, or None if not an IAT slot
+        """
+        if program is None or address is None:
+            return None
+        ref_mgr = program.getReferenceManager()
+        fm = program.getFunctionManager()
+        # Refs FROM this address: for an IAT slot, Ghidra typically has a memory ref from the data to the thunk.
+        refs_from = ref_mgr.getReferencesFrom(address)
+        try:
+            for ref in refs_from:
+                to_addr = ref.getToAddress()
+                if to_addr is None:
+                    continue
+                func = fm.getFunctionAt(to_addr) or fm.getFunctionContaining(to_addr)
+                if func is not None:
+                    return func.getEntryPoint()
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def resolve_address_or_symbol_prefer_thunk(program: GhidraProgram, address_or_symbol: str) -> GhidraAddress | None:
+        """Resolve address or symbol; if the result is an IAT slot, return the thunk address instead.
+
+        Enables list-cross-references and get-call-graph to support both thunk addresses
+        (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc) by normalizing IAT to thunk.
+        """
+        addr = AddressUtil.resolve_address_or_symbol(program, address_or_symbol)
+        if addr is None:
+            return None
+        thunk = AddressUtil.resolve_iat_to_thunk(program, addr)
+        return thunk if thunk is not None else addr
+
+    @staticmethod
     def get_containing_function(program: GhidraProgram, address: GhidraAddress) -> GhidraFunction | None:
         """Get the function containing the given address.
 

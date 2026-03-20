@@ -36,9 +36,11 @@ from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
-# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null (e.g. Windows Resource Reference Analyzer)
+# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null (e.g. Windows Resource Reference Analyzer).
+# Try multiple names in case Ghidra version uses a different display name.
 _HEADLESS_UNSAFE_ANALYZERS = (
     "Windows Resource Reference Analyzer",
+    "Windows Resource Reference",
 )
 
 

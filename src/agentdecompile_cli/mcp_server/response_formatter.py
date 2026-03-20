@@ -463,21 +463,77 @@ def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
     return steps
 
 
+def _strings_no_results_suggestions(query: str) -> list[str]:
+    """Build context-aware next-step suggestions when a string search returns no results."""
+    steps: list[str] = []
+    q = (query or "").strip()
+    # Partial / shorter query: try first word or first token (e.g. "patching complete" -> "patching")
+    if q:
+        tokens = [t for t in re.split(r"\s+", q) if len(t) > 1]
+        if len(tokens) > 1:
+            partial = tokens[0]
+            steps.append(
+                f"Try a shorter or partial query: `search-strings query={partial}` (e.g. first word of \"{q}\")."
+            )
+        elif len(q) > 6:
+            # Single long word: suggest substring
+            steps.append(
+                f"Try a shorter substring: `search-strings query={q[:min(8, len(q))]}` to see if the string is split or abbreviated."
+            )
+    # Related terms for status/completion messages (patcher, installer, UI feedback)
+    status_like = [
+        ("complete", ["done", "success", "finished", "ok", "ready"]),
+        ("patching", ["patch", "patched", "install", "update"]),
+        ("success", ["complete", "done", "finished", "ok"]),
+        ("error", ["fail", "failed", "warning", "invalid"]),
+        ("done", ["complete", "success", "finished"]),
+    ]
+    q_lower = q.lower()
+    for keyword, related in status_like:
+        if keyword in q_lower:
+            for r in related[:2]:  # at most 2 related suggestions
+                steps.append(f"Try a related term: `search-strings query={r}`.")
+            break
+    # Broader discovery
+    steps.append(
+        "Use `list-strings` to see what strings exist in the binary (they may be worded differently or encoded)."
+    )
+    steps.append(
+        "Use `search-code query=<your term>` to find the phrase in decompiled function names or code, in case it is built at runtime."
+    )
+    steps.append(
+        "If the binary is packed or obfuscated, strings may be decoded at runtime or stored in non-default encodings (e.g. UTF-16); consider running the program and tracing, or try `search-strings` with a regex pattern."
+    )
+    return steps
+
+
 def _next_steps_strings(data: dict[str, Any]) -> list[str]:
     mode: str = data.get("mode", "")
     results: list[dict[str, Any]] = data.get("results", [])
+    query: str = (data.get("query") or data.get("pattern") or "").strip()
     steps: list[str] = []
     if mode == "count":
         steps.append("Use `list-strings` to see actual string values.")
     elif results:
         first: dict[str, Any] = results[0]
         addr = first.get("address", "")
-        val = first.get("value", "")  # noqa: F841
         if addr:
             steps.append(f"Find references to this string: `get-references address={addr}`.")
             steps.append(f"Decompile containing function: `get-functions mode=decompile address={addr}`.")
-        steps.append("Strings are goldmines for RE: error messages reveal logic, format strings reveal data structures.")
-    steps.append("Search for keywords: `search-strings query=password` or `search-strings query=error`.")
+        steps.append(
+            "Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings."
+        )
+    else:
+        # No results: context-aware suggestions when the user ran a search with a query
+        if query:
+            steps.extend(_strings_no_results_suggestions(query))
+        else:
+            steps.append(
+                "Use `list-strings` to see what strings exist; use a smaller minLength if the binary has few or short strings."
+            )
+            steps.append(
+                "If you expected a specific phrase, try `search-strings query=<keyword>` or `search-code query=<keyword>` (code search finds names and decompiled text)."
+            )
     return steps
 
 

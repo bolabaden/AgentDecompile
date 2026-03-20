@@ -3130,6 +3130,10 @@ class ProjectToolProvider(ToolProvider):
 
             try:
                 source_file: Any = project_data.getFile(source_path)
+                if source_file is None and source_path.startswith("/"):
+                    source_file = project_data.getFile(source_path.lstrip("/"))
+                if source_file is None and not source_path.startswith("/"):
+                    source_file = project_data.getFile(f"/{source_path}")
                 if source_file is None:
                     raise ValueError(f"Local project item not found: {source_path}")
 
@@ -3199,31 +3203,44 @@ class ProjectToolProvider(ToolProvider):
                 # Local push: save all modified domain files in the local project
                 logger.info("sync-project local push mode (no shared session)")
                 push_result = self._push_local_project_to_shared(args, "local-project", project_data)
-                return create_success_response(
-                    {
-                        "operation": "sync-project",
-                        "mode": mode,
-                        **push_result,
-                        "direction": "local-save",
-                        "success": len(push_result["errors"]) == 0,
-                        "note": "No shared server session. Performed local project save.",
-                    },
-                )
+                errors = push_result.get("errors") or []
+                success = len(errors) == 0
+                payload = {
+                    "operation": "sync-project",
+                    "mode": mode,
+                    **push_result,
+                    "direction": "local-save",
+                    "success": success,
+                    "note": "No shared server session. Performed local project save."
+                    if success
+                    else "Local save completed with errors; annotations may still be in the current program.",
+                }
+                if not success and "error" not in payload:
+                    first = errors[0] if errors else {}
+                    msg = first.get("error", "One or more files could not be saved.")
+                    payload["error"] = f"Local save had {len(errors)} error(s). First: {msg}"
+                return create_success_response(payload)
 
             if project_data is not None and mode == "bidirectional":
                 # Local bidirectional: just save (can't pull without a source)
                 logger.info("sync-project local bidirectional mode (no shared session, saving only)")
                 push_result = self._push_local_project_to_shared(args, "local-project", project_data)
-                return create_success_response(
-                    {
-                        "operation": "sync-project",
-                        **push_result,
-                        "mode": "bidirectional",
-                        "direction": "local-save-only",
-                        "success": len(push_result["errors"]) == 0,
-                        "note": "No shared server session. Only local save was performed (pull requires a shared server connection).",
-                    },
-                )
+                errors = push_result.get("errors") or []
+                success = len(errors) == 0
+                payload = {
+                    "operation": "sync-project",
+                    **push_result,
+                    "mode": "bidirectional",
+                    "direction": "local-save-only",
+                    "success": success,
+                    "note": "No shared server session. Only local save was performed (pull requires a shared server connection)."
+                    if success
+                    else "Local save completed with errors.",
+                }
+                if not success and "error" not in payload:
+                    first = errors[0] if errors else {}
+                    payload["error"] = f"Local save had {len(errors)} error(s). First: {first.get('error', 'Unknown')}"
+                return create_success_response(payload)
 
             logger.warning("sync-project aborted: no shared-server session and no actionable local project")
             return create_success_response(

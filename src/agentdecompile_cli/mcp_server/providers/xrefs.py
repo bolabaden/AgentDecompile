@@ -4,6 +4,8 @@
   from (what this references), both, function (refs within a function), referencers_decomp,
   import, thunk. Paginated via limit/offset.
 - list-cross-references: Alias that delegates to get-references with same semantics.
+- When the target is in the .rsrc section, refs "to" also include LoadStringA/LoadStringW call sites,
+  since resource strings are referenced indirectly via those APIs rather than direct code xrefs.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
+# APIs that load resource strings; .rsrc strings have no direct code xrefs.
+_LOADSTRING_NAMES = ("LoadStringA", "LoadStringW", "LoadString")
+
 
 class CrossReferencesToolProvider(ToolProvider):
     HANDLERS = {
@@ -33,12 +38,12 @@ class CrossReferencesToolProvider(ToolProvider):
         return [
             types.Tool(
                 name=Tool.GET_REFERENCES.value,
-                description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address.",
+                description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address. For targets in the .rsrc section, also includes LoadStringA/LoadStringW call sites (resource strings are referenced indirectly).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name to analyze."},
+                        "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk for consistent results."},
                         "target": {"type": "string", "description": "Alternative parameter for addressOrSymbol."},
                         "importName": {"type": "string", "description": "Import or external symbol name (e.g. RegOpenKeyExA). Alternative to addressOrSymbol when the target is an external."},
                         "mode": {
@@ -55,12 +60,12 @@ class CrossReferencesToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=Tool.LIST_CROSS_REFERENCES.value,
-                description="Extract every interaction mapping to and from a specific target address simultaneously.",
+                description="Extract every interaction mapping to and from a specific target address simultaneously. For .rsrc targets, refs-to include LoadStringA/LoadStringW call sites.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "addressOrSymbol": {"type": "string", "description": "The target address to investigate."},
+                        "addressOrSymbol": {"type": "string", "description": "The target address or symbol. Supports both thunk addresses (e.g. 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk."},
                         "target": {"type": "string", "description": "Alternative parameter for address."},
                         "importName": {"type": "string", "description": "Import or external symbol name. Alternative to addressOrSymbol."},
                         "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
@@ -114,24 +119,88 @@ class CrossReferencesToolProvider(ToolProvider):
             max_results=max_results,
         )
 
+    def _is_address_in_rsrc(self, program: Any, addr: Any) -> bool:
+        """True if the address lies in a memory block that looks like the PE .rsrc section."""
+        try:
+            block = program.getMemory().getBlock(addr)
+            if block is None:
+                return False
+            name = (block.getName() or "").lower()
+            return "rsrc" in name or ".rsrc" in name
+        except Exception:
+            return False
+
+    def _get_loadstring_indirect_refs(
+        self, program: Any, ref_mgr: Any, fm: Any, seen_from: set[str], max_results: int
+    ) -> list[dict[str, Any]]:
+        """Collect call sites of LoadStringA/LoadStringW for .rsrc string referencers (indirect refs)."""
+        indirect: list[dict[str, Any]] = []
+        try:
+            st = program.getSymbolTable()
+            for name in _LOADSTRING_NAMES:
+                if len(indirect) >= max_results:
+                    break
+                symbols = st.getSymbols(name)
+                sym = None
+                if hasattr(symbols, "hasNext") and symbols.hasNext():
+                    sym = symbols.next()
+                else:
+                    for s in symbols:
+                        sym = s
+                        break
+                if sym is None:
+                    continue
+                sym_addr = sym.getAddress()
+                for ref in ref_mgr.getReferencesTo(sym_addr):
+                    if len(indirect) >= max_results:
+                        break
+                    from_addr = ref.getFromAddress()
+                    from_str = str(from_addr)
+                    if from_str in seen_from:
+                        continue
+                    seen_from.add(from_str)
+                    func = fm.getFunctionContaining(from_addr)
+                    indirect.append(
+                        {
+                            "fromAddress": from_str,
+                            "toAddress": str(sym_addr),
+                            "type": str(ref.getReferenceType()),
+                            "function": func.getName() if func else None,
+                            "indirect": True,
+                            "via": name,
+                            "note": "Resource strings in .rsrc are loaded via LoadStringA/LoadStringW; match resource ID at call site to confirm.",
+                        },
+                    )
+        except Exception as e:
+            logger.debug("LoadString indirect refs failed: %s", e)
+        return indirect
+
     async def _handle_to(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
         # Use ref_mgr with already-resolved addr so raw addresses (e.g. 0x004a2a62) and
         # symbol names both work; avoid ghidra_tools.list_cross_references(addr_str)
         # which looks up by symbol name only and fails for addresses with no symbol.
         refs_to: list[dict[str, Any]] = []
+        seen_from: set[str] = set()
         for ref in ref_mgr.getReferencesTo(addr):
             if len(refs_to) >= max_results:
                 break
             from_addr = ref.getFromAddress()
+            from_str = str(from_addr)
+            seen_from.add(from_str)
             func = fm.getFunctionContaining(from_addr)
             refs_to.append(
                 {
-                    "fromAddress": str(from_addr),
+                    "fromAddress": from_str,
                     "toAddress": str(ref.getToAddress()),
                     "type": str(ref.getReferenceType()),
                     "function": func.getName() if func else None,
                 },
             )
+        # Resource strings (.rsrc) are referenced via LoadStringA/LoadStringW, not direct xrefs.
+        if self._is_address_in_rsrc(program, addr):
+            remaining = max(0, max_results - len(refs_to))
+            indirect = self._get_loadstring_indirect_refs(program, ref_mgr, fm, seen_from, remaining)
+            refs_to.extend(indirect)
         return create_success_response({"mode": "to", "target": str(addr), "references": refs_to, "count": len(refs_to)})
 
     async def _handle_from(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
@@ -151,19 +220,25 @@ class CrossReferencesToolProvider(ToolProvider):
     async def _handle_both(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
         # Use ref_mgr with already-resolved addr (see _handle_to).
         refs_to: list[dict[str, Any]] = []
+        seen_from: set[str] = set()
         for ref in ref_mgr.getReferencesTo(addr):
             if len(refs_to) >= max_results:
                 break
             from_addr = ref.getFromAddress()
+            from_str = str(from_addr)
+            seen_from.add(from_str)
             func = fm.getFunctionContaining(from_addr)
             refs_to.append(
                 {
-                    "fromAddress": str(from_addr),
+                    "fromAddress": from_str,
                     "toAddress": str(ref.getToAddress()),
                     "type": str(ref.getReferenceType()),
                     "function": func.getName() if func else None,
                 },
             )
+        if self._is_address_in_rsrc(program, addr):
+            remaining = max(0, max_results - len(refs_to))
+            refs_to.extend(self._get_loadstring_indirect_refs(program, ref_mgr, fm, seen_from, remaining))
 
         refs_from: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesFrom(addr):
@@ -216,7 +291,7 @@ class CrossReferencesToolProvider(ToolProvider):
             decomp = DecompInterface()
             decomp.openProgram(program)
             monitor = ConsoleTaskMonitor()
-            seen_funcs = set()
+            seen_funcs: set[str] = set()
             refs_seen = 0
             for ref in ref_mgr.getReferencesTo(addr):
                 if refs_seen >= max_results:
@@ -242,6 +317,44 @@ class CrossReferencesToolProvider(ToolProvider):
                         results.append({"function": func.getName(), "decompilation": "// error"})
                     if len(results) >= 50:
                         break
+            # When target is in .rsrc, also decompile referencers via LoadStringA/LoadStringW.
+            if self._is_address_in_rsrc(program, addr) and len(results) < 50:
+                from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+
+                seen_from_refs: set[str] = set()
+                indirect = self._get_loadstring_indirect_refs(program, ref_mgr, fm, seen_from_refs, max_results)
+                for entry in indirect:
+                    if len(results) >= 50:
+                        break
+                    func_name = entry.get("function")
+                    if not func_name or func_name in seen_funcs:
+                        continue
+                    seen_funcs.add(func_name)
+                    raw = (entry["fromAddress"] or "").strip()
+                    if ":" in raw:
+                        raw = raw.split(":")[-1].strip()
+                    from_addr = AddressUtil.parse_address(program, raw)
+                    if from_addr is None:
+                        continue
+                    func = fm.getFunctionContaining(from_addr) or fm.getFunctionAt(from_addr)
+                    if func is not None:
+                        try:
+                            dr = decomp.decompileFunction(func, 30, monitor)
+                            code = ""
+                            if dr and dr.decompileCompleted():
+                                df = dr.getDecompiledFunction()
+                                code = df.getC() if df else ""
+                            results.append(
+                                {
+                                    "function": func.getName(),
+                                    "address": str(func.getEntryPoint()),
+                                    "decompilation": code[:2000],
+                                    "indirect": True,
+                                    "via": entry.get("via", "LoadString"),
+                                },
+                            )
+                        except Exception:
+                            results.append({"function": func.getName(), "decompilation": "// error", "indirect": True})
             decomp.dispose()
         except ImportError:
             pass

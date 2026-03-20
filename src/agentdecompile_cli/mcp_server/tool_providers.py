@@ -1034,9 +1034,9 @@ class ToolProvider:
         """
         offset = self._get_int(args, "offset", "startindex", default=0)
         limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=DEFAULT_PAGE_LIMIT if default_limit is None else default_limit)
-        return offset, limit
+        return offset if offset is not None else 0, limit if limit is not None else 0
 
-    def _dispatch_handler(self, *args, **kwargs) -> Any:
+    def _dispatch_handler(self, *args: Any, **kwargs: Any) -> Any:
         """Unified handler dispatch with error handling.
 
         Supports two calling patterns:
@@ -1094,8 +1094,8 @@ class ToolProvider:
                         "Check the tool's inputSchema for valid enum values.",
                     ],
                 )
-            handler = getattr(self, handler_name)
-            return handler(args_dict, **kwargs)
+            handler = getattr(self, handler_name)  # pyright: ignore[reportArgumentType]
+            return handler(args_dict, **kwargs)  # pyright: ignore[reportOptionalCall]
         raise ValueError("Invalid _dispatch_handler call signature")
 
     # ------------------------------------------------------------------
@@ -1164,9 +1164,12 @@ class ToolProvider:
             try:
                 addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
                 if addr is not None:
-                    f = fm.getFunctionContaining(addr)
+                    f = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
                     if f is None:
-                        f = fm.getFunctionAt(addr)
+                        # Support IAT address: resolve to thunk and get function at thunk
+                        thunk_addr = AddressUtil.resolve_iat_to_thunk(target_program, addr)
+                        if thunk_addr is not None:
+                            f = fm.getFunctionAt(thunk_addr) or fm.getFunctionContaining(thunk_addr)
                     if f is not None:
                         return f
             except Exception:
@@ -1207,9 +1210,11 @@ class ToolProvider:
         try:
             addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
             if addr is not None:
-                f = fm.getFunctionContaining(addr)
+                f = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
                 if f is None:
-                    f = fm.getFunctionAt(addr)
+                    thunk_addr = AddressUtil.resolve_iat_to_thunk(target_program, addr)
+                    if thunk_addr is not None:
+                        f = fm.getFunctionAt(thunk_addr) or fm.getFunctionContaining(thunk_addr)
                 return f
         except Exception:
             return None
@@ -1217,14 +1222,19 @@ class ToolProvider:
         return None
 
     def _resolve_address(self, address_or_symbol: str, program: Any | None = None) -> Any:
-        """Resolve an address/symbol string against the active program."""
+        """Resolve an address/symbol string against the active program.
+
+        Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses
+        (e.g. 0x48f1fc): when an IAT slot is given, resolves to the thunk address so
+        list-cross-references and get-call-graph use the same logical target.
+        """
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
 
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
 
-        return AddressUtil.resolve_address_or_symbol(target_program, address_or_symbol)
+        return AddressUtil.resolve_address_or_symbol_prefer_thunk(target_program, address_or_symbol)
 
     def _get_function_manager(self, program: Any | None = None) -> Any:
         """Get function manager from program, with safe access and caching.

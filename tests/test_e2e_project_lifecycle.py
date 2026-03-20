@@ -172,7 +172,7 @@ def test_known_fixture_analysis_outputs_match_observed_contract(
     assert "Find, list, and search strings embedded in the binary." in strings_text
     assert f"Find references to this string: `get-references address={KNOWN_STRING_ADDRESS}`." in strings_text
     assert f"Decompile containing function: `get-functions mode=decompile address={KNOWN_STRING_ADDRESS}`." in strings_text
-    assert "Search for keywords: `search-strings query=password` or `search-strings query=error`." in strings_text
+    assert "search-strings" in strings_text and "list-strings" in strings_text
 
 
 def test_remove_program_binary_supports_local_projects(
