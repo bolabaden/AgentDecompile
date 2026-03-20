@@ -102,7 +102,10 @@ _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
 
 
 def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
-    """Drop recommendation lines that reference tools disabled via env configuration."""
+    """Drop recommendation lines that reference tools disabled via env configuration.
+    Also drops steps that mention get-functions (e.g. `get-functions mode=decompile address=...`)
+    when that tool is not advertised (legacy mode off).
+    """
     filtered: list[str] = []
     for step in steps:
         mentioned = re.findall(r"`([A-Za-z0-9_-]+)`", step)
@@ -112,6 +115,10 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
             if token_norm in _DISABLABLE_RECOMMENDATION_TOOLS and not is_tool_advertised(token):
                 blocked = True
                 break
+        # Steps like "Decompile containing function: `get-functions mode=decompile address=...`"
+        # have the tool name inside a longer backticked phrase; the regex above won't match.
+        if not blocked and "get-functions" in step and not is_tool_advertised("get-functions"):
+            blocked = True
         if not blocked:
             filtered.append(step)
     return filtered
