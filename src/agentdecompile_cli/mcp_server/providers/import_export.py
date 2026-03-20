@@ -930,7 +930,19 @@ class ImportExportToolProvider(ToolProvider):
                     mgr.reAnalyzeAll(monitor)
                 mgr.startAnalysis(monitor)
 
-            self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
+            from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingModuleSource]
+
+            try:
+                GhidraScriptUtil.acquireBundleHostReference()
+            except Exception:
+                pass
+            try:
+                self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
+            finally:
+                try:
+                    GhidraScriptUtil.releaseBundleHostReference()
+                except Exception:
+                    pass
             if hasattr(self.program_info, "ghidra_analysis_complete"):
                 self.program_info.ghidra_analysis_complete = True
 
