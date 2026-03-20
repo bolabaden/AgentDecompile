@@ -31,18 +31,18 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from mcp import types
+from mcp import types  # pyright: ignore[reportMissingImports]
 
-from agentdecompile_cli.launcher import ProgramInfo
-from agentdecompile_cli.mcp_server.providers._collectors import iter_items
-from agentdecompile_cli.mcp_server.response_formatter import render_tool_response
-from agentdecompile_cli.mcp_server.session_context import (
+from agentdecompile_cli.launcher import ProgramInfo  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_server.providers._collectors import iter_items  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[reportMissingImports]
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
     get_current_request_auto_match_propagate,
     get_current_request_auto_match_target_paths,
 )
-from agentdecompile_cli.registry import (
+from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
     ADVERTISED_TOOLS,
     ADVERTISED_TOOL_PARAMS,
     TOOL_ALIASES,
@@ -57,7 +57,7 @@ from agentdecompile_cli.registry import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from agentdecompile_cli.registry import (
+    from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
         Tool,
     )
 
