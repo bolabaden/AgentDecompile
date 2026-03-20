@@ -406,3 +406,11 @@ docs/generated/
 *.ps
 *.lock~
 *.lock
+*.gpr
+*.prp
+*.sarif
+*.gzf
+out.cpp
+out.txt
+~index.dat
+agentdecompile_test_8081/pipeline_steps.json

@@ -82,6 +82,7 @@ class CallGraphToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
+        # function/addressOrSymbol: resolved via AddressUtil (0x=hex, else decimal) in CallGraphTool or _resolve_function
         func = self._get_address_or_symbol(args)
         if not func:
             raise ValueError("function or addressOrSymbol is required")

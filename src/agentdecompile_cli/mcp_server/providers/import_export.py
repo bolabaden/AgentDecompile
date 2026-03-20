@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 
+from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,176 @@ def _normalize_import_destination_folder(args: dict[str, Any]) -> str:
     if len(s) > 1:
         s = s.rstrip("/")
     return s or "/"
+
+
+def _escape_xml_text(raw: str) -> str:
+    """Escape text for safe use inside XML character content."""
+    if not raw:
+        return ""
+    return (
+        str(raw)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _generate_program_xml(program: Any, get_function_manager: Any) -> str:
+    """Generate a comprehensive XML representation of the program (fallback when XmlExporter is unavailable)."""
+    import xml.etree.ElementTree as ET  # noqa: PLC0415
+
+    root = ET.Element("program")
+    root.set("name", _escape_xml_text(program.getName() if hasattr(program, "getName") else ""))
+    root.set("language", _escape_xml_text(str(program.getLanguage().getLanguageID()) if program.getLanguage() else ""))
+    root.set("compiler", _escape_xml_text(str(program.getCompilerSpec().getCompilerSpecID()) if program.getCompilerSpec() else ""))
+    root.set("imageBase", str(program.getImageBase()) if hasattr(program, "getImageBase") and program.getImageBase() else "0")
+
+    try:
+        func_mgr = get_function_manager(program)
+        func_count = func_mgr.getFunctionCount() if hasattr(func_mgr, "getFunctionCount") else 0
+        funcs_el = ET.SubElement(root, "functions")
+        funcs_el.set("count", str(func_count))
+        for func in islice(func_mgr.getFunctions(True), 10000):
+            fe = ET.SubElement(funcs_el, "function")
+            fe.set("name", _escape_xml_text(func.getName() if hasattr(func, "getName") else ""))
+            if hasattr(func, "getEntryPoint") and func.getEntryPoint():
+                fe.set("address", str(func.getEntryPoint()))
+            if hasattr(func, "getBody") and func.getBody():
+                fe.set("size", str(func.getBody().getNumAddresses()))
+    except Exception:
+        pass
+
+    try:
+        if hasattr(program, "getMemory") and program.getMemory():
+            mem = program.getMemory()
+            blocks_el = ET.SubElement(root, "memoryBlocks")
+            for block in mem.getBlocks() if hasattr(mem, "getBlocks") else []:
+                be = ET.SubElement(blocks_el, "block")
+                if hasattr(block, "getStart"):
+                    be.set("start", str(block.getStart()))
+                if hasattr(block, "getEnd"):
+                    be.set("end", str(block.getEnd()))
+                if hasattr(block, "getName"):
+                    be.set("name", _escape_xml_text(block.getName()))
+    except Exception:
+        pass
+
+    try:
+        ref_mgr = program.getReferenceManager() if hasattr(program, "getReferenceManager") else None
+        if ref_mgr and hasattr(ref_mgr, "getReferenceCount"):
+            root.set("referenceCount", str(ref_mgr.getReferenceCount()))
+    except Exception:
+        pass
+
+    ET.indent(root, space="  ")
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode", default_namespace="")
+
+
+def _generate_program_ascii_fallback(program: Any, get_function_manager: Any) -> str:
+    """Generate a plain-text program summary (fallback when AsciiExporter is unavailable)."""
+    lines: list[str] = []
+    name = program.getName() if hasattr(program, "getName") else "Program"
+    lines.append(f"Program: {name}")
+    lines.append("")
+    if program.getLanguage():
+        lines.append(f"Language: {program.getLanguage().getLanguageID()}")
+    if program.getCompilerSpec():
+        lines.append(f"Compiler: {program.getCompilerSpec().getCompilerSpecID()}")
+    if hasattr(program, "getImageBase") and program.getImageBase():
+        lines.append(f"Image base: {program.getImageBase()}")
+    lines.append("")
+    lines.append("Functions:")
+    lines.append("-" * 60)
+    try:
+        func_mgr = get_function_manager(program)
+        for func in islice(func_mgr.getFunctions(True), 10000):
+            addr = str(func.getEntryPoint()) if hasattr(func, "getEntryPoint") and func.getEntryPoint() else ""
+            fname = func.getName() if hasattr(func, "getName") else ""
+            size = ""
+            if hasattr(func, "getBody") and func.getBody():
+                size = str(func.getBody().getNumAddresses())
+            lines.append(f"  {addr}  {fname}  (size: {size})")
+    except Exception:
+        lines.append("  (unable to list)")
+    return "\n".join(lines)
+
+
+def _generate_program_html(program: Any, get_function_manager: Any) -> str:
+    """Generate a comprehensive HTML report for the program."""
+    name = program.getName() if hasattr(program, "getName") else "Program"
+    lang = str(program.getLanguage().getLanguageID()) if program.getLanguage() else ""
+    comp = str(program.getCompilerSpec().getCompilerSpecID()) if program.getCompilerSpec() else ""
+    base = str(program.getImageBase()) if hasattr(program, "getImageBase") and program.getImageBase() else "0"
+
+    func_rows: list[str] = []
+    try:
+        func_mgr = get_function_manager(program)
+        count = 0
+        for func in func_mgr.getFunctions(True):
+            if count >= 5000:
+                func_rows.append('<tr><td colspan="5">… (truncated)</td></tr>')
+                break
+            addr = str(func.getEntryPoint()) if hasattr(func, "getEntryPoint") and func.getEntryPoint() else ""
+            fname = (func.getName() or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            size = ""
+            if hasattr(func, "getBody") and func.getBody():
+                size = str(func.getBody().getNumAddresses())
+            ext = "Yes" if (hasattr(func, "isExternal") and func.isExternal()) else ""
+            thunk = "Yes" if (hasattr(func, "isThunk") and func.isThunk()) else ""
+            func_rows.append(f"<tr><td>{addr}</td><td>{fname}</td><td>{size}</td><td>{ext}</td><td>{thunk}</td></tr>")
+            count += 1
+        func_count = count
+    except Exception:
+        func_count = 0
+        func_rows.append("<tr><td colspan=\"5\">Unable to list functions</td></tr>")
+
+    functions_table = "\n".join(func_rows)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="generator" content="AgentDecompile"/>
+<title>Program: {name.replace("&", "&amp;").replace("<", "&lt;")}</title>
+<style>
+body {{ font-family: system-ui, sans-serif; margin: 1rem 2rem; background: #1a1a1a; color: #e0e0e0; }}
+h1 {{ color: #7dd3fc; }}
+h2 {{ color: #a5b4fc; margin-top: 1.5rem; }}
+table {{ border-collapse: collapse; width: 100%; margin-top: 0.5rem; }}
+th, td {{ border: 1px solid #444; padding: 0.35rem 0.75rem; text-align: left; }}
+th {{ background: #2d2d2d; color: #93c5fd; }}
+tr:nth-child(even) {{ background: #252525; }}
+.meta {{ display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1.5rem; max-width: 40rem; }}
+.meta span:first-child {{ color: #94a3b8; }}
+</style>
+</head>
+<body>
+<h1>Program export: {name.replace("&", "&amp;").replace("<", "&lt;")}</h1>
+<section>
+<h2>Metadata</h2>
+<div class="meta">
+<span>Name</span><span>{name.replace("&", "&amp;").replace("<", "&lt;")}</span>
+<span>Language</span><span>{lang.replace("&", "&amp;").replace("<", "&lt;")}</span>
+<span>Compiler</span><span>{comp.replace("&", "&amp;").replace("<", "&lt;")}</span>
+<span>Image base</span><span>{base.replace("&", "&amp;").replace("<", "&lt;")}</span>
+<span>Functions</span><span>{func_count}</span>
+</div>
+</section>
+<section>
+<h2>Functions</h2>
+<table>
+<thead><tr><th>Address</th><th>Name</th><th>Size</th><th>External</th><th>Thunk</th></tr></thead>
+<tbody>
+{functions_table}
+</tbody>
+</table>
+</section>
+</body>
+</html>
+"""
+    return html
 
 
 class ImportExportToolProvider(ToolProvider):
@@ -567,7 +738,7 @@ class ImportExportToolProvider(ToolProvider):
         fmt = self._get_str(args, "format", default="cpp")
         fmt = (fmt or "cpp").strip().lower()
 
-        supported_formats = ["c", "cpp", "cxx", "gzf", "sarif", "xml", "html", "ascii"]
+        supported_formats: list[str] = ["c", "cpp", "cxx", "gzf", "sarif", "xml", "html", "ascii"]
         if fmt not in supported_formats:
             return create_success_response(
                 {
@@ -629,9 +800,10 @@ class ImportExportToolProvider(ToolProvider):
                     out = out.with_suffix(ext)
                 create_header = self._get_bool(args, "createheader", default=True)
                 include_types = self._get_bool(args, "includetypes", default=True)
-                include_globals = self._get_bool(args, "includeglobals", default=True)
+                _include_globals = self._get_bool(args, "includeglobals", default=True)  # reserved for CppExporter API
                 tags = self._get_str(args, "tags")
-                try:
+
+                def _run_cpp_export() -> None:
                     from agentdecompile_cli.ghidrecomp.decompile import decompile_to_single_file
 
                     decompile_to_single_file(
@@ -644,6 +816,9 @@ class ImportExportToolProvider(ToolProvider):
                         tags=tags,
                         verbose=False,
                     )
+
+                try:
+                    self._run_program_transaction(program, "export-cpp", _run_cpp_export)
                     return create_success_response(
                         {
                             "action": "export",
@@ -669,8 +844,6 @@ class ImportExportToolProvider(ToolProvider):
                 if out.suffix.lower() != ".sarif":
                     out = out.with_suffix(".sarif")
                 try:
-                    from datetime import datetime
-
                     # Generate comprehensive SARIF report with actual analysis data
                     results: list[dict[str, Any]] = []
 
@@ -771,8 +944,8 @@ class ImportExportToolProvider(ToolProvider):
                     except Exception as e:
                         logger.debug("Error collecting function analysis: %s", e)
 
-                    now = datetime.utcnow().isoformat() + "Z"
-                    sarif_doc = {
+                    now: str = datetime.now(timezone.utc).isoformat() + "Z"
+                    sarif_doc: dict[str, Any] = {
                         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
                         "version": "2.1.0",
                         "runs": [
@@ -846,6 +1019,106 @@ class ImportExportToolProvider(ToolProvider):
                         },
                     )
 
+            if fmt == "ascii":
+                if out.suffix.lower() not in {".txt", ".ascii", ".lst"}:
+                    out = out.with_suffix(".txt")
+                ascii_done = False
+                try:
+                    from java.io import File  # pyright: ignore[reportMissingImports]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    def _run_ascii_export() -> None:
+                        from ghidra.app.util.exporter import AsciiExporter  # pyright: ignore[reportMissingModuleSource]
+
+                        exporter = AsciiExporter()
+                        exporter.export(File(str(out)), program, None, TaskMonitor.DUMMY)
+
+                    self._run_program_transaction(program, "export-ascii", _run_ascii_export)
+                    ascii_done = True
+                except Exception as exc:
+                    logger.debug("AsciiExporter failed, using fallback text: %s", exc)
+                if not ascii_done:
+                    ascii_content = _generate_program_ascii_fallback(program, self._get_function_manager)
+                    out.write_text(ascii_content, encoding="utf-8")
+                return create_success_response(
+                    {
+                        "action": "export",
+                        "format": fmt,
+                        "outputPath": str(out),
+                        "success": True,
+                        "apiClass": "ghidra.app.util.exporter.AsciiExporter or fallback",
+                    },
+                )
+
+            if fmt == "xml":
+                if out.suffix.lower() != ".xml":
+                    out = out.with_suffix(".xml")
+                xml_done = False
+                try:
+                    from java.io import File  # pyright: ignore[reportMissingImports]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    def _run_xml_export() -> None:
+                        from ghidra.app.util.exporter import XmlExporter  # pyright: ignore[reportMissingModuleSource]
+
+                        exporter = XmlExporter()
+                        addr_set = None
+                        if hasattr(program, "getMemory") and program.getMemory():
+                            mem = program.getMemory()
+                            if hasattr(mem, "getAllInitializedAddressSet"):
+                                addr_set = mem.getAllInitializedAddressSet()
+                            elif hasattr(mem, "getLoadedAndInitializedAddressSet"):
+                                addr_set = mem.getLoadedAndInitializedAddressSet()
+                        exporter.export(File(str(out)), program, addr_set, TaskMonitor.DUMMY)
+
+                    self._run_program_transaction(program, "export-xml", _run_xml_export)
+                    xml_done = True
+                except Exception as exc:
+                    logger.debug("XmlExporter failed, using fallback XML: %s", exc)
+                if not xml_done:
+                    xml_content = _generate_program_xml(program, self._get_function_manager)
+                    out.write_text(xml_content, encoding="utf-8")
+                return create_success_response(
+                    {
+                        "action": "export",
+                        "format": fmt,
+                        "outputPath": str(out),
+                        "success": True,
+                        "apiClass": "ghidra.app.util.exporter.XmlExporter or fallback",
+                    },
+                )
+
+            if fmt == "html":
+                if out.suffix.lower() not in {".html", ".htm"}:
+                    out = out.with_suffix(".html")
+                html_done = False
+                try:
+                    from java.io import File  # pyright: ignore[reportMissingImports]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    def _run_html_export() -> None:
+                        from ghidra.app.util.exporter import HtmlExporter  # pyright: ignore[reportMissingModuleSource]
+
+                        exporter = HtmlExporter()
+                        exporter.export(File(str(out)), program, None, TaskMonitor.DUMMY)
+
+                    self._run_program_transaction(program, "export-html", _run_html_export)
+                    html_done = True
+                except Exception as exc:
+                    logger.debug("HtmlExporter not available or failed, using generated HTML: %s", exc)
+                if not html_done:
+                    html_content = _generate_program_html(program, self._get_function_manager)
+                    out.write_text(html_content, encoding="utf-8")
+                return create_success_response(
+                    {
+                        "action": "export",
+                        "format": fmt,
+                        "outputPath": str(out),
+                        "success": True,
+                        "apiClass": "ghidra.app.util.exporter.HtmlExporter or generated report",
+                    },
+                )
+
             payload = {
                 "name": program.getName(),
                 "address": str(program.getImageBase()),
@@ -875,7 +1148,7 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
-            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
             session_marked_complete = bool(getattr(self.program_info, "analysis_complete", False))
             ghidra_requires_analysis = True
@@ -934,9 +1207,9 @@ class ImportExportToolProvider(ToolProvider):
 
         program = self.program_info.program
         try:
-            from ghidra.program.model.lang import CompilerSpecID, LanguageID  # pyright: ignore[reportMissingModuleSource]
-            from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingModuleSource]
-            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.model.lang import CompilerSpecID, LanguageID  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
             def _change_processor() -> None:
                 language_id = LanguageID(language)
@@ -987,8 +1260,8 @@ class ImportExportToolProvider(ToolProvider):
             results: list[dict[str, Any]] = []
             all_ok = True
             try:
-                from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
-                from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+                from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                 checkin_comment = comment or "Checkin all changes"
                 # Auto-checkin flow (AGENTDECOMPILE_AUTO_CHECKIN): checkout if not already checked out so we can check in;
@@ -1118,8 +1391,8 @@ class ImportExportToolProvider(ToolProvider):
             program_display_name = program.getName()
 
         try:
-            from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
-            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
             if domain_file is None:
                 raise RuntimeError("No domain file associated with active program")
 
@@ -1296,7 +1569,7 @@ class ImportExportToolProvider(ToolProvider):
                     },
                 )
 
-            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
             if domain_file.isCheckedOut():
                 return create_success_response(
@@ -1535,7 +1808,7 @@ class ImportExportToolProvider(ToolProvider):
         filter_str = self._get_str(args, "filter", "query", "search")
 
         try:
-            from ghidra.framework.main import AppInfo  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.framework.main import AppInfo  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
             AppInfo.getActiveProject().getProjectData()
             # This needs proper language service access
