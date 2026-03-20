@@ -56,6 +56,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`get-current-program`](#get-current-program)
     - [`get-data`](#get-data)
     - [`get-functions`](#get-functions)
+    - [`get-prompt-content`](#get-prompt-content)
     - [`get-references`](#get-references)
     - [`import-binary`](#import-binary)
     - [`inspect-memory`](#inspect-memory)
@@ -68,6 +69,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`list-project-binary-metadata`](#list-project-binary-metadata)
     - [`list-project-files`](#list-project-files)
     - [`list-processors`](#list-processors)
+    - [`list-prompts`](#list-prompts)
     - [`list-strings`](#list-strings)
     - [`match-function`](#match-function)
     - [`execute-script`](#execute-script)
@@ -1007,6 +1009,27 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `programPath` (string, optional): Optional override for program context when resolving.
 
 **Examples**: After `manage-symbols` (rename) returns a conflict, call `resolve-modification-conflict conflictId="<uuid>" resolution=overwrite` to apply, or `resolution=skip` to discard.
+
+### `list-prompts`
+
+**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator). Use `get-prompt-content` with a prompt name to resolve the prompt messages for driving a subagent or new turn.
+
+**Parameters**: None.
+
+**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`), then use `get-prompt-content` with that name and arguments to get the task description and messages to pass to a subagent.
+
+### `get-prompt-content`
+
+**Description**: Resolve a named MCP prompt with the given arguments and return the prompt messages and description. Use the returned content to start a subagent or new turn with that task (e.g. run the Scout or Diver workflow). This is the tool equivalent of MCP `prompts/get`: the model can call it to obtain the same content that the client would get from `prompts/list` and `prompts/get`, then pass that content to the host's subagent/task API.
+
+**Parameters**:
+- `promptName` (string, required): MCP prompt name (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`, `re-bottom-up-analyst`, `re-convergence-orchestrator`).
+- `arguments` (object, optional): Prompt arguments as key-value strings (e.g. `program_path`, `analysis_target`, `search_keywords`).
+- `programPath` (string, optional): Convenience: merged into `arguments` as `program_path` if not provided in `arguments`.
+- `analysisTarget` (string, optional): Convenience: merged into `arguments` as `analysis_target`.
+- `searchKeywords` (string, optional): Convenience: merged into `arguments` as `search_keywords`.
+
+**Examples**: `get-prompt-content promptName="re-scout-broad-sweep" arguments='{"program_path":"/K1/swkotor.exe","analysis_target":"save/load"}'` — use the returned `description` and `messages` to start a subagent with that task.
 
 ### `search-code`
 
