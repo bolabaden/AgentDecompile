@@ -139,6 +139,13 @@ class GetFunctionAioToolProvider(ToolProvider):
             program_path = str(program_path) if program_path else "current program"
             msg = f"Function not found: {func_id} (program: {program_path}). Use list-functions with this program to see available functions and addresses."
             msg += " If you requested a common base address (e.g. 0x401000), the executable entry point may be at a different address; use get-current-program or list-functions to find it."
+            try:
+                fm = program.getFunctionManager()
+                count = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else 0
+                if count == 0:
+                    msg += " The program has no functions yet; run analyze-program first, then try get-function again."
+            except Exception:
+                pass
             raise ValueError(msg)
 
         entry = target.getEntryPoint()

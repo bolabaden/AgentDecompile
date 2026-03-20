@@ -32,31 +32,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.ghidrecomp.utility import disable_headless_unsafe_analyzers
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
-
-# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null (e.g. Windows Resource Reference Analyzer).
-# Try multiple names in case Ghidra version uses a different display name.
-_HEADLESS_UNSAFE_ANALYZERS = (
-    "Windows Resource Reference Analyzer",
-    "Windows Resource Reference",
-)
-
-
-def _disable_headless_unsafe_analyzers(program: Any) -> None:
-    """Disable analyzers that crash in headless/PyGhidra (no script bundle host)."""
-    try:
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingModuleSource]
-
-        opts = program.getOptions(Program.ANALYSIS_PROPERTIES)
-        for name in _HEADLESS_UNSAFE_ANALYZERS:
-            try:
-                opts.setBoolean(name, False)
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 
 def _normalize_import_destination_folder(args: dict[str, Any]) -> str:
@@ -922,7 +901,7 @@ class ImportExportToolProvider(ToolProvider):
                 )
 
             # Disable analyzers that NPE in headless (no GhidraScriptUtil.bundleHost)
-            _disable_headless_unsafe_analyzers(program)
+            disable_headless_unsafe_analyzers(program)
 
             mgr = AutoAnalysisManager.getAnalysisManager(program)
 

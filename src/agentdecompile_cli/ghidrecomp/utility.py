@@ -8,7 +8,7 @@ Used by launcher and batch CLI; some functions are pyghidra extensions.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # needed for ghidra python vscode autocomplete
 if TYPE_CHECKING:
@@ -17,6 +17,52 @@ if TYPE_CHECKING:
     import ghidra
 
     from ghidra_builtins import *  # noqa: F403
+
+# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null.
+_HEADLESS_UNSAFE_ANALYZERS = (
+    "Windows Resource Reference Analyzer",
+    "Windows Resource Reference",
+    "WindowsResourceReferenceAnalyzer",
+)
+_HEADLESS_UNSAFE_SUBSTRINGS = ("Windows Resource", "Resource Reference")
+
+
+def disable_headless_unsafe_analyzers(program: Any) -> None:
+    """Disable analyzers that crash in headless/PyGhidra (e.g. WindowsResourceReferenceAnalyzer)."""
+    try:
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingModuleSource]
+
+        opts = program.getOptions(Program.ANALYSIS_PROPERTIES)
+        for name in _HEADLESS_UNSAFE_ANALYZERS:
+            try:
+                if opts.contains(name):
+                    opts.setBoolean(name, False)
+            except Exception:
+                pass
+        _disable_analyzer_options_matching(opts)
+    except Exception:
+        pass
+
+
+def _disable_analyzer_options_matching(opts: Any) -> None:
+    """Recursively disable boolean options whose name contains a headless-unsafe substring."""
+    try:
+        names = opts.getOptionNames() if hasattr(opts, "getOptionNames") else []
+        for name in names or []:
+            try:
+                if any(sub in name for sub in _HEADLESS_UNSAFE_SUBSTRINGS):
+                    if opts.contains(name):
+                        try:
+                            opts.setBoolean(name, False)
+                        except Exception:
+                            pass
+                child = opts.getOptions(name) if hasattr(opts, "getOptions") else None
+                if child is not None:
+                    _disable_analyzer_options_matching(child)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def analyze_program(
@@ -41,7 +87,7 @@ def analyze_program(
 
     if GhidraProgramUtilities.shouldAskToAnalyze(program) or force_analysis:
         print(f"Analyzing program {program.name}...")
-
+        disable_headless_unsafe_analyzers(program)
         GhidraScriptUtil.acquireBundleHostReference()
         try:
             print("Running analyzers...")
