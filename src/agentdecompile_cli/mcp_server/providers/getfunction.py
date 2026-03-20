@@ -161,7 +161,7 @@ class GetFunctionToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=Tool.MATCH_FUNCTION.value,
-                description="Match functions across different builds or versions of a binary (cross-program matching). Give a source function and target program paths to find the equivalent in each target and optionally propagate names, tags, comments, prototype, and bookmarks. If function/functionIdentifier/addressOrSymbol is omitted but targetProgramPaths is set (or targets are discoverable from the session), the tool iterates over all functions in the source (bulk migration). Use without targetProgramPaths for single-program modes: similar, callers, callees, signature. Matched results include functionDetails (get-function output) for context.",
+                description="Match functions across different builds or versions of a binary (cross-program matching). Matching uses signature (param count, return type), name, and call-graph (caller/callee names)—not byte or instruction comparison—so it works when addresses and assembly differ (e.g. related binaries). Give a source function and target program paths; when multiple targets share the same signature, candidates are ranked by name match then call-graph overlap. Optionally propagate names, tags, comments, prototype, and bookmarks. If function/functionIdentifier/addressOrSymbol is omitted but targetProgramPaths is set (or targets are discoverable from the session), the tool iterates over all functions in the source (bulk migration). Use without targetProgramPaths for single-program modes: similar, callers, callees, signature. Matched results include functionDetails (get-function output) for context.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -702,6 +702,25 @@ class GetFunctionToolProvider(ToolProvider):
             return []
         return paths
 
+    def _source_call_graph_sets(self, source_func: Any) -> tuple[frozenset[str], frozenset[str]]:
+        """Return (callers, callees) as frozensets of function names for cross-program call-graph scoring."""
+        callers = frozenset(c.getName() for c in source_func.getCallingFunctions(None))
+        callees = frozenset(c.getName() for c in source_func.getCalledFunctions(None))
+        return callers, callees
+
+    def _call_graph_overlap(
+        self,
+        source_callers: frozenset[str],
+        source_callees: frozenset[str],
+        target_feature: _FunctionMatchFeature,
+    ) -> float:
+        """Return overlap in [0, 1]: shared callers + shared callees over source total. Used to rank same-signature candidates."""
+        if not source_callers and not source_callees:
+            return 0.0
+        shared_calls = len(source_callers & target_feature.callers) + len(source_callees & target_feature.callees)
+        total = len(source_callers) + len(source_callees)
+        return shared_calls / total if total else 0.0
+
     def _list_source_function_identifiers(
         self,
         program: Any,
@@ -748,6 +767,7 @@ class GetFunctionToolProvider(ToolProvider):
         source_return_type = str(source_func.getReturnType())
         source_sig = str(source_func.getSignature())
         sig_key = (source_param_count, source_return_type)
+        source_callers, source_callees = self._source_call_graph_sets(source_func)
 
         results_per_target: list[dict[str, Any]] = []
         errors: list[str] = []
@@ -789,11 +809,17 @@ class GetFunctionToolProvider(ToolProvider):
             candidates = target_index.by_signature.get(sig_key, [])
             best_feature: _FunctionMatchFeature | None = None
             best_score = 0.0
+            best_call_graph_overlap = 0.0
             for feat in candidates:
                 # Name match = 1.0; same signature (param_count, return_type) but different name = 0.7
                 score = 1.0 if feat.name == source_name else 0.7
-                if score >= min_similarity and score > best_score:
+                if score < min_similarity:
+                    continue
+                cg_overlap = self._call_graph_overlap(source_callers, source_callees, feat)
+                # Rank by (score, call-graph overlap) so same-signature candidates are disambiguated by call graph
+                if (score, cg_overlap) > (best_score, best_call_graph_overlap):
                     best_score = score
+                    best_call_graph_overlap = cg_overlap
                     best_feature = feat
 
             if best_feature is None:
@@ -833,6 +859,7 @@ class GetFunctionToolProvider(ToolProvider):
                     "address": best_feature.address,
                     "signature": best_feature.signature,
                     "similarityScore": best_score,
+                    "callGraphOverlap": round(best_call_graph_overlap, 4),
                 },
                 "propagated": [],
             }

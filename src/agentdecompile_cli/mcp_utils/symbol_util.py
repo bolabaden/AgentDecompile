@@ -13,12 +13,10 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
-
-    # Type alias for convenience
     Symbol = GhidraSymbol
 
 # Default symbol name patterns that Ghidra generates

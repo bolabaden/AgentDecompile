@@ -123,7 +123,6 @@ class Tool(str, Enum):
     GET_DATA = "get-data"
     GET_FUNCTION = "get-function"
     GET_FUNCTIONS = "get-functions"
-    GET_PROMPT_CONTENT = "get-prompt-content"
     GET_REFERENCES = "get-references"
     IMPORT_BINARY = "import-binary"
     INSPECT_MEMORY = "inspect-memory"
@@ -418,7 +417,6 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
     Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
     Tool.OPEN.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
-    Tool.GET_PROMPT_CONTENT.value: _params("promptName", "arguments", "programPath", "analysisTarget", "searchKeywords"),
     Tool.LIST_PROMPTS.value: _params(),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
     Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),

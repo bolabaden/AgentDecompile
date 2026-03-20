@@ -88,6 +88,15 @@ services:
     ports:
       # AgentDecompile MCP HTTP server (binds to container port 8080 by default).
       - ${AGENTDECOMPILE_MCP_PORT:-8080}:8080  # AgentDecompile MCP HTTP
+    environment:
+      # Shared Ghidra server: MCP backend connects to ghidra service on same network.
+      AGENT_DECOMPILE_GHIDRA_SERVER_HOST: ${AGENT_DECOMPILE_GHIDRA_SERVER_HOST:-ghidra}
+      AGENT_DECOMPILE_GHIDRA_SERVER_PORT: ${AGENT_DECOMPILE_GHIDRA_SERVER_PORT:-13100}
+      AGENT_DECOMPILE_PROJECT_PATH: ${AGENT_DECOMPILE_PROJECT_PATH:-/tmp/agentdecompile-projects}
+      # Optional: set for open(shared) to create/use a repo (e.g. agentrepo). Credentials depend on Ghidra image.
+      AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME: ${AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD: ${AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD:-}
+      AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: ${AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY:-agentrepo}
     volumes:
       # Ghidra core installation shared from ghidra service (read-only).
       # PyGhidra requires these to initialize the JVM and access Ghidra APIs.

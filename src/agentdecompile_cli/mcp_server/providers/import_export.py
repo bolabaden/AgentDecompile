@@ -27,13 +27,14 @@ from mcp import types
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
+    is_shared_server_handle,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
     n,
 )
-from agentdecompile_cli.ghidrecomp.utility import analyze_program as run_analysis
+from ghidrecomp.utility import analyze_program as run_analysis
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
@@ -421,7 +422,7 @@ class ImportExportToolProvider(ToolProvider):
         session_id = get_current_mcp_session_id()
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
-        if not handle or n(str(handle.get("mode", ""))) != "sharedserver":
+        if not handle or not is_shared_server_handle(handle):
             return {
                 "action": "import",
                 "importedFrom": str(source),
@@ -475,17 +476,145 @@ class ImportExportToolProvider(ToolProvider):
                 "error": f"analyzeHeadless script not found: {analyze_headless}",
             }
 
+        # ALTERNATIVE: Use PyGhidra API directly with repository adapter to avoid analyzeHeadless auth issues
+        # This avoids the th3w1zard1 cached username problem by using the already-authenticated repository_adapter
+        try:
+            if not repository_adapter.isConnected():
+                repository_adapter.connect()
+            
+            # Get the manager's ghidra_project or create a temporary one connected to the repository
+            ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            if ghidra_project is None:
+                # Create a temporary project connected to the repository
+                from agentdecompile_cli.launcher import PyGhidraContext
+                import tempfile
+                temp_proj_dir = tempfile.mkdtemp(prefix="agentdecompile_shared_import_")
+                try:
+                    temp_context = PyGhidraContext(
+                        project_name="temp_import",
+                        project_path=temp_proj_dir,
+                        force_analysis=False,
+                        verbose_analysis=False,
+                        no_symbols=False,
+                    )
+                    ghidra_project = temp_context.project
+                except Exception as e:
+                    logger.warning(f"Failed to create temp project for shared import: {e}, falling back to analyzeHeadless")
+                    ghidra_project = None
+            
+            if ghidra_project is not None:
+                # Use PyGhidra API to import directly into repository
+                from java.io import File  # pyright: ignore[reportMissingImports]
+                from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports]
+                
+                # Import the binary into the (possibly local) project
+                program = ghidra_project.importProgram(File(str(source)))
+                if program is None:
+                    raise RuntimeError("importProgram returned None")
+                
+                # Use the shared repository's root folder, not the local project's.
+                # repository_adapter is the ServerRepositoryAdapter; get Repository then getRootFolder().
+                root_folder = None
+                try:
+                    repository = repository_adapter.getRepository()
+                    if repository is not None and hasattr(repository, "getRootFolder"):
+                        root_folder = repository.getRootFolder()
+                        logger.info("Got root folder from shared repository: %s", repository_name)
+                except Exception as repo_exc:
+                    logger.warning("Could not get root folder from repository_adapter.getRepository(): %s", repo_exc)
+                
+                # DO NOT fall back to local project_data - we're in shared-server mode, must use repository
+                if root_folder is None:
+                    logger.error("Could not get repository root folder for shared import - repository adapter may be disconnected")
+                    program.release(ghidra_project)
+                    raise RuntimeError(f"repository root folder not available for shared repository '{repository_name}'. Repository adapter may be disconnected.")
+                
+                # Save the program to the repository root folder
+                program_name = source.name
+                try:
+                    domain_file = root_folder.createFile(program_name, program, TaskMonitor.DUMMY)
+                    if domain_file is None:
+                        raise RuntimeError("createFile returned None")
+                    
+                    # Run analysis if requested
+                    if analyze_after_import:
+                        from ghidra.program.util import ProgramUtilities  # pyright: ignore[reportMissingImports]
+                        ProgramUtilities.analyze(program, TaskMonitor.DUMMY)
+                        # Save changes after analysis
+                        domain_file.save(TaskMonitor.DUMMY)
+                    
+                    # Release the program
+                    program.release(ghidra_project)
+                    
+                    # Refresh repository listing
+                    binaries = self._list_repository_items(repository_adapter)
+                    SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
+                    
+                    return {
+                        "action": "import",
+                        "importedFrom": str(source),
+                        "filesDiscovered": 1,
+                        "filesImported": 1,
+                        "importedPrograms": [{"sourcePath": str(source), "programName": program_name}],
+                        "analysisRequested": analyze_after_import,
+                        "versionControlRequested": True,
+                        "versionControlEnabled": True,
+                        "success": True,
+                        "repository": repository_name,
+                        "programs": binaries,
+                        "method": "pyghidra_api",
+                    }
+                except Exception as create_exc:
+                    program.release(ghidra_project)
+                    logger.warning(f"PyGhidra API createFile failed: {create_exc}, falling back to analyzeHeadless")
+                    raise
+        except Exception as api_exc:
+            logger.warning(f"PyGhidra API import failed: {api_exc}, falling back to analyzeHeadless")
+            # Fall through to analyzeHeadless method
+        
+        # FALLBACK: Use analyzeHeadless (may have auth issues with cached username)
         repository_url = f"ghidra://{server_host}:{server_port}/{repository_name}"
-        command = [str(analyze_headless), repository_url, "-import", str(source)]
+        # Build command: repository URL, then -import, then -connect, then -p, then -commit
+        # Order per analyzeHeadless help: <repo_url> [[-import ...] | [-process ...]] [-connect [<userID>]] [-p] [-commit]
+        # Try putting -connect BEFORE repository URL to set credentials first
+        command = [str(analyze_headless)]
+        if server_username:
+            # Put -connect before repository URL to ensure credentials are set before connection
+            command.extend(["-connect", server_username, "-p"])
+        command.append(repository_url)
+        command.extend(["-import", str(source)])
         if recursive and source.is_dir():
             command.append("-recursive")
         if not analyze_after_import:
             command.append("-noanalysis")
-        if server_username:
-            command.extend(["-connect", server_username, "-p"])
         command.append("-commit")
 
+        # Log command for debugging (redact password)
+        logger.info(
+            "[_handle_shared_import] Running analyzeHeadless: %s (username: %s, password: %s)",
+            " ".join(command),
+            server_username or "none",
+            "***" if server_password else "none",
+        )
         try:
+            # Set environment variables to override any cached username
+            # analyzeHeadless may read username from cached project files or Java system properties
+            env = dict(os.environ)
+            if server_username:
+                env["GHIDRA_SERVER_USERNAME"] = server_username
+                # Clear any existing JAVA_TOOL_OPTIONS to avoid conflicts
+                java_opts = env.get("JAVA_TOOL_OPTIONS", "").strip()
+                # Remove any existing -Duser.name settings
+                java_opts = " ".join([opt for opt in java_opts.split() if not opt.startswith("-Duser.name=")])
+                # Add our user.name override
+                if java_opts:
+                    env["JAVA_TOOL_OPTIONS"] = f"{java_opts} -Duser.name={server_username}".strip()
+                else:
+                    env["JAVA_TOOL_OPTIONS"] = f"-Duser.name={server_username}"
+            # Use shell=False but ensure password is piped correctly
+            # analyzeHeadless -p prompts for password; we pipe it via stdin
+            # Note: analyzeHeadless may read username from cached project files before processing -connect flag
+            # The -Duser.name JVM option should override cached values
             completed = subprocess.run(
                 command,
                 input=(server_password + "\n") if server_username else None,
@@ -493,6 +622,7 @@ class ImportExportToolProvider(ToolProvider):
                 capture_output=True,
                 timeout=600,
                 check=False,
+                env=env,
             )
         except Exception as exc:
             return {
@@ -804,7 +934,7 @@ class ImportExportToolProvider(ToolProvider):
                 tags = self._get_str(args, "tags")
 
                 def _run_cpp_export() -> None:
-                    from agentdecompile_cli.ghidrecomp.decompile import decompile_to_single_file
+                    from ghidrecomp.decompile import decompile_to_single_file
 
                     decompile_to_single_file(
                         out,
@@ -1472,7 +1602,7 @@ class ImportExportToolProvider(ToolProvider):
                 project_provider = None
                 if self._manager is not None and hasattr(self._manager, "_get_project_provider"):
                     project_provider = self._manager._get_project_provider()
-                if project_provider is not None and repo_adapter is not None and handle is not None and n(str(handle.get("mode", ""))) == "sharedserver":
+                if project_provider is not None and repo_adapter is not None and handle is not None and is_shared_server_handle(handle):
                     try:
                         await project_provider._checkout_shared_program(repo_adapter, program_path, session_id)
                         resolved = self._resolve_domain_file_for_checkout_status(program_path)
@@ -1537,7 +1667,7 @@ class ImportExportToolProvider(ToolProvider):
                 session_id = get_current_mcp_session_id()
                 session = SESSION_CONTEXTS.get_or_create(session_id)
                 handle = session.project_handle if isinstance(session.project_handle, dict) else None
-                if handle and n(str(handle.get("mode", ""))) == "sharedserver":
+                if handle and is_shared_server_handle(handle):
                     # Confirm file in repo when we have adapter; otherwise trust shared-server + path shape
                     repo_adapter = handle.get("repository_adapter")
                     if repo_adapter is not None:
@@ -1672,7 +1802,7 @@ class ImportExportToolProvider(ToolProvider):
                 project_provider = None
                 if self._manager is not None and hasattr(self._manager, "_get_project_provider"):
                     project_provider = self._manager._get_project_provider()
-                if project_provider is not None and repo_adapter is not None and handle is not None and n(str(handle.get("mode", ""))) == "sharedserver":
+                if project_provider is not None and repo_adapter is not None and handle is not None and is_shared_server_handle(handle):
                     try:
                         await project_provider._checkout_shared_program(repo_adapter, program_path, session_id)
                         resolved = self._resolve_domain_file_for_checkout_status(program_path)

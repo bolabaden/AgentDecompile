@@ -24,7 +24,6 @@ import sys
 import tempfile
 import time
 
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +37,12 @@ except Exception:
     Settings = None  # type: ignore[assignment]
 
 from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
-from agentdecompile_cli.ghidrecomp.utility import disable_headless_unsafe_analyzers
+try:
+    from ghidrecomp.utility import disable_headless_unsafe_analyzers  # type: ignore[attr-defined]
+except (ImportError, AttributeError):
+    def disable_headless_unsafe_analyzers(program: Any) -> None:
+        """No-op when ghidrecomp does not export this (e.g. older or different build)."""
+        pass
 from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.registry import Tool
 from agentdecompile_cli.tools.wrappers import GhidraTools
@@ -49,15 +53,15 @@ if TYPE_CHECKING:
         #    DecompiledFunction,
     )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DomainFile,  # noqa: TC004
         DomainFolder,
     )
     from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function,
-        Program as GhidraProgram,  # noqa: TC004
+        Program as GhidraProgram,
     )
 
     from agentdecompile_cli.mcp_server import PythonMcpServer, ServerConfig  # noqa: F401
@@ -164,37 +168,7 @@ def _iter_domain_items(
 # ProgramInfo + PyGhidraContext  (formerly context.py)
 # ---------------------------------------------------------------------------
 
-
-@dataclass
-class ProgramInfo:
-    """Information about a loaded program"""
-
-    name: str
-    program: GhidraProgram
-    flat_api: FlatProgramAPI | None
-    decompiler: DecompInterface
-    metadata: dict[str, Any]  # Ghidra program metadata
-    ghidra_analysis_complete: bool
-    file_path: Path | None = None
-    load_time: float | None = None
-    code_collection: Any | None = None
-    strings_collection: Any | None = None
-
-    @property
-    def analysis_complete(self) -> bool:
-        """Check if Ghidra analysis is complete."""
-        return self.ghidra_analysis_complete
-
-    @property
-    def current_program(self) -> GhidraProgram | None:
-        """Get the current program."""
-        return self.program
-
-    @current_program.setter
-    def current_program(self, program: GhidraProgram) -> None:
-        """Set the current program."""
-        self.program = program
-
+from agentdecompile_cli.context import ProgramInfo
 
 class PyGhidraContext:
     """Manages a Ghidra project, including its creation, program imports, and cleanup."""
@@ -995,7 +969,7 @@ class PyGhidraContext:
         from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         # Import symbol utilities from ghidrecomp
-        from agentdecompile_cli.ghidrecomp.utility import (
+        from ghidrecomp.utility import (
             get_pdb,
             set_pdb,
             set_remote_pdbs,

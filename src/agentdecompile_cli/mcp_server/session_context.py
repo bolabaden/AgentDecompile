@@ -433,4 +433,16 @@ class SessionContextStore:
             return None
 
 
+def is_shared_server_handle(handle: Any) -> bool:
+    """Return True if the session project handle represents a shared Ghidra server connection.
+
+    Accepts both "shared-server" and "sharedserver" so all code paths recognize
+    the session as shared regardless of which string is stored.
+    """
+    if not isinstance(handle, dict):
+        return False
+    mode = (str(handle.get("mode", "") or "").strip().lower()).replace("-", "")
+    return mode == "sharedserver"
+
+
 SESSION_CONTEXTS = SessionContextStore()

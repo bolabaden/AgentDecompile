@@ -27,7 +27,7 @@ from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
-# Ghidra comment type constants
+# Ghidra comment type constants (int codes for Listing.getComment(int, Address))
 _COMMENT_TYPES = {
     "eol": 0,  # CodeUnit.EOL_COMMENT
     "pre": 1,  # CodeUnit.PRE_COMMENT
@@ -35,6 +35,33 @@ _COMMENT_TYPES = {
     "plate": 3,  # CodeUnit.PLATE_COMMENT
     "repeatable": 4,  # CodeUnit.REPEATABLE_COMMENT
 }
+
+
+def _get_listing_comment(listing: Any, comment_type_code: int, addr: Any) -> str | None:
+    """Get comment at address for the given type. Supports both Listing overloads:
+    getComment(int, Address) and getComment(CommentType, Address).
+    """
+    try:
+        return listing.getComment(comment_type_code, addr)
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "no matching overloads" not in err_msg and "getcomment" not in err_msg:
+            raise
+        try:
+            from ghidra.program.model.listing import CommentType  # pyright: ignore[reportMissingModuleSource]
+
+            # CommentType enum order: EOL=0, PRE=1, POST=2, PLATE=3, REPEATABLE=4
+            _by_code = (
+                CommentType.EOL,
+                CommentType.PRE,
+                CommentType.POST,
+                CommentType.PLATE,
+                CommentType.REPEATABLE,
+            )
+            ctype_enum = _by_code[comment_type_code] if 0 <= comment_type_code < 5 else CommentType.EOL
+            return listing.getComment(ctype_enum, addr)
+        except Exception:
+            raise e
 
 
 class CommentToolProvider(ToolProvider):
@@ -130,7 +157,7 @@ class CommentToolProvider(ToolProvider):
         comment_type_code = self._resolve_comment_type(ctype)
 
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
-            existing = listing.getComment(addr, comment_type_code)
+            existing = _get_listing_comment(listing, comment_type_code, addr)
             if existing is not None and str(existing).strip() and str(existing).strip() != text.strip():
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
                 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
@@ -172,7 +199,7 @@ class CommentToolProvider(ToolProvider):
         addr = self._resolve_address(addr_str, program=program)
         comments = {}
         for name, code in _COMMENT_TYPES.items():
-            c = listing.getComment(code, addr)
+            c = _get_listing_comment(listing, code, addr)
             if c:
                 comments[name] = c
         return create_success_response({"action": "get", "address": str(addr), "comments": comments})

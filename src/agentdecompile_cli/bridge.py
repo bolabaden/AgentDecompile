@@ -73,7 +73,6 @@ if TYPE_CHECKING:
         UnstructuredContent,
     )
     from mcp.types import (
-        GetPromptResult,
         Prompt,
         Resource,
     )
@@ -448,14 +447,6 @@ class RawMcpHttpBackend:
 
     async def list_prompts(self) -> list[dict[str, Any]]:
         return await self._request_list("prompts/list", "prompts")
-
-    async def get_prompt(
-        self,
-        name: str,
-        arguments: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Return the prompt result from prompts/get."""
-        return await self._request("prompts/get", {"name": name, "arguments": arguments or {}})
 
     async def close(self) -> None:
         """Close the underlying httpx client."""
@@ -1201,19 +1192,6 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(msg + "\n")
             return []
 
-    async def _handle_get_prompt(self, name: str, arguments: dict[str, str] | None) -> GetPromptResult:
-        """Handle MCP get_prompt request by forwarding to backend."""
-        from mcp.types import GetPromptResult as _GetPromptResult
-
-        try:
-            raw: dict[str, Any] = await self._backend_request("get_prompt", {"name": name, "arguments": arguments})
-            sys.stderr.write(f"Get prompt result: {raw}\n")
-            return _GetPromptResult.model_validate(raw)
-        except Exception as e:
-            msg = f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}"
-            sys.stderr.write(msg + "\n")
-            raise
-
     def _register_handlers(self):
         """Register MCP protocol handlers that forward to AgentDecompile backend."""
 
@@ -1246,11 +1224,6 @@ class AgentDecompileStdioBridge:
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
             sys.stderr.write("list_prompts handler called\n")
             return await self._handle_list_prompts()
-
-        @self.server.get_prompt()
-        async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:  # type: ignore[name-defined]
-            sys.stderr.write(f"get_prompt handler called for {name}\n")
-            return await self._handle_get_prompt(name, arguments)
 
     def _create_initialization_options(self):
         """Create MCP initialization options with explicit logging capability.

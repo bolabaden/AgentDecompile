@@ -129,9 +129,10 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
 - CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used; when the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations can reuse the same session—for multi-user or multi-session use, send distinct session ids.
 - Before calling domain_file.save() while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction".
-- get-function with an address returns the function that contains that address (getFunctionContaining/getFunctionAt), not the callee; IAT/thunk resolution is not used for get-function address resolution.
-- get-references and list-cross-references accept addressOrSymbol or importName; both thunk and IAT addresses are supported; for targets in .rsrc, LoadStringA/LoadStringW call sites are included as indirect refs.
+- get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
+- When Ghidra exposes multiple overloads for the same operation (e.g. Listing.getComment(int, Address) vs getComment(CommentType, Address)), support both with try/fallback for compatibility across backends.
 - Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
+- Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ (e.g. KOTOR 1 vs KOTOR 2).
 
 ## Modification conflicts (two-step flow)
 
