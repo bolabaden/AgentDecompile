@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import multiprocessing
@@ -182,12 +183,14 @@ def _client(ctx: click.Context) -> Any:
             sid = entry.get("session_id")
             if isinstance(sid, str) and sid.strip():
                 extra_headers["Mcp-Session-Id"] = sid.strip()
+    cookie_file = _cookie_file_path(ctx)
     if url:
-        return get_client(url=url, extra_headers=extra_headers)
+        return get_client(url=url, extra_headers=extra_headers, cookie_file=cookie_file)
     return get_client(
         host=opts.get("host", "127.0.0.1"),
         port=opts.get("port", 8080),
         extra_headers=extra_headers,
+        cookie_file=cookie_file,
     )
 
 
@@ -197,6 +200,12 @@ def _fmt(ctx: click.Context) -> str:
     Returns configured format (json, text, yaml, etc.) or default.
     """
     return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
+
+
+def _cookie_file_path(ctx: click.Context) -> Path | None:
+    """Get the path to the cookie file from CLI context options."""
+    opts = _get_opts(ctx)
+    return opts.get("cookie_file")
 
 
 def _extract_text(result: Any) -> str | None:
@@ -876,6 +885,13 @@ def _parse_tool_payload(arguments: str) -> dict[str, Any]:
 
 def _cli_state_path() -> Path:
     return Path.cwd() / _CLI_STATE_DIR / _CLI_STATE_FILE
+
+
+def _cookie_file_path(ctx: click.Context) -> Path:
+    """Path to persistent cookie file for MCP session (per backend scope)."""
+    scope = _cache_scope_key(ctx)
+    safe = hashlib.md5(scope.encode()).hexdigest()[:24]
+    return Path.cwd() / _CLI_STATE_DIR / f"cookies_{safe}.json"
 
 
 def _load_cli_state() -> dict[str, Any]:

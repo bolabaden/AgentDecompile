@@ -19,6 +19,7 @@ import os
 import re
 import sys
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -307,6 +308,7 @@ def get_client(
     url: str | None = None,
     api_key: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    cookie_file: Path | None = None,
 ) -> Any:
     """Create and return an AgentDecompileMcpClient instance (not connected)."""
     from agentdecompile_cli.bridge import AgentDecompileMcpClient
@@ -316,6 +318,7 @@ def get_client(
         port=port,
         url=url,
         extra_headers=extra_headers,
+        cookie_file=cookie_file,
     )
 
 
