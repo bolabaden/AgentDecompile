@@ -854,7 +854,7 @@ class PyGhidraContext:
         if GhidraProgramUtilities.shouldAskToAnalyze(program) or force_analysis or self.force_analysis:
             GhidraScriptUtil.acquireBundleHostReference()
 
-            program_options = self.program_options.get("program_options", {})
+            program_options: dict[str, Any] = self.program_options.get("program_options", {})
             if program is not None and program.getFunctionManager().getFunctionCount() > 1000:
                 # Force Decomp Param ID is not set
                 analyzers_options = program_options.get("Analyzers", {})
