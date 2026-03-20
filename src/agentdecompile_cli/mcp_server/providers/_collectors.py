@@ -92,9 +92,10 @@ def _get_function_list(fm: Any) -> list[Any]:
             return out
     except Exception:
         pass
-    # Strategy 2: iter_items (hasNext/next)
+    # Strategy 2: iter_items (hasNext/next) for Java Iterator
     try:
-        out = list(iter_items(fm.getFunctions(True)))
+        it = fm.getFunctions(True)
+        out = list(iter_items(it))
         if out:
             return out
     except Exception:
@@ -120,6 +121,29 @@ def _get_function_list(fm: Any) -> list[Any]:
                 return raw
         except Exception:
             pass
+        # Strategy 3: getFunctionAt/getFunctionAfter walk when iterators fail (e.g. PyGhidra/JPype)
+        try:
+            program = fm.getProgram() if hasattr(fm, "getProgram") else None
+            if program is not None and hasattr(program, "getMemory") and hasattr(fm, "getFunctionAfter"):
+                mem = program.getMemory()
+                min_addr = mem.getMinAddress() if hasattr(mem, "getMinAddress") else None
+                if min_addr is not None:
+                    out = []
+                    func = fm.getFunctionAt(min_addr) if hasattr(fm, "getFunctionAt") else None
+                    if func is None:
+                        func = fm.getFunctionAfter(min_addr)
+                    max_iters = count + 1000 if count else 10000
+                    while func is not None and len(out) < max_iters:
+                        out.append(func)
+                        entry = func.getEntryPoint() if hasattr(func, "getEntryPoint") else None
+                        if entry is None:
+                            break
+                        func = fm.getFunctionAfter(entry)
+                    if out:
+                        logger.debug("_get_function_list: collected %d functions via getFunctionAfter walk", len(out))
+                        return out
+        except Exception as e:
+            logger.debug("_get_function_list: getFunctionAfter fallback failed: %s", e)
     return []
 
 
