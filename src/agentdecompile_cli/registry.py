@@ -837,19 +837,17 @@ _add_builtin_param_aliases()
 # Default advertised surface (MCP + CLI) is blacklist-driven.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
 # New tools are auto-advertised unless added to this hidden set.
+# Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols
+# (create_label, rename_data) are advertised by default for annotation and organization.
 _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     {
         Tool.DELETE_PROJECT_BINARY,
         Tool.GEN_CALLGRAPH,
         Tool.GET_FUNCTIONS,
-        Tool.MANAGE_BOOKMARKS,
-        # Tool.MANAGE_COMMENTS exposed so agents can annotate binaries (comments) and save into project
         Tool.MANAGE_DATA_TYPES,
         Tool.MANAGE_FILES,
-        Tool.MANAGE_FUNCTION,
         Tool.MANAGE_STRINGS,
         Tool.MANAGE_STRUCTURES,
-        Tool.MANAGE_SYMBOLS,
         Tool.SUGGEST,
     },
 )
