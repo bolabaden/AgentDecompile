@@ -53,7 +53,8 @@ if TYPE_CHECKING:
     from mcp import types
     from mcp.server import Server as MCPServer
 
-    from agentdecompile_cli.launcher import ProgramInfo, ProjectManager
+    from agentdecompile_cli.launcher import ProgramInfo
+    from agentdecompile_cli.project_manager import ProjectManager
     from agentdecompile_cli.mcp_server.auth import (
         AuthConfig,
     )

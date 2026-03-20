@@ -1,10 +1,11 @@
-"""Compatibility module mirrored in launcher.py as the primary implementation.
-This file is kept for backward-compatibility.
-Prefer importing from agentdecompile_cli.launcher.
+"""Project management for AgentDecompile CLI.
 
-Project management for AgentDecompile CLI.
-Handles creation and management of Ghidra projects in .agentdecompile/projects/
-within the current working directory, similar to how .git or .vscode work.
+Single implementation of ProjectManager. Handles creation and management of
+Ghidra projects in .agentdecompile/projects/ within the current working
+directory, similar to how .git or .vscode work.
+
+Launcher re-exports ProjectManager from here for backward compatibility;
+prefer importing from agentdecompile_cli.project_manager.
 """
 
 from __future__ import annotations
@@ -117,7 +118,7 @@ class ProjectManager:
             self.project = GhidraProject.openProject(
                 str(project_path),
                 project_name,
-                False,
+                False,  # readOnly=False: allow write operations (rename, comment, checkin, etc.)
             )
         else:
             sys.stderr.write(f"Creating new project: {project_name} at {project_path}\n")

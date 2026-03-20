@@ -31,10 +31,8 @@ from agentdecompile_cli.executor import (  # noqa: E402
     resolve_backend_url,
     run_async,
 )
-from agentdecompile_cli.launcher import (
-    AgentDecompileLauncher,  # noqa: E402
-    ProjectManager,  # noqa: E402
-)
+from agentdecompile_cli.launcher import AgentDecompileLauncher  # noqa: E402
+from agentdecompile_cli.project_manager import ProjectManager  # noqa: E402
 
 try:
     from agentdecompile_cli import __version__
