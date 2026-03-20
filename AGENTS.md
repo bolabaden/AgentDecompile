@@ -34,7 +34,7 @@ To run in **proxy mode** (forward to a remote MCP backend), use **agentdecompile
 
 **Auto check-in** (optional):
 
-- **`AGENTDECOMPILE_AUTO_CHECKIN`**: When set to `1` or `true`, after any modifying tool succeeds (e.g. `manage-symbols` rename/create_label, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set, `manage-function-tags` add/remove, `match-function`), the server automatically runs **checkin-program** (no path = check in all open programs that can be checked in), saving changes to the project. When this is set, **checkin-program** is not advertised, since check-ins happen automatically.
+- **`AGENTDECOMPILE_AUTO_CHECKIN`**: When set to `1` or `true`, after any modifying tool succeeds (e.g. `manage-symbols` rename/create_label, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set, `manage-function-tags` add/remove, `match-function`), the server automatically runs **checkin-program** with no path (check in all): for **shared/versioned** programs it checks them in to the server; for **local** (non-versioned) programs it saves to disk. When this is set, **checkin-program** is not advertised, since check-ins/saves happen automatically.
 
 **Checkin all** (when auto-checkin is off): Call **checkin-program** with no `programPath` (or omit the parameter) to check in every open program in the session that is checked out and can be checked in, so changes are not left locked.
 

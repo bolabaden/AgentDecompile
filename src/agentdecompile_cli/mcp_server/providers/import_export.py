@@ -1025,23 +1025,28 @@ class ImportExportToolProvider(ToolProvider):
                         all_ok = False
                         continue
                     domain_file = prog.getDomainFile()
-                    if domain_file is None or not domain_file.isVersioned() or not domain_file.canCheckin():
+                    if domain_file is None:
                         continue
                     try:
-                        _keep = keep_checked_out
+                        if domain_file.isVersioned() and domain_file.canCheckin():
+                            _keep = keep_checked_out
 
-                        class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
-                            def getComment(self) -> str:  # noqa: N802
-                                return checkin_comment
+                            class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
+                                def getComment(self) -> str:  # noqa: N802
+                                    return checkin_comment
 
-                            def keepCheckedOut(self) -> bool:  # noqa: N802
-                                return _keep
+                                def keepCheckedOut(self) -> bool:  # noqa: N802
+                                    return _keep
 
-                            def createKeepFile(self) -> bool:  # noqa: N802
-                                return False
+                                def createKeepFile(self) -> bool:  # noqa: N802
+                                    return False
 
-                        domain_file.checkin(_SimpleCheckinHandler(), TaskMonitor.DUMMY)
-                        results.append({"programPath": path_key, "success": True})
+                            domain_file.checkin(_SimpleCheckinHandler(), TaskMonitor.DUMMY)
+                            results.append({"programPath": path_key, "success": True, "mode": "checkin"})
+                        else:
+                            # Local (non-versioned) project: save to disk so changes persist
+                            domain_file.save(TaskMonitor.DUMMY)
+                            results.append({"programPath": path_key, "success": True, "mode": "save_local"})
                     except Exception as e:
                         results.append({"programPath": path_key, "success": False, "error": str(e)})
                         all_ok = False
