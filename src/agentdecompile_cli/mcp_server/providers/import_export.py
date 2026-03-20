@@ -37,6 +37,21 @@ from agentdecompile_cli.registry import Tool
 logger = logging.getLogger(__name__)
 
 
+def _normalize_import_destination_folder(args: dict[str, Any]) -> str:
+    """Ghidra folder pathname for saveAs (e.g. '/' or '/bin')."""
+    raw = ToolProvider._get_str(args, "destinationfolder", "destination_folder", default="/")
+    s = (raw or "/").strip().replace("\\", "/")
+    if not s:
+        s = "/"
+    if not s.startswith("/"):
+        s = "/" + s
+    while "//" in s:
+        s = s.replace("//", "/")
+    if len(s) > 1:
+        s = s.rstrip("/")
+    return s or "/"
+
+
 class ImportExportToolProvider(ToolProvider):
     HANDLERS = {
         "importbinary": "_handle_import",
@@ -356,6 +371,24 @@ class ImportExportToolProvider(ToolProvider):
             "stdout": stdout or None,
         }
 
+    def _merge_imported_program_into_session_binaries(
+        self,
+        session_id: str,
+        *,
+        program_name: str,
+        path_in_project: str,
+    ) -> None:
+        """Append/replace one program in session binary index so list-project-files works before domain refresh."""
+        cur = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
+        by_key: dict[str, dict[str, Any]] = {}
+        for it in cur:
+            p = str(it.get("path") or it.get("name") or "").strip()
+            if p:
+                by_key[p] = dict(it)
+        key = (path_in_project or "").strip() or f"/{program_name}"
+        by_key[key] = {"name": program_name, "path": key, "type": "Program"}
+        SESSION_CONTEXTS.set_project_binaries(session_id, list(by_key.values()))
+
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         file_path = self._require_str(args, "path", "filepath", "file", "binarypath", "binary", name="filePath")
         prog_name = self._get_str(args, "programname", "name")
@@ -376,9 +409,41 @@ class ImportExportToolProvider(ToolProvider):
         imported_programs: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         discovered_count = 0
+        dest_folder = _normalize_import_destination_folder(args)
+        session_id = get_current_mcp_session_id()
 
         # Prefer the session's Ghidra project (launcher) so import goes into the correct project.
         ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+
+        # If no project is open, try to open it from AGENT_DECOMPILE_PROJECT_PATH so imports persist.
+        # This ensures import-binary works even when the project wasn't explicitly opened first.
+        if ghidra_project is None and self._manager is not None:
+            project_path = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
+            if project_path:
+                project_path_str = str(project_path).strip()
+                if project_path_str:
+                    try:
+                        project_provider = self._manager._get_project_provider()
+                        if project_provider is not None:
+                            logger.info(
+                                "import-binary: ghidra_project is None, attempting to open project from %s",
+                                project_path_str,
+                            )
+                            await project_provider._handle_open_project({"path": project_path_str})
+                            # Re-check ghidra_project after opening
+                            ghidra_project = getattr(self._manager, "ghidra_project", None)
+                            if ghidra_project is None:
+                                logger.warning(
+                                    "import-binary: open-project succeeded but ghidra_project is still None; "
+                                    "imports may not persist to the expected project"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            "import-binary: failed to auto-open project from %s: %s; "
+                            "will use temporary ProjectManager (imports may not persist)",
+                            project_path_str,
+                            e,
+                        )
 
         try:
             if ghidra_project is not None:
@@ -386,14 +451,23 @@ class ImportExportToolProvider(ToolProvider):
 
                 for item in self._iter_files_to_import(source, recursive, max_depth):
                     discovered_count += 1
-                    name = prog_name or item.name
+                    name = (prog_name or item.name or "").strip() or item.name
                     try:
                         program = ghidra_project.importProgram(File(str(item)))
                         if program is None:
                             raise RuntimeError("importProgram returned None")
-                        if name and (not item.name or name.strip().lower() != item.name.strip().lower()):
-                            ghidra_project.saveAs(program, "/", name.strip(), True)
-                        final_name = name.strip() or (program.getName() if hasattr(program, "getName") else item.name)
+                        # Always saveAs into the project domain. Previously saveAs ran only when the
+                        # display name differed from the source filename, so imports like foo.exe
+                        # never persisted and list-project-files saw an empty tree (matches PyGhidraContext.import_binary).
+                        try:
+                            if hasattr(program, "setName"):
+                                program.setName(name)
+                            elif hasattr(program, "name"):
+                                setattr(program, "name", name)
+                        except Exception:
+                            pass
+                        ghidra_project.saveAs(program, dest_folder, name, True)
+                        final_name = name
                         path_in_project = ""
                         try:
                             df = program.getDomainFile()
@@ -401,17 +475,30 @@ class ImportExportToolProvider(ToolProvider):
                                 path_in_project = str(df.getPathname())
                         except Exception:
                             pass
+                        if not path_in_project:
+                            path_in_project = (
+                                f"/{final_name}" if dest_folder in ("/", "") else f"{dest_folder}/{final_name}"
+                            )
                         imported_programs.append(
                             {
                                 "sourcePath": str(item),
                                 "programName": final_name,
-                                "programPath": path_in_project or f"/{final_name}",
+                                "programPath": path_in_project,
                             },
+                        )
+                        self._merge_imported_program_into_session_binaries(
+                            session_id,
+                            program_name=final_name,
+                            path_in_project=path_in_project,
                         )
                         # Leave program in project; do not release (we are not the consumer)
                     except Exception as exc:
                         errors.append({"path": str(item), "error": str(exc)})
             else:
+                # Fallback: no ghidra_project available. Create a temporary ProjectManager.
+                # WARNING: This creates a separate project that gets cleaned up, so imports won't
+                # persist to the main project. Users should open-project first or ensure
+                # AGENT_DECOMPILE_PROJECT_PATH is set.
                 from agentdecompile_cli.project_manager import ProjectManager
 
                 manager = ProjectManager()
@@ -422,7 +509,15 @@ class ImportExportToolProvider(ToolProvider):
                             program = manager.import_binary(item, program_name=prog_name or item.name)
                             if program is None:
                                 raise RuntimeError("import_binary returned None")
-                            imported_programs.append({"sourcePath": str(item), "programName": program.getName() if hasattr(program, "getName") else item.name})
+                            prog_name_final = program.getName() if hasattr(program, "getName") else item.name
+                            imported_programs.append({"sourcePath": str(item), "programName": prog_name_final})
+                            # Merge into session binaries so list-project-files can see it (even though
+                            # the underlying project may be temporary).
+                            self._merge_imported_program_into_session_binaries(
+                                session_id,
+                                program_name=prog_name_final,
+                                path_in_project=f"/{prog_name_final}",
+                            )
                         except Exception as exc:
                             errors.append({"path": str(item), "error": str(exc)})
                 finally:
