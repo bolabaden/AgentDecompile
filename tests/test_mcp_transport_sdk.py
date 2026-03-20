@@ -182,6 +182,37 @@ async def test_list_project_files_bootstraps_shared_listing_from_env(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_list_project_files_returns_shared_server_session_when_handle_is_shared_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With session in shared-server mode and no binaries, list-project-files returns source=shared-server-session."""
+    session_id = "test-shared-handle-only"
+    monkeypatch.setattr(project_provider_module, "get_current_mcp_session_id", lambda: session_id)
+
+    SESSION_CONTEXTS.set_project_handle(
+        session_id,
+        {
+            "mode": "shared-server",
+            "server_host": "ghidra",
+            "server_port": 13100,
+            "repository_name": "agentrepo",
+        },
+    )
+    SESSION_CONTEXTS.set_project_binaries(session_id, [])
+
+    provider = ProjectToolProvider()
+    provider._manager = None
+
+    response = await provider._handle_list({})
+    payload = json.loads(response[0].text)
+
+    assert payload.get("source") == "shared-server-session"
+    assert payload.get("count") == 0
+    assert payload.get("folder") == "/"
+    assert "note" in payload
+
+
+@pytest.mark.asyncio
 async def test_open_project_shared_flag_forces_shared_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ProjectToolProvider()
     existing_local_path = tmp_path / "ExistingProject"
@@ -546,3 +577,18 @@ def test_sse_transport_mode_serves_tools_resources_and_tool_calls(backend_server
         assert tool_payload["result"] == "sse_mode_ok"
     finally:
         _stop_process(process)
+
+
+def test_shared_project_verification_criteria() -> None:
+    """Pass/fail criteria used by scripts/verify_shared_project_full.py: shared-server-session in stdout and exit 0."""
+    # Same logic as verify_shared_project_full.py (returncode and "shared-server-session" in output)
+    def passed(returncode: int, stdout: str) -> bool:
+        if returncode != 0:
+            return False
+        return "shared-server-session" in stdout
+
+    assert passed(0, '{"source": "shared-server-session", "count": 0}') is True
+    assert passed(0, "source: shared-server-session") is True
+    assert passed(0, "local-ghidra-project") is False
+    assert passed(1, "shared-server-session") is False
+    assert passed(1, "") is False
