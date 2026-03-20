@@ -2849,9 +2849,10 @@ class ProjectToolProvider(ToolProvider):
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         repository_adapter: Any = handle.get("repository_adapter") if handle else None
         repository_name: str | None = handle.get("repository_name") if handle else None
+        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
         logger.info(
             "shared-sync session context session_id=%s has_handle=%s handle_mode=%s has_repository_adapter=%s repository=%s",
-            session_id,
+            _sid_hint,
             bool(handle),
             (handle or {}).get("mode") if isinstance(handle, dict) else None,
             repository_adapter is not None,
@@ -3157,16 +3158,17 @@ class ProjectToolProvider(ToolProvider):
         logger.info("shared-sync execution start default_mode=%s arg_keys=%s", default_mode, sorted(list(args.keys())))
         mode = self._resolve_shared_sync_mode(args, default_mode=default_mode)
         session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
+        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
         logger.info(
             "shared-sync context resolved session_id=%s mode=%s has_handle=%s has_adapter=%s repository=%s",
-            session_id,
+            _sid_hint,
             mode,
             bool(handle),
             repository_adapter is not None,
             repository_name,
         )
         is_shared_session = handle and n(str(handle.get("mode", ""))) == "sharedserver"
-        is_local_gpr_session = handle and n(str(handle.get("mode", ""))) in {"localgpr", "local"}
+        is_local_gpr_session = handle and n(str(handle.get("mode", ""))) in {"localgpr", "local"}  # noqa: F841
 
         if not is_shared_session:
             # No shared server session — try local project operations

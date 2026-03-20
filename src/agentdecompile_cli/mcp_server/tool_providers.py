@@ -1728,10 +1728,12 @@ class ToolProviderManager:
         """Resolve and activate a program by path: cache → shared checkout → bootstrap → local path."""
         existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if existing is not None:
-            logger.debug("program already in session: session_id=%s program=%s", session_id, requested_program_key)
+            _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
+            logger.debug("program already in session: session_id=%s program=%s", _sid_hint, requested_program_key)
             return existing
 
-        logger.debug("activating program: session_id=%s program=%s", session_id, requested_program_key)
+        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
+        logger.debug("activating program: session_id=%s program=%s", _sid_hint, requested_program_key)
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         project_provider = self._get_project_provider()

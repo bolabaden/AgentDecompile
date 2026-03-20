@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -289,6 +290,52 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
             },
         },
     }
+
+
+# Session cookie name (no hyphen); used for cookie-based session id (header wins over cookie).
+_MCP_SESSION_COOKIE_NAME = "mcp_session_id"
+# Allow "default" or a single token: alphanumeric, hyphen, underscore, 1–128 chars (MCP visible ASCII).
+_SESSION_ID_VALID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
+    """Parse Cookie header and return the value for mcp_session_id, or None."""
+    if scope.get("type") != "http":
+        return None
+    for key_b, value_b in scope.get("headers", []):
+        if key_b.decode("latin1").lower() == "cookie":
+            cookie_header = value_b.decode("latin1")
+            prefix = _MCP_SESSION_COOKIE_NAME + "="
+            for part in cookie_header.split(";"):
+                part = part.strip()
+                if part.startswith(prefix):
+                    return part[len(prefix) :].strip().strip('"')
+            return None
+    return None
+
+
+def _validate_session_id(value: str) -> str:
+    """Return value if it is a valid session id; otherwise return 'default'.
+
+    Allows literal 'default' or a token matching [a-zA-Z0-9_-]{1,128}.
+    Rejects empty, newlines, path-like, or overlength to avoid injection.
+    """
+    if not value or "\n" in value or "\r" in value or "/" in value or "\\" in value:
+        return "default"
+    if value == "default":
+        return value
+    if _SESSION_ID_VALID_RE.match(value):
+        return value
+    return "default"
+
+
+def _make_session_cookie_header(session_id: str, secure: bool) -> tuple[bytes, bytes]:
+    """Build Set-Cookie header value for mcp_session_id (HttpOnly, SameSite=Lax)."""
+    # Path=/; HttpOnly; SameSite=Lax; optionally Secure (only over TLS or SESSION_COOKIE_SECURE)
+    value = f"{_MCP_SESSION_COOKIE_NAME}={session_id}; Path=/; HttpOnly; SameSite=Lax"
+    if secure:
+        value += "; Secure"
+    return (b"set-cookie", value.encode("latin1"))
 
 
 def _auth_context_from_scope_headers(
@@ -687,13 +734,18 @@ class PythonMcpServer:
 
         async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
             """Propagate MCP session ID into ContextVar, bind fingerprint, then delegate."""
+            # When no session id is provided (no mcp-session-id header, no session cookie),
+            # use the single default session so multiple requests (e.g. sequential CLI
+            # invocations) reuse the same session without the client persisting a session id.
             session_id: str = "default"
             user_agent: str = ""
             remote_addr: str = ""
             project_path_override: str | None = None
             auto_match_propagate: str | None = None
             auto_match_target_paths: str | None = None
+            request_scheme: str = "http"
             if scope.get("type") == "http":
+                request_scheme = scope.get("scheme", "http")
                 key_b: bytes
                 value_b: bytes
                 for key_b, value_b in scope.get("headers", []):
@@ -714,6 +766,12 @@ class PythonMcpServer:
                 client_info: tuple[int, int] | None = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
+                # Resolution order: header (already set) → cookie → default. If no header, try cookie.
+                if session_id == "default":
+                    cookie_sid = _parse_mcp_session_cookie_from_scope(scope)
+                    if cookie_sid:
+                        session_id = cookie_sid
+                session_id = _validate_session_id(session_id)
 
             # Capture which sessions exist before the SDK handles the request.
             pre_sessions: set[str] = set(session_manager._server_instances.keys())
@@ -740,6 +798,12 @@ class PythonMcpServer:
             session_id_for_response: str = session_id
             response_start_sent: list[bool] = [False]
 
+            # Secure cookie only over TLS or when SESSION_COOKIE_SECURE is set (e.g. behind TLS terminator).
+            cookie_secure: bool = (
+                request_scheme == "https"
+                or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+            )
+
             async def send_wrapper(message: dict[str, Any]) -> None:
                 if message.get("type") == "http.response.start" and not response_start_sent[0]:
                     response_start_sent[0] = True
@@ -755,6 +819,9 @@ class PythonMcpServer:
                     headers.append(
                         (key_lower, (existing_sid if existing_sid else session_id_for_response.encode("latin1")))
                     )
+                    # Set-Cookie for session so clients (e.g. browser or CLI with cookie jar) can resend it.
+                    if session_id_for_response != "default":
+                        headers.append(_make_session_cookie_header(session_id_for_response, cookie_secure))
                     message = {**message, "headers": headers}
                 await send(message)
 

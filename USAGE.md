@@ -30,6 +30,7 @@ Program path: /K1/k1_win_gog_swkotor.exe
 Notes:
 
 - The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
+- **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open-project` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
 

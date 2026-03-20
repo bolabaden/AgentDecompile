@@ -15,14 +15,21 @@ import socket
 import threading
 import time
 
-from typing import TYPE_CHECKING, Any
+from collections import Callable
+from contextlib import AbstractContextManager
+from contextvars import Token
+from typing import TYPE_CHECKING, Any, Awaitable
+
+import uvicorn
 
 from fastapi import FastAPI
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
+from starlette.types import Message
 
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.mcp_server.auth import AuthMiddleware
+from agentdecompile_cli.mcp_server.server import _validate_session_id
 from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID, SESSION_CONTEXTS
 from agentdecompile_cli.registry import Tool
 
@@ -30,6 +37,25 @@ if TYPE_CHECKING:
     from agentdecompile_cli.mcp_server.auth import AuthConfig
 
 logger = logging.getLogger(__name__)
+
+# Cookie name for MCP session (allowlist only this cookie when forwarding to backend).
+_MCP_SESSION_COOKIE_NAME = "mcp_session_id"
+
+
+def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
+    """Parse Cookie header and return the value for mcp_session_id, or None."""
+    if scope.get("type") != "http":
+        return None
+    for key_b, value_b in scope.get("headers", []):
+        if key_b.decode("latin1").lower() == "cookie":
+            cookie_header = value_b.decode("latin1")
+            prefix = _MCP_SESSION_COOKIE_NAME + "="
+            for part in cookie_header.split(";"):
+                part = part.strip()
+                if part.startswith(prefix):
+                    return part[len(prefix) :].strip().strip('"')
+            return None
+    return None
 
 
 def _proxy_mcp_post_openapi_extra() -> dict[str, Any]:
@@ -122,7 +148,9 @@ class AgentDecompileMcpProxyServer:
         self.app: FastAPI = FastAPI(
             title=self.config.name,
             version=self.config.version,
-            description=("AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."),
+            description=(
+                "AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
+            ),
             docs_url="/docs",
             redoc_url="/redoc",
             openapi_url="/openapi.json",
@@ -133,10 +161,10 @@ class AgentDecompileMcpProxyServer:
             json_response=True,
             stateless=False,
         )
-        self._session_manager_cm: Any | None = None
+        self._session_manager_cm: AbstractContextManager[StreamableHTTPSessionManager, bool | None] | None = None
         self._running: bool = False
         self._server_thread: threading.Thread | None = None
-        self._uvicorn_server: Any | None = None
+        self._uvicorn_server: uvicorn.Server | None = None
 
         self._setup_routes()
 
@@ -153,7 +181,7 @@ class AgentDecompileMcpProxyServer:
         """Register FastAPI routes: startup/shutdown for MCP session manager and bridge, health, API info, and MCP path stubs."""
 
         @self.app.on_event("startup")
-        async def _startup_session_manager() -> None:
+        async def _startup_session_manager() -> AbstractContextManager[StreamableHTTPSessionManager] | None:
             # Bridge uses StreamableHTTPSessionManager; enter its context so MCP sessions can be created
             self._session_manager_cm = self._session_manager.run()
             await self._session_manager_cm.__aenter__()
@@ -272,7 +300,9 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP Streamable HTTP proxy endpoint",
-                description=("Canonical MCP streamable-HTTP proxy endpoint. Use POST for JSON-RPC methods and forward all calls to the configured backend URL. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
+                description=(
+                    "Canonical MCP streamable-HTTP proxy endpoint. Use POST for JSON-RPC methods and forward all calls to the configured backend URL. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                ),
                 operation_id=f"proxy_mcp_streamable_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -283,7 +313,9 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility proxy endpoint",
-                description=("Compatibility MCP proxy endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
+                description=(
+                    "Compatibility MCP proxy endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
+                ),
                 operation_id=f"proxy_mcp_message_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -296,7 +328,7 @@ class AgentDecompileMcpProxyServer:
             if scope.get("type") != "http":
                 return forwarded
 
-            allowed_headers = {
+            allowed_headers: set[str] = {
                 "authorization",
                 "mcp-session-id",
                 "x-ghidra-server-host",
@@ -308,17 +340,25 @@ class AgentDecompileMcpProxyServer:
                 "x-agentdecompile-auto-match-propagate",
                 "x-agentdecompile-auto-match-target-paths",
             }
+            key_b: bytes
+            value_b: bytes
             for key_b, value_b in scope.get("headers", []):
                 key = key_b.decode("latin1").lower()
                 if key in allowed_headers:
                     forwarded[key_b.decode("latin1")] = value_b.decode("latin1").strip()
+            # Forward only the MCP session cookie (allowlist) so backend receives session id via cookie.
+            cookie_sid = _parse_mcp_session_cookie_from_scope(scope)
+            if cookie_sid:
+                forwarded["Cookie"] = f"{_MCP_SESSION_COOKIE_NAME}={cookie_sid}"
             return forwarded
 
-        async def _mcp_asgi(scope: dict[str, Any], receive: Any, send: Any) -> None:
-            session_id = "default"
-            user_agent = ""
-            remote_addr = ""
+        async def _mcp_asgi(scope: dict[str, Any], receive: Callable[[], Awaitable[Message]], send: Callable[[Message], Awaitable[None]]) -> None:
+            session_id: str = "default"
+            user_agent: str = ""
+            remote_addr: str = ""
             if scope.get("type") == "http":
+                key_b: bytes
+                value_b: bytes
                 for key_b, value_b in scope.get("headers", []):
                     header_name = key_b.decode("latin1").lower()
                     if header_name == "mcp-session-id":
@@ -330,18 +370,24 @@ class AgentDecompileMcpProxyServer:
                 client_info = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
+                # Resolution order: header (already set) → cookie → default.
+                if session_id == "default":
+                    cookie_sid = _parse_mcp_session_cookie_from_scope(scope)
+                    if cookie_sid:
+                        session_id = cookie_sid
+                session_id = _validate_session_id(session_id)
 
             self._bridge._set_streamable_http_headers(session_id, _forwardable_shared_headers(scope))
 
-            pre_sessions = set(session_manager._server_instances.keys())
+            pre_sessions: set[str] = set(session_manager._server_instances.keys())
 
-            token = CURRENT_MCP_SESSION_ID.set(session_id)
+            token: Token[str] = CURRENT_MCP_SESSION_ID.set(session_id)
             try:
                 await mcp_handle(scope, receive, send)
             finally:
                 CURRENT_MCP_SESSION_ID.reset(token)
 
-            post_sessions = set(session_manager._server_instances.keys())
+            post_sessions: set[str] = set(session_manager._server_instances.keys())
             new_sids = post_sessions - pre_sessions
             if new_sids and (user_agent or remote_addr):
                 fingerprint = SESSION_CONTEXTS.compute_client_fingerprint(
@@ -355,7 +401,7 @@ class AgentDecompileMcpProxyServer:
                 SESSION_CONTEXTS.evict_to_grace(gone_sid)
 
         # Optionally wrap with auth (experimental, off by default).
-        mcp_app: Any = _mcp_asgi
+        mcp_app: Callable[[dict[str, Any], Any, Any], Awaitable[None]] = _mcp_asgi
         if self.auth_config is not None:
             mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
 
@@ -383,12 +429,12 @@ class AgentDecompileMcpProxyServer:
                         break
                 return scope
 
-            async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+            async def __call__(self, scope: dict[str, Any], receive: Callable[[], Awaitable[Message]], send: Callable[[Message], Awaitable[None]]) -> None:
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
                         scope = self._handle_stale_session(scope)
-                        rewritten = {**scope, "path": "/"}
+                        rewritten: dict[str, Any] = {**scope, "path": "/"}
                         await mcp_app(rewritten, receive, send)
                         return
                 await inner_app(scope, receive, send)

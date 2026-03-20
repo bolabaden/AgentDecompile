@@ -59,6 +59,14 @@ uv run agentdecompile-cli --server-url http://127.0.0.1:8080 tool-seq \
 - **CLI persistence:** The CLI persists the session id per normalized backend URL (in `.agentdecompile/cli_state.json`) and sends it on later invocations when the same `--server-url` is used, so `open-project` in one run and `checkout-program` in a second run can reuse the same server session.
 - **Proxy forwarding:** Proxies (e.g. agentdecompile-proxy) must forward the client's `mcp-session-id` header to the backend so the same logical session is used end-to-end. Without that, the backend sees a new session each request and shared-project state from a previous `open-project` is not available.
 
+### Default session
+
+When no session id is provided (no `mcp-session-id` header and no session cookie), the server uses a single stable session id `"default"`. All such requests share the same in-memory session, so multiple requests (e.g. sequential CLI invocations) can reuse the same session without the client persisting a session id. **Caveat:** Multiple independent clients that do not send a session id will share the same default session. Single-user or single-client use is the intended case for "no session id"; for multi-user or multi-session use, clients should send distinct session ids (or use cookies so each gets a distinct id).
+
+### Session id in logs (security)
+
+Do not log full MCP session ids. Use a redacted form (e.g. first 8–12 characters + "…") or "present" in all log messages. If any middleware or handler logs response bodies, ensure `sessionId` is redacted or excluded (e.g. debug_info returns `sessionId` in payloads; do not log those payloads in full).
+
 ### Session state caveat
 
 CLI reuses the same server session across invocations when the same `--server-url` is used, provided the server (or proxy) forwards the session id. If you use a proxy, ensure it forwards `mcp-session-id` to the backend. Programs loaded in one session are available in the next run only when the session is preserved. Use `tool-seq` to chain multiple tool calls (open, analyze, list, decompile) within a single run, or pass binaries as positional arguments to `agentdecompile-server` so they are imported at startup.
@@ -115,6 +123,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
 - CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used.
+- When the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations (e.g. open-project then checkout-program in two runs) can reuse the same session without the CLI persisting a session id; for multi-user or multi-session use, send distinct session ids.
 
 ## MCP server debugging & self-healing
 

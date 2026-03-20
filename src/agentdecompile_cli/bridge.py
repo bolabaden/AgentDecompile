@@ -164,6 +164,10 @@ def _is_transport_connection_error(exc: BaseException) -> bool:
     return any(keyword in err_str for keyword in _TRANSPORT_ERROR_KEYWORDS)
 
 
+# Cookie name for MCP session (persistent cookie jar); must match server/proxy.
+_MCP_SESSION_COOKIE_NAME = "mcp_session_id"
+
+
 class RawMcpHttpBackend:
     """Speaks the MCP Streamable-HTTP transport using plain httpx.
 
@@ -181,12 +185,14 @@ class RawMcpHttpBackend:
         connect_timeout: float = CONNECT_TIMEOUT,
         op_timeout: float = BACKEND_OP_TIMEOUT,
         extra_headers: dict[str, str] | None = None,
+        cookie_file: Path | None = None,
     ) -> None:
         self._url: str = url.rstrip("/")
         self._session_id: str | None = None
         self._request_counter: int = 0
         self._initialized: bool = False
         self._extra_headers: dict[str, str] = dict(extra_headers or {})
+        self._cookie_file: Path | None = cookie_file
         self._client: AsyncClient = AsyncClient(
             timeout=Timeout(op_timeout, connect=connect_timeout),
             follow_redirects=True,
@@ -198,6 +204,49 @@ class RawMcpHttpBackend:
         self._request_counter += 1
         return self._request_counter
 
+    def _load_cookie_from_file(self) -> str | None:
+        """Load mcp_session_id from persistent cookie file; return value or None."""
+        if not self._cookie_file or not self._cookie_file.exists():
+            return None
+        try:
+            data = json.loads(self._cookie_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                val = data.get(_MCP_SESSION_COOKIE_NAME)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        except Exception:
+            pass
+        return None
+
+    def _save_cookie_to_file(self, value: str) -> None:
+        """Persist mcp_session_id to cookie file (HttpOnly-style; we only store the value)."""
+        if not self._cookie_file:
+            return
+        try:
+            self._cookie_file.parent.mkdir(parents=True, exist_ok=True)
+            self._cookie_file.write_text(
+                json.dumps({_MCP_SESSION_COOKIE_NAME: value}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _save_session_cookie_from_response(self, resp: Any) -> None:
+        """If response has Set-Cookie mcp_session_id, persist to cookie file."""
+        if not self._cookie_file:
+            return
+        set_cookie: str | None = resp.headers.get("set-cookie") or resp.headers.get("Set-Cookie")
+        if not set_cookie:
+            return
+        prefix = _MCP_SESSION_COOKIE_NAME + "="
+        idx = set_cookie.find(prefix)
+        if idx >= 0:
+            rest = set_cookie[idx + len(prefix) :]
+            end = rest.find(";")
+            cookie_val = (rest[: end].strip() if end >= 0 else rest.strip()).strip('"')
+            if cookie_val:
+                self._save_cookie_to_file(cookie_val)
+
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {
             "Content-Type": "application/json",
@@ -207,6 +256,11 @@ class RawMcpHttpBackend:
         # Always send a session ID so servers that require it (e.g. behind some proxies) accept the request.
         # Use "default" when we have none yet; server may return a new one in response headers.
         h["Mcp-Session-Id"] = self._session_id or "default"
+        # Persistent cookie jar: send session cookie if present so server can use cookie-based session.
+        if self._cookie_file:
+            cookie_val = self._load_cookie_from_file()
+            if cookie_val:
+                h["Cookie"] = f"{_MCP_SESSION_COOKIE_NAME}={cookie_val}"
         return h
 
     @staticmethod
@@ -248,6 +302,7 @@ class RawMcpHttpBackend:
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
         if sid:
             self._session_id = sid
+        self._save_session_cookie_from_response(resp)
 
         # Some servers expose /mcp but not /mcp/message; retry without /message on 404
         if resp.status_code == 404 and self._url.endswith("/mcp/message/"):
@@ -256,6 +311,7 @@ class RawMcpHttpBackend:
             sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
             if sid:
                 self._session_id = sid
+            self._save_session_cookie_from_response(resp)
 
         # On 400, retry once without session id (stale id can cause server to reject)
         if resp.status_code == 400 and had_session_id:
@@ -264,6 +320,7 @@ class RawMcpHttpBackend:
             sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
             if sid:
                 self._session_id = sid
+            self._save_session_cookie_from_response(resp)
 
         try:
             resp.raise_for_status()
@@ -296,7 +353,11 @@ class RawMcpHttpBackend:
                 return {"error": {"code": -32600, "message": f"Unparseable SSE response ({len(resp.text)} bytes)"}}
         return resp.json()  # type: ignore[return-value]
 
-    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+    async def _notify(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> None:
         """Send a JSON-RPC notification (no id, no response expected)."""
         body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params:
@@ -306,7 +367,11 @@ class RawMcpHttpBackend:
         except Exception:
             pass  # notifications are fire-and-forget
 
-    async def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Send a JSON-RPC request and return the ``result`` dict."""
         rid = self._next_id()
         body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "id": rid}
@@ -320,7 +385,11 @@ class RawMcpHttpBackend:
             raise ClientError(f"JSON-RPC error: {msg}")
         return response.get("result", response)
 
-    async def _request_list(self, method: str, key: str) -> list[dict[str, Any]]:
+    async def _request_list(
+        self,
+        method: str,
+        key: str,
+    ) -> list[dict[str, Any]]:
         """Call a list-style RPC method and safely extract ``key`` from its result."""
         result = await self._request(method)
         if not isinstance(result, dict):
@@ -421,13 +490,16 @@ class AgentDecompileMcpClient:
         port: int = 8080,
         url: str | None = None,
         extra_headers: dict[str, str] | None = None,
+        cookie_file: Path | None = None,
     ):
         """Initialize the client.
 
         Args:
+        ----
             host: Server host (used if url is None).
             port: Server port (used if url is None).
             url: Override URL (e.g. http://host:port or http://host:port/mcp/message).
+            cookie_file: Optional path to persist MCP session cookie (for cookie-based session reuse).
         """
         if url and url.strip():
             self._url = normalize_backend_url(url.strip())
@@ -437,6 +509,7 @@ class AgentDecompileMcpClient:
                 base = f"{base.rstrip('/')}/mcp/message"
             self._url = base
         self._extra_headers = dict(extra_headers or {})
+        self._cookie_file: Path | None = cookie_file
         self._backend: RawMcpHttpBackend | None = None
         self._connected: bool = False
 
@@ -451,7 +524,11 @@ class AgentDecompileMcpClient:
 
     async def _connect_internal(self) -> None:
         """Connect to the backend using plain httpx."""
-        self._backend = RawMcpHttpBackend(self._url, extra_headers=self._extra_headers)
+        self._backend = RawMcpHttpBackend(
+            self._url,
+            extra_headers=self._extra_headers,
+            cookie_file=self._cookie_file,
+        )
         try:
             await self._backend.initialize()
             self._connected = True
