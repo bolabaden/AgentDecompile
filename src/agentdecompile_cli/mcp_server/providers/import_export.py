@@ -32,7 +32,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
-from agentdecompile_cli.ghidrecomp.utility import disable_headless_unsafe_analyzers
+from agentdecompile_cli.ghidrecomp.utility import analyze_program as run_analysis
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
@@ -875,9 +875,7 @@ class ImportExportToolProvider(ToolProvider):
         program = self.program_info.program
 
         try:
-            from ghidra.app.plugin.core.analysis import AutoAnalysisManager  # pyright: ignore[reportMissingModuleSource]
             from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
-            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             session_marked_complete = bool(getattr(self.program_info, "analysis_complete", False))
             ghidra_requires_analysis = True
@@ -900,49 +898,11 @@ class ImportExportToolProvider(ToolProvider):
                     },
                 )
 
-            # Disable analyzers that NPE in headless (no GhidraScriptUtil.bundleHost)
-            disable_headless_unsafe_analyzers(program)
-
-            mgr = AutoAnalysisManager.getAnalysisManager(program)
-
+            # Single code path: same as CLI/launcher (disables headless-unsafe analyzers, acquires bundle host, runs analysis)
             def _run_auto_analysis() -> None:
-                monitor = TaskMonitor.DUMMY
-                reanalyze_done = False
-                try:
-                    from ghidra.program.model.address import AddressSet  # pyright: ignore[reportMissingModuleSource]
+                run_analysis(program, force_analysis=True)
 
-                    addr_set = None
-                    if hasattr(program, "getMemory"):
-                        memory = self._get_memory(program)
-                        if memory is not None:
-                            if hasattr(memory, "getLoadedAndInitializedAddressSet"):
-                                addr_set = memory.getLoadedAndInitializedAddressSet()
-                            elif hasattr(memory, "getAllInitializedAddressSet"):
-                                addr_set = memory.getAllInitializedAddressSet()
-                    if addr_set is None:
-                        addr_set = AddressSet()
-                    mgr.reAnalyzeAll(addr_set)
-                    reanalyze_done = True
-                except Exception:
-                    pass
-
-                if not reanalyze_done:
-                    mgr.reAnalyzeAll(monitor)
-                mgr.startAnalysis(monitor)
-
-            from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingModuleSource]
-
-            try:
-                GhidraScriptUtil.acquireBundleHostReference()
-            except Exception:
-                pass
-            try:
-                self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
-            finally:
-                try:
-                    GhidraScriptUtil.releaseBundleHostReference()
-                except Exception:
-                    pass
+            self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
             if hasattr(self.program_info, "ghidra_analysis_complete"):
                 self.program_info.ghidra_analysis_complete = True
 
