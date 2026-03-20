@@ -22,6 +22,7 @@ from __future__ import annotations
 import heapq
 import json
 import logging
+import uuid
 
 from collections import defaultdict
 from pathlib import Path
@@ -38,10 +39,13 @@ from agentdecompile_cli.mcp_server.session_context import (
     get_current_mcp_session_id,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
     n,
 )
+from agentdecompile_cli.mcp_utils.symbol_util import SymbolUtil
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
@@ -301,6 +305,34 @@ class GetFunctionToolProvider(ToolProvider):
     ) -> list[types.TextContent]:
         new_name = self._require_str(args, "newname", "name", name="newName")
 
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_name = func.getName()
+            if not SymbolUtil.is_default_symbol_name(current_name):
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Rename would overwrite existing custom function name:\n\n"
+                    "```diff\n"
+                    f"- {current_name}\n"
+                    f"+ {new_name}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
+
         def _rename_function() -> None:
             from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
@@ -325,6 +357,34 @@ class GetFunctionToolProvider(ToolProvider):
     ) -> list[types.TextContent]:
         proto = self._require_str(args, "prototype", "signature", name="prototype")
 
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_sig = str(func.getSignature() or "").strip()
+            if current_sig and current_sig != proto:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Set prototype would overwrite existing signature:\n\n"
+                    "```diff\n"
+                    f"- {current_sig}\n"
+                    f"+ {proto}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
+
         def _set_prototype() -> None:
             func.setSignature(proto)
 
@@ -346,6 +406,34 @@ class GetFunctionToolProvider(ToolProvider):
         func_id: str,
     ) -> list[types.TextContent]:
         cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_cc = (func.getCallingConventionName() or "").strip() if hasattr(func, "getCallingConventionName") else ""
+            if current_cc and current_cc != cc:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Set calling convention would overwrite existing:\n\n"
+                    "```diff\n"
+                    f"- {current_cc}\n"
+                    f"+ {cc}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _set_calling_convention() -> None:
             func.setCallingConvention(cc)
@@ -373,6 +461,34 @@ class GetFunctionToolProvider(ToolProvider):
         dtm = program.getDataTypeManager()
         parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
         rt = parser.parse(rt_str)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_rt = str(func.getReturnType() or "").strip()
+            if current_rt and current_rt != rt_str:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Set return type would overwrite existing:\n\n"
+                    "```diff\n"
+                    f"- {current_rt}\n"
+                    f"+ {rt_str}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _set_return_type() -> None:
             from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]

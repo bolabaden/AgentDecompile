@@ -14,6 +14,7 @@ from .strings import StringToolProvider
 from .structures import StructureToolProvider
 from .xrefs import CrossReferencesToolProvider
 from .comments import CommentToolProvider
+from .conflict_resolution import ConflictResolutionToolProvider
 from .bookmarks import BookmarkToolProvider
 from .project import ProjectToolProvider
 from .callgraph import CallGraphToolProvider
@@ -32,6 +33,7 @@ __all__ = [
     "BookmarkToolProvider",
     "CallGraphToolProvider",
     "CommentToolProvider",
+    "ConflictResolutionToolProvider",
     "ConstantSearchToolProvider",
     "CrossReferencesToolProvider",
     "DataFlowToolProvider",

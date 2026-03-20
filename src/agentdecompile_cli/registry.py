@@ -149,6 +149,7 @@ class Tool(str, Enum):
     OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
     OPEN = "open"
     READ_BYTES = "read-bytes"
+    RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
     SEARCH_EVERYTHING = "search-everything"
@@ -416,6 +417,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
     Tool.OPEN.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
+    Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),
     Tool.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
     Tool.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     Tool.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
@@ -857,6 +859,20 @@ _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
     "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
 )
 
+# When set (1/true/yes), the server auto-runs checkin-program after any modifying tool succeeds.
+# checkin-program is then hidden from the advertised tool list.
+_AUTO_CHECKIN_ENV_VARS: tuple[str, ...] = (
+    "AGENTDECOMPILE_AUTO_CHECKIN",
+    "AGENT_DECOMPILE_AUTO_CHECKIN",
+)
+
+
+def _auto_checkin_enabled() -> bool:
+    """True if AGENTDECOMPILE_AUTO_CHECKIN (or alias) is set; then checkin-program is hidden and run after setters."""
+    return any(
+        _is_truthy_env(os.getenv(var_name)) for var_name in _AUTO_CHECKIN_ENV_VARS
+    )
+
 
 def _is_truthy_env(value: str | None) -> bool:
     if value is None:
@@ -907,24 +923,32 @@ def _build_advertised_tools() -> list[str]:
     Otherwise: start from all canonical tools, remove disabled, then either hide
     _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
     """
-    canonical_visible = [t.value for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
-    hidden_set = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
-    disabled_set = _get_disabled_tools()
-    explicit_set = _get_explicit_enabled_tools()
+    canonical_visible: list[str] = [t.value for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
+    hidden_set: set[str] = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
+    disabled_set: set[str] = _get_disabled_tools()
+    explicit_set: set[str] | None = _get_explicit_enabled_tools()
 
     if explicit_set is not None:
         # AGENTDECOMPILE_ENABLE_TOOLS takes absolute priority – expose exactly these tools.
-        return [tool for tool in canonical_visible if normalize_identifier(tool) in explicit_set]
+        result: list[str] = [tool for tool in canonical_visible if normalize_identifier(tool) in explicit_set]
+        if _auto_checkin_enabled():
+            checkin_norm = normalize_identifier(Tool.CHECKIN_PROGRAM.value)
+            result = [t for t in result if normalize_identifier(t) != checkin_norm]
+        return result
 
-    include_hidden = _legacy_tools_advertised()
+    include_hidden: bool = _legacy_tools_advertised()
 
     result: list[str] = []
     for tool in canonical_visible:
-        norm = normalize_identifier(tool)
+        norm: str = normalize_identifier(tool)
         if norm in disabled_set:
             continue
         if norm not in hidden_set or include_hidden:
             result.append(tool)
+    # When auto-checkin is enabled, hide checkin-program (it runs automatically after modifying tools).
+    if _auto_checkin_enabled():
+        checkin_norm: str = normalize_identifier(Tool.CHECKIN_PROGRAM.value)
+        result = [t for t in result if normalize_identifier(t) != checkin_norm]
     return result
 
 

@@ -500,11 +500,15 @@ AgentDecompile exposes 53 canonical MCP tools (see `src/agentdecompile_cli/regis
 - Canonical MCP tool names use **kebab-case** (for example `open`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
-- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`
+- Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`, `resolve-modification-conflict` (when a modifying tool reports a conflict)
 
 Live local server contract note: the default advertised surface is currently 37 tools. Hidden compatibility tools such as `manage-comments` remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
 
 Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
+
+#### Modification conflicts (two-step flow)
+
+Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` rename/set prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set) do **not** overwrite existing *custom* (user-defined) data immediately. If the change would overwrite custom data—such as a symbol name you already set, an existing comment, or a structure that already exists—the tool returns a **conflict** response with a unique `conflictId` and a udiff-style markdown summary. To complete the change you must call **`resolve-modification-conflict`** with that `conflictId` and `resolution=overwrite` (to apply) or `resolution=skip` (to discard). If there is no existing custom data at the target (e.g. a default name like `FUN_004173b0`), the modifying tool succeeds in one step. See [AGENTS.md](AGENTS.md#modification-conflicts-two-step-flow) and [TOOLS_LIST.md](TOOLS_LIST.md#resolve-modification-conflict) for details.
 
 ### Connection options
 
@@ -548,6 +552,7 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | Default Ghidra shared repository name for shared-server workflows. | `agentdecompile-server --ghidra-server-repository`; `agentdecompile-cli --ghidra-server-repository` |
 | `AGENTDECOMPILE_AUTO_MATCH_PROPAGATE` | When set to `1` or `true`, after function-modifying tools (rename, set prototype/tags/comments) the server runs match-function to other binaries. HTTP equivalent: `X-AgentDecompile-Auto-Match-Propagate`. | None (env or header only) |
 | `AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS` | Optional comma-separated program paths for auto propagation. If unset, other open programs in the session are used. HTTP equivalent: `X-AgentDecompile-Auto-Match-Target-Paths`. | None (env or header only) |
+| `AGENTDECOMPILE_AUTO_CHECKIN` | When set to `1` or `true`, the server automatically runs checkin-program after any modifying tool (e.g. manage-symbols, manage-function, manage-comments, manage-structures, apply-data-type, manage-bookmarks, manage-function-tags, match-function) succeeds. **checkin-program** is then hidden from the advertised tool list. | None (env only) |
 
 Compact alias compatibility: `AGENTDECOMPILE_GHIDRA_SERVER_HOST/PORT/USERNAME/PASSWORD/REPOSITORY` are accepted and normalized automatically for launchers that emit no-underscore variants.
 

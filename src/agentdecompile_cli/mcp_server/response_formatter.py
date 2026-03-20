@@ -518,7 +518,6 @@ def _next_steps_strings(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         addr = first.get("address", "")
         if addr:
-            steps.append(f"Find references to this string: `get-references address={addr}`.")
             steps.append(f"Decompile containing function: `get-functions mode=decompile address={addr}`.")
         steps.append(
             "Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings."
@@ -1615,6 +1614,25 @@ def _render_strings(data: dict[str, Any]) -> str:
                 row.append(str(len(refs)) if isinstance(refs, list) else str(refs))
             rows.append(row)
         lines.append(_md_table(headers, rows))
+        # Include get-references style output for each string that has referencesTo
+        for r in results:
+            refs_to: list[dict[str, Any]] = r.get("referencesTo") or []
+            if not refs_to:
+                continue
+            addr = r.get("address", "")
+            lines.append("")
+            lines.append(_md_heading(4, f"References to {addr}"))
+            lines.append("")
+            ref_headers: list[str] = ["From", "Type", "Function"]
+            ref_rows: list[list[str]] = [
+                [
+                    ref.get("fromAddress", ""),
+                    ref.get("type", ""),
+                    ref.get("function") or "",
+                ]
+                for ref in refs_to
+            ]
+            lines.append(_md_table(ref_headers, ref_rows))
     else:
         lines.append("*No strings found.*")
 
@@ -1928,6 +1946,38 @@ def _render_data(data: dict[str, Any]) -> str:
         lines.append(_md_heading(3, "Raw Bytes"))
         lines.append("")
         lines.append(_md_code_block(f"Hex:   {hex_str}\nASCII: {ascii_str}", ""))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Conflict renderer (two-step modification conflicts)
+# ---------------------------------------------------------------------------
+
+
+def _render_conflict(data: dict[str, Any]) -> str:
+    """Render a modification-conflict response as markdown.
+
+    Shows conflictSummary (udiff-style), nextStep (how to resolve), and conflictId/tool.
+    """
+    lines: list[str] = []
+    lines.append(_md_heading(2, "Modification conflict"))
+    lines.append("")
+    summary = data.get("conflictSummary", "")
+    if summary:
+        lines.append(summary)
+        lines.append("")
+    next_step = data.get("nextStep", "")
+    if next_step:
+        lines.append(_md_heading(3, "Next step"))
+        lines.append("")
+        lines.append(next_step)
+        lines.append("")
+    conflict_id = data.get("conflictId", "")
+    tool = data.get("tool", "")
+    if conflict_id or tool:
+        lines.append(_md_bold_kv("conflictId", _md_code_inline(conflict_id)))
+        if tool:
+            lines.append(_md_bold_kv("Tool", _md_code_inline(tool)))
     return "\n".join(lines)
 
 
@@ -2320,9 +2370,11 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         A markdown string suitable for returning as TextContent.text.
     """
     logger.debug("render_tool_response tool=%s", normalized_tool_name)
-    # Errors are always rendered with _render_error so the user sees a clear message
-    if data.get("success") is False:
-        body: str = _render_error(data)
+    # Modification conflicts get their own renderer (udiff + nextStep)
+    if data.get("modificationConflict") is True or (data.get("success") is False and data.get("conflictId")):
+        body = _render_conflict(data)
+    elif data.get("success") is False:
+        body = _render_error(data)
     else:
         # Look up per-tool renderer (key = normalize_identifier(tool_name)); missing or exception → generic table + key blocks
         renderer = TOOL_RENDERERS.get(normalized_tool_name)

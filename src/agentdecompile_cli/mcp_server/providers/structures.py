@@ -9,6 +9,7 @@ Structures define memory layout so the decompiler can show field names instead o
 from __future__ import annotations
 
 import logging
+import uuid
 
 from typing import Any, cast
 
@@ -19,7 +20,9 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structures,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
     n,
 )
@@ -181,6 +184,34 @@ class StructureToolProvider(ToolProvider):
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            existing = self._find_structure(dtm, name)
+            if existing is not None:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Create structure would overwrite existing structure with the same name:\n\n"
+                    f"Structure **{name}** already exists."
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                store_args = dict(args)
+                store_args["mode"] = "create"
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_STRUCTURES.value,
+                    arguments=store_args,
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_STRUCTURES.value, conflict_summary, next_step)
 
         from ghidra.program.model.data import CategoryPath  # pyright: ignore[reportMissingModuleSource]
 
@@ -356,9 +387,42 @@ class StructureToolProvider(ToolProvider):
             return create_success_response({"action": "apply", "batch": True, "results": results})
 
         addr = self._resolve_address(addr_str, program=program)
+        listing = self._get_listing(program)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            existing_data = listing.getDataAt(addr)
+            if existing_data is not None:
+                existing_type = str(existing_data.getDataType() or "")
+                if existing_type.strip():
+                    from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                    from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                    conflict_id = str(uuid.uuid4())
+                    conflict_summary = (
+                        "Apply structure would overwrite existing data at address:\n\n"
+                        "```diff\n"
+                        f"- (existing) {existing_type}\n"
+                        f"+ {struct_name}\n"
+                        "```"
+                    )
+                    next_step = (
+                        f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                        'To discard, use `resolution` = "skip".'
+                    )
+                    program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                    store_args = dict(args)
+                    store_args["mode"] = "apply"
+                    conflict_store_store(
+                        get_current_mcp_session_id(),
+                        conflict_id,
+                        tool=Tool.MANAGE_STRUCTURES.value,
+                        arguments=store_args,
+                        program_path=str(program_path) if program_path else None,
+                        summary=conflict_summary,
+                    )
+                    return create_conflict_response(conflict_id, Tool.MANAGE_STRUCTURES.value, conflict_summary, next_step)
 
         def _apply_struct() -> None:
-            listing = self._get_listing(program)
             listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
             listing.createData(addr, dt)
 

@@ -1,6 +1,6 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 53 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
 **Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
@@ -73,6 +73,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`execute-script`](#execute-script)
     - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser)
     - [`read-bytes`](#read-bytes)
+    - [`resolve-modification-conflict`](#resolve-modification-conflict)
     - [`search-code`](#search-code)
     - [`search-constants`](#search-constants)
     - [`search-everything`](#search-everything)
@@ -995,6 +996,18 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `read_bytes(binary_name, address, size)` → forwards to `read-bytes`.
 
 **Examples**: `read-bytes programPath="/bin.exe" address="0x404000" length=256`.
+
+### `resolve-modification-conflict`
+
+**Description**: Resolve a modification conflict reported by another tool. Call only when a tool returned a `conflictId` because the change would overwrite custom data; use `resolution=overwrite` to apply the change or `resolution=skip` to discard.
+
+**Parameters**:
+- `conflictId` (string, required): The GUID returned in the conflict response from the modifying tool.
+- `resolution` (string, required): `overwrite` = apply the stored modification; `skip` = discard and remove from store.
+- `programPath` (string, optional): Optional override for program context when resolving.
+
+**Examples**: After `manage-symbols` (rename) returns a conflict, call `resolve-modification-conflict conflictId="<uuid>" resolution=overwrite` to apply, or `resolution=skip` to discard.
+
 ### `search-code`
 
 **Description**: Searches code for patterns in disassembly or pcode.

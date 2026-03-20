@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 
 from typing import TYPE_CHECKING, Any
 
@@ -23,9 +24,13 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_symbols,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
+    n,
 )
+from agentdecompile_cli.mcp_utils.symbol_util import SymbolUtil
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
@@ -39,19 +44,22 @@ _DEFAULT_NAME_RE = re.compile(r"^(FUN|LAB|SUB|DAT|EXT|PTR|ARRAY)_[0-9a-fA-F]+$")
 
 class SymbolToolProvider(ToolProvider):
     HANDLERS = {
-        "managesymbols": "_handle",
-        "searchsymbolsbyname": "_handle_search",
-        "searchsymbols": "_handle_search",
-        "listimports": "_handle_list_imports_alias",
-        "listexports": "_handle_list_exports_alias",
         "createlabel": "_handle_create_label_alias",
+        "listexports": "_handle_list_exports_alias",
+        "listimports": "_handle_list_imports_alias",
+        "managesymbols": "_handle",
+        "searchsymbols": "_handle_search",
+        "searchsymbolsbyname": "_handle_search",
     }
 
     def list_tools(self) -> list[types.Tool]:
-        base_manage_schema = {
+        base_manage_schema: dict[str, Any] = {
             "type": "object",
             "properties": {
-                "programPath": {"type": "string", "description": "The active program project."},
+                "programPath": {
+                    "type": "string",
+                    "description": "The active program project.",
+                },
                 "mode": {
                     "type": "string",
                     "enum": [
@@ -68,13 +76,37 @@ class SymbolToolProvider(ToolProvider):
                     "default": "symbols",
                     "description": "What operation to perform regarding symbols (names assigned to addresses).",
                 },
-                "query": {"type": "string", "description": "Regex pattern or exact text to find matching labels."},
-                "addressOrSymbol": {"type": "string", "description": "The hex memory address or existing symbol name you want to interact with."},
-                "labelName": {"type": "string", "description": "The new label name to apply (if creating/renaming)."},
-                "newName": {"type": "string", "description": "Alternative parameter for labelName."},
-                "filterDefaultNames": {"type": "boolean", "default": True, "description": "Ignore auto-generated messy labels like 'FUN_00101000'."},
-                "limit": {"type": "integer", "default": 100, "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
-                "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
+                "query": {
+                    "type": "string",
+                    "description": "Regex pattern or exact text to find matching labels.",
+                },
+                "addressOrSymbol": {
+                    "type": "string",
+                    "description": "The hex memory address or existing symbol name you want to interact with.",
+                },
+                "labelName": {
+                    "type": "string",
+                    "description": "The new label name to apply (if creating/renaming).",
+                },
+                "newName": {
+                    "type": "string",
+                    "description": "Alternative parameter for labelName.",
+                },
+                "filterDefaultNames": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Ignore auto-generated messy labels like 'FUN_00101000'.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 100,
+                    "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Pagination offset.",
+                },
             },
             "required": [],
         }
@@ -91,10 +123,17 @@ class SymbolToolProvider(ToolProvider):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "The active program project."},
+                        "programPath": {
+                            "type": "string",
+                            "description": "The active program project.",
+                        },
                         "query": {"type": "string", "description": "Regex or substring to match text."},
                         "namePattern": {"type": "string", "description": "Alternative parameter for query."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
@@ -109,7 +148,11 @@ class SymbolToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The active program project."},
                         "query": {"type": "string", "description": "Regex or substring to match text."},
                         "namePattern": {"type": "string", "description": "Alternative parameter for query."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
@@ -122,7 +165,11 @@ class SymbolToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of imports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of imports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                     },
                     "required": [],
                 },
@@ -134,7 +181,11 @@ class SymbolToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of exports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of exports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                     },
                     "required": [],
                 },
@@ -411,6 +462,40 @@ class SymbolToolProvider(ToolProvider):
         addr: Any = self._resolve_address(addr_str, program=program)
         st = self._get_symbol_table(program)
 
+        # Force-apply path: skip conflict check when re-invoked from resolve-modification-conflict
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            sym_at_addr: Any = st.getPrimarySymbol(addr)
+            if sym_at_addr is not None:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                conflict_id = str(uuid.uuid4())
+                existing_name = sym_at_addr.getName()
+                conflict_summary = (
+                    "Create label would conflict with existing symbol at address:\n\n"
+                    "```diff\n"
+                    f"- (existing) {existing_name}\n"
+                    f"+ {label}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                program_path_str = str(program_path) if program_path is not None else None
+                store_args = dict(args)
+                store_args["mode"] = "create_label"
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_SYMBOLS.value,
+                    arguments=store_args,
+                    program_path=program_path_str,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_SYMBOLS.value, conflict_summary, next_step)
+
         def _create_label_single() -> None:
             st.createLabel(addr, label, SourceType.USER_DEFINED)
 
@@ -437,11 +522,45 @@ class SymbolToolProvider(ToolProvider):
         if sym is None:
             raise ValueError(f"No symbol at {addr_str}")
 
-        def _rename_symbol() -> None:
-            sym.setName(new_name, SourceType.USER_DEFINED)
+        # Force-apply path: resolve-modification-conflict re-invoked with this set; skip conflict check
+        if args.get(FORCE_APPLY_CONFLICT_ID_KEY):
 
-        self._run_program_transaction(program, "rename-data", _rename_symbol)
-        return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
+            def _rename_symbol() -> None:
+                sym.setName(new_name, SourceType.USER_DEFINED)
+
+            self._run_program_transaction(program, "rename-data", _rename_symbol)
+            return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
+
+        current_name = sym.getName()
+        if SymbolUtil.is_default_symbol_name(current_name):
+            # Auto-generated name; no conflict, apply immediately
+            def _rename_symbol() -> None:
+                sym.setName(new_name, SourceType.USER_DEFINED)
+
+            self._run_program_transaction(program, "rename-data", _rename_symbol)
+            return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
+
+        # Custom name would be overwritten; two-step conflict
+        from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+        from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+        conflict_id = str(uuid.uuid4())
+        conflict_summary = f"Rename would overwrite existing custom symbol name:\n\n```diff\n- {current_name}\n+ {new_name}\n```"
+        next_step = (
+            f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+            'To discard, use `resolution` = "skip".'
+        )
+        program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+        program_path_str = str(program_path) if program_path is not None else None
+        conflict_store_store(
+            get_current_mcp_session_id(),
+            conflict_id,
+            tool=Tool.MANAGE_SYMBOLS.value,
+            arguments=dict(args),
+            program_path=program_path_str,
+            summary=conflict_summary,
+        )
+        return create_conflict_response(conflict_id, Tool.MANAGE_SYMBOLS.value, conflict_summary, next_step)
 
     async def _demangle(self, args: dict[str, Any]) -> list[types.TextContent]:
         query: str = self._get_str(args, "query", "symbol", "name", "addressorsymbol")

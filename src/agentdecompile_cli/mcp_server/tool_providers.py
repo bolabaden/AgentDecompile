@@ -53,6 +53,7 @@ from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImport
     normalize_identifier,
     resolve_tool_name,
     to_snake_case,
+    _auto_checkin_enabled,
 )
 
 if TYPE_CHECKING:
@@ -77,6 +78,10 @@ DEFAULT_SAMPLES_PER_CONSTANT = 5
 DEFAULT_MAX_ENTRIES = 200
 # DEFAULT_TIMEOUT_SECONDS is imported from constants.py above to avoid circular imports
 
+# Two-step modification conflict: when a tool would overwrite custom data, it stores pending here;
+# resolve-modification-conflict re-invokes the tool with this key set so the handler skips conflict check.
+FORCE_APPLY_CONFLICT_ID_KEY = "forceapplyconflictid"  # n("__force_apply_conflict_id")
+
 # Auto match-function propagation (env-driven). When the user renames/sets prototype/tags/comments
 # on a function, we can optionally run match-function to other binaries; args must not be re-entered.
 AUTO_MATCH_INVOCATION_KEY = "automatchinvocation"
@@ -88,6 +93,18 @@ _AUTO_MATCH_TRIGGER_MODES: dict[str, frozenset[str]] = {
     "managecomments": frozenset({"set", "post", "eol", "pre", "plate", "repeatable"}),
     "managefunctiontags": frozenset({"add", "remove", "set"}),
 }
+
+# Tools that modify project data; when AGENTDECOMPILE_AUTO_CHECKIN is set, checkin-program runs after these succeed.
+_AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset({
+    "managesymbols",
+    "managefunction",
+    "managecomments",
+    "managestructures",
+    "applydatatype",
+    "managebookmarks",
+    "managefunctiontags",
+    "matchfunction",
+})
 
 # ProcessPoolExecutor for auto match-function (child process, does not block main). Spawn context so child gets fresh interpreter (no JVM fork).
 _AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
@@ -313,6 +330,24 @@ def _infer_param_schema(param_name: str) -> dict[str, Any]:
 
 def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
     """Create a standardized MCP success response."""
+    return [types.TextContent(type="text", text=_json.dumps(data))]
+
+
+def create_conflict_response(
+    conflict_id: str,
+    tool: str,
+    conflict_summary: str,
+    next_step: str,
+) -> list[types.TextContent]:
+    """Create a two-step conflict response: modification would overwrite custom data; client must call resolve-modification-conflict."""
+    data: dict[str, Any] = {
+        "success": False,
+        "modificationConflict": True,
+        "conflictId": conflict_id,
+        "tool": tool,
+        "conflictSummary": conflict_summary,
+        "nextStep": next_step,
+    }
     return [types.TextContent(type="text", text=_json.dumps(data))]
 
 
@@ -1502,6 +1537,7 @@ class ToolProviderManager:
             BookmarkToolProvider,
             CallGraphToolProvider,
             CommentToolProvider,
+            ConflictResolutionToolProvider,
             ConstantSearchToolProvider,
             CrossReferencesToolProvider,
             DataFlowToolProvider,
@@ -1528,6 +1564,7 @@ class ToolProviderManager:
             BookmarkToolProvider,
             CallGraphToolProvider,
             CommentToolProvider,
+            ConflictResolutionToolProvider,
             ConstantSearchToolProvider,
             CrossReferencesToolProvider,
             DataFlowToolProvider,
@@ -2147,6 +2184,32 @@ class ToolProviderManager:
                             await self.call_tool(Tool.MATCH_FUNCTION.value, match_args, program_info=effective_program_info)
                         except Exception as auto_match_exc:
                             logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
+
+        # Auto check-in: when AGENTDECOMPILE_AUTO_CHECKIN is set, run checkin-program after any modifying tool succeeds.
+        if (
+            not norm_args.get(n("__auto_checkin_invocation"))
+            and _auto_checkin_enabled()
+            and norm_name in _AUTO_CHECKIN_TRIGGER_TOOLS
+            and result
+            and isinstance(result[0], types.TextContent)
+        ):
+            try:
+                parsed = _json.loads(result[0].text)
+                tool_success = (
+                    parsed.get("success", True) is not False
+                    and parsed.get("modificationConflict") is not True
+                    and "error" not in (parsed.get("error") or "")
+                )
+            except Exception:
+                tool_success = False
+            if tool_success:
+                try:
+                    await self.call_tool(
+                        Tool.CHECKIN_PROGRAM.value,
+                        {"__auto_checkin_invocation": True, "comment": "Auto check-in after modification"},
+                    )
+                except Exception as auto_checkin_exc:
+                    logger.warning("Auto check-in after modify failed (best-effort): %s", auto_checkin_exc)
 
         # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
         if not norm_args.get("autoprereqinvocation") and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
