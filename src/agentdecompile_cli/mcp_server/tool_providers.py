@@ -58,7 +58,7 @@ from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImport
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from ghidra.program.model.address import Address
+    from ghidra.program.model.address import Address  # pyright: ignore[reportMissingModuleSource]
 
     from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
         Tool,
@@ -1159,17 +1159,15 @@ class ToolProvider:
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
 
         # When identifier looks like a hex address, resolve by address first so we don't depend on iterator.
+        # Use only getFunctionContaining(addr) or getFunctionAt(addr). Do NOT resolve to IAT/thunk/callee:
+        # that would make get-function(0x004381ed) return the callee (e.g. FUN_004173b0) when 0x004381ed
+        # is a call site; the user expects the function that contains 0x004381ed.
         s = (function_identifier or "").strip().removeprefix("0x").removeprefix("0X")
         if s and len(s) <= 10 and all(c in "0123456789aAbBcCdDeEfF" for c in s):
             try:
                 addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
                 if addr is not None:
                     f = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
-                    if f is None:
-                        # Support IAT address: resolve to thunk and get function at thunk
-                        thunk_addr = AddressUtil.resolve_iat_to_thunk(target_program, addr)
-                        if thunk_addr is not None:
-                            f = fm.getFunctionAt(thunk_addr) or fm.getFunctionContaining(thunk_addr)
                     if f is not None:
                         return f
             except Exception:
@@ -1211,10 +1209,6 @@ class ToolProvider:
             addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
             if addr is not None:
                 f = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
-                if f is None:
-                    thunk_addr = AddressUtil.resolve_iat_to_thunk(target_program, addr)
-                    if thunk_addr is not None:
-                        f = fm.getFunctionAt(thunk_addr) or fm.getFunctionContaining(thunk_addr)
                 return f
         except Exception:
             return None
