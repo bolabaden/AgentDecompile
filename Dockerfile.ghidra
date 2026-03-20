@@ -28,10 +28,6 @@ ENV PUID=${PUID}
 ARG PGID="1001"
 ENV PGID=${PGID}
 
-# Optional: trust extra CA (e.g. corporate proxy). Put PEM in docker/extra-ca.crt and rebuild.
-COPY docker/extra-ca.crt /tmp/extra-ca.crt
-RUN grep -q "BEGIN CERTIFICATE" /tmp/extra-ca.crt 2>/dev/null && cat /tmp/extra-ca.crt >> /etc/ssl/cert.pem || true
-
 RUN set -eux; \
     apk update; \
     apk add --no-cache \
@@ -103,10 +99,6 @@ ARG PUID="1001"
 ENV PUID=${PUID}
 ARG PGID="1001"
 ENV PGID=${PGID}
-
-# Optional: trust extra CA (same as build stage)
-COPY docker/extra-ca.crt /tmp/extra-ca.crt
-RUN grep -q "BEGIN CERTIFICATE" /tmp/extra-ca.crt 2>/dev/null && cat /tmp/extra-ca.crt >> /etc/ssl/cert.pem || true
 
 RUN set -eux; \
     apk update; \
