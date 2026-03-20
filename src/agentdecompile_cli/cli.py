@@ -521,7 +521,7 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
 
 
 def _build_shared_open_payload(ctx: click.Context) -> dict[str, Any] | None:
-    """Build open-project (shared) payload from global opts; None if no host."""
+    """Build open (shared) payload from global opts; None if no host."""
     shared_defaults = _shared_server_defaults(ctx)
     shared_host = str(shared_defaults["host"] or "").strip()
     if not shared_host:
@@ -1183,7 +1183,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             ctx = click.get_current_context()
             # Remove None values and format arguments
             args = {k: v for k, v in kwargs.items() if v is not None}
-            # For open-project, merge global Ghidra server options so --ghidra-server-username etc. are sent
+            # For open, merge global Ghidra server options so --ghidra-server-username etc. are sent
             if _tool_name == Tool.OPEN_PROJECT.value:
                 opts = _get_opts(ctx)
                 if not args.get("serverUsername") and not args.get("server_username"):
@@ -2472,7 +2472,7 @@ def match_function(
     "migrate-metadata",
     help="Bulk propagate function metadata from a source binary to others (match-function over all functions). "
     "Uses match-function with no function identifier so the tool iterates all functions; discovers targets from the session if not given. "
-    "When using a remote server (--server-url), open the project in the same session first (e.g. tool-seq with open-project then this command).",
+    "When using a remote server (--server-url), open the project in the same session first (e.g. tool-seq with open then this command).",
 )
 @click.option("-b", "--binary", "program_path", help="Source program path (programPath).")
 @click.option("--source-path", "program_path_alt", help="Alias for --binary.")
@@ -2510,7 +2510,7 @@ def migrate_metadata(
     """Run match-function over all functions in the source (bulk migration). No function identifier = iterate all.
 
     Sessions are isolated: the server session for this CLI run must already have a project open
-    (shared or local). Use tool-seq to run open-project then migrate-metadata in one connection.
+    (shared or local). Use tool-seq to run open then migrate-metadata in one connection.
     Use --checkin to check in all open programs after propagation (same session).
     """
     source = (program_path or program_path_alt or "").strip()
@@ -2579,9 +2579,9 @@ def memory_run(
 # ---------------------------------------------------------------------------
 
 
-@main.command("open", help="Open project/shared session (open-project); use import/import-binary for local binaries")
+@main.command("open", help="Open project/shared session (open); use import/import-binary for local binaries")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
-@click.option("--shared/--no-shared", "shared", default=False, help="Force shared Ghidra repository mode for open-project")
+@click.option("--shared/--no-shared", "shared", default=False, help="Force shared Ghidra repository mode for open")
 @click.option("--open-all-programs", "open_all_programs", is_flag=True, default=False, help="Open all programs in the project")
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
@@ -4126,7 +4126,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                 if tool_registry.is_valid_tool(name):
                     resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(name))
                     prepared_arguments = tool_registry.parse_arguments(prepared_arguments, resolved_name)
-                # For open-project, merge global Ghidra server options so tool-seq sends credentials
+                # For open, merge global Ghidra server options so tool-seq sends credentials
                 if tool_registry.canonicalize_tool_name(name) == tool_registry.canonicalize_tool_name(Tool.OPEN_PROJECT.value):
                     opts = _get_opts(ctx)
                     # Ensure we have root/group opts (tool-seq runs as subcommand; ctx.obj may be unset)

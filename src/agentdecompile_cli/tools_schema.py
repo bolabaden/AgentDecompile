@@ -36,6 +36,6 @@ __all__ = [
     "to_camel_case_key",
 ]
 
-# Backward-compat: str-keyed view of TOOL_PARAMS for code that does TOOL_PARAMS.get("open-project").
+# Backward-compat: str-keyed view of TOOL_PARAMS for code that does TOOL_PARAMS.get("open").
 # Registry holds dict[Tool, list[str]]; we expose dict[str, list[str]] here.
 TOOL_PARAMS: dict[str, list[str]] = {t.value: list(p) for t, p in _TOOL_PARAMS_ENUM.items()}

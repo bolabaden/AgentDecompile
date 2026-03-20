@@ -80,7 +80,7 @@ A **bulk metadata migration** path that:
 | Decision                             | Rationale                                                                                                                                                                                                                  |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bulk iteration inside match-function | Single MCP round-trip for “migrate all”; avoids payload size and session limits from scripting thousands of match-function calls.                                                                                          |
-| Target discovery from session        | match-function uses `SESSION_CONTEXTS.get_project_binaries(session_id)` (populated by open-project/import), filters by binary extension and excludes source path. Script/CLI do not call list-project-files for discovery. |
+| Target discovery from session        | match-function uses `SESSION_CONTEXTS.get_project_binaries(session_id)` (populated by open/import), filters by binary extension and excludes source path. Script/CLI do not call list-project-files for discovery. |
 | Script as launcher                   | Aligns with repo pattern: helper_scripts run CLI or external tools (e.g. mcp_cli_testing.py, run_live_agdec_http_test.py). No duplicate MCP HTTP client in migrate_k1_metadata.py.                                         |
 | Prefer CLI migrate-metadata          | Canonical entry point; script docstring and USAGE.md direct users to `agentdecompile-cli migrate-metadata --binary <path>`.                                                                                                |
 | includeExternals default             | CLI defaults to true; match-function bulk uses it when listing source identifiers.                                                                                                                                         |
@@ -198,7 +198,7 @@ A **bulk metadata migration** path that:
 
 ## Open questions (resolved or optional)
 
-1. **Project bootstrap**: Resolved—user opens project first (MCP or tool-seq); script does not call open-project. Document in USAGE.md.
+1. **Project bootstrap**: Resolved—user opens project first (MCP or tool-seq); script does not call open. Document in USAGE.md.
 2. **Target discovery**: Resolved—match-function uses session binaries (get_project_binaries), not list-project-files from the client. Binary filter in getfunction: `.exe`, `.dll`, `.so`, `.dylib`.
 3. **Function identifier in bulk**: N/A—bulk mode does not pass functionIdentifier; tool iterates internally. Single-function mode uses name or address (getfunction uses same _resolve_function / name-vs-address logic).
 

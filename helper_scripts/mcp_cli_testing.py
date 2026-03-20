@@ -247,7 +247,7 @@ def build_validate_cases(program_path: str, host: str, port: int, username: str,
         {
             "name": "open",
             "uvx": f"{uvx_prefix} open --server_host {host} --server_port {port} --server_username {username} --server_password {password} {program_path}",
-            "tool": "open-project",
+            "tool": "open",
             "args": {
                 "serverHost": host,
                 "serverPort": port,
@@ -383,7 +383,7 @@ def build_verify_cases(program_path: str, host: str, port: int, username: str, p
         {
             "name": "open",
             "uvx": f"{uvx_prefix} open --server_host {host} --server_port {port} --server_username {username} --server_password {password} {program_path}",
-            "tool": "open-project",
+            "tool": "open",
             "args": {
                 "serverHost": host,
                 "serverPort": port,
@@ -756,7 +756,7 @@ def cmd_agdec_http(args: argparse.Namespace) -> int:
         ]
     else:
         steps = [
-            ("open_project", "open-project", open_args),
+            ("open_project", "open", open_args),
             ("list_project_files", "list-project-files", {"format": "json"}),
             ("get_current_program", "get-current-program", {"programPath": program_path, "format": "json"}),
             ("list_functions", "list-functions", {"programPath": program_path, "limit": 5, "format": "json"}),
@@ -995,7 +995,7 @@ def main(argv: list[str] | None = None) -> int:
     agdec_parser.add_argument(
         "--ghidra-host",
         default=os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", ""),
-        help="Ghidra shared-server host for open-project",
+        help="Ghidra shared-server host for open",
     )
     agdec_parser.add_argument("--ghidra-port", type=int, default=13100, help="Ghidra shared-server port")
     agdec_parser.add_argument(

@@ -190,7 +190,7 @@ class TestToolEnum:
 
     def test_resolve_tool_name_enum_canonical(self):
         """resolve_tool_name_enum returns enum for canonical kebab-case names."""
-        assert resolve_tool_name_enum("open-project") == Tool.OPEN_PROJECT
+        assert resolve_tool_name_enum("open") == Tool.OPEN_PROJECT
         assert resolve_tool_name_enum("get-functions") == Tool.GET_FUNCTIONS
         assert resolve_tool_name_enum("manage-bookmarks") == Tool.MANAGE_BOOKMARKS
 
@@ -218,7 +218,7 @@ class TestToolEnum:
 
     def test_tool_from_string(self):
         """Tool.from_string matches resolve_tool_name_enum."""
-        assert Tool.from_string("open-project") == Tool.OPEN_PROJECT
+        assert Tool.from_string("open") == Tool.OPEN_PROJECT
         assert Tool.from_string("get-symbols") == Tool.MANAGE_SYMBOLS
         assert Tool.from_string("unknown-tool") is None
 

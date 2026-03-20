@@ -77,7 +77,7 @@ def test_open_project_and_current_program_match_known_fixture_contract(
     local_http_session: JsonRpcMcpSession,
     known_fixture_binary: Path,
 ) -> None:
-    open_text = _tool_text(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+    open_text = _tool_text(local_http_session, "open", {"path": str(known_fixture_binary)})
     current_text = _tool_text(local_http_session, "get-current-program", {})
 
     # Path may be truncated with … in markdown tables, so we check substrings
@@ -105,7 +105,7 @@ def test_known_fixture_analysis_outputs_match_observed_contract(
     local_http_session: JsonRpcMcpSession,
     known_fixture_binary: Path,
 ) -> None:
-    _tool_text(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+    _tool_text(local_http_session, "open", {"path": str(known_fixture_binary)})
 
     functions_text = _tool_text(local_http_session, "list-functions", {"limit": 10})
     references_text = _tool_text(local_http_session, "get-references", {"mode": "to", "target": KNOWN_ENTRY_ADDRESS})
@@ -184,7 +184,7 @@ def test_remove_program_binary_supports_local_projects(
     shutil.copy2(_known_fixture_source(), removable_binary)
     removable_binary.chmod(0o755)
 
-    opened = _tool_json(local_http_session, "open-project", {"path": str(removable_binary)})
+    opened = _tool_json(local_http_session, "open", {"path": str(removable_binary)})
     assert opened.get("success") is True
 
     removed = _tool_json(
@@ -200,5 +200,5 @@ def test_remove_program_binary_supports_local_projects(
     names = [entry["name"] for entry in files.get("files", [])]
     assert removable_binary.name not in names
 
-    restored = _tool_json(local_http_session, "open-project", {"path": str(known_fixture_binary)})
+    restored = _tool_json(local_http_session, "open", {"path": str(known_fixture_binary)})
     assert restored.get("success") is True

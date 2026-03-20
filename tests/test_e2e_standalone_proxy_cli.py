@@ -255,7 +255,7 @@ class TestStandaloneToolsList:
 
             # Verify all core advertised tools are present (check both hyphen and underscore forms)
             expected_core = [
-                "open-project",
+                "open",
                 "list-project-files",
                 "get-current-program",
                 "decompile-function",
@@ -573,7 +573,7 @@ class TestStandaloneToolResponseStructure:
 
 
 class TestStandaloneOpenProject:
-    """Test open-project tool with various inputs."""
+    """Test open tool with various inputs."""
 
     def test_open_project_nonexistent_path_returns_error(self):
         server = PythonMcpServer()
@@ -581,7 +581,7 @@ class TestStandaloneOpenProject:
             _, sid = _init_session(client)
             body = _post_with_session(
                 client, sid,
-                _tool_call_payload("open-project", {"path": "/nonexistent/binary.exe"}),
+                _tool_call_payload("open", {"path": "/nonexistent/binary.exe"}),
             )
             assert "result" in body
             text = _extract_text_content(body)
@@ -598,7 +598,7 @@ class TestStandaloneOpenProject:
             _, sid = _init_session(client)
             body = _post_with_session(
                 client, sid,
-                _tool_call_payload("open-project", {
+                _tool_call_payload("open", {
                     "path": "/some/binary",
                     "serverHost": "nonexistent.host.invalid",
                     "serverPort": 13100,

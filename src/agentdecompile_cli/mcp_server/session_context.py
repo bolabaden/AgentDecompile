@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 CURRENT_MCP_SESSION_ID: ContextVar[str] = ContextVar("current_mcp_session_id", default="default")
 
 # Per-request project path override (e.g. from proxy X-AgentDecompile-Project-Path header).
-# When set, debug_info and open-project flows use this path instead of runtime_context.
+# When set, debug_info and open flows use this path instead of runtime_context.
 CURRENT_REQUEST_PROJECT_PATH_OVERRIDE: ContextVar[str | None] = ContextVar("current_request_project_path_override", default=None)
 
 # Per-request auto match-function propagation (X-AgentDecompile-Auto-Match-Propagate header).

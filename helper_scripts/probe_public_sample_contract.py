@@ -118,7 +118,7 @@ def collect_contract_snapshot(base_url: str, binary_path: Path) -> dict[str, obj
     with JsonRpcMcpSession(base_url, timeout=180.0) as session:
         snapshot["tools_list"] = session.list_tools()
         snapshot["resources_list"] = session.list_resources()
-        snapshot["open_project"] = session.call_tool_json("open-project", {"path": str(binary_path)})
+        snapshot["open_project"] = session.call_tool_json("open", {"path": str(binary_path)})
         snapshot["list_project_files"] = session.call_tool_json("list-project-files", {})
         snapshot["get_current_program"] = session.call_tool_json("get-current-program", {})
         snapshot["analyze_program"] = session.call_tool_json("analyze-program", {})

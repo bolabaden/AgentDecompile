@@ -633,7 +633,7 @@ class TestDockerHealthAndInit:
         tool_names = {t["name"] for t in tools}
         # Verify core tools are advertised (accept both hyphenated and underscored forms)
         expected = [
-            "open-project", "list-project-files", "get-current-program",
+            "open", "list-project-files", "get-current-program",
             "decompile-function", "search-symbols", "get-references",
             "list-imports", "list-exports", "list-functions", "export",
             "import-binary",
@@ -862,7 +862,7 @@ class TestDockerCLI:
         assert result.returncode == 0
         assert (result.stderr or "").strip() == ""
         assert lines[0] == "Valid tool names:"
-        assert "  open-project" in lines
+        assert "  open" in lines
         assert "  list-project-files" in lines
         assert "  get-current-program" in lines
         assert "  decompile-function" in lines
@@ -1150,7 +1150,7 @@ class TestDockerProjectLifecycleTransitions:
     @pytest.mark.parametrize("endpoint", _endpoint_variants())
     def test_endpoint_variants_support_local_open_workflow(self, docker_stack, endpoint: str):
         with JsonRpcMcpSession(MCP_BASE_URL, endpoint=endpoint) as session:
-            open_payload = session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+            open_payload = session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
             assert open_payload["operation"] == "import"
             assert open_payload["importedFrom"] == LOCAL_CONTAINER_BINARY
             assert open_payload["filesDiscovered"] == 1
@@ -1174,7 +1174,7 @@ class TestDockerProjectLifecycleTransitions:
             assert current_payload["functionCount"] >= 0
 
     def test_local_open_then_shared_connect_switches_listing_source(self, docker_http_session: JsonRpcMcpSession):
-        local_open = docker_http_session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+        local_open = docker_http_session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
         assert local_open["operation"] == "import"
         assert local_open["importedFrom"] == LOCAL_CONTAINER_BINARY
         assert local_open["filesDiscovered"] == 1
@@ -1277,7 +1277,7 @@ class TestDockerProjectLifecycleTransitions:
                 f"and discovered {connect_payload['programCount']} items."
             )
 
-        local_open = accessor_http_session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+        local_open = accessor_http_session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
         assert local_open["operation"] == "import"
         assert local_open["importedFrom"] == LOCAL_CONTAINER_BINARY
         assert local_open["filesDiscovered"] == 1
@@ -1309,7 +1309,7 @@ class TestDockerProjectLifecycleTransitions:
         assert listed_program["type"] == "Program"
 
     def test_accessor_headers_do_not_override_existing_local_path(self, accessor_http_session: JsonRpcMcpSession):
-        local_open = accessor_http_session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+        local_open = accessor_http_session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
         assert local_open["operation"] == "import"
         assert local_open["importedFrom"] == LOCAL_CONTAINER_BINARY
         assert local_open["filesDiscovered"] == 1
@@ -1324,7 +1324,7 @@ class TestDockerProjectLifecycleTransitions:
         assert current_payload["programPath"].endswith(LOCAL_CONTAINER_PROGRAM_NAME)
 
     def test_checkout_status_reports_local_only_state_after_local_open(self, docker_http_session: JsonRpcMcpSession):
-        docker_http_session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+        docker_http_session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
 
         checkout_payload = docker_http_session.call_tool_json("checkout-status", {})
         assert checkout_payload["action"] == "checkout_status"
@@ -1342,7 +1342,7 @@ class TestDockerProjectLifecycleTransitions:
         assert checkout_payload["note"] == "Program is local-only. Shared checkout/checkin is unavailable until the program exists in a shared Ghidra repository."
 
     def test_local_sync_project_uses_documented_local_save_modes_after_open(self, docker_http_session: JsonRpcMcpSession):
-        docker_http_session.call_tool_json("open-project", {"path": LOCAL_CONTAINER_BINARY})
+        docker_http_session.call_tool_json("open", {"path": LOCAL_CONTAINER_BINARY})
 
         push_payload = docker_http_session.call_tool_json("sync-project", {"mode": "push"})
         assert push_payload["operation"] == "sync-project"
@@ -1410,7 +1410,7 @@ class TestDockerProjectLifecycleTransitions:
     def test_cli_tool_seq_keeps_state_for_documented_local_container_workflow(self, docker_stack):
         steps = json.dumps(
             [
-                {"name": "open-project", "arguments": {"path": LOCAL_CONTAINER_BINARY, "format": "json"}},
+                {"name": "open", "arguments": {"path": LOCAL_CONTAINER_BINARY, "format": "json"}},
                 {"name": "get-current-program", "arguments": {"format": "json"}},
                 {"name": "list-project-files", "arguments": {"format": "json"}},
                 {"name": "checkout-status", "arguments": {"format": "json"}},
@@ -1426,7 +1426,7 @@ class TestDockerProjectLifecycleTransitions:
         assert payload["steps"][1]["index"] == 2
         assert payload["steps"][2]["index"] == 3
         assert payload["steps"][3]["index"] == 4
-        assert payload["steps"][0]["name"] == "open-project"
+        assert payload["steps"][0]["name"] == "open"
         assert payload["steps"][1]["name"] == "get-current-program"
         assert payload["steps"][2]["name"] == "list-project-files"
         assert payload["steps"][3]["name"] == "checkout-status"
@@ -1488,7 +1488,7 @@ class TestDockerProjectLifecycleTransitions:
             "--format",
             "json",
             "tool",
-            "open-project",
+            "open",
             json.dumps({"path": LOCAL_CONTAINER_BINARY, "format": "json"}),
         )
         assert result.returncode == 0, result.stderr or result.stdout

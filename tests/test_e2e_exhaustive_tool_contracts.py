@@ -99,7 +99,7 @@ def _module_session(local_group_server: str):
     """
     with JsonRpcMcpSession(local_group_server, timeout=120.0) as session:
         # Import the test binary once for the entire module
-        payload = _j(session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        payload = _j(session, "open", {"path": str(TEST_BINARY_PATH)})
         assert payload.get("operation") in ("import", "switch"), f"Unexpected: {payload}"
         yield session
 
@@ -135,21 +135,21 @@ def _text(session: JsonRpcMcpSession, tool: str, args: dict[str, Any]) -> str:
 # ============================================================================
 
 class TestOpenProject:
-    """``open-project`` – import / switch to a binary."""
+    """``open`` – import / switch to a binary."""
 
     def test_open_project_returns_import_operation(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        p = _j(local_http_session, "open", {"path": str(TEST_BINARY_PATH)})
         assert "operation" in p
         assert p["operation"] in ("import", "switch")
 
     def test_open_project_import_counts(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        p = _j(local_http_session, "open", {"path": str(TEST_BINARY_PATH)})
         assert isinstance(p.get("filesDiscovered"), int)
         assert p["filesDiscovered"] >= 1
         assert isinstance(p.get("filesImported"), int)
 
     def test_open_project_imported_programs_structure(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        p = _j(local_http_session, "open", {"path": str(TEST_BINARY_PATH)})
         programs = p.get("importedPrograms", [])
         assert isinstance(programs, list)
         if programs:
@@ -158,18 +158,18 @@ class TestOpenProject:
             assert prog["programName"] == BINARY_NAME
 
     def test_open_project_has_no_errors(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        p = _j(local_http_session, "open", {"path": str(TEST_BINARY_PATH)})
         assert p.get("errors") == [] or p.get("errors") is None or len(p.get("errors", [])) == 0
 
     def test_open_project_groups_and_depth(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": str(TEST_BINARY_PATH)})
+        p = _j(local_http_session, "open", {"path": str(TEST_BINARY_PATH)})
         assert isinstance(p.get("groupsCreated"), int)
         assert p["groupsCreated"] >= 0
         assert isinstance(p.get("maxDepthUsed"), int)
         assert p["maxDepthUsed"] >= 1
 
     def test_open_nonexistent_path_returns_error(self, local_http_session: JsonRpcMcpSession):
-        p = _j(local_http_session, "open-project", {"path": "/nonexistent/binary"})
+        p = _j(local_http_session, "open", {"path": "/nonexistent/binary"})
         assert p.get("success") is False or "error" in p
         assert "error" in p
 

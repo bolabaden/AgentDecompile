@@ -849,7 +849,7 @@ class AgentDecompileStdioBridge:
 
         When agentdecompile-proxy runs with AGENTDECOMPILE_PROJECT_PATH and optionally
         AGENTDECOMPILE_PROJECT_NAME, these are sent to the backend so debug-info and
-        open-project use the right .gpr path instead of the backend default (e.g. my_project.gpr).
+        open use the right .gpr path instead of the backend default (e.g. my_project.gpr).
         Enables multiple proxy sessions to target different projects via env.
         """
         path_val: str = os.environ.get("AGENTDECOMPILE_PROJECT_PATH", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_PATH", "").strip() or ""
@@ -934,9 +934,9 @@ class AgentDecompileStdioBridge:
         ``AGENT_DECOMPILE_GHIDRA_SERVER_PORT``,
         ``AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME``,
         ``AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD``, and optionally
-        ``AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY``). This method reads them and calls ``open-project`` on the remote
+        ``AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY``). This method reads them and calls ``open`` on the remote
         backend so that tools like ``list-project-files`` work immediately
-        without requiring a manual ``open-project`` call.
+        without requiring a manual ``open`` call.
         """
         server_host: str = (
             os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()

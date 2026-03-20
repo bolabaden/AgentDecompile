@@ -48,9 +48,9 @@ isProject: false
 ### Type-safety and migration rules
 
 - **Resolve at boundary:** When receiving a tool name from MCP/CLI (str), call `Tool.from_string(name)` once at the boundary; use `Tool | None` (or `Tool`) for the rest of the call path so internal code stays typed.
-- **Prefer enum over string literals:** Use `Tool.XXX.value` (or `.wire_name` if kept) in provider `name=` and in comparisons; avoid literals like `"open-project"` to prevent typos and drift.
+- **Prefer enum over string literals:** Use `Tool.XXX.value` (or `.wire_name` if kept) in provider `name=` and in comparisons; avoid literals like `"open"` to prevent typos and drift.
 - **Data structures:** `_TOOL_PARAMS_STR` / `_merged_params_str` stay str-keyed; only `TOOL_PARAMS` is `dict[Tool, list[str]]`. `ADVERTISED_TOOL_PARAMS` remains str-keyed for ToolRegistry and tool_providers (wire/display). Internal sets use `frozenset[Tool]`; use `Tool` in annotations for params and membership.
-- **Verification (post-implementation):** Grep for string literals that look like tool names (e.g. `'open-project'`, `'get-functions'`) and replace with `Tool.XXX.value` where the intent is a known tool.
+- **Verification (post-implementation):** Grep for string literals that look like tool names (e.g. `'open'`, `'get-functions'`) and replace with `Tool.XXX.value` where the intent is a known tool.
 
 ---
 
@@ -217,7 +217,7 @@ Implementation notes:
 ### Research insights (section 5)
 
 - **Exhaustive migration:** Grep for `get_tool_params`, `is_tool_advertised`, `resolve_tool_name_enum`, `normalize_identifier(Tool`, `to_snake_case(.*tool`, and membership in `_DEFAULT_HIDDEN_TOOLS` / `DISABLED_GUI_ONLY_TOOLS` to find every call site; replace with enum API or thin wrapper as per plan.
-- **Comparison:** Prefer `tool == Tool.OPEN_PROJECT` and `tool in DISABLED_GUI_ONLY_TOOLS` over comparing to raw strings for clarity and type safety; StrEnum/str-Enum still allows `tool == "open-project"` but enum comparisons are clearer.
+- **Comparison:** Prefer `tool == Tool.OPEN_PROJECT` and `tool in DISABLED_GUI_ONLY_TOOLS` over comparing to raw strings for clarity and type safety; StrEnum/str-Enum still allows `tool == "open"` but enum comparisons are clearer.
 - **Tests / derived lists:** When tests or code build lists from tools (e.g. tools with params, curated commands), use `Tool` and properties: e.g. `[t.value for t in Tool if t.params]` or `{t for t in Tool if t in _SOME_SET}` instead of string-keyed derivations.
 
 ---

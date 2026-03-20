@@ -31,6 +31,7 @@ from typing import Any, ClassVar, cast
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import iter_items
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -208,7 +209,7 @@ class GetFunctionToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=Tool.MIGRATE_METADATA.value,
-                description="Bulk propagate function metadata from a source binary to others: runs match-function over all functions in the source. Use when you want to migrate names, tags, comments, prototype, and bookmarks from one binary to one or more target binaries (e.g. different builds). Optional targetProgramPaths; if omitted, targets are discovered from the session. Open a project in the session first (open-project or import-binary).",
+                description="Bulk propagate function metadata from a source binary to others: runs match-function over all functions in the source. Use when you want to migrate names, tags, comments, prototype, and bookmarks from one binary to one or more target binaries (e.g. different builds). Optional targetProgramPaths; if omitted, targets are discovered from the session. Open a project in the session first (open or import-binary).",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -415,7 +416,7 @@ class GetFunctionToolProvider(ToolProvider):
             # Search for functions with a specific tag
             fm = self._get_function_manager(program)
             results = []
-            for func in fm.getFunctions(True):
+            for func in iter_items(fm.getFunctions(True)):
                 tags = list(func.getTags())
                 tag_names = [t.getName() for t in tags]
                 if tag_name and tag_name.lower() in [tn.lower() for tn in tag_names]:
@@ -426,7 +427,7 @@ class GetFunctionToolProvider(ToolProvider):
             # List all known tags
             fm = self._get_function_manager(program)
             all_tags = set()
-            for func in fm.getFunctions(True):
+            for func in iter_items(fm.getFunctions(True)):
                 all_tags.update(t.getName() for t in func.getTags())
             return create_success_response({"action": "list", "tags": sorted(all_tags), "count": len(all_tags)})
 
@@ -509,7 +510,7 @@ class GetFunctionToolProvider(ToolProvider):
             by_caller: dict[str, set[str]] = defaultdict(set)
             by_callee: dict[str, set[str]] = defaultdict(set)
 
-            for func in fm.getFunctions(True):
+            for func in iter_items(fm.getFunctions(True)):
                 # Call graph sets used for similarity: more shared callers/callees => higher match score
                 callers = frozenset(c.getName() for c in func.getCallingFunctions(None))
                 callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
@@ -594,7 +595,7 @@ class GetFunctionToolProvider(ToolProvider):
         """List function identifiers (name or address) from source program for bulk match."""
         fm = self._get_function_manager(program)
         identifiers: list[str] = []
-        for func in fm.getFunctions(include_externals):
+        for func in iter_items(fm.getFunctions(include_externals)):
             name = func.getName() or ""
             addr = str(func.getEntryPoint())
             if name and not (name.startswith("FUN_") and len(name) > 4 and name[4:].replace(".", "").isdigit()):
@@ -624,7 +625,7 @@ class GetFunctionToolProvider(ToolProvider):
         session_id = get_current_mcp_session_id()
         manager = getattr(self, "_manager", None)
         if manager is None:
-            raise ValueError("Cross-program matching requires a session with program resolution. Ensure open-project or import-binary has been used so target programs can be opened.")
+            raise ValueError("Cross-program matching requires a session with program resolution. Ensure open or import-binary has been used so target programs can be opened.")
 
         source_name = source_func.getName()
         source_param_count = source_func.getParameterCount()
