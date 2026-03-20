@@ -83,15 +83,18 @@ def collect_function_call_counts(func: Any) -> dict[str, int]:
 def _get_function_list(fm: Any) -> list[Any]:
     """Return a list of functions from FunctionManager; try multiple strategies for PyGhidra/JPype iterator quirks."""
     count = fm.getFunctionCount() if hasattr(fm, "getFunctionCount") else 0
+    out: list[Any] = []
+
     # Strategy 1: direct Python for-loop (works when Java iterable implements __iter__)
     try:
-        out: list[Any] = []
         for f in fm.getFunctions(True):
             out.append(f)
         if out:
             return out
     except Exception:
         pass
+    out = []
+
     # Strategy 2: iter_items (hasNext/next) for Java Iterator
     try:
         it = fm.getFunctions(True)
@@ -100,7 +103,45 @@ def _get_function_list(fm: Any) -> list[Any]:
             return out
     except Exception:
         pass
+
     if count > 0:
+        # Strategy 2b: consume iterator on Java side via ArrayList (PyGhidra/JPype often break on Java iterators in Python)
+        try:
+            from java.util import ArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+            it = fm.getFunctions(True)
+            arr = ArrayList()
+            while it.hasNext():
+                arr.add(it.next())
+            out = [arr.get(i) for i in range(arr.size())]
+            if out:
+                logger.debug("_get_function_list: collected %d functions via Java ArrayList", len(out))
+                return out
+        except Exception as e:
+            logger.debug("_get_function_list: ArrayList fallback failed: %s", e)
+
+        # Strategy 2c: getFunctions(AddressSetView, forward) over full memory (sometimes different iterator impl)
+        try:
+            program = fm.getProgram() if hasattr(fm, "getProgram") else None
+            if program is not None and hasattr(program, "getMemory"):
+                mem = program.getMemory()
+                if hasattr(mem, "getAddressSet"):
+                    addr_set = mem.getAddressSet()
+                    if addr_set is not None:
+                        it = fm.getFunctions(addr_set, True)
+                        out = list(iter_items(it))
+                        if not out:
+                            from java.util import ArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+                            it2 = fm.getFunctions(addr_set, True)
+                            arr = ArrayList()
+                            while it2.hasNext():
+                                arr.add(it2.next())
+                            out = [arr.get(i) for i in range(arr.size())]
+                        if out:
+                            logger.debug("_get_function_list: collected %d functions via getFunctions(AddressSet)", len(out))
+                            return out
+        except Exception as e:
+            logger.debug("_get_function_list: getFunctions(AddressSet) failed: %s", e)
+
         try:
             out = []
             for f in fm.getFunctions(False):
@@ -121,6 +162,7 @@ def _get_function_list(fm: Any) -> list[Any]:
                 return raw
         except Exception:
             pass
+
         # Strategy 3: getFunctionAt/getFunctionAfter walk when iterators fail (e.g. PyGhidra/JPype)
         try:
             program = fm.getProgram() if hasattr(fm, "getProgram") else None
@@ -144,6 +186,9 @@ def _get_function_list(fm: Any) -> list[Any]:
                         return out
         except Exception as e:
             logger.debug("_get_function_list: getFunctionAfter fallback failed: %s", e)
+
+        if count > 0:
+            logger.warning("_get_function_list: functionCount=%d but all strategies returned empty list", count)
     return []
 
 
