@@ -9,6 +9,7 @@ Uses _collectors.collect_bookmarks for listing. All normalization is in base Too
 from __future__ import annotations
 
 import logging
+import uuid
 
 from typing import Any, ClassVar
 
@@ -16,7 +17,9 @@ from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_bookmarks
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
     n,
 )
@@ -114,13 +117,54 @@ class BookmarkToolProvider(ToolProvider):
             )
 
         # Single bookmark: require address; type/category/comment are optional (defaults: Note, AgentDecompile, "")
-        addr = self._require_address_or_symbol(args)
+        addr_str: str = self._require_address_or_symbol(args)
+        bm_type: str = self._get_str(args, "type") or "Note"
+        category: str = self._get_str(args, "category") or "AgentDecompile"
+        comment: str = self._get_str(args, "comment") or ""
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            assert self.program_info is not None
+            program = self.program_info.program
+            address = self._resolve_address(addr_str)
+            if address is not None:
+                bm_mgr = program.getBookmarkManager()
+                def _def():
+                    return ""
+                for bm in (bm_mgr.getBookmarks(address) or []):
+                    bm_t = getattr(bm, "getType", _def)()
+                    bm_c = getattr(bm, "getCategory", _def)()
+                    if bm_t == bm_type and bm_c == category:
+                        from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                        from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                        conflict_id = str(uuid.uuid4())
+                        conflict_summary = (
+                            "Set bookmark would overwrite existing bookmark at (address, type, category):\n\n"
+                            f"Existing bookmark **{bm_type}** / **{category}** at address."
+                        )
+                        next_step = (
+                            f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                            'To discard, use `resolution` = "skip".'
+                        )
+                        program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                        store_args = dict(args)
+                        store_args["mode"] = "set"
+                        conflict_store_store(
+                            get_current_mcp_session_id(),
+                            conflict_id,
+                            tool=Tool.MANAGE_BOOKMARKS.value,
+                            arguments=store_args,
+                            program_path=str(program_path) if program_path else None,
+                            summary=conflict_summary,
+                        )
+                        return create_conflict_response(conflict_id, Tool.MANAGE_BOOKMARKS.value, conflict_summary, next_step)
+
         result = await self._add_single(
             {
-                "addressorsymbol": addr,
-                "type": self._get_str(args, "type"),
-                "category": self._get_str(args, "category"),
-                "comment": self._get_str(args, "comment"),
+                "addressorsymbol": addr_str,
+                "type": bm_type,
+                "category": category,
+                "comment": comment,
             },
         )
         return create_success_response(result)

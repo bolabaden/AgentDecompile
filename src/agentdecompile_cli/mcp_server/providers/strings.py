@@ -229,6 +229,41 @@ class StringToolProvider(ToolProvider):
 
         return strings
 
+    def _attach_references_to_string_results(
+        self, strings: list[dict[str, Any]], ref_limit: int = 25
+    ) -> None:
+        """Attach referencesTo (get-references style) to each string result."""
+        if not strings or not self.program_info:
+            return
+        try:
+            program: Any = self.program_info.program
+            ref_mgr: Any = program.getReferenceManager()
+            fm = self._get_function_manager(program)
+            for s in strings:
+                try:
+                    addr: Any = self._resolve_address(s.get("address"), program=program)
+                    if addr is None:
+                        continue
+                    refs_to: list[dict[str, Any]] = []
+                    for ref in ref_mgr.getReferencesTo(addr):
+                        if len(refs_to) >= ref_limit:
+                            break
+                        from_addr = ref.getFromAddress()
+                        func = fm.getFunctionContaining(from_addr)
+                        refs_to.append(
+                            {
+                                "fromAddress": str(from_addr),
+                                "toAddress": str(ref.getToAddress()),
+                                "type": str(ref.getReferenceType()),
+                                "function": func.getName() if func else None,
+                            }
+                        )
+                    s["referencesTo"] = refs_to
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     async def _handle_list(
         self,
         args: dict[str, Any],
@@ -341,6 +376,7 @@ class StringToolProvider(ToolProvider):
                     strings = [s for s in strings if pat.search(s.get("value", ""))]
                     total = len(strings)
                     strings, has_more = self._paginate_results(strings, offset, max_results)
+                    self._attach_references_to_string_results(strings)
                     return self._create_paginated_response(
                         strings, offset, max_results, total=total, mode=mode, query=pattern
                     )
@@ -363,6 +399,7 @@ class StringToolProvider(ToolProvider):
             total = len(scored)
             strings = [s for _, s in scored]
             strings, has_more = self._paginate_results(strings, offset, max_results)
+            self._attach_references_to_string_results(strings)
             return self._create_paginated_response(
                 strings, offset, max_results, total=total, mode=mode, query=pattern
             )
@@ -405,6 +442,7 @@ class StringToolProvider(ToolProvider):
             except Exception:
                 pass
 
+        self._attach_references_to_string_results(strings)
         extra: dict[str, Any] = {}
         if pattern:
             extra["query"] = pattern

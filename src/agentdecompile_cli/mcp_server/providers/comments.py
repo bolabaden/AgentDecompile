@@ -9,6 +9,7 @@ set/write at an address; get at address; search globally or search_decomp
 from __future__ import annotations
 
 import logging
+import uuid
 
 from typing import Any
 
@@ -16,7 +17,9 @@ from mcp import types
 
 from agentdecompile_cli.mcp_server.providers._collectors import collect_comments
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
     n,
 )
@@ -124,9 +127,39 @@ class CommentToolProvider(ToolProvider):
         ctype = self._get_str(args, "type", "commenttype", default="eol")
 
         addr = self._resolve_address(addr_str, program=program)
+        comment_type_code = self._resolve_comment_type(ctype)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            existing = listing.getComment(addr, comment_type_code)
+            if existing is not None and str(existing).strip() and str(existing).strip() != text.strip():
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = (
+                    "Set comment would overwrite existing comment at (address, type):\n\n"
+                    "```diff\n"
+                    f"- {existing}\n"
+                    f"+ {text}\n"
+                    "```"
+                )
+                next_step = (
+                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
+                    'To discard, use `resolution` = "skip".'
+                )
+                program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_COMMENTS.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_COMMENTS.value, conflict_summary, next_step)
 
         def _set_comment() -> None:
-            listing.setComment(addr, self._resolve_comment_type(ctype), text)
+            listing.setComment(addr, comment_type_code, text)
 
         self._run_program_transaction(program, "set-comment", _set_comment)
         return create_success_response({"action": "set", "address": str(addr), "type": ctype, "comment": text, "success": True})

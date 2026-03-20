@@ -32,7 +32,11 @@ To run in **proxy mode** (forward to a remote MCP backend), use **agentdecompile
 - **`AGENTDECOMPILE_AUTO_MATCH_PROPAGATE`**: When set to `1` or `true`, after function-modifying tools (`rename-function`, `manage-function` with rename/set_prototype/set_return_type/set_calling_convention, `manage-comments` with set/post/eol/etc., `manage-function-tags` with add/remove), the server automatically runs match-function for the modified function to configured target binaries, propagating names, tags, all comment types, prototype, and bookmarks, and checks in target programs (minimizing lock time when it checked them out). For **local .gpr projects**, propagation runs in a **child process** (ProcessPoolExecutor, spawn) so the main MCP process is not blocked; for shared-server or other sessions it runs in-process. **HTTP equivalent:** send header `X-AgentDecompile-Auto-Match-Propagate` with value `1`, `true`, or `yes` (per-request override).
 - **`AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS`**: Optional comma-separated list of target program paths for auto propagation. If unset, other open programs in the session are used as targets. **HTTP equivalent:** `X-AgentDecompile-Auto-Match-Target-Paths` (comma-separated paths; per-request override).
 
-**Checkin all**: Call **checkin-program** with no `programPath` (or omit the parameter) to check in every open program in the session that is checked out and can be checked in, so changes are not left locked.
+**Auto check-in** (optional):
+
+- **`AGENTDECOMPILE_AUTO_CHECKIN`**: When set to `1` or `true`, after any modifying tool succeeds (e.g. `manage-symbols` rename/create_label, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set, `manage-function-tags` add/remove, `match-function`), the server automatically runs **checkin-program** (no path = check in all open programs that can be checked in), saving changes to the project. When this is set, **checkin-program** is not advertised, since check-ins happen automatically.
+
+**Checkin all** (when auto-checkin is off): Call **checkin-program** with no `programPath` (or omit the parameter) to check in every open program in the session that is checked out and can be checked in, so changes are not left locked.
 
 ### Running the MCP server locally
 
@@ -124,6 +128,13 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
 - CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used.
 - When the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations (e.g. open-project then checkout-program in two runs) can reuse the same session without the CLI persisting a session id; for multi-user or multi-session use, send distinct session ids.
+- get-function with an address returns the function that contains that address (getFunctionContaining/getFunctionAt), not the callee; IAT/thunk resolution is not used for get-function address resolution.
+- get-references and list-cross-references accept addressOrSymbol or importName; both thunk and IAT addresses are supported; for targets in .rsrc, LoadStringA/LoadStringW call sites are included as indirect refs.
+- Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
+
+## Modification conflicts (two-step flow)
+
+Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set) may return a **conflict** when the change would overwrite existing custom data. In that case, the response includes a `conflictId` and a udiff-style summary. Use **`resolve-modification-conflict`** with that `conflictId` and `resolution=overwrite` to apply the change or `resolution=skip` to discard. Do not retry the modifying tool with the same args to force overwrite—only `resolve-modification-conflict` completes the flow.
 
 ## MCP server debugging & self-healing
 
