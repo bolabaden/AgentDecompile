@@ -40,6 +40,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The active program project."},
                         "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name to analyze."},
                         "target": {"type": "string", "description": "Alternative parameter for addressOrSymbol."},
+                        "importName": {"type": "string", "description": "Import or external symbol name (e.g. RegOpenKeyExA). Alternative to addressOrSymbol when the target is an external."},
                         "mode": {
                             "type": "string",
                             "description": "Which direction the cross-references should be tracked. 'to' means finding who refers to this address. 'from' means finding what this address refers out to.",
@@ -61,6 +62,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The active program project."},
                         "addressOrSymbol": {"type": "string", "description": "The target address to investigate."},
                         "target": {"type": "string", "description": "Alternative parameter for address."},
+                        "importName": {"type": "string", "description": "Import or external symbol name. Alternative to addressOrSymbol."},
                         "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
@@ -77,13 +79,15 @@ class CrossReferencesToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         self._require_program()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "target", "symbol", name="addressOrSymbol")
+        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "target", "symbol", "importname", name="addressOrSymbol")
         mode = self._get_str(args, "mode", "direction", default="to")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         addr = self._resolve_address(addr_str, program=program)
+        if addr is None:
+            raise ValueError(f"Could not resolve address or symbol: {addr_str!r}. Check format (e.g. 0x401000) and that the program is loaded.")
         ref_mgr = program.getReferenceManager()
         fm = self._get_function_manager(program)
 
@@ -111,16 +115,10 @@ class CrossReferencesToolProvider(ToolProvider):
         )
 
     async def _handle_to(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
-        # Try GhidraTools first
-        if self.ghidra_tools:
-            try:
-                results = self.ghidra_tools.list_cross_references(addr_str)
-                paginated, has_more = self._paginate_results(results, offset, max_results)
-                return self._create_paginated_response(paginated, offset, max_results, total=len(results), mode="to", target=addr_str)
-            except Exception:
-                pass
-
-        refs_to = []
+        # Use ref_mgr with already-resolved addr so raw addresses (e.g. 0x004a2a62) and
+        # symbol names both work; avoid ghidra_tools.list_cross_references(addr_str)
+        # which looks up by symbol name only and fails for addresses with no symbol.
+        refs_to: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesTo(addr):
             if len(refs_to) >= max_results:
                 break
@@ -137,7 +135,7 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "to", "target": str(addr), "references": refs_to, "count": len(refs_to)})
 
     async def _handle_from(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
-        refs_from = []
+        refs_from: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesFrom(addr):
             if len(refs_from) >= max_results:
                 break
@@ -151,16 +149,8 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "from", "target": str(addr), "references": refs_from, "count": len(refs_from)})
 
     async def _handle_both(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
-        # Try GhidraTools first
-        if self.ghidra_tools:
-            try:
-                results = self.ghidra_tools.list_cross_references(addr_str)
-                paginated, has_more = self._paginate_results(results, offset, max_results)
-                return self._create_paginated_response(paginated, offset, max_results, total=len(results), mode="both", target=addr_str)
-            except Exception:
-                pass
-
-        refs_to = []
+        # Use ref_mgr with already-resolved addr (see _handle_to).
+        refs_to: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesTo(addr):
             if len(refs_to) >= max_results:
                 break
@@ -175,7 +165,7 @@ class CrossReferencesToolProvider(ToolProvider):
                 },
             )
 
-        refs_from = []
+        refs_from: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesFrom(addr):
             if len(refs_from) >= max_results:
                 break

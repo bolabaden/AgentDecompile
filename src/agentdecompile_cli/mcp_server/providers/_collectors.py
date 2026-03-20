@@ -80,25 +80,56 @@ def collect_function_call_counts(func: Any) -> dict[str, int]:
     return {"callerCount": caller_count, "calleeCount": callee_count}
 
 
+def _get_function_list(fm: Any) -> list[Any]:
+    """Return a list of functions from FunctionManager; try multiple strategies for PyGhidra/JPype iterator quirks."""
+    count = fm.getFunctionCount() if hasattr(fm, "getFunctionCount") else 0
+    # Strategy 1: direct Python for-loop (works when Java iterable implements __iter__)
+    try:
+        out: list[Any] = []
+        for f in fm.getFunctions(True):
+            out.append(f)
+        if out:
+            return out
+    except Exception:
+        pass
+    # Strategy 2: iter_items (hasNext/next)
+    try:
+        out = list(iter_items(fm.getFunctions(True)))
+        if out:
+            return out
+    except Exception:
+        pass
+    if count > 0:
+        try:
+            out = []
+            for f in fm.getFunctions(False):
+                out.append(f)
+            if out:
+                return out
+        except Exception:
+            pass
+        try:
+            out = list(iter_items(fm.getFunctions(False)))
+            if out:
+                return out
+        except Exception:
+            pass
+        try:
+            raw = list(fm.getFunctions(True))
+            if raw:
+                return raw
+        except Exception:
+            pass
+    return []
+
+
 def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Single pass over all functions: name, address, signature, params, comments, tags, caller/callee counts. Used by list-functions and others."""
     fm = program.getFunctionManager()
     results: list[dict[str, Any]] = []
-    func_iter = iter_items(fm.getFunctions(True))
-    # Some PyGhidra/VM setups do not yield from getFunctions(True); try getFunctions(False) if count says we have functions.
-    try:
-        first_func = next(func_iter, None)
-    except Exception:
-        first_func = None
-    if first_func is None and fm.getFunctionCount() > 0:
-        func_iter = iter_items(fm.getFunctions(False))
-    else:
-        def _restore_iter():
-            yield first_func
-            yield from func_iter
-        func_iter = _restore_iter() if first_func is not None else func_iter
+    func_list = _get_function_list(fm)
 
-    for func in func_iter:
+    for func in func_list:
         if not hasattr(func, "getName"):
             continue
         params = []

@@ -55,7 +55,7 @@ class ProjectManager:
         self.projects_dir.mkdir(parents=True, exist_ok=True)
 
         # Open/create the Ghidra project
-        self.open_project()
+        self.open()
 
         self._initialized = True
 
@@ -93,7 +93,7 @@ class ProjectManager:
 
         return project_name, project_path
 
-    def open_project(self) -> GhidraProject:
+    def open(self) -> GhidraProject:
         """Open or create Ghidra project using PyGhidra.
 
         Returns:

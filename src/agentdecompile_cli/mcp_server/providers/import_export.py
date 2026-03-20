@@ -36,6 +36,26 @@ from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
+# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null (e.g. Windows Resource Reference Analyzer)
+_HEADLESS_UNSAFE_ANALYZERS = (
+    "Windows Resource Reference Analyzer",
+)
+
+
+def _disable_headless_unsafe_analyzers(program: Any) -> None:
+    """Disable analyzers that crash in headless/PyGhidra (no script bundle host)."""
+    try:
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingModuleSource]
+
+        opts = program.getOptions(Program.ANALYSIS_PROPERTIES)
+        for name in _HEADLESS_UNSAFE_ANALYZERS:
+            try:
+                opts.setBoolean(name, False)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 def _normalize_import_destination_folder(args: dict[str, Any]) -> str:
     """Ghidra folder pathname for saveAs (e.g. '/' or '/bin')."""
@@ -899,6 +919,9 @@ class ImportExportToolProvider(ToolProvider):
                     },
                 )
 
+            # Disable analyzers that NPE in headless (no GhidraScriptUtil.bundleHost)
+            _disable_headless_unsafe_analyzers(program)
+
             mgr = AutoAnalysisManager.getAnalysisManager(program)
 
             def _run_auto_analysis() -> None:
@@ -1242,7 +1265,37 @@ class ImportExportToolProvider(ToolProvider):
                 )
 
         try:
-            if not domain_file.isVersioned():
+            # Check if this is a shared repository file before validating isVersioned()
+            # Files from shared repositories may not be marked as versioned locally if they
+            # were created via createFile() fallback, but they are still version-controlled in the repo.
+            # When in shared-server mode and path looks like a repo path, treat as versioned
+            # so we don't depend on getItem() (which may fail across proxy/session boundaries).
+            is_shared_repo_file = False
+            if program_path and (program_path.startswith("/") or "/" in program_path):
+                session_id = get_current_mcp_session_id()
+                session = SESSION_CONTEXTS.get_or_create(session_id)
+                handle = session.project_handle if isinstance(session.project_handle, dict) else None
+                if handle and n(str(handle.get("mode", ""))) == "sharedserver":
+                    # Confirm file in repo when we have adapter; otherwise trust shared-server + path shape
+                    repo_adapter = handle.get("repository_adapter")
+                    if repo_adapter is not None:
+                        parts = program_path.rsplit("/", 1)
+                        folder_path = parts[0] if len(parts) == 2 else "/"
+                        item_name = parts[1] if len(parts) == 2 else parts[0]
+                        try:
+                            repo_item = repo_adapter.getItem(folder_path, item_name)
+                            if repo_item is not None:
+                                is_shared_repo_file = True
+                        except Exception:
+                            pass
+                    # If no adapter (e.g. proxy) but we're in shared-server mode and path is repo-shaped, treat as shared
+                    if not is_shared_repo_file and (handle.get("repository_name") or handle.get("server_host")):
+                        is_shared_repo_file = True
+
+            # Only check isVersioned() for non-repository files
+            # Shared repository files are version-controlled even if the local DomainFile
+            # isn't marked as versioned (e.g., when created via createFile() fallback)
+            if not is_shared_repo_file and not domain_file.isVersioned():
                 return create_success_response(
                     {
                         "action": "checkout",

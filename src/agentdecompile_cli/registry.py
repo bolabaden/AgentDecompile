@@ -147,7 +147,7 @@ class Tool(str, Enum):
     EXECUTE_SCRIPT = "execute-script"
     OPEN_ALL_PROGRAMS_IN_CODE_BROWSER = "open-all-programs-in-code-browser"
     OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
-    OPEN_PROJECT = "open"
+    OPEN = "open"
     READ_BYTES = "read-bytes"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
@@ -414,7 +414,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.MIGRATE_METADATA.value: _params("programPath", "targetProgramPaths", "minSimilarity", "limit", "includeExternals", "propagateNames", "propagateTags", "propagateComments", "propagatePrototype", "propagateBookmarks"),
     Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
     Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
-    Tool.OPEN_PROJECT.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
+    Tool.OPEN.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
     Tool.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
     Tool.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
@@ -438,8 +438,8 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
-    "open": Tool.OPEN_PROJECT.value,
-    "switch-project": Tool.OPEN_PROJECT.value,  # folded into open
+    "open": Tool.OPEN.value,
+    "switch-project": Tool.OPEN.value,  # folded into open
     "download-shared-repository": Tool.SYNC_PROJECT.value,
     "sync-shared-repository": Tool.SYNC_PROJECT.value,
     "sync-shared-project": Tool.SYNC_PROJECT.value,
@@ -812,7 +812,7 @@ def _add_builtin_param_aliases() -> None:
         _add(Tool.IMPORT_BINARY.value, alias_name, canonical_param, replace=True)
 
     # Open/shared-server argument harmonization.
-    for tool_name in (Tool.OPEN_PROJECT.value,):
+    for tool_name in (Tool.OPEN.value,):
         _add(tool_name, "isShared", "shared")
         _add(tool_name, "sharedMode", "shared")
         _add(tool_name, "shared_mode", "shared")

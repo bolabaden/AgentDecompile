@@ -801,7 +801,7 @@ class TestToolSchemaValidation:
     def test_open_project_schema_has_path(self, session):
         """open/open must advertise 'path' parameter."""
         tools = session.list_tools()
-        open_tools = [t for t in tools if t["name"].replace("_", "") in ("open", "openproject")]
+        open_tools = [t for t in tools if t["name"].replace("_", "") in ("open", "open")]
         assert len(open_tools) >= 1
         schema = open_tools[0]["inputSchema"]
         props = schema.get("properties", {})

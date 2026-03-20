@@ -19,8 +19,8 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_function_comments,
     collect_function_tags,
 )
+from agentdecompile_cli.mcp_server.constants import DEFAULT_TIMEOUT_SECONDS  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.tool_providers import (
-    DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
     create_success_response,
 )
@@ -125,7 +125,21 @@ class GetFunctionAioToolProvider(ToolProvider):
 
         target = self._resolve_function(func_id, program=program)
         if target is None:
-            raise ValueError(f"Function not found: {func_id}")
+            program_path = (
+                getattr(self.program_info, "file_path", None)
+                or getattr(self.program_info, "path", None)
+            )
+            if not program_path and program is not None:
+                try:
+                    df = program.getDomainFile()
+                    if df is not None:
+                        program_path = str(df.getPathname())
+                except Exception:
+                    pass
+            program_path = str(program_path) if program_path else "current program"
+            msg = f"Function not found: {func_id} (program: {program_path}). Use list-functions with this program to see available functions and addresses."
+            msg += " If you requested a common base address (e.g. 0x401000), the executable entry point may be at a different address; use get-current-program or list-functions to find it."
+            raise ValueError(msg)
 
         entry = target.getEntryPoint()
         body = target.getBody()

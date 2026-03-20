@@ -34,7 +34,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from mcp import types  # pyright: ignore[reportMissingImports]
 
 from agentdecompile_cli.launcher import ProgramInfo  # pyright: ignore[reportMissingImports]
-from agentdecompile_cli.mcp_server.providers._collectors import iter_items  # pyright: ignore[reportMissingImports]
+
+# iter_items imported lazily in _resolve_function to avoid circular import
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[reportMissingImports]
     SESSION_CONTEXTS,
@@ -57,6 +58,8 @@ from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImport
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from ghidra.program.model.address import Address
+
     from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
         Tool,
     )
@@ -72,7 +75,7 @@ DEFAULT_LARGE_PAGE_LIMIT = 1000
 DEFAULT_MAX_INSTRUCTIONS = 2000000
 DEFAULT_SAMPLES_PER_CONSTANT = 5
 DEFAULT_MAX_ENTRIES = 200
-DEFAULT_TIMEOUT_SECONDS = 60
+# DEFAULT_TIMEOUT_SECONDS is imported from constants.py above to avoid circular imports
 
 # Auto match-function propagation (env-driven). When the user renames/sets prototype/tags/comments
 # on a function, we can optionally run match-function to other binaries; args must not be re-entered.
@@ -1030,7 +1033,7 @@ class ToolProvider:
             >>> results = all_results[offset : offset + limit]
         """
         offset = self._get_int(args, "offset", "startindex", default=0)
-        limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default= DEFAULT_PAGE_LIMIT if default_limit is None else default_limit)
+        limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=DEFAULT_PAGE_LIMIT if default_limit is None else default_limit)
         return offset, limit
 
     def _dispatch_handler(self, *args, **kwargs) -> Any:
@@ -1139,7 +1142,8 @@ class ToolProvider:
     ) -> Any | None:
         """Resolve a function by name, entrypoint string, or address/symbol.
 
-        Tries in order: exact name match, exact entry point string, then AddressUtil
+        Tries in order: exact name match, exact entry point string (including
+        address equality so 0x00401000 matches 00401000), then AddressUtil
         (hex address or symbol name) and getFunctionContaining(addr).
         """
         if not function_identifier:
@@ -1150,17 +1154,57 @@ class ToolProvider:
             return None
 
         fm = target_program.getFunctionManager()
-        for func in iter_items(fm.getFunctions(include_externals)):
-            if func.getName() == function_identifier or str(func.getEntryPoint()) == function_identifier:
+        # Lazy import to avoid circular dependency with providers/__init__.py
+        from agentdecompile_cli.mcp_server.providers._collectors import iter_items  # pyright: ignore[reportMissingImports]
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
+
+        # When identifier looks like a hex address, resolve by address first so we don't depend on iterator.
+        s = (function_identifier or "").strip().removeprefix("0x").removeprefix("0X")
+        if s and len(s) <= 10 and all(c in "0123456789aAbBcCdDeEfF" for c in s):
+            try:
+                addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
+                if addr is not None:
+                    f = fm.getFunctionContaining(addr)
+                    if f is None:
+                        f = fm.getFunctionAt(addr)
+                    if f is not None:
+                        return f
+            except Exception:
+                pass
+
+        # Parse address early so we can match by address equality (0x00401000 vs 00401000)
+        parsed_addr: Address | None = AddressUtil.parse_address(target_program, function_identifier)
+
+        def _entry_matches(func: Any) -> bool:
+            if func.getName() == function_identifier:
+                return True
+            if str(func.getEntryPoint()) == function_identifier:
+                return True
+            if parsed_addr is not None:
+                ep = func.getEntryPoint()
+                if ep is not None and hasattr(parsed_addr, "equals") and parsed_addr.equals(ep):
+                    return True
+            return False
+
+        def _iter_functions():
+            for func in iter_items(fm.getFunctions(include_externals)):
+                yield func
+            if fm.getFunctionCount() > 0:
+                for func in iter_items(fm.getFunctions(False)):
+                    yield func
+            # PyGhidra iterator may not yield; try materializing.
+            if fm.getFunctionCount() > 0:
+                try:
+                    for func in list(fm.getFunctions(True)):
+                        yield func
+                except Exception:
+                    pass
+
+        for func in _iter_functions():
+            if _entry_matches(func):
                 return func
-        if fm.getFunctionCount() > 0:
-            for func in iter_items(fm.getFunctions(False)):
-                if func.getName() == function_identifier or str(func.getEntryPoint()) == function_identifier:
-                    return func
 
         try:
-            from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
-
             addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
             if addr is not None:
                 f = fm.getFunctionContaining(addr)
@@ -1558,7 +1602,13 @@ class ToolProviderManager:
             pass
         if not host:
             host = (
-                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENTDECOMPILE_GHIDRA_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", "")))))
+                os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+                    os.getenv(
+                        "AGENT_DECOMPILE_SERVER_HOST",
+                        os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENTDECOMPILE_GHIDRA_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))),
+                    ),
+                )
             ).strip()
         if not host:
             return
@@ -1568,11 +1618,17 @@ class ToolProviderManager:
             ).strip() or "13100"
         if not username:
             username = (
-                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_GHIDRA_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))))
+                os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                    os.getenv("AGENTDECOMPILE_GHIDRA_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))),
+                )
             ).strip()
         if not password:
             password = (
-                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_GHIDRA_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))))
+                os.getenv(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                    os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_GHIDRA_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))),
+                )
             ).strip()
         if not repo:
             repo = (

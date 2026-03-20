@@ -435,30 +435,64 @@ class GhidraTools:
             imports.append(ImportInfo(name=symbol.getName(), library=str(symbol.getParentNamespace())))
         return imports[offset : limit + offset]
 
-    @handle_exceptions
-    def list_cross_references(self, name_or_address: str) -> list[CrossReferenceInfo]:
-        """Finds and lists all cross-references (x-refs) to a given function, symbol,
-        or address within a binary.
-        """
-        # Use the unified resolver
-        sym: GhidraSymbol = self.find_symbol(name_or_address)
-        addr: GhidraAddress = sym.getAddress()
-
+    def _refs_to_cross_reference_infos(self, references: Any) -> list[CrossReferenceInfo]:
+        """Build CrossReferenceInfo list from a reference iterator; deduplicates by from_address."""
+        seen: set[str] = set()
         cross_references: list[CrossReferenceInfo] = []
-        rm: GhidraReferenceManager = self.program.getReferenceManager()
-        references = rm.getReferencesTo(addr)
-
+        fm = self.program.getFunctionManager()
         for ref in references:
-            from_func = self.program.getFunctionManager().getFunctionContaining(ref.getFromAddress())
+            from_addr_str = str(ref.getFromAddress())
+            if from_addr_str in seen:
+                continue
+            seen.add(from_addr_str)
+            from_func = fm.getFunctionContaining(ref.getFromAddress())
             cross_references.append(
                 CrossReferenceInfo(
                     function_name=from_func.getName() if from_func else None,
-                    from_address=str(ref.getFromAddress()),
+                    from_address=from_addr_str,
                     to_address=str(ref.getToAddress()),
                     reference_type=str(ref.getReferenceType()),
                     is_primary=bool(ref.isPrimary()) if hasattr(ref, "isPrimary") else False,
                 ),
             )
+        return cross_references
+
+    @handle_exceptions
+    def list_cross_references(self, name_or_address: str) -> list[CrossReferenceInfo]:
+        """Finds and lists all cross-references (x-refs) to a given function, symbol,
+        or address within a binary. For ambiguous names (e.g. imports in multiple
+        namespaces), aggregates refs from all matching symbols.
+        """
+        rm: GhidraReferenceManager = self.program.getReferenceManager()
+        try:
+            sym: GhidraSymbol = self.find_symbol(name_or_address)
+            return self._refs_to_cross_reference_infos(rm.getReferencesTo(sym.getAddress()))
+        except ValueError as e:
+            if "Ambiguous" not in str(e):
+                raise
+        # Ambiguous: aggregate refs from all matching symbols (e.g. CreateFileA in multiple DLLs)
+        symbols: list[GhidraSymbol] = self.find_symbols(name_or_address)
+        if not symbols:
+            raise ValueError(f"Symbol '{name_or_address}' not found.")
+        cross_references: list[CrossReferenceInfo] = []
+        seen: set[str] = set()
+        fm = self.program.getFunctionManager()
+        for sym in symbols:
+            for ref in rm.getReferencesTo(sym.getAddress()):
+                from_addr_str = str(ref.getFromAddress())
+                if from_addr_str in seen:
+                    continue
+                seen.add(from_addr_str)
+                from_func = fm.getFunctionContaining(ref.getFromAddress())
+                cross_references.append(
+                    CrossReferenceInfo(
+                        function_name=from_func.getName() if from_func else None,
+                        from_address=from_addr_str,
+                        to_address=str(ref.getToAddress()),
+                        reference_type=str(ref.getReferenceType()),
+                        is_primary=bool(ref.isPrimary()) if hasattr(ref, "isPrimary") else False,
+                    ),
+                )
         return cross_references
 
     def _search_code_literal(

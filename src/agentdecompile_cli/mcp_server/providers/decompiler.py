@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.constants import DEFAULT_TIMEOUT_SECONDS  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.tool_providers import (
-    DEFAULT_TIMEOUT_SECONDS,
     ToolProvider,
     create_success_response,
 )

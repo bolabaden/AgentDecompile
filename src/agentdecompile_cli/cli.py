@@ -549,7 +549,7 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         open_payload = _build_shared_open_payload(ctx)
         if not open_payload:
             return None
-        open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+        open_result = await client.call_tool(Tool.OPEN.value, open_payload)
         if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
             return open_result
         return None
@@ -563,7 +563,7 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         open_payload = _build_shared_open_payload(ctx)
         if not open_payload:
             return None
-        open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+        open_result = await client.call_tool(Tool.OPEN.value, open_payload)
         if _get_error_result_message(open_result):
             return open_result
         return None  # proceed with match-function call
@@ -578,7 +578,7 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
             open_payload = _build_shared_open_payload(ctx)
             if not open_payload:
                 return None
-            open_result = await client.call_tool(Tool.OPEN_PROJECT.value, open_payload)
+            open_result = await client.call_tool(Tool.OPEN.value, open_payload)
             if _get_error_result_message(open_result):
                 return open_result
         return None
@@ -613,7 +613,7 @@ async def _maybe_preopen_requested_program(
 async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> tuple[bool, Any | None]:
     """Try to open a program with the given payload."""
     try:
-        open_result = await client.call_tool(Tool.OPEN_PROJECT.value, {**open_payload, "format": "json"})
+        open_result = await client.call_tool(Tool.OPEN.value, {**open_payload, "format": "json"})
         if _get_error_result_message(open_result):
             return False, open_result
     except Exception:
@@ -1184,7 +1184,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             # Remove None values and format arguments
             args = {k: v for k, v in kwargs.items() if v is not None}
             # For open, merge global Ghidra server options so --ghidra-server-username etc. are sent
-            if _tool_name == Tool.OPEN_PROJECT.value:
+            if _tool_name == Tool.OPEN.value:
                 opts = _get_opts(ctx)
                 if not args.get("serverUsername") and not args.get("server_username"):
                     v = opts.get("ghidra_server_username") or opts.get("server_username")
@@ -1773,7 +1773,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # Open the cached program
                     await _call_raw(
                         ctx,
-                        Tool.OPEN_PROJECT.value,
+                        Tool.OPEN.value,
                         {"path": cached_prog, "local": True},
                     )
                     # Retry resource read
@@ -2659,7 +2659,7 @@ def open_cmd(
         payload["serverPort"] = int(server_port)
     if server_repository is not None and str(server_repository).strip():
         payload["repositoryName"] = str(server_repository).strip()
-    _run_async(_call(ctx, Tool.OPEN_PROJECT.value, **payload))
+    _run_async(_call(ctx, Tool.OPEN.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3892,7 +3892,7 @@ def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
     _run_async(
         _call(
             ctx,
-            Tool.OPEN_PROJECT.value,
+            Tool.OPEN.value,
             path=resolved_path,
             analyzeAfterImport=not no_analyze,
         ),
@@ -4127,7 +4127,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                     resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(name))
                     prepared_arguments = tool_registry.parse_arguments(prepared_arguments, resolved_name)
                 # For open, merge global Ghidra server options so tool-seq sends credentials
-                if tool_registry.canonicalize_tool_name(name) == tool_registry.canonicalize_tool_name(Tool.OPEN_PROJECT.value):
+                if tool_registry.canonicalize_tool_name(name) == tool_registry.canonicalize_tool_name(Tool.OPEN.value):
                     opts = _get_opts(ctx)
                     # Ensure we have root/group opts (tool-seq runs as subcommand; ctx.obj may be unset)
                     if not opts and ctx.parent and isinstance(getattr(ctx.parent, "obj", None), dict):
