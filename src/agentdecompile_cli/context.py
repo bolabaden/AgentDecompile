@@ -1,8 +1,7 @@
-"""Compatibility shim for Ghidra project context (ProgramInfo, PyGhidraContext).
+"""Ghidra project context (ProgramInfo, PyGhidraContext).
 
-This module is mirrored in launcher.py as the primary implementation. It is kept
-here so that existing imports like ``from agentdecompile_cli.context import PyGhidraContext``
-continue to work. New code should prefer ``from agentdecompile_cli.launcher import ...``.
+``ProgramInfo`` is defined only in this module. ``launcher`` re-exports it for
+call sites that import from the merged launcher entrypoint.
 
 What lives here:
   - ProgramInfo: Dataclass holding a loaded program, its FlatProgramAPI, decompiler,
@@ -10,6 +9,9 @@ What lives here:
   - PyGhidraContext: Manages a Ghidra project (create/open), program import/analysis,
     symbol setup, GDT application, and Chroma semantic collections. Used by the
     headless analysis workflow; the MCP server uses ProjectManager + launcher instead.
+
+A parallel ``PyGhidraContext`` implementation also exists in ``launcher.py`` for
+the MCP/launcher stack; keep behavior aligned when changing either copy.
 """
 
 from __future__ import annotations
@@ -28,28 +30,31 @@ from typing import TYPE_CHECKING, Any
 try:
     import chromadb  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
+    from chromadb.api import ClientAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
     from chromadb.config import Settings  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from chromadb.api.models.Collection import Collection  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 except Exception:
-    chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment]
+    if not TYPE_CHECKING:
+        chromadb = None
+        Settings = None
 
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface,
         DecompiledFunction,
     )
-    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        DomainFile,  # noqa: TC004
+    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DomainFile,
         DomainFolder,
     )
-    from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function,
-        Program,  # noqa: TC004
+        Program,
     )
 
 # Configure logging
@@ -69,8 +74,8 @@ class ProgramInfo:
     ghidra_analysis_complete: bool
     file_path: Path | None = None
     load_time: float | None = None
-    code_collection: Any | None = None
-    strings_collection: Any | None = None
+    code_collection: Collection | None = None
+    strings_collection: Collection | None = None
 
     @property
     def analysis_complete(self) -> bool:
@@ -132,9 +137,9 @@ class PyGhidraContext:
         self.programs: dict[str, ProgramInfo] = {}
         self._init_project_programs()
 
-        self.agentdecompile_dir = self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
+        self.agentdecompile_dir: Path = self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
 
-        self.chroma_client: Any | None = None
+        self.chroma_client: ClientAPI | None = None
         if chromadb is not None and Settings is not None:
             chromadb_path: Path = self.agentdecompile_dir / "chromadb"
             chromadb_path.mkdir(parents=True, exist_ok=True)
@@ -190,8 +195,8 @@ class PyGhidraContext:
         Returns:
             The Ghidra project object.
         """
-        from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.framework.model import ProjectLocator  # pyright: ignore[reportMissingModuleSource]
 
         # For standard Ghidra projects, use directory containing .gpr file
         project_dir: Path = self.project_path
@@ -531,7 +536,7 @@ class PyGhidraContext:
         return program_info
 
     def _init_program_info(self, program: Program | None) -> ProgramInfo | None:
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
+        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         if program is None:
             logger.error("Program is None")
@@ -593,7 +598,7 @@ class PyGhidraContext:
                 try:
                     if i % 10 == 0:
                         logger.debug(f"Decompiling {i}/{len(functions)}")
-                    decompiled: DecompiledFunction = tools.decompile_function(func)
+                    decompiled: DecompiledFunction = tools.decompile_function(func)  # pyright: ignore[reportAssignmentType]
                     decompiles.append(decompiled.code)
                     ids.append(decompiled.name)
                     metadatas.append(
@@ -626,6 +631,7 @@ class PyGhidraContext:
 
         collection_name: str = f"{program_info.name}_strings"
         logger.info(f"Initializing Chroma strings collection for {program_info.name}")
+        strings_collection: Collection | None = None
         try:
             strings_collection = self.chroma_client.get_collection(name=collection_name)
             logger.info("Collection '%s' exists; skipping strings ingest.", collection_name)
@@ -634,7 +640,7 @@ class PyGhidraContext:
             logger.info("Creating new strings collection '%s'", collection_name)
             tools = GhidraTools(program_info)
 
-            strings: list[String] = tools.get_all_strings()
+            strings: list[Any] = tools.get_all_strings()
             metadatas: list[dict[str, Any]] = [{"address": str(s.address)} for s in strings]
             ids: list[str] = [str(s.address) for s in strings]
             strings_values: list[str] = [s.value for s in strings]
@@ -783,21 +789,26 @@ class PyGhidraContext:
         force_analysis: bool = False,
         verbose_analysis: bool = False,
     ):
-        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports]
-        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports]
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
-        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
+        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
-        # Import symbol utilities from ghidrecomp
-        from agentdecompile_cli.ghidrecomp.utility import (
-            disable_headless_unsafe_analyzers,
+        # Import symbol utilities from ghidrecomp (disable_headless_unsafe_analyzers may be missing in some builds)
+        from ghidrecomp.utility import (
             get_pdb,
             set_pdb,
             set_remote_pdbs,
             setup_symbol_server,
         )
+        try:
+            if not TYPE_CHECKING:
+                from ghidrecomp.utility import disable_headless_unsafe_analyzers
+        except (ImportError, AttributeError):
+            def disable_headless_unsafe_analyzers(program: Any) -> None:
+                """No-op when ghidrecomp does not export this (e.g. older or different build)."""
 
         df: DomainFile | None = None
         if isinstance(df_or_prog, DomainFile):
@@ -818,7 +829,7 @@ class PyGhidraContext:
                 df_or_prog.getName(),
                 False,
             )
-            self.programs[df_or_prog.getName() if df is None else df.pathname] = self._init_program_info(program)
+            self.programs[df_or_prog.getName() if df is None else df.pathname] = self._init_program_info(program)  # pyright: ignore[reportArgumentType]
 
         logger.info("Analyzing program: %s", program)
 
@@ -907,8 +918,8 @@ class PyGhidraContext:
         if self.gzfs_path is not None:
             from java.io import File  # type: ignore
 
-            pathname = df.pathname.replace("/", "_")
-            gzf_file = self.gzfs_path / f"{pathname}.gzf"
+            pathname: str = df.pathname.replace("/", "_")
+            gzf_file: Path = self.gzfs_path / f"{pathname}.gzf"
             self.project.saveAsPackedFile(program, File(str(gzf_file.absolute())), True)
 
         logger.info(f"Analysis for {df_or_prog.getName()} complete")
@@ -925,63 +936,63 @@ class PyGhidraContext:
 
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options: ToolOptions = prog.getOptions(Program.ANALYSIS_PROPERTIES)
-        option_type = prog_options.getType(option_name)
+        option_type: Any = prog_options.getType(option_name)
 
-        match str(option_type):
-            case "INT_TYPE":
-                logger.debug("Setting type: INT")
-                prog_options.setInt(option_name, int(value))
-            case "LONG_TYPE":
-                logger.debug("Setting type: LONG")
-                prog_options.setLong(option_name, int(value))
-            case "STRING_TYPE":
-                logger.debug("Setting type: STRING")
-                prog_options.setString(option_name, value)
-            case "DOUBLE_TYPE":
-                logger.debug("Setting type: DOUBLE")
-                prog_options.setDouble(option_name, float(value))
-            case "FLOAT_TYPE":
-                logger.debug("Setting type: FLOAT")
-                prog_options.setFloat(option_name, float(value))
-            case "BOOLEAN_TYPE":
-                logger.debug("Setting type: BOOLEAN")
-                if isinstance(value, str):
-                    temp_bool = value.lower()
-                    if temp_bool in {"true", "false"}:
-                        prog_options.setBoolean(option_name, temp_bool == "true")
-                elif isinstance(value, bool):
-                    prog_options.setBoolean(option_name, value)
-                else:
-                    raise ValueError(
-                        f"Failed to setBoolean on {option_name} {option_type}",
-                    )
-            case "ENUM_TYPE":
-                logger.debug("Setting type: ENUM")
-                from java.lang import Enum  # type: ignore
+        option_type_str: str = str(option_type)
+        if option_type_str == "INT_TYPE":
+            logger.debug("Setting type: INT")
+            prog_options.setInt(option_name, int(value))
+        elif option_type_str == "LONG_TYPE":
+            logger.debug("Setting type: LONG")
+            prog_options.setLong(option_name, int(value))
+        elif option_type_str == "STRING_TYPE":
+            logger.debug("Setting type: STRING")
+            prog_options.setString(option_name, value)
+        elif option_type_str == "DOUBLE_TYPE":
+            logger.debug("Setting type: DOUBLE")
+            prog_options.setDouble(option_name, float(value))
+        elif option_type_str == "FLOAT_TYPE":
+            logger.debug("Setting type: FLOAT")
+            prog_options.setFloat(option_name, float(value))
+        elif option_type_str == "BOOLEAN_TYPE":
+            logger.debug("Setting type: BOOLEAN")
+            if isinstance(value, str):
+                temp_bool = value.lower()
+                if temp_bool in {"true", "false"}:
+                    prog_options.setBoolean(option_name, temp_bool == "true")
+            elif isinstance(value, bool):
+                prog_options.setBoolean(option_name, value)
+            else:
+                raise ValueError(
+                    f"Failed to setBoolean on {option_name} {option_type}",
+                )
+        elif option_type_str == "ENUM_TYPE":
+            logger.debug("Setting type: ENUM")
+            from java.lang import Enum  # type: ignore
 
-                enum_for_option = prog_options.getEnum(option_name, None)
-                if enum_for_option is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                new_enum = None
-                try:
-                    new_enum = Enum.valueOf(enum_for_option.getClass(), value)
-                except Exception:
-                    for enum_value in enum_for_option.values():  # type: ignore
-                        if value == enum_value.toString():
-                            new_enum = enum_value
-                            break
-                if new_enum is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                prog_options.setEnum(option_name, new_enum)
-            case _:
-                logger.warning("option %s set not supported, ignoring", option_type)
+            enum_for_option = prog_options.getEnum(option_name, None)
+            if enum_for_option is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            new_enum = None
+            try:
+                new_enum = Enum.valueOf(enum_for_option.getClass(), value)
+            except Exception:
+                for enum_value in enum_for_option.values():  # type: ignore
+                    if value == enum_value.toString():
+                        new_enum = enum_value
+                        break
+            if new_enum is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            prog_options.setEnum(option_name, new_enum)
+        else:
+            logger.warning("option %s set not supported, ignoring", option_type)
 
     def configure_symbols(
         self,
@@ -990,11 +1001,11 @@ class PyGhidraContext:
         allow_remote: bool = True,
     ):
         """Configures symbol servers and attempts to load PDBs for programs."""
-        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports]
-            PdbAnalyzer,
-            PdbUniversalAnalyzer,
+        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+            PdbAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
+            PdbUniversalAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
         )
-        from ghidra.app.util.pdb import PdbProgramAttributes  # pyright: ignore[reportMissingImports]
+        from ghidra.app.util.pdb import PdbProgramAttributes  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         logger.info("Configuring symbol search paths...")
         # This is a simplification. A real implementation would need to configure the symbol server
@@ -1028,10 +1039,11 @@ class PyGhidraContext:
         verbose: bool = False,
     ):
         """Apply GDT to program"""
-        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
+        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.address import AddressSetView  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
         from java.io import File  # pyright: ignore[reportMissingImports]
         from java.util import List  # pyright: ignore[reportMissingImports]
 
@@ -1048,9 +1060,9 @@ class PyGhidraContext:
             raise ValueError(f"Failed to open file archive {gdt_path}")
         always_replace = True
         create_bookmarks_enabled = True
-        cmd: ApplyFunctionDataTypesCmd = ApplyFunctionDataTypesCmd(
+        cmd = ApplyFunctionDataTypesCmd(
             List.of(archive_dtm),
-            None,
+            AddressSetView.EMPTY_SET,
             SourceType.USER_DEFINED,
             always_replace,
             create_bookmarks_enabled,
@@ -1063,7 +1075,7 @@ class PyGhidraContext:
         return dict(meta)
 
     def setup_decompiler(self, program: Program) -> DecompInterface:
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options = DecompileOptions()
 

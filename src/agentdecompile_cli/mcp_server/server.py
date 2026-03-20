@@ -529,11 +529,6 @@ class PythonMcpServer:
             """List all available MCP prompts."""
             return prompt_providers.list_prompts()
 
-        @server.get_prompt()
-        async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-            """Resolve a prompt by name with the given arguments."""
-            return prompt_providers.get_prompt(name, arguments)
-
         return server
 
     # Paths that the MCP session handler should serve.

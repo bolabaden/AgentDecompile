@@ -26,14 +26,12 @@ if TYPE_CHECKING:
     import argparse
 
     from agentdecompile_cli.launcher import ProgramInfo
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
     )
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
-
-    # Type alias for convenience
     Symbol = GhidraSymbol
 
 

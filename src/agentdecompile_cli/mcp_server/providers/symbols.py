@@ -36,6 +36,7 @@ from agentdecompile_cli.registry import Tool
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
+
 logger = logging.getLogger(__name__)
 
 # Default name filter for auto-generated symbols

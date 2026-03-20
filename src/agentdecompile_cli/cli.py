@@ -49,7 +49,7 @@ from agentdecompile_cli.executor import (
     resolve_backend_url,
     run_async,
 )
-from agentdecompile_cli.ghidrecomp.decompile import decompile
+from ghidrecomp.decompile import decompile
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,

@@ -21,10 +21,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
+    from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
-    from agentdecompile_cli.mcp_server.session_context import ProgramInfo  # pyright: ignore[reportMissingModuleSource]
-    from agentdecompile_cli.tools.decompile_tool import DecompileTool  # pyright: ignore[reportMissingModuleSource]
+    from agentdecompile_cli.launcher import ProgramInfo
+    from agentdecompile_cli.tools.decompile_tool import DecompileTool
 
 logger = logging.getLogger(__name__)
 

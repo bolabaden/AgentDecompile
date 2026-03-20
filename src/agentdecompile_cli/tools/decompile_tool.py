@@ -16,18 +16,16 @@ from agentdecompile_cli.models import DecompiledFunction
 if TYPE_CHECKING:
     import argparse
 
-    from agentdecompile_cli.launcher import ProgramInfo
-    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
+    from agentdecompile_cli.context import ProgramInfo
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface as GhidraDecompInterface,
     )
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
     )
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
-
-    # Type alias for convenience
     Symbol = GhidraSymbol
 
 

@@ -42,6 +42,7 @@ from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[r
     get_current_mcp_session_id,
     get_current_request_auto_match_propagate,
     get_current_request_auto_match_target_paths,
+    is_shared_server_handle,
 )
 from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
     ADVERTISED_TOOLS,
@@ -59,11 +60,9 @@ from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImport
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from ghidra.program.model.address import Address  # pyright: ignore[reportMissingModuleSource]
+    from ghidra.program.model.address import Address  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
-    from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
-        Tool,
-    )
+    from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -1695,7 +1694,7 @@ class ToolProviderManager:
 
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
-        if handle and n(str(handle.get("mode", ""))) == "sharedserver":
+        if handle and is_shared_server_handle(handle):
             repository_adapter = handle.get("repository_adapter")
             if repository_adapter is not None:
                 try:
@@ -1801,8 +1800,6 @@ class ToolProviderManager:
         except Exception:
             decompiler = None
 
-        from agentdecompile_cli.launcher import ProgramInfo
-
         program_path = normalized
         try:
             if hasattr(domain_file, "getPathname"):
@@ -1845,7 +1842,7 @@ class ToolProviderManager:
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         project_provider = self._get_project_provider()
 
-        if project_provider is not None and handle and n(str(handle.get("mode", ""))) == "sharedserver":
+        if project_provider is not None and handle and is_shared_server_handle(handle):
             repository_adapter = handle.get("repository_adapter")
             if repository_adapter is not None:
                 try:
@@ -2237,10 +2234,8 @@ class ToolProviderManager:
             if isinstance(program_info_or_path, ProgramInfo):
                 pi = program_info_or_path
             elif isinstance(program_info_or_path, (os.PathLike, str)):
-                from agentdecompile_cli.context import ProgramInfo as ContextProgramInfo
-
                 _path = Path(str(program_info_or_path))
-                pi = ContextProgramInfo(  # type: ignore[call-arg]
+                pi = ProgramInfo(  # type: ignore[call-arg]
                     name=_path.name,
                     program=None,  # type: ignore[arg-type]
                     flat_api=None,

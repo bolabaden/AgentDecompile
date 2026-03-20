@@ -133,6 +133,237 @@ flowchart TD
   C3 --> D[PyGhidra and Ghidra APIs]
 ```
 
+### Exhaustive architecture (src/agentdecompile_cli)
+
+The following diagram maps the full structure of `src/agentdecompile_cli/`: entry points, bridge/executor, registry, launcher, MCP server core, all tool and resource providers, Ghidra integration, utilities, and external integrations. Arrows indicate dependency and data flow.
+
+```mermaid
+flowchart TB
+  subgraph Entry["Entry points"]
+    E1["cli.py — Click CLI (HTTP client)"]
+    E2["__main__.py — MCP stdio entry"]
+    E3["server.main — HTTP server"]
+    E4["server.proxy_main — Proxy"]
+  end
+
+  subgraph Bridge["Bridge & execution"]
+    B1["bridge.py — MCP session fix, AgentDecompileMcpClient, AgentDecompileStdioBridge, RawMcpHttpBackend"]
+    B2["executor.py — get_client, run_async, DynamicToolExecutor, URL normalization"]
+  end
+
+  subgraph Reg["Registry (central)"]
+    R1["registry.py — Tool enum, TOOLS, TOOL_PARAMS, normalize_identifier, resolve_tool_name, ToolRegistry"]
+  end
+
+  subgraph Launch["Launcher & context"]
+    L1["launcher.py — ProgramInfo, PyGhidraContext, AgentDecompileLauncher, init_agentdecompile_context"]
+    L2["context.py — compatibility shim"]
+    L3["project_manager.py — ProjectManager (.agentdecompile/projects)"]
+  end
+
+  subgraph ServerCore["MCP server core"]
+    S1["server.py — PythonMcpServer, ServerConfig, FastAPI, StreamableHTTPSessionManager"]
+    S2["tool_providers.py — ToolProvider base, ToolProviderManager, UnifiedToolProviderManager, register_all_providers"]
+    S3["resource_providers.py — ResourceProvider base, ResourceProviderManager"]
+    S4["auth.py — AuthConfig, AuthContext, AuthMiddleware, CURRENT_AUTH_CONTEXT"]
+    S5["session_context.py — SessionContext, SessionContextStore, CURRENT_MCP_SESSION_ID, grace period reaper"]
+    S6["prompt_providers.py — list_prompts, _PROMPTS"]
+    S7["conflict_store.py — PendingModification, get/remove conflicts"]
+    S8["auto_match_worker.py — auto match-function propagation"]
+  end
+
+  subgraph ToolProv["Tool providers (21 classes)"]
+    T0["ToolProvider base — HANDLERS, list_tools, call_tool, _get_program, _get helpers"]
+    T1["bookmarks — BookmarkToolProvider"]
+    T2["callgraph — CallGraphToolProvider"]
+    T3["comments — CommentToolProvider"]
+    T4["conflict_resolution — ConflictResolutionToolProvider"]
+    T5["constants — ConstantSearchToolProvider"]
+    T6["data — DataToolProvider"]
+    T7["dataflow — DataFlowToolProvider"]
+    T8["datatypes — DataTypeToolProvider"]
+    T9["decompiler — DecompilerToolProvider"]
+    T10["dissect — GetFunctionAioToolProvider"]
+    T11["functions — FunctionToolProvider"]
+    T12["getfunction — GetFunctionToolProvider, _FunctionMatchFeature, _FunctionMatchIndex"]
+    T13["import_export — ImportExportToolProvider"]
+    T14["memory — MemoryToolProvider"]
+    T15["project — ProjectToolProvider"]
+    T16["prompts — PromptToolProvider"]
+    T17["script — ScriptToolProvider"]
+    T18["search_everything — SearchEverythingToolProvider"]
+    T19["strings — StringToolProvider"]
+    T20["structures — StructureToolProvider"]
+    T21["suggestions — SuggestionToolProvider"]
+    T22["symbols — SymbolToolProvider"]
+    T23["vtable — VtableToolProvider"]
+    T24["xrefs — CrossReferencesToolProvider"]
+    TC["_collectors — iter_items, collect_function_comments, collect_constants"]
+  end
+
+  subgraph ResProv["Resource providers (4 classes)"]
+    R0["ResourceProvider base — list_resources, read_resource"]
+    R2["programs — ProgramListResource (ghidra://programs)"]
+    R3["debug_info — DebugInfoResource (ghidra://debug-info)"]
+    R4["static_analysis — StaticAnalysisResultsResource (ghidra://static-analysis-results)"]
+    R5["analysis_dump — AnalysisDumpResource"]
+  end
+
+  subgraph GhidraLayer["Ghidra integration"]
+    G1["tools/wrappers.py — GhidraTools (find_function, decompile_function, list_strings, search_code)"]
+    G2["ghidrecomp/decompile.py — decompile, DecompileTool"]
+    G3["ghidrecomp/callgraph.py — CallGraph, gen_callgraph, Mermaid"]
+    G4["ghidrecomp/sast.py — Semgrep/CodeQL, SARIF, preprocess_c_files"]
+    G5["ghidrecomp/utility.py — analyze_program, apply_gdt, get_pdb, set_pdb, save_program_as_gzf"]
+    G6["tools/decompile_tool.py — DecompileTool"]
+    G7["tools/callgraph_tool.py — CallGraphTool"]
+  end
+
+  subgraph Models["Models & config"]
+    M1["models.py — Pydantic: DecompiledFunction, ProgramInfo, SymbolInfo, etc."]
+    M2["config/config_manager.py — ConfigManager, ConfigChangeListener"]
+  end
+
+  subgraph Utils["mcp_utils"]
+    U1["address_util — AddressUtil (parse/format hex)"]
+    U2["symbol_util — SymbolUtil (name/address resolution)"]
+    U3["memory_util — MemoryUtil (read bytes, inspect)"]
+    U4["program_lookup_util — ProgramLookupUtil, ProgramValidationException"]
+    U5["schema_util — SchemaUtil, SchemaBuilder (MCP JSON schema)"]
+    U6["debug_logger — DebugLogger"]
+    U7["service_registry — AgentDecompileInternalServiceRegistry"]
+  end
+
+  subgraph Ext["External"]
+    X1["PyGhidra / JVM (ghidra.* APIs)"]
+    X2["MCP SDK (mcp.server.Server, StreamableHTTPSessionManager)"]
+    X3["FastAPI / Uvicorn"]
+    X4["chromadb (optional semantic search)"]
+    X5["Ghidra Server (shared projects)"]
+  end
+
+  E1 --> B1
+  E1 --> B2
+  E2 --> B1
+  E3 --> L1
+  E4 --> B1
+  B1 --> B2
+  B1 --> R1
+  B2 --> R1
+  L1 --> L3
+  L1 --> B2
+  L1 --> S1
+  L1 --> X1
+  L2 -.-> L1
+  S1 --> S2
+  S1 --> S3
+  S1 --> S4
+  S1 --> S5
+  S1 --> S6
+  S1 --> X2
+  S1 --> X3
+  S2 --> R1
+  S2 --> T0
+  S2 --> S7
+  S2 --> S8
+  S3 --> R0
+  S3 --> S2
+  T0 --> R1
+  T1 --> T0
+  T2 --> T0
+  T3 --> T0
+  T4 --> T0
+  T5 --> T0
+  T6 --> T0
+  T7 --> T0
+  T8 --> T0
+  T9 --> T0
+  T10 --> T0
+  T11 --> T0
+  T12 --> T0
+  T13 --> T0
+  T14 --> T0
+  T15 --> T0
+  T16 --> T0
+  T17 --> T0
+  T18 --> T0
+  T19 --> T0
+  T20 --> T0
+  T21 --> T0
+  T22 --> T0
+  T23 --> T0
+  T24 --> T0
+  T1 --> TC
+  T3 --> TC
+  T5 --> TC
+  T11 --> TC
+  T12 --> TC
+  T13 --> TC
+  T15 --> TC
+  T19 --> TC
+  T22 --> TC
+  T2 --> G1
+  T9 --> G1
+  T11 --> G1
+  T12 --> G1
+  T13 --> G1
+  T15 --> G1
+  T17 --> G1
+  T19 --> G1
+  T22 --> G1
+  T24 --> G1
+  T1 --> U1
+  T1 --> U2
+  T2 --> U1
+  T3 --> U1
+  T6 --> U3
+  T9 --> U1
+  T11 --> U1
+  T11 --> U2
+  T12 --> U1
+  T12 --> U2
+  T13 --> U1
+  T13 --> U4
+  T14 --> U3
+  T15 --> U4
+  T19 --> U1
+  T22 --> U2
+  T24 --> U1
+  T24 --> U2
+  R0 --> S5
+  R2 --> S5
+  R3 --> S5
+  R3 --> S4
+  R4 --> S5
+  R5 --> S5
+  G1 --> M1
+  G1 --> U1
+  G1 --> G2
+  G1 --> G3
+  G1 --> G5
+  G1 --> X1
+  G2 --> G6
+  G3 --> G7
+  G2 --> G5
+  G3 --> G5
+  G4 --> G5
+  G5 --> X1
+  S5 --> U4
+  S2 --> S5
+  S3 --> S5
+  L1 --> M2
+  L1 --> X4
+  L1 --> X5
+  T15 --> X5
+  T13 --> X5
+```
+
+**Request path (tools/call):** HTTP → auth/session middleware → MCP Server `call_tool` → ToolProviderManager.call_tool → normalize name via registry → provider.call_tool → HANDLERS dispatch → GhidraTools / ProgramInfo / mcp_utils → response_formatter → TextContent.
+
+**Request path (resources/read):** HTTP → read_resource(uri) → ResourceProviderManager → provider.read_resource (e.g. DebugInfoResource, ProgramListResource).
+
+**Session:** Middleware sets CURRENT_MCP_SESSION_ID (and auth); tools use get_current_mcp_session_id() → SessionContextStore.get_or_create(session_id) → SessionContext (open_programs, active_program_key). Program resolution is by programPath (or active) via session’s open_programs; ProgramLookupUtil for shared projects.
+
 Current source-graph inventory from `src/agentdecompile_cli`:
 
 - `76` Python modules
@@ -608,9 +839,9 @@ curl -X POST http://127.0.0.1:8080/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
 
-### Structures (manage-structures)
+### Tools List
 
-The current `manage-structures` provider supports `parse`, `validate`, `create`, `add_field`, `modify_field`, `modify_from_c`, `info`, `list`, `apply`, `delete`, and `parse_header`. For precise structure definitions, use `parse_header` or `modify_from_c` with a full C definition. See [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained command reference.
+ - See [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained command reference.
 
 ## License
 

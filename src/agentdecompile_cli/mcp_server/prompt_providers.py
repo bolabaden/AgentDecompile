@@ -18,10 +18,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Prompt definitions
 # ---------------------------------------------------------------------------
-# Each prompt has: name (MCP identifier), title, description, arguments (for prompts/get),
-# and messages (list of {role, text} with {placeholders} filled from arguments).
-# Used by multi-subagent workflows: client calls prompts/list then prompts/get with
-# name + arguments; the returned messages drive the subagent's initial task.
+# Each prompt has: name (MCP identifier), title, description, and arguments.
+# Used by list_prompts (MCP prompts/list) to advertise available workflow prompts.
 
 _PROMPTS: list[dict[str, Any]] = [
     # 1. Scout – Broad Sweep
@@ -325,8 +323,9 @@ _PROMPTS: list[dict[str, Any]] = [
         "description": (
             "Ports analysis from one binary to another (e.g. game v1 to v2, or "
             "different platform builds). Use match-function with targetProgramPaths for "
-            "cross-program matching; optionally propagate names, tags, comments, prototype, and bookmarks. "
-            "Fallback: correlate by name/signature with list-functions/search-symbols and "
+            "cross-program matching; matching uses signature, name, and call graph (caller/callee names), "
+            "not byte-level comparison, so it works when assembly differs. Optionally propagate names, tags, "
+            "comments, prototype, and bookmarks. Fallback: correlate by name/signature with list-functions/search-symbols and "
             "propagate via rename-function, set-function-prototype, manage-comments, manage-bookmarks, manage-function-tags."
         ),
         "arguments": [
@@ -346,8 +345,8 @@ _PROMPTS: list[dict[str, Any]] = [
                     "1. Use `list-project-files` to verify both binaries are accessible.\n"
                     "2. Use `match-function` with `programPath` set to the source binary, "
                     "`functionIdentifier` (or `function`) set to the function to match, and "
-                    "`targetProgramPaths` set to the target binary path(s). Set `propagateNames`, "
-                    "`propagateTags`, `propagateComments`, `propagatePrototype`, and `propagateBookmarks` to true to port "
+                    "`targetProgramPaths` set to the target binary path(s). Matching uses signature, name, and call graph (no byte comparison). "
+                    "Set `propagateNames`, `propagateTags`, `propagateComments`, `propagatePrototype`, and `propagateBookmarks` to true to port "
                     "names, tags, all comment types, prototype, and bookmarks. If a function is not found by match-function, correlate by name/signature "
                     "with `list-functions` or `search-symbols` (switching `programPath`) and propagate "
                     "via `rename-function`, `set-function-prototype`, `manage-comments`, `manage-bookmarks`, "
@@ -480,47 +479,6 @@ _PROMPTS: list[dict[str, Any]] = [
 ]
 
 
-def _format_keyword_clause(arguments: dict[str, str] | None) -> str:
-    """Build the keyword hint clause for prompt messages."""
-    kw = (arguments or {}).get("search_keywords", "")
-    if kw:
-        return f" (focus on: {kw})"
-    return ""
-
-
-def _render_messages(
-    prompt_def: dict[str, Any],
-    arguments: dict[str, str] | None,
-) -> list[types.PromptMessage]:
-    """Render prompt messages with parameter substitution.
-
-    Fills {program_path}, {analysis_target}, {keyword_clause}, etc. in each message text.
-    Defaults are applied so prompts still render when the client omits optional args.
-    """
-    args = dict(arguments or {})
-    args.setdefault("program_path", "/path/to/binary")
-    args.setdefault("analysis_target", "target subsystem")
-    args.setdefault("search_keywords", "")
-    args.setdefault("category_path", "/RE_Analysis")
-    args.setdefault("bookmark_category", "Analysis")
-    args.setdefault("source_program_path", args.get("program_path", "/path/to/source"))
-    args.setdefault("target_program_path", "/path/to/target")
-    args.setdefault("max_iterations", "3")
-    args.setdefault("prior_function_list", "")
-    args["keyword_clause"] = _format_keyword_clause(arguments)
-
-    messages: list[types.PromptMessage] = []
-    for msg_def in prompt_def["messages"]:
-        text = msg_def["text"].format_map(args)
-        messages.append(
-            types.PromptMessage(
-                role=msg_def["role"],
-                content=types.TextContent(type="text", text=text),
-            ),
-        )
-    return messages
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -546,15 +504,3 @@ def list_prompts() -> list[types.Prompt]:
             ),
         )
     return prompts
-
-
-def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-    """Resolve a prompt by name with the given arguments."""
-    for p in _PROMPTS:
-        if p["name"] == name:
-            messages = _render_messages(p, arguments)
-            return types.GetPromptResult(
-                description=p.get("description", ""),
-                messages=messages,
-            )
-    raise ValueError(f"Unknown prompt: {name}")

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from mcp import types
 
     from agentdecompile_cli.launcher import ProgramInfo
+    from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +29,14 @@ class ResourceProvider:
 
     def __init__(self, program_info: ProgramInfo | None = None):
         self.program_info: ProgramInfo | None = program_info
-        self.tool_provider_manager: Any | None = None
+        self.tool_provider_manager: ToolProviderManager | None = None
         self.runtime_context: dict[str, Any] = {}
 
     def set_program_info(self, program_info: ProgramInfo) -> None:
         """Set the program info."""
         self.program_info = program_info
 
-    def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+    def set_tool_provider_manager(self, tool_provider_manager: ToolProviderManager) -> None:
         """Set the tool-provider manager for cross-resource tool calls."""
         self.tool_provider_manager = tool_provider_manager
 
@@ -67,20 +68,24 @@ class ResourceProviderManager:
     def __init__(self):
         self.providers: list[ResourceProvider] = []
         self.program_info: ProgramInfo | None = None
-        self.tool_provider_manager: Any | None = None
+        self.tool_provider_manager: ToolProviderManager | None = None
         self.runtime_context: dict[str, Any] = {}
 
         # Initialize all resource providers
         self._init_providers()
 
     def _init_providers(self) -> None:
-        """Register built-in resource providers: debug info (ghidra://debug-info) and analysis dump (ghidra://analysis-dump)."""
+        """Register built-in resource providers: debug info, analysis dump, and tool-backed agentdecompile://<tool-name>."""
         from agentdecompile_cli.mcp_server.resources import DebugInfoResource
         from agentdecompile_cli.mcp_server.resources.analysis_dump import AnalysisDumpResource
+        from agentdecompile_cli.mcp_server.resources.tool_resources import ToolOutputResource
+        from agentdecompile_cli.mcp_server.resources.mermaid_flowchart import MermaidFlowchartResource
 
         self.providers = [
             DebugInfoResource(),
             AnalysisDumpResource(),
+            ToolOutputResource(),
+            MermaidFlowchartResource(),
         ]
 
         # Wire manager and runtime context into providers if already set (e.g. by server startup)
@@ -99,7 +104,7 @@ class ResourceProviderManager:
         self.program_info = program_info
         self._for_each_provider(lambda provider: provider.set_program_info(program_info))
 
-    def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+    def set_tool_provider_manager(self, tool_provider_manager: ToolProviderManager) -> None:
         """Set tool-provider manager for all resource providers."""
         self.tool_provider_manager = tool_provider_manager
         self._for_each_provider(lambda provider: provider.set_tool_provider_manager(tool_provider_manager))
@@ -132,8 +137,8 @@ class ResourceProviderManager:
         logger.info("ResourceProviderManager: Attempting to read resource: %s", uri)
         logger.info(f"  Current program_info: {self.program_info}")
         logger.info(f"  Registered providers: {[p.__class__.__name__ for p in self.providers]}")
-        attempted_providers = []
-        last_exception = None
+        attempted_providers: list[str] = []
+        last_exception: Exception | None = None
 
         for provider in self.providers:
             provider_name = provider.__class__.__name__
@@ -148,13 +153,13 @@ class ResourceProviderManager:
                 logger.debug("  Provider %s does not handle this URI: %s", provider_name, e)
                 continue
             except Exception as e:
-                logger.error(f"  Provider {provider_name} raised exception: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"  Provider {provider_name} raised exception: {e.__class__.__name__}: {e}", exc_info=True)
                 last_exception = e
                 continue
 
         error_msg = f"Unknown resource: {uri}. Attempted providers: {', '.join(attempted_providers)}"
-        if last_exception:
-            error_msg += f". Last exception: {type(last_exception).__name__}: {last_exception}"
+        if last_exception is not None:
+            error_msg += f". Last exception: {last_exception.__class__.__name__}: {last_exception}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 

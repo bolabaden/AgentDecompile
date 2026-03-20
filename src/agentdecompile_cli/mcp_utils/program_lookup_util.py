@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
 
 if TYPE_CHECKING:
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Program as GhidraProgram,
     )
 

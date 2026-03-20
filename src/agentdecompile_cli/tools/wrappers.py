@@ -17,7 +17,7 @@ import sys
 
 from typing import TYPE_CHECKING, Any
 
-from agentdecompile_cli.ghidrecomp.callgraph import _unwrap_mermaid, gen_mermaid_url, get_called, get_calling
+from ghidrecomp.callgraph import _unwrap_mermaid, gen_mermaid_url, get_called, get_calling
 from agentdecompile_cli.models import (
     BytesReadResult,
     CallGraphDirection,
@@ -35,33 +35,32 @@ from agentdecompile_cli.models import (
     SymbolInfo,
 )
 from jpype import JByte
+from jpype.types import JArray
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from agentdecompile_cli.launcher import ProgramInfo
-    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs, reportMissingModuleSource]
+    from agentdecompile_cli.context import ProgramInfo
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface as GhidraDecompInterface,
         DecompileResults as GhidraDecompileResults,
     )
-    from ghidra.program.model.address import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         AddressFactory as GhidraAddressFactory,
     )
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
         FunctionManager as GhidraFunctionManager,
         Program as GhidraProgram,
     )
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         ReferenceManager as GhidraReferenceManager,
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
     )
-    from ghidra.util.task import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]  # noqa: TC004
+    from ghidra.util.task import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
-
-    # Type alias for convenience
     Symbol = GhidraSymbol
 
 
@@ -444,8 +443,8 @@ class GhidraTools:
     @handle_exceptions
     def list_imports(self, query: str | None = None, offset: int = 0, limit: int = 25) -> list[ImportInfo]:
         """Lists all imported functions and symbols for a specified binary."""
-        imports = []
-        symbols = self.program.getSymbolTable().getExternalSymbols()
+        imports: list[ImportInfo] = []
+        symbols: list[GhidraSymbol] = self.program.getSymbolTable().getExternalSymbols()
         for symbol in symbols:
             if query and not re.search(query, symbol.getName(), re.IGNORECASE):
                 continue
@@ -463,9 +462,12 @@ class GhidraTools:
                 continue
             seen.add(from_addr_str)
             from_func = fm.getFunctionContaining(ref.getFromAddress())
+            if from_func is None:
+                logger.warning(f"No function containing address {from_addr_str}")
+                continue
             cross_references.append(
                 CrossReferenceInfo(
-                    function_name=from_func.getName() if from_func else None,
+                    function_name=from_func.getName(),
                     from_address=from_addr_str,
                     to_address=str(ref.getToAddress()),
                     reference_type=str(ref.getReferenceType()),
@@ -501,9 +503,12 @@ class GhidraTools:
                     continue
                 seen.add(from_addr_str)
                 from_func = fm.getFunctionContaining(ref.getFromAddress())
+                if from_func is None:
+                    logger.warning(f"No function containing address {from_addr_str}")
+                    continue
                 cross_references.append(
                     CrossReferenceInfo(
-                        function_name=from_func.getName() if from_func else None,
+                        function_name=from_func.getName(),
                         from_address=from_addr_str,
                         to_address=str(ref.getToAddress()),
                         reference_type=str(ref.getReferenceType()),
@@ -570,7 +575,7 @@ class GhidraTools:
         search_results: list[CodeSearchResult] = []
 
         # Query for more results than needed to account for filtering
-        results = self.program_info.code_collection.query(
+        results: dict[str, Any] = self.program_info.code_collection.query(
             query_texts=[query],
             n_results=limit + offset,
         )
@@ -638,20 +643,20 @@ class GhidraTools:
             raise ValueError("Code indexing is not complete for this binary. Please try again later.")
 
         # ALWAYS get literal count (reuse for literal mode search)
-        literal_results = self.program_info.code_collection.get(where_document={"$contains": query})
-        literal_total = len(literal_results["ids"]) if literal_results and literal_results.get("ids") else 0
+        literal_results: dict[str, Any] = self.program_info.code_collection.get(where_document={"$contains": query})
+        literal_total: int = len(literal_results["ids"]) if literal_results and literal_results.get("ids") else 0
 
         # Total functions in collection (absolute total)
-        total_functions = self.program_info.code_collection.count()
+        total_functions: int = self.program_info.code_collection.count()
 
         # Default semantic total to "available" (filtered by limit)
         # If we filter and get FEWER than requested, we effectively found "all" above threshold
         # in this range.
         # But we don't know beyond the limit.
         # So we default to total_functions as "estimated matches" if we hit the limit.
-        semantic_total = total_functions
+        semantic_total: int = total_functions
 
-        search_results: list[CodeSearchResult] = []
+        search_results: list[CodeSearchResult] | None = None
 
         if search_mode == SearchMode.LITERAL:
             search_results = self._search_code_literal(literal_results, limit, offset, include_full_code, preview_length)
@@ -669,10 +674,10 @@ class GhidraTools:
                 semantic_total = estimated_total
 
         return CodeSearchResults(
-            results=search_results,
+            results=search_results or [],
             query=query,
             search_mode=search_mode,
-            returned_count=len(search_results),
+            returned_count=len(search_results or []),
             offset=offset,
             limit=limit,
             literal_total=literal_total,
@@ -680,7 +685,7 @@ class GhidraTools:
             total_functions=total_functions,
         )
 
-    def _build_string_search_result(self, doc: str, metadata: dict, similarity: float) -> StringSearchResult:
+    def _build_string_search_result(self, doc: str, metadata: dict[str, Any], similarity: float) -> StringSearchResult:
         """Build a StringSearchResult from document and metadata."""
         return StringSearchResult(
             value=doc,
@@ -694,10 +699,10 @@ class GhidraTools:
         if not self.program_info.strings_collection:
             raise ValueError("String indexing is not complete for this binary. Please try again later.")
 
-        search_results = []
+        search_results: list[StringSearchResult] = []
 
         # Literal search first
-        literal_results = self.program_info.strings_collection.get(where_document={"$contains": query}, limit=limit)
+        literal_results: dict[str, Any] = self.program_info.strings_collection.get(where_document={"$contains": query}, limit=limit)
         if literal_results and literal_results["documents"]:
             for i, doc in enumerate(literal_results["documents"]):
                 metadata = literal_results["metadatas"][i]
@@ -743,7 +748,7 @@ class GhidraTools:
         # Use JPype to handle byte arrays properly for PyGhidra
         # Create Java byte array - JPype's runtime magic confuses static type checkers
         buf = JByte[size]  # type: ignore[reportInvalidTypeArguments]
-        n = mem.getBytes(addr, buf)
+        n = mem.getBytes(addr, JArray(JByte, size))
 
         # Convert Java signed bytes (-128 to 127) to Python unsigned (0 to 255)
         if n > 0:
@@ -824,7 +829,7 @@ class GhidraTools:
     ) -> CallGraphResult:
         """Legacy callgraph implementation for backward compatibility."""
         # don't really limit the graph
-        MAX_DEPTH: int = sys.getrecursionlimit() - 1
+        MAX_DEPTH: int = sys.getrecursionlimit() - 1  # noqa: F841
         MAX_PATH_LEN: int = 50
 
         def gen_callgraph(

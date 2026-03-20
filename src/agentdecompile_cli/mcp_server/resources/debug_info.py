@@ -32,6 +32,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
     get_current_request_project_path_override,
+    is_shared_server_handle,
 )
 from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, Tool
 
@@ -504,8 +505,7 @@ class DebugInfoResource(ResourceProvider):
         snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=5, tool_history_limit=5)
         project_handle = snapshot.get("projectHandle")
         active_key = snapshot.get("activeProgramKey")
-        mode_str = str((project_handle.get("mode") if isinstance(project_handle, dict) else None) or "").strip().lower().replace("-", "")
-        is_shared = isinstance(project_handle, dict) and mode_str == "sharedserver"
+        is_shared = is_shared_server_handle(project_handle)
 
         result: dict[str, Any] = {
             "resourceUri": RESOURCE_URI_DEBUG_INFO,

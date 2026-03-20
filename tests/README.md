@@ -66,6 +66,7 @@ Tests are organized by functionality (37 test files total):
 - `test_e2e_workflow.py` - End-to-end workflow scenarios
 - `test_dynamic_tool_executor.py` - Dynamic tool execution
 - `test_import_e2e.py` - Binary import workflows
+- `test_shared_project_flow.py` - Shared project flow: open(shared), list-project-files (source=shared-server-session), is_shared_server_handle
 
 ### Helpers and Configuration
 - `conftest.py` - Pytest fixtures (shared across all tests)

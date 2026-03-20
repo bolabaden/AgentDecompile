@@ -56,7 +56,6 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`get-current-program`](#get-current-program)
     - [`get-data`](#get-data)
     - [`get-functions`](#get-functions)
-    - [`get-prompt-content`](#get-prompt-content)
     - [`get-references`](#get-references)
     - [`import-binary`](#import-binary)
     - [`inspect-memory`](#inspect-memory)
@@ -921,7 +920,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 ### `match-function`
 
-**Description**: Matches functions across binaries using fingerprints, with similarity thresholds and propagation of names/tags/comments. This tool uses ChromaDB for efficient matching and batch processing.
+**Description**: Matches functions across different builds or binaries (cross-program matching) by **signature** (parameter count and return type), **name**, and **call-graph** (caller/callee names). Does not use byte-level or instruction-level comparison, so it works when addresses, registers, and stack layout differ (e.g. KOTOR 1 vs KOTOR 2). Supports similarity thresholds and propagation of names, tags, comments, prototype, and bookmarks. When multiple target functions share the same signature, candidates are ranked by name match then by call-graph overlap (shared callees/callers). Single-program modes: similar, callers, callees, signature.
 
 **Parameters**:
 - `programPath` (string, optional): Source program.
@@ -932,7 +931,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
   - Synonyms: `targetProgramPaths`, `targetpp`.
 - `maxInstructions` (integer, optional): Max instrs.
   - Synonyms: `maxInstructions`, `maxi`.
-- `minSimilarity` (number, optional): Min similarity (default: 0.8).
+- `minSimilarity` (number, optional): Min similarity 0–1 or 0–100 (default: 0.7). Name match = 1.0; same signature only = 0.7; call-graph used to disambiguate.
   - Synonyms: `minSimilarity`, `mins`.
 - `propagateNames` (boolean, optional): Prop names (default: false).
   - Synonyms: `propagateNames`, `propagaten`.
@@ -1012,24 +1011,11 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 ### `list-prompts`
 
-**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator). Use `get-prompt-content` with a prompt name to resolve the prompt messages for driving a subagent or new turn.
+**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator).
 
 **Parameters**: None.
 
-**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`), then use `get-prompt-content` with that name and arguments to get the task description and messages to pass to a subagent.
-
-### `get-prompt-content`
-
-**Description**: Resolve a named MCP prompt with the given arguments and return the prompt messages and description. Use the returned content to start a subagent or new turn with that task (e.g. run the Scout or Diver workflow). This is the tool equivalent of MCP `prompts/get`: the model can call it to obtain the same content that the client would get from `prompts/list` and `prompts/get`, then pass that content to the host's subagent/task API.
-
-**Parameters**:
-- `promptName` (string, required): MCP prompt name (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`, `re-bottom-up-analyst`, `re-convergence-orchestrator`).
-- `arguments` (object, optional): Prompt arguments as key-value strings (e.g. `program_path`, `analysis_target`, `search_keywords`).
-- `programPath` (string, optional): Convenience: merged into `arguments` as `program_path` if not provided in `arguments`.
-- `analysisTarget` (string, optional): Convenience: merged into `arguments` as `analysis_target`.
-- `searchKeywords` (string, optional): Convenience: merged into `arguments` as `search_keywords`.
-
-**Examples**: `get-prompt-content promptName="re-scout-broad-sweep" arguments='{"program_path":"/K1/swkotor.exe","analysis_target":"save/load"}'` — use the returned `description` and `messages` to start a subagent with that task.
+**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`).
 
 ### `search-code`
 

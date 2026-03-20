@@ -186,7 +186,6 @@ if TYPE_CHECKING:
     )
     from mcp.types import (
         CallToolResult,
-        GetPromptResult,
         Prompt,
         Resource,
         Tool,
@@ -440,15 +439,6 @@ class AgentDecompileStdioBridge:
             except Exception as e:
                 sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
                 return []
-
-        @self.server.get_prompt()
-        async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
-            try:
-                async with self._with_backend_session("get_prompt") as session:
-                    return await session.get_prompt(name, arguments)
-            except Exception as e:
-                sys.stderr.write(f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}\n")
-                raise
 
     def _create_initialization_options(self):
         """Create MCP initialization options with explicit logging capability."""

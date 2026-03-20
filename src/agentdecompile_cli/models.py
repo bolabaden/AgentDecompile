@@ -113,6 +113,10 @@ class SymbolInfo(BaseModel):
     name: str = Field(..., description="The name of the symbol.")
     address: str = Field(..., description="The address of the symbol.")
     type: str = Field(..., description="The type of the symbol (e.g., FUNCTION, LABEL, etc.).")
+    namespace: str | None = Field(None, description="The namespace of the symbol.")
+    source: str | None = Field(None, description="The source of the symbol.")
+    refcount: int | None = Field(None, description="The reference count of the symbol.")
+    external: bool | None = Field(None, description="Whether the symbol is external.")
 
 
 class SymbolInfos(BaseModel):
@@ -124,6 +128,7 @@ class SymbolInfos(BaseModel):
 class CrossReferenceInfo(BaseModel):
     """Represents a cross-reference (xref) to or from an address."""
 
+    function_name: str = Field(..., description="The name of the function where the reference originates.")
     from_address: str = Field(..., description="The address where the reference originates.")
     to_address: str = Field(..., description="The address being referenced.")
     reference_type: str = Field(..., description="The type of reference (e.g., FLOW, READ, WRITE).")
@@ -140,17 +145,24 @@ class CodeSearchResult(BaseModel):
     """Represents a single code search result."""
 
     function_name: str = Field(..., description="The name of the function containing the match.")
-    code_preview: str = Field(..., description="A preview of the code containing the match.")
-    match_snippet: str = Field(..., description="The matched code snippet.")
-    similarity: float | None = Field(None, description="The similarity score (0-1) for semantic searches.")
-    address: str = Field(..., description="The address of the function.")
+    code: str = Field(..., description="The matched code snippet.")
+    similarity: float = Field(..., description="The similarity score (0-1) for semantic searches.")
+    search_mode: SearchMode = Field(..., description="The mode of the search.")
+    preview: str | None = Field(None, description="A preview of the code containing the match.")
 
 
 class CodeSearchResults(BaseModel):
     """A container for a list of code search results."""
 
     results: list[CodeSearchResult] = Field(..., description="A list of code search results.")
-    total_matches: int = Field(..., description="Total number of matches found.")
+    query: str = Field(..., description="The query that was used for the search.")
+    search_mode: SearchMode = Field(..., description="The mode of the search.")
+    returned_count: int = Field(..., description="The number of results returned.")
+    offset: int = Field(..., description="The offset of the search.")
+    limit: int = Field(..., description="The limit of the search.")
+    literal_total: int = Field(..., description="The total number of literal matches found.")
+    semantic_total: int = Field(..., description="The total number of semantic matches found.")
+    total_functions: int = Field(..., description="The total number of functions in the binary.")
 
 
 class SearchMode(str, Enum):

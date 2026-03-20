@@ -28,6 +28,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
+    is_shared_server_handle,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     ActionableError,
@@ -47,7 +48,7 @@ from agentdecompile_cli.mcp_server.domain_folder_listing import (
 if TYPE_CHECKING:
     from abc import ABC, abstractmethod
 
-    from ghidra.framework.store import CheckoutType  # pyright: ignore[reportMissingModuleSource]
+    from ghidra.framework.store import CheckoutType  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
     class ProjectData(ABC):
         @abstractmethod
@@ -456,7 +457,7 @@ class ProjectToolProvider(ToolProvider):
 
     def _infer_requested_shared_repository_name(self, args: dict[str, Any], path: str) -> str | None:
         """Infer the shared repository name from explicit args or a repository-like path."""
-        requested_repository = self._get_str(args, "repositoryname")
+        requested_repository = self._get_str(args, "repositoryname", "path")
         if requested_repository and requested_repository.strip():
             return requested_repository.strip().strip("/")
 
@@ -742,11 +743,29 @@ class ProjectToolProvider(ToolProvider):
         except Exception:
             pass  # auth injection is best-effort; never block the tool call
 
-        server_host: str = self._require_str(args, "serverhost", name="serverHost")
-        server_port: int = self._get_int(args, "serverport", "port", default=13100)
+        server_host = (self._require_str(args, "serverhost", name="serverHost") or "").strip()
+        if not server_host:
+            raise ActionableError(
+                "serverHost is required and must be non-empty for shared project connection.",
+                context={"action": "connect-shared-project", "mode": "shared-server"},
+                next_steps=["Pass a valid serverHost (e.g. 127.0.0.1 or the Ghidra server hostname)."],
+            )
+        _port_raw = self._get_int(args, "serverport", "port", default=13100)
+        try:
+            server_port = int(_port_raw) if _port_raw is not None else 13100
+        except (TypeError, ValueError):
+            server_port = 13100
+        if not (0 < server_port <= 65535):
+            server_port = 13100
         server_username: str = self._get_str(args, "serverusername", "username")
         server_password: str = self._get_str(args, "serverpassword", "password")
         path: str = self._get_str(args, "path", "programpath", "repositoryname", "binaryname", "binary", default="")
+        # Ensure path is set from repositoryName if path is empty
+        if not path or not path.strip():
+            repo_name = self._get_str(args, "repositoryname", "path", default="")
+            if repo_name and repo_name.strip():
+                path = repo_name.strip()
+                logger.info("[connect-shared-project] Using repositoryName=%r as path", path)
 
         auth_provided = bool(server_username and server_password)
         server_reachable = False
@@ -761,13 +780,16 @@ class ProjectToolProvider(ToolProvider):
 
         try:
             logger.info("[connect-shared-project] TCP connect check %s:%d ...", server_host, server_port)
-            with socket.create_connection((server_host, server_port), timeout=5):
+            with socket.create_connection((str(server_host), server_port), timeout=5):
                 server_reachable = True
             logger.info("[connect-shared-project] TCP connect OK")
         except OSError as exc:
             logger.warning("[connect-shared-project] TCP connect FAILED: %s", exc)
+            errno_22_hint = ""
+            if getattr(exc, "errno", None) == 22:
+                errno_22_hint = " (Ensure serverHost is a valid hostname/IP and serverPort is an integer, e.g. 13100.)"
             raise ActionableError(
-                f"Ghidra server not reachable at {server_host}:{server_port}: {exc}",
+                f"Ghidra server not reachable at {server_host}:{server_port}: {exc}{errno_22_hint}",
                 context={
                     "action": "connect-shared-project",
                     "mode": "shared-server",
@@ -1017,11 +1039,23 @@ class ProjectToolProvider(ToolProvider):
 
         repository_names: list[str] = [str(name) for name in repository_names_raw]
         requested_repository_name = self._infer_requested_shared_repository_name(args, path)
+        # Fallback: if inference failed but path looks like a repo name, use it
+        # This handles cases where the old code doesn't have the inference fix
+        if requested_repository_name is None:
+            # Try to get from args directly (normalized keys)
+            repo_from_args = self._get_str(args, "repositoryname", "path", default="")
+            if repo_from_args and repo_from_args.strip() and "/" not in repo_from_args.strip().rstrip("/"):
+                requested_repository_name = repo_from_args.strip().rstrip("/")
+                logger.info("[connect-shared-project] Using repositoryName/path from args=%r as repository name", requested_repository_name)
+            elif path and path.strip() and "/" not in path.strip().rstrip("/"):
+                requested_repository_name = path.strip().rstrip("/")
+                logger.info("[connect-shared-project] Using path parameter=%r as repository name (inference returned None)", requested_repository_name)
+        allow_repo_creation = bool(server_username or server_password)
         repository_names, repository_created = self._ensure_shared_repository_exists(
             server_adapter=server_adapter,
             repository_names=repository_names,
             requested_repository=requested_repository_name,
-            auth_provided=auth_provided,
+            auth_provided=allow_repo_creation,
             server_host=server_host,
             server_port=server_port,
         )
@@ -1171,6 +1205,12 @@ class ProjectToolProvider(ToolProvider):
             },
         )
         SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
+        logger.info(
+            "[connect-shared-project] Session %s is now in SHARED-SERVER mode: repository=%s, binaries=%d",
+            session_id[:12],
+            repository_name,
+            len(binaries),
+        )
 
         # Ensure a Ghidra project exists so _checkout_shared_program has project_data for versioned checkout
         if self._manager is not None and getattr(self._manager, "ghidra_project", None) is None:
@@ -1550,6 +1590,8 @@ class ProjectToolProvider(ToolProvider):
         folder: str = self._get_str(args, "folder", default="/")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
         session_id: str = get_current_mcp_session_id()
+        project_handle_for_list = SESSION_CONTEXTS.get_project_handle(session_id)
+        is_shared_mode: bool = is_shared_server_handle(project_handle_for_list)
 
         fs_path: str = self._get_str(args, "path")
         if fs_path:
@@ -1587,6 +1629,50 @@ class ProjectToolProvider(ToolProvider):
                         "files": files,
                         "count": len(files),
                         "source": "shared-server-session",
+                    },
+                )
+            # Check if we're in shared-server mode - if so, NEVER fall back to local project
+            if is_shared_mode:
+                # In shared-server mode but no binaries: repository might be empty or listing failed
+                # Try to refresh from the repository adapter if available
+                repository_adapter = project_handle_for_list.get("repository_adapter") if isinstance(project_handle_for_list, dict) else None
+                if repository_adapter is not None:
+                    try:
+                        logger.info("list-project-files: refreshing repository listing for shared-server session")
+                        refreshed_binaries = self._list_repository_items(repository_adapter)
+                        SESSION_CONTEXTS.set_project_binaries(session_id, refreshed_binaries)
+                        if refreshed_binaries:
+                            files = []
+                            for item in refreshed_binaries[:max_results]:
+                                path = str(item.get("path") or "")
+                                name = str(item.get("name") or Path(path).name)
+                                files.append(
+                                    {
+                                        "name": name,
+                                        "path": path,
+                                        "isDirectory": False,
+                                        "type": item.get("type", "Program"),
+                                    },
+                                )
+                            return create_success_response(
+                                {
+                                    "folder": folder,
+                                    "files": files,
+                                    "count": len(files),
+                                    "source": "shared-server-session",
+                                    "note": "Refreshed from repository",
+                                },
+                            )
+                    except Exception as e:
+                        logger.warning("list-project-files: failed to refresh shared repository listing: %s", e)
+                # Shared-server mode but no binaries available (empty repo or error)
+                return create_success_response(
+                    {
+                        "folder": folder,
+                        "files": [],
+                        "count": 0,
+                        "source": "shared-server-session",
+                        "note": "Shared repository is empty or listing unavailable. Use import-binary to add programs.",
                     },
                 )
             # No program loaded and no session binaries: list from the open Ghidra project
@@ -1633,7 +1719,10 @@ class ProjectToolProvider(ToolProvider):
             else:
                 target_folder = project_data.getFolder(normalized_folder)
                 if target_folder is None:
-                    return create_success_response({"folder": normalized_folder, "files": [], "count": 0})
+                    payload: dict[str, Any] = {"folder": normalized_folder, "files": [], "count": 0}
+                    if is_shared_mode:
+                        payload["source"] = "shared-server-session"
+                    return create_success_response(payload)
 
             files = self._list_domain_files(target_folder, max_results)
             if not files:
@@ -1651,15 +1740,19 @@ class ProjectToolProvider(ToolProvider):
                                 "type": item.get("type", "Program"),
                             },
                         )
+                    source_key = "shared-server-session" if is_shared_mode else "session-binaries"
                     return create_success_response(
                         {
                             "folder": folder,
                             "files": fallback_files,
                             "count": len(fallback_files),
-                            "source": "session-binaries",
+                            "source": source_key,
                         },
                     )
-            return create_success_response({"folder": folder, "files": files, "count": len(files)})
+            payload = {"folder": folder, "files": files, "count": len(files)}
+            if is_shared_mode:
+                payload["source"] = "shared-server-session"
+            return create_success_response(payload)
         except Exception as e:
             session_binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if session_binaries:
@@ -2406,7 +2499,7 @@ class ProjectToolProvider(ToolProvider):
         connect_result = await self._handle_connect_shared_project(resolved)
         session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
 
-        connect_success = bool(handle and n(str(handle.get("mode", ""))) == "sharedserver")
+        connect_success = bool(handle and is_shared_server_handle(handle))
         if not connect_success:
             return create_success_response(
                 {
@@ -3250,7 +3343,7 @@ class ProjectToolProvider(ToolProvider):
             repository_adapter is not None,
             repository_name,
         )
-        is_shared_session = handle and n(str(handle.get("mode", ""))) == "sharedserver"
+        is_shared_session = handle and is_shared_server_handle(handle)
         is_local_gpr_session = handle and n(str(handle.get("mode", ""))) in {"localgpr", "local"}  # noqa: F841
 
         if not is_shared_session:
@@ -3784,7 +3877,7 @@ class ProjectToolProvider(ToolProvider):
 
     def _remove_shared_repository_item(self, program_path: str) -> dict[str, Any] | None:
         session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
-        if not handle or n(str(handle.get("mode", ""))) != "sharedserver" or repository_adapter is None:
+        if not handle or not is_shared_server_handle(handle) or repository_adapter is None:
             return None
 
         requested = self._normalize_repo_path(program_path)

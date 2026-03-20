@@ -1,0 +1,10 @@
+[containers]
+dns_servers = ["1.1.1.1", "8.8.8.8"]
+
+[engine]
+cgroup_manager = "cgroupfs"
+
+# Using iptables until we fix nftables on WSL:
+# https://github.com/containers/podman/issues/25201
+[network]
+firewall_driver="iptables"
