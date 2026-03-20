@@ -478,8 +478,19 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
             parser.error("Cannot use --project-name with a .gpr file")
         sys.stderr.write(f"[project-paths] .gpr mode: dir='{project_path.parent}', name='{project_path.stem}'\n")
         return str(project_path.parent), project_path.stem, project_path
-    sys.stderr.write(f"[project-paths] directory mode: dir='{project_path}', name='{args.project_name}'\n")
-    return str(project_path), args.project_name, None
+    
+    # For directory mode: check environment variable if project_name is the default
+    # This allows AGENT_DECOMPILE_PROJECT_NAME to override the default "my_project"
+    resolved_project_name: str = args.project_name
+    if resolved_project_name == "my_project":
+        # Check environment variable directly (same logic as _default_project_name_for_env)
+        env_project_name: str = (os.getenv("AGENT_DECOMPILE_PROJECT_NAME") or os.getenv("AGENTDECOMPILE_PROJECT_NAME") or "").strip()
+        if env_project_name:
+            resolved_project_name = env_project_name
+            sys.stderr.write(f"[project-paths] Using project name from env: {resolved_project_name!r}\n")
+    
+    sys.stderr.write(f"[project-paths] directory mode: dir='{project_path}', name='{resolved_project_name}'\n")
+    return str(project_path), resolved_project_name, None
 
 
 def _initialize_pyghidra(verbose_analysis: bool) -> None:
@@ -523,8 +534,8 @@ def _initialize_pyghidra(verbose_analysis: bool) -> None:
 
 
 async def _run_stdio_mode(
-    launcher: Any | None,
-    project_manager: Any | None,
+    launcher: AgentDecompileLauncher | None,
+    project_manager: ProjectManager | None,
     backend: str | int,
 ) -> None:
     """Run stdio MCP bridge mode."""
