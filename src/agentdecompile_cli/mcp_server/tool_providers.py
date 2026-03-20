@@ -1933,12 +1933,13 @@ class ToolProviderManager:
 
                 advertised_properties[snake_param] = provider_param_schema or _infer_param_schema(param)
 
-            # Let client choose markdown (human-readable) vs json (machine-readable) for tool output
-            advertised_properties["format"] = {
+            # Let client choose markdown (human-readable) vs json (machine-readable) for tool output.
+            # Use responseFormat so tools that use 'format' for something else (e.g. export: gzf/sarif/cpp) are not overwritten.
+            advertised_properties["responseFormat"] = {
                 "type": "string",
                 "enum": ["markdown", "json"],
                 "default": "markdown",
-                "description": "Output format (default: markdown). Use --format json / -f json only when you strictly need machine-readable output; markdown is recommended.",
+                "description": "Tool response format (default: markdown). Use responseFormat=json for machine-readable output.",
             }
 
             # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema
@@ -2214,7 +2215,8 @@ class ToolProviderManager:
                     logger.warning("Auto check-in after modify failed (best-effort): %s", auto_checkin_exc)
 
         # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
-        if not norm_args.get("autoprereqinvocation") and norm_args.get("format", "markdown") != "json" and result and isinstance(result[0], types.TextContent):
+        response_fmt = norm_args.get("responseFormat") or (norm_args.get("format") if norm_args.get("format") in ("markdown", "json") else "markdown")
+        if not norm_args.get("autoprereqinvocation") and response_fmt != "json" and result and isinstance(result[0], types.TextContent):
             try:
                 data = _json.loads(result[0].text)
                 markdown = render_tool_response(norm_name, data)

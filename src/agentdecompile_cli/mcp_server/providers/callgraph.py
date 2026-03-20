@@ -100,9 +100,13 @@ class CallGraphToolProvider(ToolProvider):
             mode = "callees" if direction == "called" else "callers"
         display_type = self._get_str(args, "displaytype", "displayType", default="flow")
         include_refs = self._get_bool(args, "includerefs", default=True)
-        max_depth = self._get(args, "maxdepth")
-        if max_depth is not None:
-            max_depth = int(max_depth)
+        max_depth_raw = self._get(args, "maxdepth")
+        max_depth = None
+        if max_depth_raw is not None:
+            try:
+                max_depth = int(max_depth_raw)
+            except (ValueError, TypeError):
+                pass
         max_run_time = self._get_int(args, "maxruntime", default=60)
         condense = self._get_int(args, "condensethreshold", default=50)
         top = self._get_int(args, "toplayers", default=5)
