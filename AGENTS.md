@@ -113,6 +113,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
 - After fixing an issue, continue with the task without asking; run and verify, and if still broken fix and rerun until functional.
 - Fix the underlying behavior so the same user commands work unchanged; do not only improve error messages or documentation.
+- Complete implementations without placeholders; for features like export, provide fallbacks so the operation does not error or fail.
 - Use the MCP server tools (e.g. user-agdec-http) for agentdecompile workflows rather than the CLI when both are available.
 - Default to markdown (not JSON) for tool output; scale output detail by result count (few results = full detail, many = trimmed).
 - Prefer supporting Ghidra server auth via headers or CLI args when possible, not only via process environment.
@@ -126,8 +127,8 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
 - For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
-- CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used.
-- When the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations (e.g. open-project then checkout-program in two runs) can reuse the same session without the CLI persisting a session id; for multi-user or multi-session use, send distinct session ids.
+- CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used; when the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations can reuse the same session—for multi-user or multi-session use, send distinct session ids.
+- Before calling domain_file.save() while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction".
 - get-function with an address returns the function that contains that address (getFunctionContaining/getFunctionAt), not the callee; IAT/thunk resolution is not used for get-function address resolution.
 - get-references and list-cross-references accept addressOrSymbol or importName; both thunk and IAT addresses are supported; for targets in .rsrc, LoadStringA/LoadStringW call sites are included as indirect refs.
 - Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).

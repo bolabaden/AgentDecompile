@@ -191,13 +191,18 @@ def decompile_to_single_file(
     else:
         monitor = GhidraConsoleTaskMonitor().DUMMY
 
+    # Prefer no-arg constructor (Ghidra 12) so we avoid DecompileOptions/overload issues across threads.
     try:
-        # Ghidra CppExporter before 10.3.3 and later
-        decompiler = GhidraCppExporter(None, create_header, create_file, emit_types, exclude_tags, tags)
-    except TypeError:
-        # Ghidra CppExporter before 10.3.3
-        decompiler = GhidraCppExporter(create_header, create_file, emit_types, exclude_tags, tags)
+        decompiler = GhidraCppExporter()
+    except Exception:  # noqa: BLE001
+        try:
+            from ghidra.app.decompiler import DecompileOptions  # pyright: ignore[reportMissingModuleSource]
 
+            opts = DecompileOptions()
+            tags_str = tags or ""
+            decompiler = GhidraCppExporter(opts, create_header, create_file, emit_types, True, exclude_tags, tags_str)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"CppExporter could not be instantiated: {e}") from e
     decompiler.export(c_file, prog, prog.getMemory(), monitor)
 
 

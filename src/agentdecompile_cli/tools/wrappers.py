@@ -45,7 +45,6 @@ if TYPE_CHECKING:
         DecompileResults as GhidraDecompileResults,
     )
     from ghidra.program.model.address import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
-        Address as GhidraAddress,
         AddressFactory as GhidraAddressFactory,
     )
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
@@ -112,15 +111,25 @@ class GhidraTools:
         - If it's a name, return exact match if unique.
         - If multiple exact matches, raise with suggestions (signature + entry point).
         - If none, raise with 'Did you mean...' suggestions from partial matches.
+
+        Address strings use consistent parsing: 0x-prefix = hex, otherwise decimal (see AddressUtil).
         """
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+
         af: GhidraAddressFactory = self.program.getAddressFactory()
         fm: GhidraFunctionManager = self.program.getFunctionManager()
 
-        # Try interpreting as an address
+        # Try AddressUtil first so "0x48b17c" is parsed as hex, not passed to Ghidra's getAddress (base-10)
+        addr = AddressUtil.parse_address(self.program, name_or_address)
+        if addr is not None:
+            func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+            if func is not None:
+                return func
+        # Fallback: Ghidra address factory for other formats
         try:
             addr = af.getAddress(name_or_address)
             if addr:
-                func = fm.getFunctionAt(addr)
+                func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
                 if func:
                     return func
         except Exception:
@@ -168,10 +177,18 @@ class GhidraTools:
         -------
             A list of unique Symbol objects that match the search criteria.
         """
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+
         st: GhidraSymbolTable = self.program.getSymbolTable()
         af: GhidraAddressFactory = self.program.getAddressFactory()
 
-        # Try interpreting as an address first
+        # Try AddressUtil first so "0x..." and decimal addresses are parsed consistently
+        addr = AddressUtil.parse_address(self.program, name_or_address)
+        if addr is not None:
+            addr_symbols = st.getSymbols(addr)
+            if addr_symbols:
+                return list(addr_symbols)
+        # Fallback: Ghidra address factory
         try:
             addr = af.getAddress(name_or_address)
             if addr:
@@ -711,20 +728,12 @@ class GhidraTools:
         if size > max_read_size:
             raise ValueError(f"Size {size} exceeds maximum {max_read_size}")
 
-        # Get address factory and parse address
-        af = self.program.getAddressFactory()
+        # Parse address with consistent rules: 0x-prefix = hex, otherwise decimal (AddressUtil)
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
-        try:
-            # Handle common hex address formats
-            addr_str = address
-            if address.lower().startswith("0x"):
-                addr_str = address[2:]
-
-            addr = af.getAddress(addr_str)
-            if addr is None:
-                raise ValueError(f"Invalid address: {address}")
-        except Exception as e:
-            raise ValueError(f"Invalid address format '{address}': {e}") from e
+        addr = AddressUtil.parse_address(self.program, address)
+        if addr is None:
+            raise ValueError(f"Invalid address format '{address}'")
 
         # Check if address is in valid memory
         mem = self.program.getMemory()

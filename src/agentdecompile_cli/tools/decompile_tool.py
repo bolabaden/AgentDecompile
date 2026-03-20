@@ -165,15 +165,23 @@ class DecompileTool:
         }
 
     def _resolve_function(self, name_or_address: str) -> GhidraFunction | None:
-        """Resolve function by name or address."""
+        """Resolve function by name or address. Address strings: 0x = hex, else decimal (AddressUtil)."""
         if not self.program:
             return None
 
-        # Try to find by address first
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+
+        # Try AddressUtil first so "0x48b17c" is parsed as hex, not base-10
+        addr = AddressUtil.parse_address(self.program, name_or_address)
+        if addr is not None:
+            fm = self.program.getFunctionManager()
+            func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+            if func is not None:
+                return func
         try:
             addr = self.program.getAddressFactory().getAddress(name_or_address)
             if addr:
-                func = self.program.getFunctionManager().getFunctionAt(addr)
+                func = self.program.getFunctionManager().getFunctionAt(addr) or self.program.getFunctionManager().getFunctionContaining(addr)
                 if func:
                     return func
         except Exception:

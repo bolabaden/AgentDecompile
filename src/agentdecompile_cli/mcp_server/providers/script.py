@@ -150,11 +150,18 @@ class ScriptToolProvider(ToolProvider):
             ns["getRegister"] = program.getRegister
             ns["getProgramContext"] = program.getProgramContext
 
-            # Address helpers
+            # Address helpers: parse 0x as hex, else decimal (same as tools via AddressUtil)
             try:
+                from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+
                 af = program.getAddressFactory()
-                ns["toAddr"] = lambda s: af.getAddress(str(s))
-                ns["getAddress"] = lambda s: af.getAddress(str(s))
+
+                def _to_addr(s: str):
+                    addr = AddressUtil.parse_address(program, str(s))
+                    return addr if addr is not None else af.getAddress(str(s))
+
+                ns["toAddr"] = _to_addr
+                ns["getAddress"] = _to_addr
             except Exception:
                 pass
 

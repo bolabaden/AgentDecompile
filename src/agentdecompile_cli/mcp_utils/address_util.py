@@ -1,9 +1,11 @@
 """Address utility helpers for Ghidra addresses and symbols.
 
-Used by tool providers to: format addresses for JSON (0x-prefix hex), parse user-supplied
-address strings (with or without 0x), validate addresses, and resolve symbols/labels
-to addresses. All address formatting should go through AddressUtil.format_address for
-consistency across tools.
+Single pipeline for address handling: all user-supplied address strings (e.g. from
+function/addressOrSymbol parameters) should be parsed or resolved via AddressUtil so
+that 0x-prefixed strings are interpreted as hex and others as decimal. Used by tool
+providers, wrappers (find_function, read_bytes, _lookup_symbols), decompile_tool,
+callgraph_tool, and script namespace (toAddr/getAddress). Format addresses for JSON
+via AddressUtil.format_address for consistency.
 """
 
 from __future__ import annotations
@@ -50,7 +52,8 @@ class AddressUtil:
     def parse_address(program: GhidraProgram, address_string: str) -> GhidraAddress | None:
         """Parse an address string that may or may not have a "0x" prefix.
 
-        This handles user input that might come in either format.
+        If the string is prefixed by 0x or 0X, the remainder is parsed as base 16.
+        Otherwise the whole string is parsed as base 10.
 
         Args:
             program: The Ghidra program (provides address factory)
@@ -62,12 +65,20 @@ class AddressUtil:
         if address_string is None or not address_string.strip():
             return None
 
-        clean_address = address_string.strip().removeprefix("0x").removeprefix("0X")
+        s = address_string.strip()
+        if s.lower().startswith("0x"):
+            clean = s[2:].lstrip()
+            base = 16
+        else:
+            clean = s
+            base = 10
+
+        if not clean:
+            return None
 
         try:
-            # Get the default address space and parse the address
             default_space = program.getAddressFactory().getDefaultAddressSpace()
-            return default_space.getAddress(int(clean_address, 16))
+            return default_space.getAddress(int(clean, base))
         except (ValueError, TypeError):
             return None
 
@@ -103,7 +114,16 @@ class AddressUtil:
 
         input_str = address_or_symbol.strip()
 
-        # First, try to find it as a symbol
+        # If input looks like a numeric address (0x-prefix or decimal digits), try parsing first.
+        # Ghidra's symbol APIs can throw when given "0x48b17c" (e.g. int() in base 10).
+        if input_str.lower().startswith("0x") or (
+            input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))
+        ):
+            addr = AddressUtil.parse_address(program, input_str)
+            if addr is not None:
+                return addr
+
+        # Try to find it as a symbol
         symbol_table = program.getSymbolTable()
         symbols = symbol_table.getLabelOrFunctionSymbols(input_str, None)
 
