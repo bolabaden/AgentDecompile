@@ -28,6 +28,7 @@ from .search_everything import SearchEverythingToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
 from .dissect import GetFunctionAioToolProvider
+from .prompts import PromptToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
@@ -47,6 +48,7 @@ __all__ = [
     "MemoryToolProvider",
     "ProjectToolProvider",
     "ScriptToolProvider",
+    "PromptToolProvider",
     "SearchEverythingToolProvider",
     "StringToolProvider",
     "StructureToolProvider",
