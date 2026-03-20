@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 
+from typing import Any
 from urllib.parse import urlsplit
 
 from mcp import types
@@ -71,6 +72,32 @@ class ProgramListResource(ResourceProvider):
                 result = json.dumps({"programs": programs})
                 logger.info(f"ProgramListResource: found {len(programs)} programs from session context")
                 return result
+
+            ghidra_project = (
+                getattr(self.tool_provider_manager, "ghidra_project", None) if self.tool_provider_manager else None
+            )
+            if ghidra_project is not None:
+                from agentdecompile_cli.mcp_server.domain_folder_listing import list_project_tree_from_ghidra
+
+                tree = list_project_tree_from_ghidra(ghidra_project, normalized_folder="/", max_results=500)
+                programs_from_tree: list[dict[str, Any]] = []
+                for item in tree:
+                    if str(item.get("type", "")).strip() != "Program":
+                        continue
+                    pth = item.get("path") or item.get("name")
+                    programs_from_tree.append(
+                        {
+                            "programPath": pth,
+                            "name": item.get("name"),
+                            "type": "Program",
+                        },
+                    )
+                if programs_from_tree:
+                    logger.info(
+                        "ProgramListResource: found %s programs from local ghidra project",
+                        len(programs_from_tree),
+                    )
+                    return json.dumps({"programs": programs_from_tree})
 
             if self.program_info is None:
                 logger.info("ProgramListResource: no program_info, returning empty list")

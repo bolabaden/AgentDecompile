@@ -39,6 +39,11 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 )
 from agentdecompile_cli.registry import Tool
 
+from agentdecompile_cli.mcp_server.domain_folder_listing import (
+    list_project_tree_from_ghidra,
+    walk_domain_folder_tree,
+)
+
 if TYPE_CHECKING:
     from abc import ABC, abstractmethod
 
@@ -1539,7 +1544,10 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
         await self._ensure_program_loaded_for_stateless_request(args)
 
-        folder: str = self._get_str(args, "folder", "path", default="/")
+        # Use only `folder` for Ghidra project paths. The `path` argument is reserved for
+        # explicit filesystem directory listing (see fs_path below); mixing the two keys
+        # caused clients that send path=/ to hit OS listing or wrong folder resolution.
+        folder: str = self._get_str(args, "folder", default="/")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
         session_id: str = get_current_mcp_session_id()
 
@@ -1581,21 +1589,34 @@ class ProjectToolProvider(ToolProvider):
                         "source": "shared-server-session",
                     },
                 )
-            # No program loaded and no session binaries: list from ghidra_project root if available
+            # No program loaded and no session binaries: list from the open Ghidra project
+            # on disk (local). Try every known domain root — some builds only expose files
+            # under getProject().getProjectData().getRootFolder(), not ghidra_project.getRootFolder().
             ghidra_project_noload: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
             if ghidra_project_noload is not None:
                 try:
-                    root_folder_noload = ghidra_project_noload.getRootFolder()
-                    if root_folder_noload is not None:
-                        normalized_folder_noload = self._normalize_repo_path(folder)
-                        if normalized_folder_noload == "/":
-                            target_folder_noload = root_folder_noload
-                        else:
-                            target_folder_noload = root_folder_noload.getFolder(normalized_folder_noload) if hasattr(root_folder_noload, "getFolder") else None
-                        if target_folder_noload is not None:
-                            files_noload = self._list_domain_files(target_folder_noload, max_results)
-                            logger.info("list-project-files (no program loaded): listed %s items from project", len(files_noload))
-                            return create_success_response({"folder": folder, "files": files_noload, "count": len(files_noload)})
+                    normalized_folder_noload = self._normalize_repo_path(folder)
+                    files_noload = list_project_tree_from_ghidra(
+                        ghidra_project_noload,
+                        normalized_folder=normalized_folder_noload,
+                        max_results=max_results,
+                    )
+                    logger.info(
+                        "list-project-files (no program loaded): listed %s items from local ghidra project",
+                        len(files_noload),
+                    )
+                    payload: dict[str, Any] = {
+                        "folder": folder,
+                        "files": files_noload,
+                        "count": len(files_noload),
+                        "source": "local-ghidra-project",
+                    }
+                    if not files_noload:
+                        payload["note"] = (
+                            "Ghidra project is open but this folder has no domain files yet "
+                            "(try folder=/ after import, or open-project on your project directory)."
+                        )
+                    return create_success_response(payload)
                 except Exception as e:
                     logger.warning("list-project-files (no program loaded): failed to list from ghidra_project: %s", e)
             return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
@@ -3930,24 +3951,4 @@ class ProjectToolProvider(ToolProvider):
         return await self._import_file(self._require_str(args, "path", "filepath", "file", name="path"), args)
 
     def _list_domain_files(self, root_folder: Any, max_results: int) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-
-        def walk(folder: Any) -> None:
-            nonlocal items
-            if len(items) >= max_results:
-                return
-
-            for child in folder.getFolders():
-                if len(items) >= max_results:
-                    return
-                items.append({"name": child.getName(), "path": str(child.getPathname()), "type": "Folder"})
-                walk(child)
-
-            for domain_file in folder.getFiles():
-                if len(items) >= max_results:
-                    return
-                content_type = str(domain_file.getContentType()) if hasattr(domain_file, "getContentType") else "unknown"
-                items.append({"name": domain_file.getName(), "path": str(domain_file.getPathname()), "type": content_type})
-
-        walk(root_folder)
-        return items
+        return walk_domain_folder_tree(root_folder, max_results)
