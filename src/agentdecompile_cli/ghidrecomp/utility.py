@@ -26,6 +26,13 @@ _HEADLESS_UNSAFE_ANALYZERS = (
 )
 _HEADLESS_UNSAFE_SUBSTRINGS = ("Windows Resource", "Resource Reference")
 
+# Dot-delimited paths used by some Ghidra versions for nested analysis options.
+_HEADLESS_UNSAFE_OPTION_PATHS = (
+    "Windows Resource Reference Analyzer",
+    "Analyzers.Windows Resource Reference Analyzer",
+    "Microsoft Code Analyzer.Windows Resource Reference Analyzer",
+)
+
 
 def disable_headless_unsafe_analyzers(program: Any) -> None:
     """Disable analyzers that crash in headless/PyGhidra (e.g. WindowsResourceReferenceAnalyzer)."""
@@ -35,8 +42,12 @@ def disable_headless_unsafe_analyzers(program: Any) -> None:
         opts = program.getOptions(Program.ANALYSIS_PROPERTIES)
         for name in _HEADLESS_UNSAFE_ANALYZERS:
             try:
-                if opts.contains(name):
-                    opts.setBoolean(name, False)
+                opts.setBoolean(name, False)
+            except Exception:
+                pass
+        for path in _HEADLESS_UNSAFE_OPTION_PATHS:
+            try:
+                opts.setBoolean(path, False)
             except Exception:
                 pass
         _disable_analyzer_options_matching(opts)
@@ -51,11 +62,10 @@ def _disable_analyzer_options_matching(opts: Any) -> None:
         for name in names or []:
             try:
                 if any(sub in name for sub in _HEADLESS_UNSAFE_SUBSTRINGS):
-                    if opts.contains(name):
-                        try:
-                            opts.setBoolean(name, False)
-                        except Exception:
-                            pass
+                    try:
+                        opts.setBoolean(name, False)
+                    except Exception:
+                        pass
                 child = opts.getOptions(name) if hasattr(opts, "getOptions") else None
                 if child is not None:
                     _disable_analyzer_options_matching(child)
