@@ -1006,6 +1006,7 @@ class ImportExportToolProvider(ToolProvider):
         program_path = self._get_str(args, "programpath", "program_path", "path", default="").strip()
         comment = self._get_str(args, "comment", "message", default="AgentDecompile checkin")
         keep_checked_out = self._get_bool(args, "keepcheckedout", default=False)
+        auto_checkin_flow = self._get_bool(args, "__auto_checkin_invocation", default=False)
 
         # Zero-arg: check in all open programs that are versioned and can be checked in
         if not program_path:
@@ -1018,6 +1019,30 @@ class ImportExportToolProvider(ToolProvider):
                 from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
                 checkin_comment = comment or "Checkin all changes"
+                # Auto-checkin flow (AGENTDECOMPILE_AUTO_CHECKIN): checkout if not already checked out so we can check in;
+                # after check-in, re-checkout only programs that were already checked out (don't leave others exclusively checked out).
+                already_checked_out: list[tuple[str, Any]] = []  # (path_key, domain_file)
+                we_checked_out: list[str] = []  # path_keys we checked out in this flow
+                if auto_checkin_flow:
+                    for path_key, info in (session.open_programs or {}).items():
+                        prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                        if prog is None:
+                            continue
+                        domain_file = prog.getDomainFile()
+                        if domain_file is None or not domain_file.isVersioned():
+                            continue
+                        if domain_file.isCheckedOut():
+                            already_checked_out.append((path_key, domain_file))
+                        else:
+                            try:
+                                domain_file.checkout(True, TaskMonitor.DUMMY)
+                                we_checked_out.append(path_key)
+                            except Exception:
+                                all_ok = False
+                                # Main loop below will still process this program (will save locally since canCheckin() is false)
+
+                # Use keep_checked_out=False for auto flow so check-in doesn't re-checkout; we'll re-checkout only already_checked_out below.
+                _keep = keep_checked_out if not auto_checkin_flow else False
                 for path_key, info in (session.open_programs or {}).items():
                     prog = getattr(info, "program", None) or getattr(info, "current_program", None)
                     if prog is None:
@@ -1029,8 +1054,6 @@ class ImportExportToolProvider(ToolProvider):
                         continue
                     try:
                         if domain_file.isVersioned() and domain_file.canCheckin():
-                            _keep = keep_checked_out
-
                             class _SimpleCheckinHandler(CheckinHandler):  # type: ignore[misc]
                                 def getComment(self) -> str:  # noqa: N802
                                     return checkin_comment
@@ -1050,6 +1073,14 @@ class ImportExportToolProvider(ToolProvider):
                     except Exception as e:
                         results.append({"programPath": path_key, "success": False, "error": str(e)})
                         all_ok = False
+
+                # Re-checkout only programs that were already checked out before we did anything (don't leave them checked in if user had them out).
+                if auto_checkin_flow and already_checked_out:
+                    for _path_key, domain_file in already_checked_out:
+                        try:
+                            domain_file.checkout(True, TaskMonitor.DUMMY)
+                        except Exception:
+                            pass  # best-effort; program remains checked in
             except Exception as e:
                 return create_success_response(
                     {
