@@ -3105,6 +3105,38 @@ class ProjectToolProvider(ToolProvider):
         errors: list[dict[str, Any]] = []
         heartbeat_interval = 10
 
+        # Headless: wait for active transactions to end (up to 60s), then force-end only if still open so save() can obtain lock.
+        _tx_wait_sec = 60
+        if not dry_run and candidates:
+            try:
+                session_id = get_current_mcp_session_id()
+                session = SESSION_CONTEXTS.get_or_create(session_id)
+                wait_start = time.time()
+                while time.time() - wait_start < _tx_wait_sec:
+                    has_tx = False
+                    for path_key, info in (session.open_programs or {}).items():
+                        prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                        if prog is None:
+                            continue
+                        tx = prog.getCurrentTransaction() if hasattr(prog, "getCurrentTransaction") else None
+                        if tx is not None:
+                            has_tx = True
+                            break
+                    if not has_tx:
+                        break
+                    time.sleep(1)
+                # After wait: force-end any remaining transactions so save can proceed
+                for path_key, info in (session.open_programs or {}).items():
+                    prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                    if prog is None:
+                        continue
+                    tx = prog.getCurrentTransaction() if hasattr(prog, "getCurrentTransaction") else None
+                    if tx is not None:
+                        prog.endTransaction(tx, True)
+                        logger.info("sync-project push: ended active transaction for program %s before save (after wait)", path_key)
+            except Exception as end_all_exc:
+                logger.warning("sync-project push: could not wait/end transactions before save (continuing): %s", end_all_exc)
+
         logger.info("shared-sync push starting transfer loop total_candidates=%s", len(candidates))
         for index, item in enumerate(candidates, start=1):
             source_path: str = self._normalize_repo_path(str(item.get("path") or ""))
@@ -3140,6 +3172,32 @@ class ProjectToolProvider(ToolProvider):
                 if hasattr(source_file, "save"):
                     logger.info("shared-sync push saving source file=%s", source_path)
                     from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                    # End any active transaction on this domain file so save() can lock it (Ghidra raises "Unable to lock due to active transaction" otherwise).
+                    try:
+                        source_pathname = (source_file.getPathname() or "").strip().replace("\\", "/")
+                        session_id = get_current_mcp_session_id()
+                        session = SESSION_CONTEXTS.get_or_create(session_id)
+                        for _path_key, info in (session.open_programs or {}).items():
+                            prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                            if prog is None:
+                                continue
+                            df = prog.getDomainFile() if hasattr(prog, "getDomainFile") else None
+                            if df is None:
+                                continue
+                            open_pathname = (df.getPathname() or "").strip().replace("\\", "/")
+                            if not open_pathname or not source_pathname:
+                                continue
+                            _a = (open_pathname or "").strip("/").lower()
+                            _b = (source_pathname or "").strip("/").lower()
+                            if _a == _b:
+                                tx = prog.getCurrentTransaction() if hasattr(prog, "getCurrentTransaction") else None
+                                if tx is not None:
+                                    prog.endTransaction(tx, True)
+                                    logger.debug("shared-sync push ended active transaction for %s before save", source_path)
+                                break
+                    except Exception as tx_exc:
+                        logger.debug("shared-sync push could not end transaction for %s (continuing): %s", source_path, tx_exc)
 
                     source_file.save(TaskMonitor.DUMMY)
                 else:
