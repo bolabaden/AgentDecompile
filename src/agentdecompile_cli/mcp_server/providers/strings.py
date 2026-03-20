@@ -341,7 +341,9 @@ class StringToolProvider(ToolProvider):
                     strings = [s for s in strings if pat.search(s.get("value", ""))]
                     total = len(strings)
                     strings, has_more = self._paginate_results(strings, offset, max_results)
-                    return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+                    return self._create_paginated_response(
+                        strings, offset, max_results, total=total, mode=mode, query=pattern
+                    )
                 except re.error:
                     pass
 
@@ -361,7 +363,9 @@ class StringToolProvider(ToolProvider):
             total = len(scored)
             strings = [s for _, s in scored]
             strings, has_more = self._paginate_results(strings, offset, max_results)
-            return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+            return self._create_paginated_response(
+                strings, offset, max_results, total=total, mode=mode, query=pattern
+            )
 
         if mode_n == "regex" and pattern:
             try:
@@ -401,4 +405,9 @@ class StringToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+        extra: dict[str, Any] = {}
+        if pattern:
+            extra["query"] = pattern
+        return self._create_paginated_response(
+            strings, offset, max_results, total=total, mode=mode, **extra
+        )

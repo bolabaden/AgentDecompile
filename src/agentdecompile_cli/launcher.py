@@ -42,6 +42,25 @@ from agentdecompile_cli.project_manager import ProjectManager
 from agentdecompile_cli.registry import Tool
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
+# Analyzers that NPE in headless when GhidraScriptUtil.bundleHost is null. Try multiple names for Ghidra version variance.
+_HEADLESS_UNSAFE_ANALYZERS = ("Windows Resource Reference Analyzer", "Windows Resource Reference")
+
+
+def _disable_headless_unsafe_analyzers(program: Any) -> None:
+    """Disable analyzers that crash in headless/PyGhidra (no script bundle host)."""
+    try:
+        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+
+        opts = program.getOptions(Program.ANALYSIS_PROPERTIES)
+        for name in _HEADLESS_UNSAFE_ANALYZERS:
+            try:
+                opts.setBoolean(name, False)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 if TYPE_CHECKING:
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface,
@@ -1093,6 +1112,8 @@ class PyGhidraContext:
                 else:
                     logger.info(f"Loaded PDB: {'None' if pdb is None else pdb.getName()}")
 
+            # Disable analyzers that NPE in headless (GhidraScriptUtil.bundleHost is null)
+            _disable_headless_unsafe_analyzers(program)
             logger.info("Starting Ghidra analysis of %s...", program)
             try:
                 flat_api.analyzeAll(program)

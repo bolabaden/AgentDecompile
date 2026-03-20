@@ -1207,6 +1207,7 @@ class AgentDecompileStdioBridge:
 
         try:
             raw: dict[str, Any] = await self._backend_request("get_prompt", {"name": name, "arguments": arguments})
+            sys.stderr.write(f"Get prompt result: {raw}\n")
             return _GetPromptResult.model_validate(raw)
         except Exception as e:
             msg = f"ERROR: get_prompt failed for {name}: {e.__class__.__name__}: {e}"
@@ -1218,6 +1219,7 @@ class AgentDecompileStdioBridge:
 
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:  # type: ignore[name-defined]
+            sys.stderr.write("list_tools handler called\n")
             return await self._handle_list_tools()
 
         @self.server.call_tool()
@@ -1225,24 +1227,29 @@ class AgentDecompileStdioBridge:
             name: str,
             arguments: dict[str, Any],
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
+            sys.stderr.write(f"call_tool handler called for {name}\n")
             return await self._handle_call_tool(name, arguments)
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]
+            sys.stderr.write("list_resources handler called\n")
             return await self._handle_list_resources()
 
         @self.server.read_resource()
         async def read_resource(
             uri: AnyUrl,  # type: ignore[name-defined]
         ) -> str | bytes | Iterable[ReadResourceContents]:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
+            sys.stderr.write(f"read_resource handler called for {uri}\n")
             return await self._handle_read_resource(uri)
 
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
+            sys.stderr.write("list_prompts handler called\n")
             return await self._handle_list_prompts()
 
         @self.server.get_prompt()
         async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:  # type: ignore[name-defined]
+            sys.stderr.write(f"get_prompt handler called for {name}\n")
             return await self._handle_get_prompt(name, arguments)
 
     def _create_initialization_options(self):
@@ -1251,6 +1258,7 @@ class AgentDecompileStdioBridge:
         Some MCP clients attempt to set the server log level during/after
         initialize and expect `capabilities.logging` to be present.
         """
+        sys.stderr.write("Creating initialization options\n")
         options: InitializationOptions = self.server.create_initialization_options()
         capabilities: ServerCapabilities | None = getattr(options, "capabilities", None)
         if capabilities is None:
@@ -1268,7 +1276,7 @@ class AgentDecompileStdioBridge:
         request.  All backend communication uses ``RawMcpHttpBackend`` (plain
         httpx POST) so no anyio cancel scopes are involved.
         """
-        sys.stderr.write("Bridge ready - stdio transport active\n")
+        sys.stderr.write("Running bridge - stdio transport active\n")
 
         try:
             async with stdio_server() as (stdio_read, stdio_write):

@@ -50,8 +50,8 @@ class CallGraphToolProvider(ToolProvider):
             "type": "object",
             "properties": {
                 "programPath": {"type": "string", "description": "The path to the program containing the function."},
-                "function": {"type": "string", "description": "The exact name or starting address of the function to trace."},
-                "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function to trace."},
+                "function": {"type": "string", "description": "The exact name or starting address of the function to trace. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk."},
+                "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function. Supports both thunk and IAT addresses; IAT is resolved to the thunk."},
                 "functionIdentifier": {"type": "string", "description": "Another alternative parameter for the function to trace."},
                 "mode": {
                     "type": "string",

@@ -843,7 +843,7 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
         Tool.GEN_CALLGRAPH,
         Tool.GET_FUNCTIONS,
         Tool.MANAGE_BOOKMARKS,
-        Tool.MANAGE_COMMENTS,
+        # Tool.MANAGE_COMMENTS exposed so agents can annotate binaries (comments) and save into project
         Tool.MANAGE_DATA_TYPES,
         Tool.MANAGE_FILES,
         Tool.MANAGE_FUNCTION,
