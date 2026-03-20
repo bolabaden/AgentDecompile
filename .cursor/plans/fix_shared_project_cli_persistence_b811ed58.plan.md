@@ -1,6 +1,6 @@
 ---
 name: Fix shared project CLI persistence
-overview: "Fix the CLI so that shared-project (connect-shared-project) state is correctly reused across separate invocations when calling tools like checkout-program. Root cause: the proxy does not forward the client's Mcp-Session-Id to the backend, so the backend never sees the same session that had open-project. Secondary: error message is misleading and CLI could optionally persist/retry shared-project context. Deepened with canonical session handling, security, framework docs, MCP debugging, and agent-native parity."
+overview: "Fix the CLI so that shared-project (connect-shared-project) state is correctly reused across separate invocations when calling tools like checkout-program. Root cause: the proxy does not forward the client's Mcp-Session-Id to the backend, so the backend never sees the same session that had open. Secondary: error message is misleading and CLI could optionally persist/retry shared-project context. Deepened with canonical session handling, security, framework docs, MCP debugging, and agent-native parity."
 todos:
   - id: proxy-forward-session-id
     content: Add mcp-session-id to allowed_headers in _forwardable_shared_headers (proxy_server.py)
@@ -9,7 +9,7 @@ todos:
     content: Reword path-not-resolved error and nextSteps in import_export.py (no 'new session' claim)
     status: completed
   - id: verify-proxy-flow
-    content: "Verify proxy flow: open-project then checkout-program in second run with same --server-url"
+    content: "Verify proxy flow: open then checkout-program in second run with same --server-url"
     status: completed
   - id: verify-direct-server
     content: "Verify direct server: same two-run test, no regression"
@@ -59,10 +59,10 @@ isProject: false
 
 User runs:
 
-1. `agentdecompile-cli --server-url http://HOST:8080/mcp --ghidra-server-host HOST ... open-project` → succeeds (shared repo, 26 programs).
+1. `agentdecompile-cli --server-url http://HOST:8080/mcp --ghidra-server-host HOST ... open` → succeeds (shared repo, 26 programs).
 2. `agentdecompile-cli --server-url http://HOST:8080 tool checkout-program '{"programPath": "/K1/k1_win_gog_swkotor.exe"}'` → fails with "Could not resolve program path in the current project" and the message "Each CLI run uses a new session...".
 
-Design intent (from AGENTS.md): CLI persists MCP session id per server URL so that `open-project` then `checkout-program` in two separate invocations reuse the same server session when the same `--server-url` is used.
+Design intent (from AGENTS.md): CLI persists MCP session id per server URL so that `open` then `checkout-program` in two separate invocations reuse the same server session when the same `--server-url` is used.
 
 ## Root cause
 
@@ -140,15 +140,15 @@ Sessions should be handled in a single, spec-aligned way across CLI, proxy, and 
 
 - At [1119–1122](src/agentdecompile_cli/mcp_server/providers/import_export.py), replace the current `error` and `nextSteps` text so that:
   - The message no longer claims "Each CLI run uses a new session" (session is persisted by the CLI).
-  - It states that **this server session** has no shared project open (e.g. call `open-project` first with shared-server options, or use the same `--server-url` and ensure the server process wasn't restarted).
-- Keep `nextSteps` actionable: same-session options (pass ghidra-server-* with the tool, or use `tool-seq` with open-project then checkout-program).
+  - It states that **this server session** has no shared project open (e.g. call `open` first with shared-server options, or use the same `--server-url` and ensure the server process wasn't restarted).
+- Keep `nextSteps` actionable: same-session options (pass ghidra-server-* with the tool, or use `tool-seq` with open then checkout-program).
 
 ### 3. (Optional) CLI: persist last connect-shared-project args and retry or hint
 
 **Scope:** Lower priority; can be a follow-up.
 
-- **Option A – Persist and retry:** In `cli_state.json` (per backend scope), persist last successful `connect-shared-project` arguments (e.g. `server_host`, `server_port`, `path`/repository, and optionally redacted auth hints). When a tool returns a structured "path-not-resolved" for a path that looks shared (e.g. starts with `/`), the CLI could call `open-project` with those args then retry the tool once (if the backend is the same and we have the args).
-- **Option B – Hint only:** Persist the same args for display only; when showing the error, suggest "If using a proxy, ensure the proxy forwards the session id; otherwise call open-project in the same session (e.g. tool-seq) or pass --ghidra-server-host and --server-repository with this command."
+- **Option A – Persist and retry:** In `cli_state.json` (per backend scope), persist last successful `connect-shared-project` arguments (e.g. `server_host`, `server_port`, `path`/repository, and optionally redacted auth hints). When a tool returns a structured "path-not-resolved" for a path that looks shared (e.g. starts with `/`), the CLI could call `open` with those args then retry the tool once (if the backend is the same and we have the args).
+- **Option B – Hint only:** Persist the same args for display only; when showing the error, suggest "If using a proxy, ensure the proxy forwards the session id; otherwise call open in the same session (e.g. tool-seq) or pass --ghidra-server-host and --server-repository with this command."
 
 Recommendation: Implement **1** and **2** first so shared project works with the proxy and the message is correct. Add **3** only if you want automatic retry or richer hints.
 
@@ -177,7 +177,7 @@ Recommendation: Implement **1** and **2** first so shared project works with the
 
 ## Verification
 
-- **Proxy flow:** Run open-project against proxy (with ghidra-server-*), then in a second run checkout-program with same --server-url (no ghidra-server-*). Expect checkout to succeed for a path like `/K1/k1_win_gog_swkotor.exe`.
+- **Proxy flow:** Run open against proxy (with ghidra-server-*), then in a second run checkout-program with same --server-url (no ghidra-server-*). Expect checkout to succeed for a path like `/K1/k1_win_gog_swkotor.exe`.
 - **Direct server:** Same two-run test against the streamable HTTP server directly; should still work (no regression).
 - **Error copy:** Trigger path-not-resolved (e.g. wrong path or fresh server). Confirm the message no longer says "Each CLI run uses a new session" and correctly describes missing shared project in this server session.
 
@@ -186,7 +186,7 @@ Recommendation: Implement **1** and **2** first so shared project works with the
 Use the **mcp-debugging** skill and CLIs to confirm session behavior after implementing the fix:
 
 - **Meta-debug loop:** Inspect → on failure run trace + analyze → self-correct → retry.
-- **Inspector / mcptools:** Call `open-project` then `checkout-program` in two requests with the same session id; verify the second request succeeds and that the proxy forwards `mcp-session-id` to the backend (e.g. via mcp-trace or proxy logs).
+- **Inspector / mcptools:** Call `open` then `checkout-program` in two requests with the same session id; verify the second request succeeds and that the proxy forwards `mcp-session-id` to the backend (e.g. via mcp-trace or proxy logs).
 - **Reference:** [.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md](.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md).
 
 ## Security ownership (optional)

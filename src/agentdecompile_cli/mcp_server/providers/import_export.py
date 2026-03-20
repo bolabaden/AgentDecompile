@@ -257,7 +257,7 @@ class ImportExportToolProvider(ToolProvider):
                 "versionControlRequested": True,
                 "versionControlEnabled": False,
                 "success": False,
-                "error": "Shared version-control import requires an active shared-server session. Call open-project against the shared server first.",
+                "error": "Shared version-control import requires an active shared-server session. Call open against the shared server first.",
             }
 
         server_host = str(handle.get("server_host") or "").strip()
@@ -275,7 +275,7 @@ class ImportExportToolProvider(ToolProvider):
                 "versionControlRequested": True,
                 "versionControlEnabled": False,
                 "success": False,
-                "error": "Shared version-control import requires repository session state. Re-run open-project against the shared server and retry.",
+                "error": "Shared version-control import requires repository session state. Re-run open against the shared server and retry.",
             }
 
         ghidra_install_dir = os.environ.get("GHIDRA_INSTALL_DIR", "").strip()
@@ -434,7 +434,7 @@ class ImportExportToolProvider(ToolProvider):
                             ghidra_project = getattr(self._manager, "ghidra_project", None)
                             if ghidra_project is None:
                                 logger.warning(
-                                    "import-binary: open-project succeeded but ghidra_project is still None; "
+                                    "import-binary: open succeeded but ghidra_project is still None; "
                                     "imports may not persist to the expected project"
                                 )
                     except Exception as e:
@@ -497,7 +497,7 @@ class ImportExportToolProvider(ToolProvider):
             else:
                 # Fallback: no ghidra_project available. Create a temporary ProjectManager.
                 # WARNING: This creates a separate project that gets cleaned up, so imports won't
-                # persist to the main project. Users should open-project first or ensure
+                # persist to the main project. Users should open first or ensure
                 # AGENT_DECOMPILE_PROJECT_PATH is set.
                 from agentdecompile_cli.project_manager import ProjectManager
 
@@ -1079,9 +1079,9 @@ class ImportExportToolProvider(ToolProvider):
                             "keep_checked_out": keep_checked_out,
                             "success": False,
                             "reason": "shared-path-requires-session",
-                            "error": "Checkin of shared repository files requires an active session with the shared Ghidra server. Call open-project with the shared server details first.",
+                            "error": "Checkin of shared repository files requires an active session with the shared Ghidra server. Call open with the shared server details first.",
                             "nextSteps": [
-                                "Call `open-project` with `serverHost`, `serverPort`, `serverRepository`, and optional auth credentials.",
+                                "Call `open` with `serverHost`, `serverPort`, `serverRepository`, and optional auth credentials.",
                                 "Then retry `checkin-program` with the same program_path.",
                             ],
                         },
@@ -1094,7 +1094,7 @@ class ImportExportToolProvider(ToolProvider):
                         "comment": comment,
                         "keep_checked_out": keep_checked_out,
                         "success": False,
-                        "error": f"Program path '{program_path}' could not be resolved. Call open-project and checkout-program first, then retry checkin-program with the same program_path.",
+                        "error": f"Program path '{program_path}' could not be resolved. Call open and checkout-program first, then retry checkin-program with the same program_path.",
                     },
                 )
 
@@ -1212,10 +1212,10 @@ class ImportExportToolProvider(ToolProvider):
                             "exclusive": exclusive,
                             "success": False,
                             "reason": "path-not-resolved",
-                            "error": "Could not resolve program path in the current project. This server session has no shared project open. Call open-project first with shared-server options (e.g. --ghidra-server-host, --server-repository), use the same --server-url and ensure the server process was not restarted, or run open-project then checkout-program in one session (e.g. tool-seq).",
+                            "error": "Could not resolve program path in the current project. This server session has no shared project open. Call open first with shared-server options (e.g. --ghidra-server-host, --server-repository), use the same --server-url and ensure the server process was not restarted, or run open then checkout-program in one session (e.g. tool-seq).",
                             "nextSteps": [
-                                "Same session: run one command with server options, e.g. `... --ghidra-server-host HOST --server-repository REPO tool checkout-program '{\"programPath\": \"/K1/...\"}'` so open-project runs first in this session.",
-                                "Or use tool-seq: `tool-seq '[{\"name\": \"open-project\", \"arguments\": {\"path\": \"Odyssey\"}}, {\"name\": \"checkout-program\", \"arguments\": {\"programPath\": \"/K1/k1_win_gog_swkotor.exe\"}}]'` with server URL and ghidra-server-* options.",
+                                "Same session: run one command with server options, e.g. `... --ghidra-server-host HOST --server-repository REPO tool checkout-program '{\"programPath\": \"/K1/...\"}'` so open runs first in this session.",
+                                "Or use tool-seq: `tool-seq '[{\"name\": \"open\", \"arguments\": {\"path\": \"Odyssey\"}}, {\"name\": \"checkout-program\", \"arguments\": {\"programPath\": \"/K1/k1_win_gog_swkotor.exe\"}}]'` with server URL and ghidra-server-* options.",
                             ],
                         },
                     )
@@ -1377,9 +1377,9 @@ class ImportExportToolProvider(ToolProvider):
                         "can_checkout": True,
                         "can_checkin": False,
                         "versionControlEnabled": True,
-                        "note": "Program path indicates shared repository. Could not open or resolve. Call open-project first.",
+                        "note": "Program path indicates shared repository. Could not open or resolve. Call open first.",
                         "nextSteps": [
-                            "Call `open-project` with shared server credentials.",
+                            "Call `open` with shared server credentials.",
                             "Retry `checkout-status` after opening the shared repository.",
                         ],
                     },
@@ -1393,9 +1393,9 @@ class ImportExportToolProvider(ToolProvider):
                         "action": "checkout_status",
                         "program": program_path or "",
                         "success": False,
-                        "error": f"Program path '{program_path}' could not be resolved from the current project or session, and no program is active. Call open-project or list-project-files first."
+                        "error": f"Program path '{program_path}' could not be resolved from the current project or session, and no program is active. Call open or list-project-files first."
                         if program_path
-                        else "No program loaded. Call open-project or import-binary first.",
+                        else "No program loaded. Call open or import-binary first.",
                     },
                 )
             program = self.program_info.program
@@ -1413,7 +1413,7 @@ class ImportExportToolProvider(ToolProvider):
                                 "action": "checkout_status",
                                 "program": program_path,
                                 "success": False,
-                                "error": f"Requested program path '{program_path}' could not be resolved. Active program is '{program_display_name}' (path: {df_path}). Open the requested program first (e.g. open-project with that path) or omit program_path to query the active program.",
+                                "error": f"Requested program path '{program_path}' could not be resolved. Active program is '{program_display_name}' (path: {df_path}). Open the requested program first (e.g. open with that path) or omit program_path to query the active program.",
                                 "activeProgram": program_display_name,
                                 "activePath": df_path,
                             },
@@ -1434,7 +1434,7 @@ class ImportExportToolProvider(ToolProvider):
                     "action": "checkout_status",
                     "program": program_path,
                     "success": False,
-                    "error": f"Program path '{program_path}' could not be resolved from the current project or session. Call open-project or list-project-files first.",
+                    "error": f"Program path '{program_path}' could not be resolved from the current project or session. Call open or list-project-files first.",
                 },
             )
 

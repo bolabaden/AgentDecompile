@@ -15,7 +15,7 @@ import socket
 import threading
 import time
 
-from collections import Callable
+from typing import Callable
 from contextlib import AbstractContextManager
 from contextvars import Token
 from typing import TYPE_CHECKING, Any, Awaitable

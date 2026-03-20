@@ -81,7 +81,7 @@ _VERSION_CONTROL_TOOLS_DOC = {
             "modesRelevantToVersionControl": ["checkout", "uncheckout", "unhijack"],
         },
     ],
-    "workflow": '1. open-project (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment="Description of changes".',
+    "workflow": '1. open (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment="Description of changes".',
 }
 
 
@@ -123,7 +123,7 @@ class DebugInfoResource(ResourceProvider):
             types.Resource(
                 uri=AnyUrl(url=RESOURCE_URI_DEBUG_INFO),
                 name="AgentDecompile Debug Info",
-                description="Unified AgentDecompile resource with forced open-project diagnostics, project inventory, program state, and profiling details",
+                description="Unified AgentDecompile resource with forced open diagnostics, project inventory, program state, and profiling details",
                 mimeType="application/json",
             ),
         ]
@@ -139,11 +139,11 @@ class DebugInfoResource(ResourceProvider):
         open_project_attempt = await self._force_open_project(uri_text)
 
         if uri_text == _LEGACY_PROGRAMS_URI:
-            logger.info("DebugInfoResource: serving legacy programs alias after open-project attempt")
+            logger.info("DebugInfoResource: serving legacy programs alias after open attempt")
             return await self._programs_resource.read_resource(uri_text)
 
         if uri_text == _LEGACY_STATIC_ANALYSIS_URI:
-            logger.info("DebugInfoResource: serving legacy static-analysis alias after open-project attempt")
+            logger.info("DebugInfoResource: serving legacy static-analysis alias after open attempt")
             return await self._static_analysis_resource.read_resource(uri_text)
 
         try:
@@ -272,7 +272,7 @@ class DebugInfoResource(ResourceProvider):
     async def _force_open_project(self, requested_uri: str) -> dict[str, Any]:
         open_args, source = self._build_open_project_arguments()
         logger.info(
-            "DebugInfoResource: forcing open-project for resource=%s source=%s args=%s",
+            "DebugInfoResource: forcing open for resource=%s source=%s args=%s",
             requested_uri,
             source,
             self._sanitize_sensitive(open_args),
@@ -517,7 +517,7 @@ class DebugInfoResource(ResourceProvider):
                 "manageFilesAlias": "manage-files (mode=checkout | mode=uncheckout)",
             },
             "applicable": is_shared,
-            "note": "Checkout/checkin apply only when connected to a shared Ghidra Server repository (open-project with serverHost/serverPort). Local projects do not use version control." if not is_shared else None,
+            "note": "Checkout/checkin apply only when connected to a shared Ghidra Server repository (open with serverHost/serverPort). Local projects do not use version control." if not is_shared else None,
             "currentCheckoutState": None,
             "checkoutStatusProbe": None,
         }

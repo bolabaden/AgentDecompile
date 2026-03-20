@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart TD
-  A[Start runtime] --> B[open or open-project]
+  A[Start runtime] --> B[open or open]
   B --> C[list project-files]
   C --> D[get-current-program]
   D --> E[search-symbols and get-references]
@@ -30,7 +30,7 @@ Program path: /K1/k1_win_gog_swkotor.exe
 Notes:
 
 - The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
-- **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open-project` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
+- **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
 
@@ -70,13 +70,13 @@ docker run --rm -i \
 
 # Local-checkout CLI sequence used to verify shared-repository and project lifecycle behavior
 $env:PYTHONPATH='src'
-C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
 Equivalent CLI entrypoint if you want the same behavior through the published command instead of `python -m`:
 
 ```powershell
-uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open-project","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
 ## 1. Start the runtime
@@ -189,7 +189,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 Equivalent raw tool call:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool open-project '{"path":"/K1/k1_win_gog_swkotor.exe"}'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool open '{"path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
 
 ### List project files
@@ -241,7 +241,7 @@ uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --
 ### Run a sequence of tool calls in one session
 
 ```powershell
-$steps = '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":10}}]'
+$steps = '[{"name":"open","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":10}}]'
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool-seq $steps
 ```
 
@@ -253,9 +253,9 @@ The contracts below were re-validated against a real `agentdecompile-server -t s
 
 - Default live MCP advertisement is **37 tools**.
 - Hidden-but-callable legacy tools still work through raw MCP and curated CLI commands; for example `manage-comments` is callable even though it is not in the default `tools/list` output.
-- `switch-project` remains accepted as a compatibility alias and currently routes to `open-project`, but it is intentionally not advertised.
+- `switch-project` remains accepted as a compatibility alias and currently routes to `open`, but it is intentionally not advertised.
 - Local JSON `list-functions` returns a `results` array, not `functions`.
-- Local JSON `open-project` and `import-binary` are similar but not identical: `open-project` returns `operation`, while `import-binary` returns `action` plus `success`, `language`, and `compiler` fields.
+- Local JSON `open` and `import-binary` are similar but not identical: `open` returns `operation`, while `import-binary` returns `action` plus `success`, `language`, and `compiler` fields.
 - On the current local sample fixture, `change-processor` fails with a `ProgramDB.setLanguage(...)` overload error and leaves the active program unchanged in terminal validation. That observed failure is captured in `examples/mcp_responses/local_live_contract_test_x86_64.json`.
 
 The repository now includes an **experimental** grouped local terminal-contract suite at `tests/test_e2e_local_terminal_contracts.py`. It is based on terminal-validated observations and is intended for opt-in harness work (`AGENTDECOMPILE_ENABLE_EXPERIMENTAL_LOCAL_CONTRACTS=1`) while the Windows pytest subprocess path is still being hardened. The existing `tests/test_e2e_project_lifecycle.py` suite continues to cover the exact read-only markdown contracts for function/reference/import/export inspection.
@@ -371,7 +371,7 @@ Notes:
 Keep state inside one CLI invocation when you need a strict open-then-query flow:
 
 ```powershell
-uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool-seq '[{"name":"open-project","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
+uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool-seq '[{"name":"open","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
 ```
 
 ## 4. Raw MCP HTTP example
@@ -448,7 +448,7 @@ X-Ghidra-Repository: Odyssey
 
 ## 5. Validate agdec-http (tool sweep + debug log)
 
-To test the agdec-http MCP server and confirm all tools are callable, use the unified CLI testing script. It runs `tools/list` and a tool-seq (open-project, list-project-files, get-current-program, list-functions, search-symbols, get-references, list-imports, list-exports, decompile-function) and writes NDJSON to a debug log (e.g. `debug-cd359b.log`).
+To test the agdec-http MCP server and confirm all tools are callable, use the unified CLI testing script. It runs `tools/list` and a tool-seq (open, list-project-files, get-current-program, list-functions, search-symbols, get-references, list-imports, list-exports, decompile-function) and writes NDJSON to a debug log (e.g. `debug-cd359b.log`).
 
 ```powershell
 # Use URL from .cursor/mcp.json (agdec-http)
@@ -458,7 +458,7 @@ uv run python helper_scripts/mcp_cli_testing.py agdec-http --mcp-config .cursor/
 uv run python helper_scripts/mcp_cli_testing.py agdec-http --server-url http://127.0.0.1:8080/mcp --program-path /K1/k1_win_gog_swkotor.exe
 ```
 
-For full workflow success with a shared server, the Ghidra repository must be reachable and `AGENT_DECOMPILE_GHIDRA_SERVER_*` (or `--ghidra-host`, `--username`, `--password`) must be set so `open-project` can connect. For a **local server with 9/9 pass**, either:
+For full workflow success with a shared server, the Ghidra repository must be reachable and `AGENT_DECOMPILE_GHIDRA_SERVER_*` (or `--ghidra-host`, `--username`, `--password`) must be set so `open` can connect. For a **local server with 9/9 pass**, either:
 
 - **Automated:** Set `GHIDRA_INSTALL_DIR` to your Ghidra install, then run `uv run python helper_scripts/run_live_agdec_http_test.py`. This starts the server, imports `tests/fixtures/test_x86_64`, runs the validation, and stops the server.
 - **Manual:** Start `agentdecompile-server -t streamable-http`, then run the script with `--server-url http://127.0.0.1:8080/mcp --bootstrap-import tests/fixtures/test_x86_64` (bootstrap imports the fixture and uses it for the tool-seq).
@@ -471,7 +471,7 @@ To bulk-propagate function metadata from a well-documented binary to others (e.g
 - Use `agentdecompile-cli tool --list-tools` to inspect the currently advertised set.
 - Use `agentdecompile-cli alias <tool-name>` when you need to understand compatibility forwards.
 - Prefer `search-symbols` for new docs and workflows; `search-symbols-by-name` remains a compatibility alias.
-- Prefer `open-project` in raw tool mode and `open` in the convenience CLI command set.
+- Prefer `open` in raw tool mode and `open` in the convenience CLI command set.
 
 ## 7. Common failure states
 
@@ -503,10 +503,10 @@ Authentication and server errors follow the same shape:
   "error": "Authentication failed for user@host:13100: ...",
   "context": {
     "state": "authentication-failed",
-    "tool": "open-project"
+    "tool": "open"
   },
   "nextSteps": [
-    "Verify serverUsername/serverPassword and retry open-project.",
+    "Verify serverUsername/serverPassword and retry open.",
     "If credentials are correct, verify server reachability and repository access."
   ]
 }

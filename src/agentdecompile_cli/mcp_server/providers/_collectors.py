@@ -84,9 +84,25 @@ def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[st
     """Single pass over all functions: name, address, signature, params, comments, tags, caller/callee counts. Used by list-functions and others."""
     fm = program.getFunctionManager()
     results: list[dict[str, Any]] = []
-    for func in fm.getFunctions(True):
+    func_iter = iter_items(fm.getFunctions(True))
+    # Some PyGhidra/VM setups do not yield from getFunctions(True); try getFunctions(False) if count says we have functions.
+    try:
+        first_func = next(func_iter, None)
+    except Exception:
+        first_func = None
+    if first_func is None and fm.getFunctionCount() > 0:
+        func_iter = iter_items(fm.getFunctions(False))
+    else:
+        def _restore_iter():
+            yield first_func
+            yield from func_iter
+        func_iter = _restore_iter() if first_func is not None else func_iter
+
+    for func in func_iter:
+        if not hasattr(func, "getName"):
+            continue
         params = []
-        for p in list(func.getParameters()):
+        for p in list(func.getParameters() if hasattr(func, "getParameters") else []):  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             params.append(
                 {
                     "name": str(p.getName() or ""),
@@ -96,17 +112,17 @@ def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[st
             )
 
         row: dict[str, Any] = {
-            "name": str(func.getName()),
-            "address": str(func.getEntryPoint()),
-            "signature": str(func.getSignature()),
-            "size": int(func.getBody().getNumAddresses()) if func.getBody() else 0,
-            "isExternal": bool(func.isExternal()),
-            "isThunk": bool(func.isThunk()),
-            "parameterCount": int(func.getParameterCount()),
+            "name": str(func.getName()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "address": str(func.getEntryPoint()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "signature": str(func.getSignature()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "size": int(func.getBody().getNumAddresses()) if func.getBody() else 0,  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "isExternal": bool(func.isExternal()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "isThunk": bool(func.isThunk()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "parameterCount": int(func.getParameterCount()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             "parameters": params,
-            "returnType": str(func.getReturnType()),
-            "callingConvention": str(func.getCallingConventionName() or ""),
-            "hasVarArgs": bool(func.hasVarArgs()),
+            "returnType": str(func.getReturnType()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "callingConvention": str(func.getCallingConventionName() or ""),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "hasVarArgs": bool(func.hasVarArgs()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             "comments": collect_function_comments(program, func),
             "tags": collect_function_tags(func),
         }

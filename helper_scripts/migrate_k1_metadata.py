@@ -8,7 +8,7 @@ iterates all functions and discovers targets from the session). Prefer:
   uv run agentdecompile-cli migrate-metadata --binary /path/to/source
 
 For shared projects, open the project first (e.g. via MCP or tool-seq with
-open-project and server options), then run migrate-metadata.
+open and server options), then run migrate-metadata.
 
 Examples:
   uv run python helper_scripts/migrate_k1_metadata.py --server-url http://127.0.0.1:8080

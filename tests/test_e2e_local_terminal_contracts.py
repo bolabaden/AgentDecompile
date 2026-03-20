@@ -165,7 +165,7 @@ def local_contract_snapshot(
 
     with JsonRpcMcpSession(terminal_style_local_server, timeout=120.0) as session:
         tools = session.list_tools()
-        open_payload = session.call_tool_json("open-project", {"path": str(KNOWN_FIXTURE_PATH)})
+        open_payload = session.call_tool_json("open", {"path": str(KNOWN_FIXTURE_PATH)})
         switch_payload = session.call_tool_json("switch-project", {"path": str(KNOWN_FIXTURE_PATH)})
         import_payload = session.call_tool_json("import-binary", {"path": str(KNOWN_FIXTURE_PATH)})
         listing_payload = session.call_tool_json("list-project-files", {})
@@ -296,7 +296,7 @@ def _tool_text(session: JsonRpcMcpSession, name: str, arguments: dict[str, objec
 
 
 def _open_known_fixture(session: JsonRpcMcpSession) -> dict[str, object]:
-    return session.call_tool_json("open-project", {"path": str(KNOWN_FIXTURE_PATH)})
+    return session.call_tool_json("open", {"path": str(KNOWN_FIXTURE_PATH)})
 
 
 def test_live_local_default_advertised_tool_surface_matches_terminal_contract(
@@ -654,14 +654,14 @@ def cli_contract_snapshot(
 
     # --- tool-seq: open + list-functions (mirrors USAGE.md tool-seq example) ---
     seq_analysis = json.dumps([
-        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "open", "arguments": {"path": fixture_path}},
         {"name": "list-functions", "arguments": {"programPath": binary_name, "limit": 50, "format": "json"}},
     ])
     analysis_toolseq_result = _cli("tool-seq", seq_analysis, timeout=120)
 
     # --- tool-seq: open + list-imports + list-exports + search-symbols --- 
     seq_imports_exports = json.dumps([
-        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "open", "arguments": {"path": fixture_path}},
         {"name": "list-imports", "arguments": {"programPath": binary_name, "format": "json"}},
         {"name": "list-exports", "arguments": {"programPath": binary_name, "format": "json"}},
         {"name": "search-symbols", "arguments": {"programPath": binary_name, "query": "main", "format": "json"}},
@@ -670,7 +670,7 @@ def cli_contract_snapshot(
 
     # --- tool-seq: open + get-references mode=from (mirrors: references from --binary ...) ---
     seq_refs_from = json.dumps([
-        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "open", "arguments": {"path": fixture_path}},
         {"name": "get-references", "arguments": {
             "programPath": binary_name, "target": KNOWN_ENTRY_ADDRESS, "mode": "from", "format": "json",
         }},
@@ -679,7 +679,7 @@ def cli_contract_snapshot(
 
     # --- tool-seq: open + get-references mode=to (mirrors: references to --binary ...) ---
     seq_refs_to = json.dumps([
-        {"name": "open-project", "arguments": {"path": fixture_path}},
+        {"name": "open", "arguments": {"path": fixture_path}},
         {"name": "get-references", "arguments": {
             "programPath": binary_name, "target": KNOWN_ENTRY_ADDRESS, "mode": "to", "format": "json",
         }},
@@ -693,7 +693,7 @@ def cli_contract_snapshot(
     # --- alias commands (no server needed – purely registry lookups) ---
     alias_ssbn_result = _cli_no_server("alias", "search-symbols-by-name")
     alias_ss_result = _cli_no_server("alias", "search-symbols")
-    alias_op_result = _cli_no_server("alias", "open-project")
+    alias_op_result = _cli_no_server("alias", "open")
 
     return {
         "list_tools_result": list_tools_result,
@@ -730,7 +730,7 @@ def test_cli_tool_list_tools_shows_37(
 def test_cli_toolseq_open_and_list_functions(
     cli_contract_snapshot: dict[str, Any],
 ) -> None:
-    """tool-seq open-project + list-functions exits 0 and surfaces entry/_printf."""
+    """tool-seq open + list-functions exits 0 and surfaces entry/_printf."""
     result = cli_contract_snapshot["analysis_toolseq_result"]
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"tool-seq analysis failed:\n{output}"
@@ -823,8 +823,8 @@ def test_cli_alias_search_symbols_resolves(
 def test_cli_alias_open_project_resolves(
     cli_contract_snapshot: dict[str, Any],
 ) -> None:
-    """``alias open-project`` shows canonical name and any aliases."""
+    """``alias open`` shows canonical name and any aliases."""
     result = cli_contract_snapshot["alias_op_result"]
     output = result.stdout + result.stderr
-    assert result.returncode == 0, f"alias open-project failed:\n{output}"
-    assert "open_project" in output or "open-project" in output
+    assert result.returncode == 0, f"alias open failed:\n{output}"
+    assert "open_project" in output or "open" in output

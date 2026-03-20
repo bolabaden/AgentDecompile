@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from mcp import types
 
 from agentdecompile_cli.launcher import ProgramInfo
+from agentdecompile_cli.mcp_server.providers._collectors import iter_items
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -320,7 +321,7 @@ class ActionableError(Exception):
     response, along with auto-inferred guidance from error message patterns.
 
     **When to use ActionableError:**
-    - No program loaded (user needs to call `import-binary` for local binaries, or `open-project` for project/shared contexts)
+    - No program loaded (user needs to call `import-binary` for local binaries, or `open` for project/shared contexts)
     - Authentication failed (user should verify credentials)
     - Invalid path (user should check if file exists)
     - Required parameter missing (user should include the param)
@@ -333,7 +334,7 @@ class ActionableError(Exception):
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
+                    "Call `import-binary` with `path` for a local binary, or `open` for a `.gpr` project/shared server session.",
                     "Then retry the current tool.",
                 ],
             )
@@ -346,7 +347,7 @@ class ActionableError(Exception):
             "success": false,
             "error": "No program loaded",
             "context": {"state": "no-active-program"},
-            "nextSteps": ["Call `import-binary` for binaries or `open-project` for project/shared contexts...", "Then retry..."],
+            "nextSteps": ["Call `import-binary` for binaries or `open` for project/shared contexts...", "Then retry..."],
             "state": "no-active-program"  (context keys flattened into response)
         }
         ```
@@ -433,7 +434,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             {"state": "no-active-program"},
             filter_recommendations(
                 [
-                    "Call `import-binary` with `path` for a local binary, or `open-project` with a `.gpr` path/shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
+                    "Call `import-binary` with `path` for a local binary, or `open` with a `.gpr` path/shared server args (`serverHost`, `serverPort`, `serverUsername`, `serverPassword`).",
                     "Then call `get-current-program` to verify an active program is loaded.",
                 ],
             ),
@@ -444,7 +445,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             {"state": "authentication-failed"},
             filter_recommendations(
                 [
-                    "Verify `serverUsername`/`serverPassword` and retry `open-project`.",
+                    "Verify `serverUsername`/`serverPassword` and retry `open`.",
                     "If credentials are correct, verify the Ghidra server is running and reachable on `serverHost:serverPort`.",
                 ],
             ),
@@ -453,7 +454,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
     if "not connected to repository server" in lowered or "shared-server" in lowered:
         manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value)
         steps = [
-            "Call `open-project` first with shared-server parameters to establish a repository session.",
+            "Call `open` first with shared-server parameters to establish a repository session.",
         ]
         if manage_files_tool:
             steps.append(f"Then call `list-project-files` or `{manage_files_tool}` `mode=list` to verify repository visibility.")
@@ -504,7 +505,7 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             filter_recommendations(
                 [
                     "Call `list-project-files` to locate the exact program path in the active project/session.",
-                    "If this is a local binary, call `import-binary` first. Otherwise, ensure `open-project` is already connected to the correct project/repository session, then retry analysis tools.",
+                    "If this is a local binary, call `import-binary` first. Otherwise, ensure `open` is already connected to the correct project/repository session, then retry analysis tools.",
                 ],
             ),
         )
@@ -1109,7 +1110,7 @@ class ToolProvider:
                 "No program loaded",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
+                    "Call `import-binary` with `path` for a local binary, or `open` for a `.gpr` project/shared server session.",
                     "Call `get-current-program` to confirm `loaded=true`.",
                 ],
             )
@@ -1121,7 +1122,7 @@ class ToolProvider:
                 "No program loaded (Ghidra tools unavailable)",
                 context={"state": "no-active-program"},
                 next_steps=[
-                    "Call `import-binary` with `path` for a local binary, or `open-project` for a `.gpr` project/shared server session.",
+                    "Call `import-binary` with `path` for a local binary, or `open` for a `.gpr` project/shared server session.",
                     "Then retry the current analysis tool.",
                 ],
             )
@@ -1149,16 +1150,23 @@ class ToolProvider:
             return None
 
         fm = target_program.getFunctionManager()
-        for func in fm.getFunctions(include_externals):
+        for func in iter_items(fm.getFunctions(include_externals)):
             if func.getName() == function_identifier or str(func.getEntryPoint()) == function_identifier:
                 return func
+        if fm.getFunctionCount() > 0:
+            for func in iter_items(fm.getFunctions(False)):
+                if func.getName() == function_identifier or str(func.getEntryPoint()) == function_identifier:
+                    return func
 
         try:
-            from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+            from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
 
             addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
             if addr is not None:
-                return fm.getFunctionContaining(addr)
+                f = fm.getFunctionContaining(addr)
+                if f is None:
+                    f = fm.getFunctionAt(addr)
+                return f
         except Exception:
             return None
 
@@ -1170,7 +1178,7 @@ class ToolProvider:
         if target_program is None:
             raise ValueError("No program loaded")
 
-        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
 
         return AddressUtil.resolve_address_or_symbol(target_program, address_or_symbol)
 
@@ -1515,7 +1523,7 @@ class ToolProviderManager:
                 logger.warning("_on_program_info_changed callback failed: %s", e)
 
     def _get_project_provider(self) -> Any | None:
-        """Return the provider that handles open-project and shared checkout (ProjectToolProvider)."""
+        """Return the provider that handles open and shared checkout (ProjectToolProvider)."""
         for provider in self.providers:
             if hasattr(provider, "_handle_open") and hasattr(provider, "_checkout_shared_program"):
                 return provider
@@ -1583,7 +1591,7 @@ class ToolProviderManager:
         try:
             await project_provider._handle_open_project(open_args)
         except Exception as e:
-            logger.debug("Shared-session bootstrap (open-project) failed: %s", e)
+            logger.debug("Shared-session bootstrap (open) failed: %s", e)
             return
 
         session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -1874,7 +1882,7 @@ class ToolProviderManager:
           (3) Record in session tool history.
           (4) Find provider (direct or via TOOL_ALIASES).
           (5) Resolve program: from args (programPath/binary/path), else session active, else manager default.
-          (6) If a program was requested but not open, try _activate_requested_program (open-project/import).
+          (6) If a program was requested but not open, try _activate_requested_program (open/import).
           (7) Set provider's program_info and call provider.call_tool; optionally apply markdown formatting.
         """
         if program_info is not None and program_info is not self.program_info:
@@ -1953,7 +1961,7 @@ class ToolProviderManager:
 
         requested_program_info = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 
-        # If client asked for a program by path but we don't have it open, try to open it (open-project/import)
+        # If client asked for a program by path but we don't have it open, try to open it (open/import)
         if requested_program_key and requested_program_info is None:
             requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
 
@@ -1999,7 +2007,7 @@ class ToolProviderManager:
                         **({"prerequisiteCalls": prereq_calls} if prereq_calls else {}),
                     },
                     next_steps=[
-                        "In this same session, open a project first: call `open-project` (shared server or local .gpr) or `import-binary` (local file), then retry this tool. CLI: use tool-seq to run open-project then this tool in one connection.",
+                        "In this same session, open a project first: call `open` (shared server or local .gpr) or `import-binary` (local file), then retry this tool. CLI: use tool-seq to run open then this tool in one connection.",
                         "Call `list-project-files` after opening a project to see available program paths in this session.",
                     ],
                 ),

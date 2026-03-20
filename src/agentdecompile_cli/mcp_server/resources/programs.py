@@ -58,7 +58,7 @@ class ProgramListResource(ResourceProvider):
 
         try:
             session_id = get_current_mcp_session_id()
-            # Session-scoped only: binaries from open-project / list-project-files in this session
+            # Session-scoped only: binaries from open / list-project-files in this session
             session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if session_binaries:
                 programs = [

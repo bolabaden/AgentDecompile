@@ -103,7 +103,7 @@ class TestToolsSchema:
     def test_tools_include_core_names(self):
         assert "get-functions" in TOOLS
         assert "manage-symbols" in TOOLS
-        assert "open-project" in TOOLS
+        assert "open" in TOOLS
         assert "list-project-files" in TOOLS
         assert "get-data" in TOOLS
         assert isinstance(TOOLS, list)
@@ -118,13 +118,13 @@ class TestToolsSchema:
         assert_mapping_invariants(tool_params_str)
 
     def test_tool_params_has_open_params(self):
-        assert "path" in get_tool_params("open-project")
-        assert isinstance(get_tool_params("open-project"), list)
+        assert "path" in get_tool_params("open")
+        assert isinstance(get_tool_params("open"), list)
 
     def test_get_tool_params_returns_list(self):
         assert "programPath" in get_tool_params("get-data")
         assert "addressOrSymbol" in get_tool_params("get-data")
-        open_params = get_tool_params("open-project")
+        open_params = get_tool_params("open")
         assert isinstance(open_params, list)
         required_open_params = {
             "path",
@@ -141,7 +141,7 @@ class TestToolsSchema:
         assert required_open_params.issubset(set(open_params))
         assert get_tool_params("unknown-tool") == []
         assert isinstance(get_tool_params("get-data"), list)
-        assert all(isinstance(item, str) for item in get_tool_params("open-project"))
+        assert all(isinstance(item, str) for item in get_tool_params("open"))
 
 
 class TestBuildSvrAdminPayload:

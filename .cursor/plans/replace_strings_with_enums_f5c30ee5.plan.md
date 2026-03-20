@@ -110,15 +110,15 @@ if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
 
 **CLI / bridge / server / launcher (wire boundary: keep .value for call_tool / MCP):**
 
-- [cli.py](src/agentdecompile_cli/cli.py): Replace `"open-project"` in `call_tool(...)` and any help/example strings with `ToolName.OPEN_PROJECT.value`. Same for any other hardcoded tool names in this file.
+- [cli.py](src/agentdecompile_cli/cli.py): Replace `"open"` in `call_tool(...)` and any help/example strings with `ToolName.OPEN_PROJECT.value`. Same for any other hardcoded tool names in this file.
 - [bridge.py](src/agentdecompile_cli/bridge.py): Replace `"get-functions"` (and any other tool name literals) with `ToolName.GET_FUNCTIONS.value` (or appropriate enum).
-- [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py): Replace `"open-project"` in test/example payloads with `ToolName.OPEN_PROJECT.value`.
-- [launcher.py](src/agentdecompile_cli/launcher.py) and [server.py](src/agentdecompile_cli/server.py): Replace `"open-project"` in `call_tool(...)` with `ToolName.OPEN_PROJECT.value`.
-- [mcp_server/proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py): Replace `"open-project"` in example/tool list with `ToolName.OPEN_PROJECT.value`.
+- [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py): Replace `"open"` in test/example payloads with `ToolName.OPEN_PROJECT.value`.
+- [launcher.py](src/agentdecompile_cli/launcher.py) and [server.py](src/agentdecompile_cli/server.py): Replace `"open"` in `call_tool(...)` with `ToolName.OPEN_PROJECT.value`.
+- [mcp_server/proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py): Replace `"open"` in example/tool list with `ToolName.OPEN_PROJECT.value`.
 
 **Response formatter:**
 
-- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): Replace `action == "open-project"` with comparison using `ToolName.OPEN_PROJECT.value` (or a normalized form if that is what `action` holds).
+- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): Replace `action == "open"` with comparison using `ToolName.OPEN_PROJECT.value` (or a normalized form if that is what `action` holds).
 
 **Providers (list_tools / tool metadata):**
 
@@ -241,7 +241,7 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py)             | 1215, 1310, 1731, 1755, 1974, 1976, 2039 | `recommend_tool("manage-files", "list-project-files")` → `ToolName.MANAGE_FILES.value`, `ToolName.LIST_PROJECT_FILES.value`                                                       |
 | [symbols.py](src/agentdecompile_cli/mcp_server/providers/symbols.py)             | 89                                       | `name="search-symbols-by-name"` — advertised alias; can stay string                                                                                                               |
 | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 1155, 1236                               | `_render_generic(data, "inspect-memory")`, `_render_generic(data, "get-call-graph")` → `ToolName.INSPECT_MEMORY.value`, `ToolName.GET_CALL_GRAPH.value`                           |
-| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638                                      | Example JSON in docstring: `"name":"open-project"`, `"name":"list-functions"` → `ToolName.OPEN_PROJECT.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
+| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638                                      | Example JSON in docstring: `"name":"open"`, `"name":"list-functions"` → `ToolName.OPEN_PROJECT.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
 | [cli.py](src/agentdecompile_cli/cli.py)                                          | 1953, 2194, 3658                         | Help/command/example strings: `"list-functions"`, `"match-function"`, `"inspect-memory"` → `ToolName.LIST_FUNCTIONS.value` etc.                                                   |
 | [bridge.py](src/agentdecompile_cli/bridge.py)                                    | 862                                      | `call_tool("connect-shared-project", ...)` — no `ToolName` member; keep string or add enum                                                                                        |
 | [debug_info.py](src/agentdecompile_cli/mcp_server/resources/debug_info.py)       | 78                                       | `"name": "manage-files"` → `ToolName.MANAGE_FILES.value`                                                                                                                          |

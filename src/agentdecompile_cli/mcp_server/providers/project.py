@@ -1,6 +1,6 @@
-"""Project Tool Provider - open-project, list-project-files, import/export, checkout/checkin, etc.
+"""Project Tool Provider - open, list-project-files, import/export, checkout/checkin, etc.
 
-Handles project and program lifecycle: open-project (local or shared Ghidra server),
+Handles project and program lifecycle: open (local or shared Ghidra server),
 analyze-program, list-project-files, import-binary, delete/remove program binary,
 checkout-program, checkin-program, checkout-status, sync-project. Also export and
 open-in-code-browser. Session state (open programs, active program) is stored in
@@ -155,7 +155,7 @@ class ProjectToolProvider(ToolProvider):
         "downloadsharedrepository": "_handle_download_shared_repository",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
-        "switchproject": "_handle_open_project",  # switch-project folded into open-project
+        "switchproject": "_handle_open_project",  # switch-project folded into open
         "deleteprojectbinary": "_handle_remove_program_binary",
         "removeprogrambinary": "_handle_remove_program_binary",
         "getcurrentaddress": "_handle_get_current_address",
@@ -507,7 +507,7 @@ class ProjectToolProvider(ToolProvider):
                 },
                 next_steps=[
                     "Provide `serverUsername` and `serverPassword` so the backend can create the repository.",
-                    "Or create the repository manually, then retry `open-project`.",
+                    "Or create the repository manually, then retry `open`.",
                 ],
             )
 
@@ -537,7 +537,7 @@ class ProjectToolProvider(ToolProvider):
         return repository_names, True
 
     async def _handle_open_project(self, args: dict[str, Any]) -> list[types.TextContent]:
-        """Unified open-project dispatcher: handles local binaries, .gpr projects, AND shared servers.
+        """Unified open dispatcher: handles local binaries, .gpr projects, AND shared servers.
 
         Routing logic:
         1. If `shared=true` or serverHost is explicitly provided → shared server mode
@@ -549,7 +549,7 @@ class ProjectToolProvider(ToolProvider):
         shared_mode_requested = self._get_bool(args, "shared", default=False)
         path = self._get_str(args, "path", "programpath", "filepath")
         logger.info(
-            "[open-project] dispatcher: shared=%s, server_host=%r, path=%r, raw_args_keys=%s",
+            "[open] dispatcher: shared=%s, server_host=%r, path=%r, raw_args_keys=%s",
             shared_mode_requested,
             server_host,
             path,
@@ -561,10 +561,10 @@ class ProjectToolProvider(ToolProvider):
             if shared_mode_requested and not server_host:
                 env_host = self._get_shared_server_host()
                 if env_host:
-                    logger.info("[open-project] shared=true with implicit env/auth host %r", env_host)
+                    logger.info("[open] shared=true with implicit env/auth host %r", env_host)
                     return await self._handle_connect_shared_project(self._build_shared_args(args, env_host))
             logger.info(
-                "[open-project] ROUTE: explicit shared server (shared=%s, serverHost in args=%s)",
+                "[open] ROUTE: explicit shared server (shared=%s, serverHost in args=%s)",
                 shared_mode_requested,
                 bool(server_host),
             )
@@ -575,12 +575,12 @@ class ProjectToolProvider(ToolProvider):
         # related HTTP headers sent by remote MCP clients).
         if not server_host:
             env_host = self._get_shared_server_host()
-            logger.info("[open-project] env_host=%r (from _get_shared_server_host)", env_host)
+            logger.info("[open] env_host=%r (from _get_shared_server_host)", env_host)
             if env_host:
                 # If no path or path doesn't exist locally, try shared mode
                 if not path:
                     # No path at all — connect to shared server and list programs
-                    logger.info("[open-project] ROUTE: shared server (no path, env_host set)")
+                    logger.info("[open] ROUTE: shared server (no path, env_host set)")
                     shared_args = self._build_shared_args(args, env_host)
                     repo = os.getenv(
                         "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
@@ -591,7 +591,7 @@ class ProjectToolProvider(ToolProvider):
                     ).strip()
                     if repo and "path" not in args:
                         shared_args["path"] = repo
-                        logger.info("[open-project] Injecting repo=%r from env", repo)
+                        logger.info("[open] Injecting repo=%r from env", repo)
                     return await self._handle_connect_shared_project(shared_args)
 
                 # Path is given — check if it's a local file/dir that exists.
@@ -601,7 +601,7 @@ class ProjectToolProvider(ToolProvider):
                     # Certainly not a local path — route to shared mode.
                     # Drop the foreign path; let _handle_connect_shared_project
                     # pick up the repository from auth context instead.
-                    logger.info("[open-project] ROUTE: shared server (foreign OS path detected)")
+                    logger.info("[open] ROUTE: shared server (foreign OS path detected)")
                     shared_args = self._build_shared_args(args, env_host)
                     shared_args.pop("path", None)
                     shared_args.pop("programpath", None)
@@ -611,11 +611,11 @@ class ProjectToolProvider(ToolProvider):
                 resolved_path = Path(path).expanduser().resolve()
                 if not resolved_path.exists():
                     # Path doesn't exist locally → try shared mode with this as the program path
-                    logger.info("[open-project] ROUTE: shared server (path %r doesn't exist locally)", resolved_path)
+                    logger.info("[open] ROUTE: shared server (path %r doesn't exist locally)", resolved_path)
                     shared_args = self._build_shared_args(args, env_host)
                     return await self._handle_connect_shared_project(shared_args)
 
-        logger.info("[open-project] ROUTE: local mode (fallthrough)")
+        logger.info("[open] ROUTE: local mode (fallthrough)")
         return await self._handle_open(args)
 
     async def _handle_svr_admin(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -1255,7 +1255,7 @@ class ProjectToolProvider(ToolProvider):
                 context={"action": "open", "mode": "local-or-project"},
                 next_steps=[
                     "For local binaries, call `import-binary` with `path`.",
-                    "For project/repository contexts, call `open-project` with a `.gpr` path, project directory, or shared-server settings.",
+                    "For project/repository contexts, call `open` with a `.gpr` path, project directory, or shared-server settings.",
                     "For shared server usage, use `connect-shared-project` tool instead.",
                 ],
             )
@@ -1281,7 +1281,7 @@ class ProjectToolProvider(ToolProvider):
 
         resolved: Path = Path(path).expanduser().resolve()
         if not resolved.exists():
-            # If path is a .gpr project path, create parent dirs and the project so open-project works without pre-existing dirs
+            # If path is a .gpr project path, create parent dirs and the project so open works without pre-existing dirs
             if resolved.suffix.lower() == ".gpr":
                 return await self._create_and_open_gpr_project(resolved, args)
             normalized_project_path = self._normalize_repo_path(path)
@@ -1614,7 +1614,7 @@ class ProjectToolProvider(ToolProvider):
                     if not files_noload:
                         payload["note"] = (
                             "Ghidra project is open but this folder has no domain files yet "
-                            "(try folder=/ after import, or open-project on your project directory)."
+                            "(try folder=/ after import, or open on your project directory)."
                         )
                     return create_success_response(payload)
                 except Exception as e:
@@ -2052,7 +2052,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             },
             next_steps=[
-                "If this target is a local binary, call `import-binary` first. If it is a project/repository path, call `open-project` to establish the project-backed session.",
+                "If this target is a local binary, call `import-binary` first. If it is a project/repository path, call `open` to establish the project-backed session.",
                 "Call `list-project-files` to confirm the program exists in the current project/session.",
             ],
         )
@@ -2298,7 +2298,7 @@ class ProjectToolProvider(ToolProvider):
         mode='download': connect to configured shared Ghidra server, pull all
             files to the local project, then clear the shared-session handle so
             subsequent tools operate on the local copy.
-        mode='local':    open a local binary / .gpr project (same as open-project
+        mode='local':    open a local binary / .gpr project (same as open
             with a path arg).
         mode='shared':   (re)connect to the shared Ghidra server (same as
             connect-shared-project).
@@ -2532,7 +2532,7 @@ class ProjectToolProvider(ToolProvider):
                     "versionControlRequested": True,
                     "versionControlEnabled": False,
                     "success": False,
-                    "error": "Automatic promotion of a local import into shared-project version control is not implemented for open-project local imports. Connect to a shared server first and use a shared-backed workflow.",
+                    "error": "Automatic promotion of a local import into shared-project version control is not implemented for open local imports. Connect to a shared server first and use a shared-backed workflow.",
                 },
             )
 
@@ -3231,16 +3231,16 @@ class ProjectToolProvider(ToolProvider):
                     "operation": "sync-project",
                     "mode": mode,
                     "success": False,
-                    "error": "No active shared-server session or local project. Run open-project first.",
+                    "error": "No active shared-server session or local project. Run open first.",
                     "context": {
                         "state": "no-sync-source",
                         "hasLocalProject": project_data is not None,
                         "isSharedSession": False,
                     },
                     "nextSteps": [
-                        "Call `open-project` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword` for shared sync.",
-                        "Call `open-project` with a local `.gpr` project path for local project operations.",
-                        "After `open-project` succeeds, retry `sync-project`.",
+                        "Call `open` with `serverHost`, `serverPort`, `serverUsername`, `serverPassword` for shared sync.",
+                        "Call `open` with a local `.gpr` project path for local project operations.",
+                        "After `open` succeeds, retry `sync-project`.",
                     ],
                 },
             )
@@ -3259,7 +3259,7 @@ class ProjectToolProvider(ToolProvider):
                         "repository": repository_name,
                     },
                     "nextSteps": [
-                        "Re-run `open-project` against the shared server to re-establish repository adapter state.",
+                        "Re-run `open` against the shared server to re-establish repository adapter state.",
                         "Then retry the same sync command.",
                     ],
                 },
@@ -3281,7 +3281,7 @@ class ProjectToolProvider(ToolProvider):
                         "repository": repository_name,
                     },
                     "nextSteps": [
-                        "Call `open-project` with a local project (`.gpr`) or import a program to initialize local project context.",
+                        "Call `open` with a local project (`.gpr`) or import a program to initialize local project context.",
                         "Retry `sync-project` after local project context is available.",
                     ],
                 },

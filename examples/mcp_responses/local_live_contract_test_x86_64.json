@@ -29,7 +29,7 @@
       "list-strings",
       "manage-function-tags",
       "match-function",
-      "open-project",
+      "open",
       "read-bytes",
       "remove-program-binary",
       "search-code",

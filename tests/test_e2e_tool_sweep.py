@@ -395,10 +395,10 @@ class TestMultiToolChains:
         assert prog_data.get("loaded") is False or prog_data.get("success") is False
 
     def test_open_nonexistent_then_list_files(self, session):
-        """Chain: open-project(bad path) → list-project-files."""
+        """Chain: open(bad path) → list-project-files."""
         # Step 1: open fails
         open_body = session.call_tool(
-            "open-project",
+            "open",
             {"path": "/nonexistent/test.exe", "format": "json"},
             request_id=20,
         )
@@ -513,9 +513,9 @@ class TestEdgeCases:
         assert len(text) > 0  # Should not crash
 
     def test_open_project_with_server_params(self, session):
-        """open-project with shared server params (from check_analyze_live.py)."""
+        """open with shared server params (from check_analyze_live.py)."""
         data = session.call_tool_json(
-            "open-project",
+            "open",
             {
                 "path": "/TestBinary/test.exe",
                 "server_host": "nonexistent.host.invalid",
@@ -586,7 +586,7 @@ class TestResponseFormats:
 
     def test_markdown_error_still_contains_json(self, session):
         """Program-resolution errors are raw JSON even in Markdown mode."""
-        body = session.call_tool("open-project", {"path": "/nonexistent/binary.exe"})
+        body = session.call_tool("open", {"path": "/nonexistent/binary.exe"})
         text = _text(body)
         # Should be parseable JSON (resolution errors bypass Markdown formatting)
         data = json.loads(text)
@@ -799,7 +799,7 @@ class TestToolSchemaValidation:
         assert "code" in schema.get("properties", {})
 
     def test_open_project_schema_has_path(self, session):
-        """open/open-project must advertise 'path' parameter."""
+        """open/open must advertise 'path' parameter."""
         tools = session.list_tools()
         open_tools = [t for t in tools if t["name"].replace("_", "") in ("open", "openproject")]
         assert len(open_tools) >= 1

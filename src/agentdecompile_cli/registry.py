@@ -147,7 +147,7 @@ class Tool(str, Enum):
     EXECUTE_SCRIPT = "execute-script"
     OPEN_ALL_PROGRAMS_IN_CODE_BROWSER = "open-all-programs-in-code-browser"
     OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
-    OPEN_PROJECT = "open-project"
+    OPEN_PROJECT = "open"
     READ_BYTES = "read-bytes"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
@@ -439,7 +439,7 @@ TOOL_ALIASES: dict[str, str] = {}
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
     "open": Tool.OPEN_PROJECT.value,
-    "switch-project": Tool.OPEN_PROJECT.value,  # folded into open-project
+    "switch-project": Tool.OPEN_PROJECT.value,  # folded into open
     "download-shared-repository": Tool.SYNC_PROJECT.value,
     "sync-shared-repository": Tool.SYNC_PROJECT.value,
     "sync-shared-project": Tool.SYNC_PROJECT.value,

@@ -20,7 +20,7 @@ Replace string literals for tool names (and where practical other string constan
 
 ## Design decisions
 
-1. **Enum type**: Use `class ToolName(str, Enum)` so that `ToolName.OPEN_PROJECT.value == "open-project"` (wire format) and enum members are serialization-friendly. Member names: `OPEN_PROJECT`, `GET_FUNCTIONS`, `MANAGE_BOOKMARKS`, etc. (PascalCase from kebab).
+1. **Enum type**: Use `class ToolName(str, Enum)` so that `ToolName.OPEN_PROJECT.value == "open"` (wire format) and enum members are serialization-friendly. Member names: `OPEN_PROJECT`, `GET_FUNCTIONS`, `MANAGE_BOOKMARKS`, etc. (PascalCase from kebab).
 2. **Boundary**: MCP and CLI receive/emit strings. Conversion: at registry boundary, `resolve_tool_name(str)` continues to return canonical kebab `str`; add `resolve_tool_name_enum(s: str) -> ToolName | None` that returns the enum for the resolved canonical name. Internal APIs that today take `tool_name: str` (where the value is known to be canonical) can be updated to `tool_name: ToolName | str` during transition, then to `ToolName` where appropriate.
 3. **Scope of “everywhere”**: Focus on **tool names** as the primary change. Optional follow-up: **ResourceUri** enum for `RESOURCE_URI`_* constants; **parameter names** and **mode/action** values are a much larger surface (many tools × many params) and can be a later phase.
 
@@ -28,7 +28,7 @@ Replace string literals for tool names (and where practical other string constan
 
 ### 1. Define ToolName enum and keep TOOLS as derived list
 
-- In [registry.py](src/agentdecompile_cli/registry.py) (or a new `agentdecompile_cli/enums.py` if you prefer to keep registry lean), define `ToolName(str, Enum)` with one member per canonical tool, `value` = kebab-case string (e.g. `OPEN_PROJECT = "open-project"`, `GET_FUNCTIONS = "get-functions"`, …). Generate member names from kebab by uppercasing and replacing `-` with `_`.
+- In [registry.py](src/agentdecompile_cli/registry.py) (or a new `agentdecompile_cli/enums.py` if you prefer to keep registry lean), define `ToolName(str, Enum)` with one member per canonical tool, `value` = kebab-case string (e.g. `OPEN_PROJECT = "open"`, `GET_FUNCTIONS = "get-functions"`, …). Generate member names from kebab by uppercasing and replacing `-` with `_`.
 - Derive the current `TOOLS` list from the enum so there is a single source of truth: e.g. `TOOLS: list[str] = [t.value for t in ToolName]` (or keep a list and add a consistency assert). Ensure every entry in the current `TOOLS` has a corresponding enum member.
 
 ### 2. Registry: key internal structures by ToolName

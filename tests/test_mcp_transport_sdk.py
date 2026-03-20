@@ -9,7 +9,6 @@ live local servers without mocking:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import socket
@@ -315,7 +314,7 @@ async def test_execute_tool_call_preopens_requested_program_for_get_current_prog
 
         async def call_tool(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
             calls.append((name, dict(payload)))
-            if name == "open-project":
+            if name == "open":
                 return {"content": [{"type": "text", "text": json.dumps({"success": True})}], "isError": False}
             if name == "manage_files":
                 return {"content": [], "isError": False}
@@ -343,7 +342,7 @@ async def test_execute_tool_call_preopens_requested_program_for_get_current_prog
     )
 
     assert result["loaded"] is True
-    assert calls[0][0] == "open-project"
+    assert calls[0][0] == "open"
     assert calls[0][1]["path"] == "/K1/k1_win_gog_swkotor.exe"
     assert calls[1][0] == "manage_files"
     assert calls[2][0] == "get_current_program"
