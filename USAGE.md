@@ -43,6 +43,7 @@ These patterns were repeatedly observed in terminal and notebook validation and 
 - If a command prints `No program loaded`, first check whether open/import happened in the same session.
 - Shared-server auth failures commonly include both `NotConnectedException` and `FailedLoginException` in one message; this usually indicates credential or repository access issues.
 - Some failures are delivered as normal MCP tool content, not transport errors; inspect payload text/JSON, not only process exit status.
+- **`tool-seq`** counts a step as failed (and exits **non-zero**) if any text part contains markdown **`## Error`** with a blockquote line (`> **…**`) or **`## Modification conflict`**, even when the MCP envelope has **`isError: false`** (same idea as nested JSON `success: false` + `error`).
 - Convenience command options and raw-tool JSON keys are not always 1:1; validate command flags with `-h` and use raw `tool` mode for exact contracts.
 - Local version-control probes may return explanatory markdown errors (`checkout-program`, `checkin-program`) while the outer call still reports success; treat payload semantics as authoritative.
 - Local import can be followed by shared-server connection attempts in subsequent steps if shared resolution paths are triggered; look for `127.0.0.1:13100` in error context.

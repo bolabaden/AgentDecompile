@@ -186,13 +186,12 @@ class TestStandaloneServerHealth:
 class TestStandaloneServerInit:
     """Test MCP initialize handshake on all endpoint paths."""
 
-    def test_initialize_at_root(self):
+    def test_post_initialize_at_root_is_not_mcp(self):
+        """JSON-RPC must use /mcp or /mcp/message; GET / is the API index only."""
         server = PythonMcpServer()
         with TestClient(server.app) as client:
-            body, sid = _init_session(client, "/")
-            info = body["result"]["serverInfo"]
-            assert info["name"] == "AgentDecompile"
-            assert "version" in info
+            resp = client.post("/", json=_initialize_payload(), headers=_HEADERS)
+            assert resp.status_code == 405, resp.text
 
     def test_initialize_at_mcp_message(self):
         server = PythonMcpServer()
@@ -779,11 +778,11 @@ class TestProxyServerInitialize:
             )
         )
 
-    def test_proxy_initialize_at_root(self):
+    def test_proxy_post_initialize_at_root_is_not_mcp(self):
         proxy = self._make_proxy(19085)
         with TestClient(proxy.app) as client:
-            body = _post(client, "/", _initialize_payload())
-            assert body["result"]["serverInfo"]["name"] == "AgentDecompile"
+            resp = client.post("/", json=_initialize_payload(), headers=_HEADERS)
+            assert resp.status_code == 405, resp.text
 
     def test_proxy_initialize_at_mcp_message(self):
         proxy = self._make_proxy(19082)

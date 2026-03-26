@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from mcp import types
 from pydantic import AnyUrl
@@ -95,6 +96,7 @@ class DebugInfoResource(ResourceProvider):
     """
 
     def __init__(self, *args, **kwargs):
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.__init__")
         super().__init__(*args, **kwargs)
         self._start_time: float = time.time()
         self._resource_read_count: int = 0
@@ -103,23 +105,27 @@ class DebugInfoResource(ResourceProvider):
 
     def set_program_info(self, program_info) -> None:
         """Forward program_info to sub-resources so ghidra://programs and ghidra://static-analysis-results see the same program."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_program_info")
         super().set_program_info(program_info)
         self._programs_resource.set_program_info(program_info)
         self._static_analysis_resource.set_program_info(program_info)
 
     def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
         """Forward manager to sub-resources so list-project-files / get-current-program and programs/static-analysis can call tools."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_tool_provider_manager")
         super().set_tool_provider_manager(tool_provider_manager)
         self._programs_resource.set_tool_provider_manager(tool_provider_manager)
         self._static_analysis_resource.set_tool_provider_manager(tool_provider_manager)
 
     def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_runtime_context")
         super().set_runtime_context(runtime_context)
         self._programs_resource.set_runtime_context(runtime_context)
         self._static_analysis_resource.set_runtime_context(runtime_context)
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of debug info resources."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.list_resources")
         return [
             types.Resource(
                 uri=AnyUrl(url=RESOURCE_URI_DEBUG_INFO),
@@ -131,6 +137,7 @@ class DebugInfoResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the debug info resource with comprehensive state information."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.read_resource")
         uri_text = str(uri)
         if uri_text not in _SUPPORTED_URIS:
             raise NotImplementedError(f"Unknown resource: {uri}")
@@ -199,6 +206,7 @@ class DebugInfoResource(ResourceProvider):
             return json.dumps(fallback_info, indent=2)
 
     async def _safe_load_json_resource(self, provider: ResourceProvider, uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._safe_load_json_resource")
         try:
             raw = await provider.read_resource(uri)
             parsed = json.loads(raw)
@@ -208,6 +216,7 @@ class DebugInfoResource(ResourceProvider):
             return {"status": "error", "uri": uri, "error": str(exc)}
 
     async def _safe_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._safe_tool_call")
         if self.tool_provider_manager is None:
             return {
                 "tool": tool_name,
@@ -271,6 +280,7 @@ class DebugInfoResource(ResourceProvider):
             }
 
     async def _force_open_project(self, requested_uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._force_open_project")
         open_args, source = self._build_open_project_arguments()
         logger.info(
             "DebugInfoResource: forcing open for resource=%s source=%s args=%s",
@@ -281,10 +291,21 @@ class DebugInfoResource(ResourceProvider):
         result = await self._safe_tool_call(Tool.OPEN.value, open_args)
         result["requestedResourceUri"] = requested_uri
         result["argumentSource"] = source
+        try:
+            parsed_uri = urlparse(requested_uri)
+            uri_scheme = (parsed_uri.scheme or "path").strip() or "path"
+        except Exception:
+            uri_scheme = "unknown"
+        logger.info(
+            "debug_info_open_project ok=%s uri_scheme=%s",
+            bool(result.get("success")),
+            uri_scheme[:48],
+        )
         return result
 
     def _build_open_project_arguments(self) -> tuple[dict[str, Any], str]:
         # Per-request override from proxy (X-AgentDecompile-Project-Path) so proxy env takes effect
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._build_open_project_arguments")
         request_gpr = get_current_request_project_path_override()
         if request_gpr:
             return ({"path": request_gpr}, "request-header:gpr")
@@ -391,6 +412,7 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _get_env_value(*names: str) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_env_value")
         for name in names:
             value = os.getenv(name, "").strip()
             if value:
@@ -399,6 +421,7 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _parse_tool_response(response: Any) -> Any:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._parse_tool_response")
         if not isinstance(response, list):
             return response
 
@@ -419,6 +442,7 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _extract_tool_response_text(response: Any) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._extract_tool_response_text")
         if not isinstance(response, list):
             return str(response)
 
@@ -431,6 +455,7 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _tool_response_succeeded(parsed: Any) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._tool_response_succeeded")
         if isinstance(parsed, dict):
             if parsed.get("success") is False:
                 return False
@@ -440,14 +465,17 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _iso_now() -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._iso_now")
         return datetime.now(timezone.utc).isoformat()
 
     @staticmethod
     def _iso_from_epoch(timestamp: float) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._iso_from_epoch")
         return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
     @classmethod
     def _build_failure_details(cls, parsed: Any) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._build_failure_details")
         if not isinstance(parsed, dict):
             return None
 
@@ -469,6 +497,7 @@ class DebugInfoResource(ResourceProvider):
 
     @classmethod
     def _sanitize_sensitive(cls, value: Any) -> Any:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._sanitize_sensitive")
         if isinstance(value, dict):
             sanitized: dict[str, Any] = {}
             for key, item in value.items():
@@ -501,6 +530,7 @@ class DebugInfoResource(ResourceProvider):
         gives full visibility: whether version control applies, current program's checkout state,
         and which tools to call (checkout-program, checkin-program, checkout-status).
         """
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_version_control_state")
         session_id = get_current_mcp_session_id()
         snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=5, tool_history_limit=5)
         project_handle = snapshot.get("projectHandle")
@@ -583,6 +613,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_metadata(self) -> dict:
         """Get metadata about the debug info itself."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_metadata")
         return {
             "version": "3.0.0",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -594,6 +625,7 @@ class DebugInfoResource(ResourceProvider):
         }
 
     def _get_request_state(self, requested_uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_request_state")
         session_id = get_current_mcp_session_id()
         return {
             "requestedUri": requested_uri,
@@ -609,6 +641,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_server_state(self) -> dict:
         """Get server runtime state information."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_server_state")
         uptime_seconds = time.time() - self._start_time
         uptime_hours = uptime_seconds / 3600
         uptime_minutes = (uptime_seconds % 3600) / 60
@@ -624,6 +657,7 @@ class DebugInfoResource(ResourceProvider):
         }
 
     def _get_runtime_state(self) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_runtime_state")
         auth_ctx = get_current_auth_context()
         auth_state = None
         if auth_ctx is not None:
@@ -680,11 +714,13 @@ class DebugInfoResource(ResourceProvider):
         }
 
     def _get_session_state(self) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_session_state")
         session_id = get_current_mcp_session_id()
         snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=250, tool_history_limit=50)
         return self._sanitize_sensitive(snapshot)
 
     def _get_project_state(self, list_project_files: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_project_state")
         session_id = get_current_mcp_session_id()
         binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         runtime_dir = str(self.runtime_context.get("projectDirectory") or "").strip()
@@ -698,6 +734,7 @@ class DebugInfoResource(ResourceProvider):
 
     @staticmethod
     def _list_local_project_filesystem(project_dir: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._list_local_project_filesystem")
         if not project_dir:
             return {"status": "unavailable", "reason": "runtime project directory not set"}
 
@@ -734,6 +771,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_program_state(self, current_program_probe: dict[str, Any] | None = None) -> dict | None:
         """Get information about the currently loaded program."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_program_state")
         if not self.program_info or not self.program_info.current_program:
             return {
                 "status": "no_program_loaded",
@@ -770,6 +808,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_analysis_state(self, static_analysis_report: dict[str, Any] | None = None) -> dict:
         """Get information about current program analysis."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_analysis_state")
         if not self.program_info or not self.program_info.current_program:
             return {
                 "status": "no_program",
@@ -836,6 +875,7 @@ class DebugInfoResource(ResourceProvider):
 
     def _get_resource_metrics(self) -> dict:
         """Get metrics about MCP resources and caching."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_resource_metrics")
         return {
             "resources_served": [
                 RESOURCE_URI_DEBUG_INFO,
@@ -850,6 +890,7 @@ class DebugInfoResource(ResourceProvider):
         }
 
     def _get_profiling_state(self) -> dict:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_profiling_state")
         analyzer_path = get_profile_analyzer_path()
         recent_runs = list_recent_profiles()
         return {

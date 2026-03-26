@@ -36,6 +36,7 @@ class DataFlowToolProvider(ToolProvider):
         error: str | None = None,
     ) -> list[types.TextContent]:
         """Create a standardized empty-result response payload."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._empty_response")
         payload: dict[str, Any] = {
             "direction": direction,
             "address": str(addr),
@@ -50,6 +51,7 @@ class DataFlowToolProvider(ToolProvider):
         return create_success_response(payload)
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.ANALYZE_DATA_FLOW.value,
@@ -97,6 +99,7 @@ class DataFlowToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle")
         self._require_program()
         addr_str = self._get_address_or_symbol(args)
         if not addr_str:
@@ -131,15 +134,19 @@ class DataFlowToolProvider(ToolProvider):
         )
 
     async def _handle_backward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_backward")
         return await self._analyze_data_flow("backward", program, addr, func, max_ops, timeout_s)
 
     async def _handle_forward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_forward")
         return await self._analyze_data_flow("forward", program, addr, func, max_ops, timeout_s)
 
     async def _handle_variable_accesses(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_variable_accesses")
         return await self._analyze_data_flow("variable_accesses", program, addr, func, max_ops, timeout_s)
 
     async def _analyze_data_flow(self, direction: str, program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._analyze_data_flow")
         decomp = None
         try:
             from ghidra.app.decompiler import DecompInterface

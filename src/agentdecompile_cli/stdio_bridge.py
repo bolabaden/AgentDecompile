@@ -16,6 +16,12 @@ tool names, parameter names (camelCase), and resource URIs match src/agentdecomp
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+from urllib.parse import urlparse
+
 import asyncio
 import contextlib
 import sys
@@ -47,6 +53,7 @@ from mcp.types import (
     TextContent,
 )
 
+from agentdecompile_cli.app_logger import norm_arg_keys
 from agentdecompile_cli.utils import get_server_start_message, normalize_backend_url
 
 if TYPE_CHECKING:
@@ -73,7 +80,22 @@ BACKEND_OP_TIMEOUT = 90.0
 
 def _canonical_streamable_http_url(url: str) -> str:
     """Return canonical MCP streamable HTTP endpoint URL with trailing slash."""
+    logger.debug("diag.enter %s", "stdio_bridge.py:_canonical_streamable_http_url")
     return f"{url}/" if url.endswith("/mcp/message") else url
+
+
+def _safe_backend_netloc_for_logs(url: str) -> str:
+    """Host (+ port) for logs only; omit userinfo so embedded credentials are never logged."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if not host:
+            return "—"
+        if parsed.port:
+            return f"{host}:{parsed.port}"
+        return host
+    except Exception:
+        return "—"
 
 
 def _is_jsonrpc_request(msg: SessionMessage) -> bool:
@@ -332,15 +354,30 @@ class AgentDecompileStdioBridge:
                 self._backend_exit_stack = exit_stack
                 self._backend_session = session
                 self._backend_connected = True
+                logger.info("legacy_stdio_bridge_backend_connected host_port=%s", _safe_backend_netloc_for_logs(self.url))
                 return session
             except asyncio.TimeoutError:
                 await self._reset_backend_session()
+                logger.warning(
+                    "legacy_stdio_bridge_backend_connect_failed exc_type=TimeoutError host_port=%s",
+                    _safe_backend_netloc_for_logs(self.url),
+                )
                 raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from None
             except (ConnectionError, OSError) as e:
                 await self._reset_backend_session()
+                logger.warning(
+                    "legacy_stdio_bridge_backend_connect_failed exc_type=%s host_port=%s",
+                    type(e).__name__,
+                    _safe_backend_netloc_for_logs(self.url),
+                )
                 raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from e
             except Exception as e:
                 await self._reset_backend_session()
+                logger.warning(
+                    "legacy_stdio_bridge_backend_connect_failed exc_type=%s host_port=%s",
+                    type(e).__name__,
+                    _safe_backend_netloc_for_logs(self.url),
+                )
                 err = str(e)
                 if any(x in err for x in ["ConnectError", "connection", "ConnectionRefused"]):
                     raise ServerNotRunningError(f"Cannot connect to AgentDecompile backend at {self.url}\n\n{get_server_start_message()}") from e
@@ -381,6 +418,11 @@ class AgentDecompileStdioBridge:
             arguments: dict[str, Any],
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # pyright: ignore[reportInvalidTypeForm]
             try:
+                logger.info(
+                    "legacy_stdio_bridge_call_tool_start name=%s arg_keys=%s",
+                    name,
+                    norm_arg_keys(arguments),
+                )
                 async with self._with_backend_session("call_tool") as session:
                     call_args: dict[str, Any] = dict(arguments or {})
                     call_args.setdefault("format", "markdown")
@@ -388,10 +430,20 @@ class AgentDecompileStdioBridge:
                         session.call_tool(name, call_args),
                         timeout=BACKEND_OP_TIMEOUT,
                     )
+                    logger.info("legacy_stdio_bridge_call_tool_ok name=%s", name)
                     return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result")] if result is None else result.content
             except RuntimeError as e:
+                logger.warning(
+                    "legacy_stdio_bridge_call_tool_failed name=%s exc_type=RuntimeError",
+                    name,
+                )
                 return [TextContent(type="text", text=f"Error: Backend connection lost: {e}")]
             except Exception as e:
+                logger.warning(
+                    "legacy_stdio_bridge_call_tool_failed name=%s exc_type=%s",
+                    name,
+                    type(e).__name__,
+                )
                 sys.stderr.write(f"ERROR: call_tool {name} failed: {e.__class__.__name__}: {e}\n")
                 return [TextContent(type="text", text=f"Error: {e.__class__.__name__}: {e}")]
 
@@ -460,6 +512,10 @@ class AgentDecompileStdioBridge:
         HTTP race conditions during the initialize handshake.
         """
         sys.stderr.write("Bridge ready - stdio transport active\n")
+        logger.info(
+            "legacy_stdio_bridge_run_start host_port=%s",
+            _safe_backend_netloc_for_logs(self.url),
+        )
         try:
             async with stdio_server() as (stdio_read, stdio_write):
                 # Pass raw streams - _IdFix wrappers cause MCP SDK async context manager errors

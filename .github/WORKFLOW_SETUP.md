@@ -55,7 +55,7 @@ That is the core step exercised by `test-ghidra.yml` before artifact upload.
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
 uv sync
 uv pip install "$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg"
-uv run pytest tests/ -v --timeout=180 --tb=short
+uv run pytest tests/ -v --timeout=120 --tb=short
 ```
 
 If you are debugging CI parity, also install the generated extension zip into the local Ghidra `Extensions` directory first, because `test-headless.yml` performs that installation step.

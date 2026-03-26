@@ -843,6 +843,10 @@ curl -X POST http://127.0.0.1:8080/mcp \
 
  - See [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained command reference.
 
+### Shared/local checkout, persistence, sync-project (E2E)
+
+Step-by-step runbook (three checkout/edit/checkin cycles, MCP restart asserts, `sync-project` pull/push): **[docs/e2e_shared_local_checkout_sync.md](docs/e2e_shared_local_checkout_sync.md)**. PowerShell automation: `scripts/e2e_checkout_sync_plan_runner.ps1` (use **`-Phase shared_plus_sync`** for open + cycles + sync in one MCP session).
+
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [LICENSE](LICENSE) for details. AGPL-3.0 is a strong copyleft license that also requires offering source to users who interact with the software over a network (e.g. SaaS). 

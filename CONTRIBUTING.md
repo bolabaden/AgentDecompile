@@ -152,7 +152,9 @@ Current generated summary:
 - The canonical tool list in `src/agentdecompile_cli/registry.py` documents all supported tool names; many additional names are legacy compatibility forwards and synonyms.
 - Policy: prefer adding or updating the default advertised tool name and its schema first, then document any legacy aliases as forwards in `TOOLS_LIST.md` when needed for compatibility.
 - Legacy names remain callable for backwards compatibility. To re-advertise the full legacy surface during testing or compatibility modes, set either `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` in your environment.
-- When submitting changes that add or remove tool names, update `TOOLS_LIST.md` and run `helper_scripts/generate_tools_list.py` and the tools-doc parity tests.
+- When submitting changes that add or remove tool names, update `TOOLS_LIST.md` and run the doc sync scripts, then the tools-doc parity tests:
+  - **`helper_scripts/reorder_tools_list_canonical.py`** — reorders the **Canonical Tool Docs** section and TOC to match `registry.TOOLS` (`Tool` enum order); drops headings not in `TOOLS`; inserts stubs for new tools. Run this after changing the enum or when parity tests report doc/schema order drift.
+  - **`helper_scripts/generate_tools_list.py`** — refreshes **Overloads** blocks (and related merges); must report `MATCH_EXACT True` against the current `TOOLS_LIST.md` (see `tests/test_tools_list_generation_sync.py`).
 
 
 ## Testing
@@ -161,8 +163,8 @@ Run focused tests first, then broader suites.
 
 ```bash
 uv run pytest -m unit -v
-uv run pytest tests/test_tools_list_generation_sync.py -v
-uv run pytest tests/ -v --timeout=180
+uv run pytest tests/test_tools_list_generation_sync.py tests/test_unified_provider_advertisement.py::TestToolsListParity -v
+uv run pytest tests/ -v --timeout=120
 ```
 
 Use markers when needed:
@@ -171,10 +173,12 @@ Use markers when needed:
 uv run pytest -m "not slow" -v
 ```
 
+**Manual E2E (shared/local checkout–checkin, `sync-project`, MCP restart):** See **[docs/e2e_shared_local_checkout_sync.md](docs/e2e_shared_local_checkout_sync.md)** for the full runbook. With Ghidra Server and `agentdecompile-server` running, use `scripts/e2e_checkout_sync_plan_runner.ps1`. Prefer **`-Phase shared_plus_sync`** for one `tool-seq` that runs open → import → three edit cycles → `sync-project` pull/push (same MCP session; avoids losing `project_data` before sync). Other phases: `shared`, `restart_assert`, `sync`, `local_full`, `restart_local_assert`, `all`, `all_local`. Use **`-AnalyzeAfterImport`** if `list-functions` / rename targets need analysis. **`-ContinueOnError`** forwards `tool-seq --continue-on-error` (runs all steps; CLI still exits non-zero if any step failed). **`tool-seq`** also counts steps as failed when the MCP text payload contains markdown **`## Error`** (blockquote-style) or **`## Modification conflict`**, even if **`isError`** is false. Override `-ProgramPath`, `-FunCycle1`, `-LabelAddress`, `-FunCycle3` from `list-project-files` / `list-functions` if your binary differs from `sort.exe`.
+
 Authoritative commands are also listed in `AGENTS.md`:
 
 - `uv run ruff check --no-fix src/ tests/`
-- `uv run pytest tests/ -v --timeout=180`
+- `uv run pytest tests/ -v --timeout=120`
 - `uv run pytest -m unit -v`
 - `uv build`
 

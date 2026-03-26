@@ -23,16 +23,19 @@ class DebugLogger:
     @staticmethod
     def set_debug_enabled(enabled: bool) -> None:
         """Set whether debug logging is enabled."""
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.set_debug_enabled")
         DebugLogger._debug_enabled = enabled
 
     @staticmethod
     def is_debug_enabled() -> bool:
         """Check if debug mode is currently enabled."""
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.is_debug_enabled")
         return DebugLogger._debug_enabled
 
     @staticmethod
     def _source_name(source: Any) -> str:
         """Return a stable source label for log messages."""
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger._source_name")
         if source is None:
             return "unknown"
         if isinstance(source, type):
@@ -42,6 +45,7 @@ class DebugLogger:
     @classmethod
     def _log(cls, prefix: str, message: str, source: Any = None) -> None:
         """Emit a prefixed debug line when debug logging is enabled."""
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger._log")
         if not cls._debug_enabled:
             return
         source_name = cls._source_name(source)
@@ -55,6 +59,7 @@ class DebugLogger:
             source: The source object for the log message
             message: The message to log
         """
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.debug")
         DebugLogger._log("DEBUG", message, source)
 
     @staticmethod
@@ -66,6 +71,7 @@ class DebugLogger:
             message: The message to log
             exception: The exception to include
         """
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.debug_with_exception")
         DebugLogger._log("DEBUG", f"{message}: {exception}", source)
 
     @staticmethod
@@ -76,6 +82,7 @@ class DebugLogger:
             source: The source object for the log message
             message: The message to log
         """
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.debug_connection")
         DebugLogger._log("DEBUG-CONNECTION", message, source)
 
     @staticmethod
@@ -87,6 +94,7 @@ class DebugLogger:
             operation: The operation being timed
             duration_ms: The duration in milliseconds
         """
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.debug_performance")
         DebugLogger._log("DEBUG-PERF", f"{operation} took {duration_ms}ms", source)
 
     @staticmethod
@@ -99,6 +107,7 @@ class DebugLogger:
             status: The status (START, END, ERROR, etc.)
             details: Additional details (optional)
         """
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.debug_tool_execution")
         message = f"{tool_name} - {status}"
         if details:
             message += f": {details}"
@@ -119,20 +128,24 @@ class DebugLogger:
 
         class Timer:
             def __init__(self, src: Any, op: str):
+                logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.Timer.__init__")
                 self.source = src
                 self.operation = op
                 self.start_time: float | None = None
 
             def __enter__(self):
+                logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.Timer.__enter__")
                 self.start_time = time.time()
                 cls.debug_tool_execution(self.source, self.operation, "START")
                 return self
 
             def __exit__(self, exc_type, exc_val, exc_tb):
+                logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.Timer.__exit__")
                 if self.start_time is not None:
                     duration_ms = int((time.time() - self.start_time) * 1000)
                     status = "ERROR" if exc_type else "SUCCESS"
                     cls.debug_performance(self.source, self.operation, duration_ms)
                     cls.debug_tool_execution(self.source, self.operation, status)
 
+        logger.debug("diag.enter %s", "mcp_utils/debug_logger.py:DebugLogger.time_operation")
         return Timer(source, operation_name)

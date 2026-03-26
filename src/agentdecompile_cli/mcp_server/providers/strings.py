@@ -38,6 +38,7 @@ class StringToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_STRINGS.value,
@@ -106,17 +107,20 @@ class StringToolProvider(ToolProvider):
         ]
 
     async def _handle_list_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_list_strings")
         updated = dict(args)
         updated["mode"] = "list"
         return await self._handle(updated)
 
     async def _handle_search_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search_strings")
         updated = dict(args)
         if not self._get_str(updated, "mode"):
             updated["mode"] = "search"
         return await self._handle(updated)
 
     async def _handle_search_code(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search_code")
         self._require_program()
         query: str = self._require_str(args, "query", "pattern", "text", name="query")
         offset, limit = self._get_pagination_params(args, default_limit=10)
@@ -176,6 +180,7 @@ class StringToolProvider(ToolProvider):
         )
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="list")
         pattern = self._get_str(args, "pattern", "query", "search", "text", "regex", "searchstring", "filter")
@@ -210,6 +215,7 @@ class StringToolProvider(ToolProvider):
         Returns empty list if string enumeration is unavailable in the current context
         (e.g., shared-server checkout without iterator support). Diagnostics are logged.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._collect_strings")
         assert self.program_info is not None, "Program info is required to collect strings"
         program = self.program_info.program
         strings = collect_strings(
@@ -233,6 +239,7 @@ class StringToolProvider(ToolProvider):
         self, strings: list[dict[str, Any]], ref_limit: int = 25
     ) -> None:
         """Attach referencesTo (get-references style) to each string result."""
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._attach_references_to_string_results")
         if not strings or not self.program_info:
             return
         try:
@@ -274,6 +281,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_list")
         return self._filter_strings(strings, "list", "", min_len, max_results, offset, include_refs)
 
     async def _handle_regex(
@@ -286,6 +294,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_regex")
         return self._filter_strings(strings, "regex", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_search(
@@ -298,6 +307,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search")
         return self._filter_strings(strings, "search", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_count(
@@ -310,6 +320,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_count")
         return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(
@@ -361,6 +372,7 @@ class StringToolProvider(ToolProvider):
         list[TextContent]
             Paginated response with filtered results
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._filter_strings")
         mode_n: str = n(mode)
         total: int = len(strings)
 

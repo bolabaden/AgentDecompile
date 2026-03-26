@@ -14,6 +14,7 @@ import logging
 import re
 import uuid
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mcp import types
@@ -22,6 +23,11 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_exports,
     collect_imports,
     collect_symbols,
+)
+from agentdecompile_cli.mcp_server.session_context import (
+    SESSION_CONTEXTS,
+    get_current_mcp_session_id,
+    is_shared_server_handle,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     FORCE_APPLY_CONFLICT_ID_KEY,
@@ -54,6 +60,7 @@ class SymbolToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider.list_tools")
         base_manage_schema: dict[str, Any] = {
             "type": "object",
             "properties": {
@@ -227,17 +234,21 @@ class SymbolToolProvider(ToolProvider):
         Returns:
             Result from _handle() after setting mode
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_mode_alias")
         forwarded_args = dict(args)
         forwarded_args.setdefault("mode", mode)
         return await self._handle(forwarded_args)
 
     async def _handle_list_imports_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_list_imports_alias")
         return await self._handle_mode_alias(args, "imports")
 
     async def _handle_list_exports_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_list_exports_alias")
         return await self._handle_mode_alias(args, "exports")
 
     async def _handle_create_label_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_create_label_alias")
         return await self._create_label(args)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -246,6 +257,7 @@ class SymbolToolProvider(ToolProvider):
         Modes: symbols, classes, namespaces, imports, exports, create_label, count, rename_data, demangle.
         Uses normalized mode string (lowercase a-z only) to select handler function.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", "action", "operation", default="symbols")
 
@@ -292,6 +304,7 @@ class SymbolToolProvider(ToolProvider):
         >>> await provider._handle_search({"query": "malloc", "limit": 10})
         [TextContent(text='{"mode":"symbols","results":[...],"count":10,"total":42,"hasMore":true}')]
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_search")
         self._require_program()
         query: str = self._get_str(args, "query", "namepattern", "pattern", "search", "name")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
@@ -345,6 +358,7 @@ class SymbolToolProvider(ToolProvider):
         )
 
     async def _list_symbols(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_symbols")
         query = self._get_str(args, "query", "pattern", "search")
         filter_default = self._get_bool(args, "filterdefaultnames", default=True)
         offset, max_results = self._get_pagination_params(args, default_limit=100)
@@ -366,6 +380,7 @@ class SymbolToolProvider(ToolProvider):
         return await self._handle_search(args)
 
     async def _list_classes(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_classes")
         assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
@@ -382,6 +397,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "classes", "results": classes, "count": len(classes)})
 
     async def _list_namespaces(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_namespaces")
         assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
@@ -398,6 +414,7 @@ class SymbolToolProvider(ToolProvider):
         return create_success_response({"mode": "namespaces", "results": namespaces, "count": len(namespaces)})
 
     async def _list_imports(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_imports")
         self._require_program()
         offset, max_results = self._get_pagination_params(args)
 
@@ -416,6 +433,7 @@ class SymbolToolProvider(ToolProvider):
         return self._create_paginated_response(paginated, offset, max_results, total=len(imports), mode="imports")
 
     async def _list_exports(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_exports")
         self._require_program()
         offset, max_results = self._get_pagination_params(args)
 
@@ -433,13 +451,141 @@ class SymbolToolProvider(ToolProvider):
         paginated, has_more = self._paginate_results(exports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(exports), mode="exports")
 
+    def _iter_domain_files_for_versioned_notify(self, program: Any, program_path: str | None) -> list[Any]:
+        """Unique DomainFiles for checkout metadata: open Program + path-resolved (match ProjectToolProvider._resolve_domain_file)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._iter_domain_files_for_versioned_notify")
+        seen: set[int] = set()
+        out: list[Any] = []
+
+        def add(df: Any) -> None:
+            if df is None:
+                return
+            try:
+                oid = id(df)
+                if oid in seen:
+                    return
+                seen.add(oid)
+                out.append(df)
+            except Exception:
+                return
+
+        path = (program_path or "").strip()
+        if not path and self.program_info is not None:
+            pi_path = getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+            if pi_path is not None:
+                path = str(pi_path).strip()
+        path_candidates: list[str] = []
+        if path:
+            path_candidates = [path]
+            if not path.startswith("/"):
+                path_candidates.append(f"/{path}")
+
+        pdf0: Any = None
+        try:
+            pdf0 = program.getDomainFile()
+            add(pdf0)
+        except Exception:
+            pass
+
+        mgr = self._manager
+
+        def add_from_project_data(project_data: Any) -> None:
+            if project_data is None or not path_candidates:
+                return
+            for cand in path_candidates:
+                try:
+                    df2 = project_data.getFile(cand)
+                except Exception:
+                    df2 = None
+                if df2 is not None:
+                    add(df2)
+                    return
+            file_name = Path(path.replace("\\", "/")).name
+            if file_name and mgr is not None:
+                try:
+                    root = project_data.getRootFolder()
+                    add(mgr._find_domain_file_by_name(root, file_name))
+                except Exception:
+                    pass
+
+        # Shared-server: correct ProjectData often comes from the open Program's DomainFile, not GhidraProject.getProjectData().
+        if pdf0 is not None:
+            try:
+                add_from_project_data(pdf0.getProjectData())
+            except Exception:
+                pass
+        if mgr is not None:
+            add_from_project_data(mgr._resolve_project_data())
+        return out
+
+    def _notify_versioned_checkout_after_program_edit(self, program: Any, program_path: str | None = None) -> None:
+        """Align shared checkout metadata with symbol/label edits (same hooks as versioned check-in path)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._notify_versioned_checkout_after_program_edit")
+        if program is None:
+            return
+        try:
+            from agentdecompile_cli.mcp_server.providers.import_export import (
+                ImportExportToolProvider as _ImportExport,
+            )
+
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+            for df in self._iter_domain_files_for_versioned_notify(program, program_path):
+                _ImportExport._try_mark_versioned_checkout_dirty(df)
+                _ImportExport._notify_domain_file_changed_for_versioned_checkin(df, program)
+                if hasattr(df, "getParent"):
+                    par = df.getParent()
+                    if par is not None and hasattr(par, "fileChanged"):
+                        try:
+                            par.fileChanged()
+                        except Exception:
+                            pass
+            gp = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            # Shared/versioned: skip GhidraProject.save here. PyGhidra 12.x can persist the Program in a way that
+            # clears ``modifiedSinceCheckout`` on the server checkout handle; a later checkin-program (separate CLI
+            # request, e.g. LFG step 09) then fails with "not modified since checkout". Pre-checkin flush does save.
+            skip_gp_save = False
+            try:
+                sid = get_current_mcp_session_id()
+                handle = SESSION_CONTEXTS.get_or_create(sid).project_handle
+                skip_gp_save = bool(handle and is_shared_server_handle(handle))
+            except Exception:
+                skip_gp_save = False
+            if gp is not None and not skip_gp_save:
+                try:
+                    gp.save(program)
+                except Exception as exc:
+                    logger.debug("notify_versioned_checkout_after_program_edit gp.save: %s", exc)
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+        except Exception as exc:
+            logger.debug("notify_versioned_checkout_after_program_edit: %s", exc)
+
+    @staticmethod
+    def _touch_listing_for_shared_checkin(program: Any) -> None:
+        """Bookmark bump in the same transaction as symbol edits so VC sees a listing change."""
+        try:
+            mem = program.getMemory()
+            if mem is None:
+                return
+            addr = mem.getMinAddress()
+            if addr is None:
+                return
+            bmm = program.getBookmarkManager()
+            if bmm is None:
+                return
+            bmm.setBookmark(addr, "Note", "AgentDecompile", "agentdecompile_vc_checkin_bump")
+        except Exception:
+            pass
+
     async def _create_label(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._create_label")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         label = self._require_str(args, "labelname", "label", "name", name="labelName")
 
         assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
+        label_pp = (self._get_str(args, "programpath", "binary", "path") or "").strip() or None
 
         # Batch support
         addr_list = self._get_list(args, "addressorsymbol", "addresses")
@@ -456,8 +602,10 @@ class SymbolToolProvider(ToolProvider):
                         results.append({"address": str(addr), "label": str(l), "success": True})
                     except Exception as e:
                         results.append({"address": str(a), "label": str(l), "success": False, "error": str(e)})
+                self._touch_listing_for_shared_checkin(program)
 
             self._run_program_transaction(program, "batch-create-labels", _create_labels_batch)
+            self._notify_versioned_checkout_after_program_edit(program, label_pp)
             return create_success_response({"mode": "create_label", "batch": True, "results": results})
 
         addr: Any = self._resolve_address(addr_str, program=program)
@@ -499,17 +647,21 @@ class SymbolToolProvider(ToolProvider):
 
         def _create_label_single() -> None:
             st.createLabel(addr, label, SourceType.USER_DEFINED)
+            self._touch_listing_for_shared_checkin(program)
 
         self._run_program_transaction(program, "create-label", _create_label_single)
+        self._notify_versioned_checkout_after_program_edit(program, label_pp)
         return create_success_response({"mode": "create_label", "address": str(addr), "label": label, "success": True})
 
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._count")
         assert self.program_info is not None  # for type checker
         program: Any = self.program_info.program
         st: Any = self._get_symbol_table(program)
         return create_success_response({"mode": "count", "totalSymbols": st.getNumSymbols()})
 
     async def _rename_data(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._rename_data")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         new_name = self._require_str(args, "newname", "name", "labelname", name="newName")
 
@@ -564,6 +716,7 @@ class SymbolToolProvider(ToolProvider):
         return create_conflict_response(conflict_id, Tool.MANAGE_SYMBOLS.value, conflict_summary, next_step)
 
     async def _demangle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._demangle")
         query: str = self._get_str(args, "query", "symbol", "name", "addressorsymbol")
         max_results: int = self._get_int(args, "maxresults", "limit", default=100)
 

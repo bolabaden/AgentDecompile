@@ -27,6 +27,7 @@ from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 
+from agentdecompile_cli.app_logger import redact_session_id
 from agentdecompile_cli.mcp_server import prompt_providers
 from agentdecompile_cli.mcp_server.auth import (
     CURRENT_AUTH_CONTEXT,
@@ -65,11 +66,13 @@ _TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
 
 def _safe_list(value: Any) -> list[Any]:
     """Ensure value is a list for JSON/response building; return empty list if not."""
+    logger.debug("diag.enter %s", "mcp_server/server.py:_safe_list")
     return value if isinstance(value, list) else []
 
 
 def _build_tool_alias_index() -> dict[str, list[str]]:
     """Build canonical tool name → sorted list of alias names for the /tool-reference payload."""
+    logger.debug("diag.enter %s", "mcp_server/server.py:_build_tool_alias_index")
     alias_index: dict[str, list[str]] = {canonical: [] for canonical in TOOLS}
     for alias_name, canonical_name in TOOL_ALIASES.items():
         if canonical_name not in alias_index:
@@ -82,6 +85,7 @@ def _build_tool_alias_index() -> dict[str, list[str]]:
 
 
 def _build_tool_reference_payload() -> dict[str, Any]:
+    logger.debug("diag.enter %s", "mcp_server/server.py:_build_tool_reference_payload")
     alias_index = _build_tool_alias_index()
     canonical_tools: list[dict[str, Any]] = []
     for canonical_name in sorted(TOOLS):
@@ -165,6 +169,7 @@ def _build_tool_reference_payload() -> dict[str, Any]:
 
 
 def _mcp_post_openapi_extra() -> dict[str, Any]:
+    logger.debug("diag.enter %s", "mcp_server/server.py:_mcp_post_openapi_extra")
     return {
         "requestBody": {
             "required": True,
@@ -301,6 +306,7 @@ _SESSION_ID_VALID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
     """Parse Cookie header and return the value for mcp_session_id, or None."""
+    logger.debug("diag.enter %s", "mcp_server/server.py:_parse_mcp_session_cookie_from_scope")
     if scope.get("type") != "http":
         return None
     for key_b, value_b in scope.get("headers", []):
@@ -321,6 +327,7 @@ def _validate_session_id(value: str) -> str:
     Allows literal 'default' or a token matching [a-zA-Z0-9_-]{1,128}.
     Rejects empty, newlines, path-like, or overlength to avoid injection.
     """
+    logger.debug("diag.enter %s", "mcp_server/server.py:_validate_session_id")
     if not value or "\n" in value or "\r" in value or "/" in value or "\\" in value:
         return "default"
     if value == "default":
@@ -333,6 +340,7 @@ def _validate_session_id(value: str) -> str:
 def _make_session_cookie_header(session_id: str, secure: bool) -> tuple[bytes, bytes]:
     """Build Set-Cookie header value for mcp_session_id (HttpOnly, SameSite=Lax)."""
     # Path=/; HttpOnly; SameSite=Lax; optionally Secure (only over TLS or SESSION_COOKIE_SECURE)
+    logger.debug("diag.enter %s", "mcp_server/server.py:_make_session_cookie_header")
     value = f"{_MCP_SESSION_COOKIE_NAME}={session_id}; Path=/; HttpOnly; SameSite=Lax"
     if secure:
         value += "; Secure"
@@ -350,6 +358,7 @@ def _auth_context_from_scope_headers(
     explicitly enabled. When AuthMiddleware is active, its context takes
     precedence and this helper is ignored.
     """
+    logger.debug("diag.enter %s", "mcp_server/server.py:_auth_context_from_scope_headers")
     if scope.get("type") != "http":
         return None
 
@@ -441,6 +450,7 @@ class PythonMcpServer:
         config: ServerConfig | None = None,
         auth_config: AuthConfig | None = None,
     ) -> None:
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.__init__")
         self.config: ServerConfig = ServerConfig() if config is None else config
         self.auth_config: AuthConfig | None = auth_config
         self.app: FastAPI = FastAPI(
@@ -482,6 +492,7 @@ class PythonMcpServer:
 
     def _create_mcp_server(self) -> MCPServer:
         """Create the MCP server instance."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._create_mcp_server")
         server = Server(name=self.config.name, version=self.config.version)
 
         @server.list_tools()
@@ -503,7 +514,24 @@ class PythonMcpServer:
             # already cascades to the manager at startup.  Passing a stale copy on
             # every call would revert updates made by tools (e.g. checkout from a
             # shared repository).  The manager tracks the latest program_info itself.
-            return await self.tool_providers.call_tool(name, call_args)
+            _t0 = time.monotonic()
+            logger.info("MCP http tools/call start name=%s", name)
+            try:
+                out = await self.tool_providers.call_tool(name, call_args)
+            except Exception:
+                logger.exception(
+                    "MCP http tools/call failed name=%s elapsed_s=%.3f",
+                    name,
+                    time.monotonic() - _t0,
+                )
+                raise
+            logger.info(
+                "MCP http tools/call done name=%s elapsed_s=%.3f parts=%s",
+                name,
+                time.monotonic() - _t0,
+                len(out) if out else 0,
+            )
+            return out
 
         @server.list_resources()
         async def list_resources() -> list[types.Resource]:
@@ -520,6 +548,12 @@ class PythonMcpServer:
                 return result
             except Exception as e:
                 logger.error(f"MCP read_resource failed for {uri}: {e.__class__.__name__}: {e}", exc_info=True)
+                _uri_tail = uri[-160:] if len(uri) > 160 else uri
+                logger.info(
+                    "mcp_read_resource_fallback_payload uri_tail=%s exc_type=%s",
+                    _uri_tail,
+                    type(e).__name__,
+                )
                 # Return empty JSON object for failed resources instead of propagating exception
                 # This prevents MCP protocol errors while still indicating failure
                 return json.dumps({"error": f"{e.__class__.__name__}: {e}", "uri": str(uri), "status": "failed"})
@@ -542,6 +576,7 @@ class PythonMcpServer:
         FastAPI routing, but these explicit route registrations keep `/mcp`
         and `/mcp/message` visible in the generated OpenAPI schema.
         """
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._mcp_openapi_stub")
         return {
             "detail": "MCP requests are handled by the outer transport middleware before FastAPI routing.",
         }
@@ -693,6 +728,7 @@ class PythonMcpServer:
             """Backward-compatible alias for the API index."""
             return await api_info()
 
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._setup_routes")
         for method in ("GET", "POST", "DELETE"):
             self.app.add_api_route(
                 "/mcp",
@@ -884,6 +920,7 @@ class PythonMcpServer:
                 (handled in ``_mcp_asgi`` post-hook).  Either way, strip
                 the stale header so the SDK creates a fresh transport.
                 """
+                logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._MCPRoutingMiddleware._handle_stale_session")
                 raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
                 key_b: bytes
                 value_b: bytes
@@ -891,17 +928,17 @@ class PythonMcpServer:
                     if key_b.lower() == b"mcp-session-id":
                         sid = value_b.decode("latin1", errors="replace").strip()
                         if sid and sid not in session_manager._server_instances:
-                            in_grace = sid in SESSION_CONTEXTS._grace
+                            in_grace = SESSION_CONTEXTS.is_in_grace(sid)
                             cleaned = [(k, v) for k, v in raw_headers if k.lower() != b"mcp-session-id"]
                             if in_grace:
                                 logger.info(
-                                    "Session %s not in SDK but in grace period — stripping header; state will be reclaimed on new session.",
-                                    sid[:12],
+                                    "mcp_stale_session_header_stripped reason=in_grace session_id=%s",
+                                    redact_session_id(sid),
                                 )
                             else:
                                 logger.info(
-                                    "Stripped stale mcp-session-id %s — a new session will be created.",
-                                    sid[:12],
+                                    "mcp_stale_session_header_stripped reason=unknown session_id=%s",
+                                    redact_session_id(sid),
                                 )
                             return {**scope, "headers": cleaned}
                         break
@@ -913,6 +950,7 @@ class PythonMcpServer:
                 receive: Any,
                 send: Any,
             ) -> None:
+                logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._MCPRoutingMiddleware.__call__")
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
@@ -930,10 +968,12 @@ class PythonMcpServer:
         project_manager: ProjectManager,
     ) -> None:
         """Set the project manager for program lifecycle management."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.set_project_manager")
         self.project_manager = project_manager
 
     def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
         """Set server startup/runtime context for resources and diagnostics."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.set_runtime_context")
         self.resource_providers.set_runtime_context(runtime_context)
 
     def set_program_info(
@@ -941,6 +981,7 @@ class PythonMcpServer:
         program_info: ProgramInfo,
     ) -> None:
         """Set the program info for tool access."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.set_program_info")
         self.program_info = program_info
         self.tool_providers.set_program_info(program_info)
         self.resource_providers.set_program_info(program_info)
@@ -951,25 +992,30 @@ class PythonMcpServer:
         Keeps the server-level copy in sync so that resource providers and any
         other server-level consumers see the latest program.
         """
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._on_provider_program_info_changed")
         self.program_info = program_info
         self.resource_providers.set_program_info(program_info)
 
     def set_ghidra_project(self, project: Any) -> None:
         """Store the GhidraProject so providers can use it for checkout."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.set_ghidra_project")
         self.tool_providers.set_ghidra_project(project)
 
     def program_opened(self, program_path: str) -> None:
         """Notify providers that a program was opened."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.program_opened")
         self.tool_providers.program_opened(program_path)
         self.resource_providers.program_opened(program_path)
 
     def program_closed(self, program_path: str) -> None:
         """Notify providers that a program was closed."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.program_closed")
         self.tool_providers.program_closed(program_path)
         self.resource_providers.program_closed(program_path)
 
     @staticmethod
     def _is_truthy_env(value: str | None) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._is_truthy_env")
         if value is None:
             return False
         return value.strip().lower() in _TRUTHY_ENV_VALUES
@@ -977,6 +1023,7 @@ class PythonMcpServer:
     @staticmethod
     def _cleanup_provider(provider: Any, provider_name: str) -> None:
         """Run provider cleanup when available; log if provider is not set."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._cleanup_provider")
         if provider is None:
             logger.warning("%s are not set! Cannot cleanup!", provider_name)
             return
@@ -987,6 +1034,7 @@ class PythonMcpServer:
 
         Returns the port the server is running on.
         """
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.start")
         if self._running:
             logger.warning("Server is already running")
             return self.config.port
@@ -1010,8 +1058,12 @@ class PythonMcpServer:
         self._server_thread = threading.Thread(target=self._run_server, daemon=True)
         self._server_thread.start()
 
-        # Wait for server to be ready
-        timeout = 10.0
+        # Wait for server to be ready (JVM + uvicorn can exceed 10s on Windows after repeated restarts).
+        try:
+            timeout = float((os.getenv("AGENT_DECOMPILE_MCP_BIND_TIMEOUT") or "").strip() or "90")
+        except ValueError:
+            timeout = 90.0
+        timeout = max(10.0, min(timeout, 600.0))
         start_time = time.time()
         while not self._is_server_ready():
             if time.time() - start_time > timeout:
@@ -1024,6 +1076,7 @@ class PythonMcpServer:
 
     def _is_port_available(self, host: str, port: int) -> bool:
         """Return True when host:port can be bound by this process."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._is_port_available")
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.bind((host, int(port)))
@@ -1033,6 +1086,7 @@ class PythonMcpServer:
 
     def _run_server(self) -> None:
         """Run the FastAPI server in a background thread."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._run_server")
         import uvicorn
 
         uvicorn_kwargs: dict[str, Any] = {
@@ -1051,12 +1105,18 @@ class PythonMcpServer:
             # Run server until shutdown
             asyncio.run(server.serve())
         except Exception as e:
-            logger.error("Server error: %s", e)
+            logger.error(
+                "mcp_server_uvicorn exc_type=%s host=%s port=%s",
+                type(e).__name__,
+                self.config.host,
+                self.config.port,
+            )
         finally:
             self._running = False
 
     def _is_server_ready(self) -> bool:
         """Check if the server is ready to accept connections."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._is_server_ready")
         if not self._running:
             return False
 
@@ -1067,14 +1127,21 @@ class PythonMcpServer:
             with httpx.Client(verify=False) as client:  # noqa: S501 (local readiness probe)
                 response = client.get(
                     f"{scheme}://{self.config.host}:{self.config.port}/health",
-                    timeout=1.0,
+                    timeout=5.0,
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                "mcp_server_health_probe exc_type=%s host=%s port=%s",
+                type(e).__name__,
+                self.config.host,
+                self.config.port,
+            )
             return False
 
     def stop(self) -> None:
         """Stop the MCP server."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.stop")
         if not self._running:
             return
 
@@ -1104,4 +1171,5 @@ class PythonMcpServer:
 
     def is_running(self) -> bool:
         """Check if the server is running."""
+        logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer.is_running")
         return self._running and self._is_server_ready()

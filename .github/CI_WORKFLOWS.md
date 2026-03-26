@@ -36,7 +36,7 @@ This workflow is the narrow extension-build check. It does not run the full Pyth
 - Triggers: push and pull request activity targeting `main` or `develop`, plus manual `workflow_dispatch`.
 - Matrix: `ubuntu-latest` and `macos-latest` x Ghidra `12.0` and `latest`.
 - Runtime: Java 21, Python 3.10, Gradle 8.14, `uv`, downloaded Ghidra installation.
-- Test command: `uv run pytest tests/ -v --timeout=180 --tb=short --junitxml=test-results.xml`.
+- Test command: `uv run pytest tests/ -v --timeout=120 --tb=short --junitxml=test-results.xml`.
 
 The workflow builds the extension, installs it into the downloaded Ghidra directory, installs PyGhidra from that same installation, and then runs the Python test suite. That makes it the closest CI approximation of the supported headless runtime.
 
@@ -102,7 +102,7 @@ gradle clean buildExtension
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
 uv sync
 uv pip install "$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg"
-uv run pytest tests/ -v --timeout=180 --tb=short
+uv run pytest tests/ -v --timeout=120 --tb=short
 ```
 
 If you want to mirror `test-headless.yml` more closely, also build the extension and install the generated zip into the local Ghidra `Extensions` directory before running the tests.

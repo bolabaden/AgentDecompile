@@ -27,6 +27,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of static analysis resources."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource.list_resources")
         return [
             types.Resource(
                 uri=AnyUrl(url="ghidra://static-analysis-results"),
@@ -38,6 +39,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the static analysis results resource as SARIF 2.1.0 JSON."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource.read_resource")
         if str(uri) != "ghidra://static-analysis-results":
             raise NotImplementedError(f"Unknown resource: '{uri}'")
 
@@ -69,6 +71,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     def _empty_sarif_report(self) -> dict[str, Any]:
         """Generate an empty SARIF 2.1.0 report when no program is loaded."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._empty_sarif_report")
         now: str = datetime.now(timezone.utc).isoformat() + "Z"
 
         return {
@@ -99,6 +102,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     def _is_analysis_complete(self, program: Any) -> bool:
         """Return True if program analysis is complete; safe for ProgramDB and headless."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._is_analysis_complete")
         try:
             get_state = getattr(program, "getAnalysisState", None)
             if get_state is not None:
@@ -116,6 +120,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _generate_sarif_report(self) -> dict[str, Any]:
         """Generate a SARIF 2.1.0 compliant static analysis report."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._generate_sarif_report")
         assert self.program_info is not None, "Program info is required to generate SARIF report"
         program: Any = self.program_info.program
         results: list[dict[str, Any]] = []
@@ -186,6 +191,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_undefined_references(self) -> list[dict[str, Any]]:
         """Collect results for undefined references."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._collect_undefined_references")
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect undefined references"
         program: Any = self.program_info.program
@@ -220,6 +226,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_bookmarks(self) -> list[dict[str, Any]]:
         """Collect results from bookmarks added during analysis."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._collect_bookmarks")
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect bookmarks"
         program: Any = self.program_info.program
@@ -260,6 +267,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
 
     async def _collect_analysis_warnings(self) -> list[dict[str, Any]]:
         """Collect analysis warnings (functions with issues, etc.)."""
+        logger.debug("diag.enter %s", "mcp_server/resources/static_analysis.py:StaticAnalysisResultsResource._collect_analysis_warnings")
         results: list[dict[str, Any]] = []
         assert self.program_info is not None, "Program info is required to collect analysis warnings"
         program: Any = self.program_info.program

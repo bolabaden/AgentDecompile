@@ -64,6 +64,7 @@ class ConfigManager:
         Args:
             config_file: Optional path to configuration file
         """
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.__init__")
         self.config_file = config_file
         self._config: dict[str, dict[str, Any]] = {}
         self._change_listeners: set[ConfigChangeListener] = set()
@@ -76,13 +77,18 @@ class ConfigManager:
 
     def _load_config(self) -> None:
         """Load configuration from file if available."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager._load_config")
         if self.config_file and self.config_file.exists():
             try:
                 with open(self.config_file) as f:
                     self._config = json.load(f)
                 DebugLogger.debug(self, f"Loaded configuration from {self.config_file}")
             except Exception as e:
-                logger.warning(f"Failed to load config file {self.config_file}: {e}")
+                logger.warning(
+                    "config_file_load_failed path_tail=%s exc_type=%s",
+                    self.config_file.name if self.config_file else "—",
+                    type(e).__name__,
+                )
                 self._config = {}
         else:
             self._config = {}
@@ -94,12 +100,13 @@ class ConfigManager:
     def _apply_env_overrides(self) -> None:
         """Apply environment variable overrides."""
         # Server configuration
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager._apply_env_overrides")
         if "AGENT_DECOMPILE_PORT" in os.environ:
             try:
                 port = int(os.environ["AGENT_DECOMPILE_PORT"])
                 self.set_server_port(port)
             except ValueError:
-                logger.warning("Invalid AGENT_DECOMPILE_PORT value")
+                logger.warning("invalid_agent_decompile_port env_value_unparseable=True")
 
         if "AGENT_DECOMPILE_HOST" in os.environ:
             host = os.environ["AGENT_DECOMPILE_HOST"].strip()
@@ -115,6 +122,7 @@ class ConfigManager:
 
     def save_config(self) -> None:
         """Save configuration to file."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.save_config")
         if self.config_file:
             try:
                 self.config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -122,31 +130,40 @@ class ConfigManager:
                     json.dump(self._config, f, indent=2)
                 DebugLogger.debug(self, f"Saved configuration to {self.config_file}")
             except Exception as e:
-                logger.error(f"Failed to save config file {self.config_file}: {e}")
+                logger.error(
+                    "config_file_save_failed path_tail=%s exc_type=%s",
+                    self.config_file.name if self.config_file else "—",
+                    type(e).__name__,
+                )
 
     def add_change_listener(self, listener: ConfigChangeListener) -> None:
         """Add a configuration change listener."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.add_change_listener")
         self._change_listeners.add(listener)
 
     def remove_change_listener(self, listener: ConfigChangeListener) -> None:
         """Remove a configuration change listener."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.remove_change_listener")
         self._change_listeners.discard(listener)
 
     def _notify_change_listeners(self, category: str, name: str, old_value: Any, new_value: Any) -> None:
         """Notify all change listeners."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager._notify_change_listeners")
         for listener in self._change_listeners:
             try:
                 listener.on_config_changed(category, name, old_value, new_value)
             except Exception as e:
-                logger.error("Error notifying config change listener: %s", e)
+                logger.error("config_change_listener_failed exc_type=%s", type(e).__name__)
 
     def _get_option(self, category: str, name: str, default_value: Any = None) -> Any:
         """Get a configuration option value."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager._get_option")
         category_config = self._config.get(category, {})
         return category_config.get(name, default_value)
 
     def _set_option(self, category: str, name: str, value: Any) -> None:
         """Set a configuration option value."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager._set_option")
         if category not in self._config:
             self._config[category] = {}
 
@@ -163,67 +180,81 @@ class ConfigManager:
     # Server configuration methods
     def get_server_port(self) -> int:
         """Get the server port."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_server_port")
         return self._get_option(self.SERVER_OPTIONS, self.SERVER_PORT, self.DEFAULT_PORT)
 
     def set_server_port(self, port: int) -> None:
         """Set the server port."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_server_port")
         if port < 1 or port > 65535:
             raise ValueError("Port must be between 1 and 65535")
         self._set_option(self.SERVER_OPTIONS, self.SERVER_PORT, port)
 
     def get_server_host(self) -> str:
         """Get the server host."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_server_host")
         return self._get_option(self.SERVER_OPTIONS, self.SERVER_HOST, self.DEFAULT_HOST)
 
     def set_server_host(self, host: str) -> None:
         """Set the server host."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_server_host")
         if not host or not host.strip():
             raise ValueError("Host cannot be empty")
         self._set_option(self.SERVER_OPTIONS, self.SERVER_HOST, host.strip())
 
     def is_server_enabled(self) -> bool:
         """Check if the server is enabled."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.is_server_enabled")
         return self._get_option(self.SERVER_OPTIONS, self.SERVER_ENABLED, self.DEFAULT_SERVER_ENABLED)
 
     def set_server_enabled(self, enabled: bool) -> None:
         """Set whether the server is enabled."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_server_enabled")
         self._set_option(self.SERVER_OPTIONS, self.SERVER_ENABLED, bool(enabled))
 
     # Debug configuration methods
     def is_debug_mode(self) -> bool:
         """Check if debug mode is enabled."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.is_debug_mode")
         return self._get_option(self.SERVER_OPTIONS, self.DEBUG_MODE, self.DEFAULT_DEBUG_MODE)
 
     def set_debug_mode(self, enabled: bool) -> None:
         """Set debug mode."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_debug_mode")
         self._set_option(self.SERVER_OPTIONS, self.DEBUG_MODE, bool(enabled))
         DebugLogger.set_debug_enabled(enabled)
 
     def is_request_logging_enabled(self) -> bool:
         """Check if request logging is enabled."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.is_request_logging_enabled")
         return self._get_option(self.SERVER_OPTIONS, self.REQUEST_LOGGING_ENABLED, self.DEFAULT_REQUEST_LOGGING_ENABLED)
 
     def set_request_logging_enabled(self, enabled: bool) -> None:
         """Set request logging."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_request_logging_enabled")
         self._set_option(self.SERVER_OPTIONS, self.REQUEST_LOGGING_ENABLED, bool(enabled))
 
     # Decompiler configuration methods
     def get_max_decompiler_search_functions(self) -> int:
         """Get the maximum number of functions to search in decompiler."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_max_decompiler_search_functions")
         return self._get_option(self.SERVER_OPTIONS, self.MAX_DECOMPILER_SEARCH_FUNCTIONS, self.DEFAULT_MAX_DECOMPILER_SEARCH_FUNCTIONS)
 
     def set_max_decompiler_search_functions(self, max_functions: int) -> None:
         """Set the maximum number of functions to search in decompiler."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_max_decompiler_search_functions")
         if max_functions < 1:
             raise ValueError("Max functions must be positive")
         self._set_option(self.SERVER_OPTIONS, self.MAX_DECOMPILER_SEARCH_FUNCTIONS, max_functions)
 
     def get_decompiler_timeout_seconds(self) -> int:
         """Get the decompiler timeout in seconds."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_decompiler_timeout_seconds")
         return self._get_option(self.SERVER_OPTIONS, self.DECOMPILER_TIMEOUT_SECONDS, self.DEFAULT_DECOMPILER_TIMEOUT_SECONDS)
 
     def set_decompiler_timeout_seconds(self, timeout: int) -> None:
         """Set the decompiler timeout in seconds."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_decompiler_timeout_seconds")
         if timeout < 1:
             raise ValueError("Timeout must be positive")
         self._set_option(self.SERVER_OPTIONS, self.DECOMPILER_TIMEOUT_SECONDS, timeout)
@@ -231,38 +262,46 @@ class ConfigManager:
     # Import/analysis configuration methods
     def get_import_analysis_timeout_seconds(self) -> int:
         """Get the import analysis timeout in seconds."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_import_analysis_timeout_seconds")
         return self._get_option(self.SERVER_OPTIONS, self.IMPORT_ANALYSIS_TIMEOUT_SECONDS, self.DEFAULT_IMPORT_ANALYSIS_TIMEOUT_SECONDS)
 
     def set_import_analysis_timeout_seconds(self, timeout: int) -> None:
         """Set the import analysis timeout in seconds."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_import_analysis_timeout_seconds")
         if timeout < 1:
             raise ValueError("Timeout must be positive")
         self._set_option(self.SERVER_OPTIONS, self.IMPORT_ANALYSIS_TIMEOUT_SECONDS, timeout)
 
     def should_wait_for_analysis_on_import(self) -> bool:
         """Check if we should wait for analysis on import."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.should_wait_for_analysis_on_import")
         return self._get_option(self.SERVER_OPTIONS, self.WAIT_FOR_ANALYSIS_ON_IMPORT, self.DEFAULT_WAIT_FOR_ANALYSIS_ON_IMPORT)
 
     def set_wait_for_analysis_on_import(self, wait: bool) -> None:
         """Set whether to wait for analysis on import."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_wait_for_analysis_on_import")
         self._set_option(self.SERVER_OPTIONS, self.WAIT_FOR_ANALYSIS_ON_IMPORT, bool(wait))
 
     def get_import_max_depth(self) -> int:
         """Get the maximum import depth."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_import_max_depth")
         return self._get_option(self.SERVER_OPTIONS, self.IMPORT_MAX_DEPTH, self.DEFAULT_IMPORT_MAX_DEPTH)
 
     def set_import_max_depth(self, depth: int) -> None:
         """Set the maximum import depth."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.set_import_max_depth")
         if depth < 1:
             raise ValueError("Depth must be positive")
         self._set_option(self.SERVER_OPTIONS, self.IMPORT_MAX_DEPTH, depth)
 
     def get_all_options(self) -> dict[str, dict[str, Any]]:
         """Get all configuration options."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.get_all_options")
         return self._config.copy()
 
     def reset_to_defaults(self) -> None:
         """Reset all options to defaults."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.reset_to_defaults")
         old_config = self._config.copy()
         self._config = {self.SERVER_OPTIONS: {}}
         self._notify_change_listeners(self.SERVER_OPTIONS, "*", old_config, self._config)
@@ -272,4 +311,5 @@ class ConfigManager:
 
     def __str__(self) -> str:
         """String representation of configuration."""
+        logger.debug("diag.enter %s", "config/config_manager.py:ConfigManager.__str__")
         return f"ConfigManager(config_file={self.config_file}, options={len(self._config)})"

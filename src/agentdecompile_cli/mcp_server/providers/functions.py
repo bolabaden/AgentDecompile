@@ -36,6 +36,7 @@ class FunctionToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.LIST_FUNCTIONS.value,
@@ -110,6 +111,7 @@ class FunctionToolProvider(ToolProvider):
         -------
         Paginated response with functions, count, total, hasMore
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_list")
         self._require_program()
         pattern = self._get_str(args, "namepattern", "pattern", "filter", "regex")
         include_ext = self._get_bool(args, "includeexternals", "externals", default=True)
@@ -141,6 +143,7 @@ class FunctionToolProvider(ToolProvider):
 
     @staticmethod
     def _response_to_payload(response: list[types.TextContent]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._response_to_payload")
         if not response:
             return {}
         text = getattr(response[0], "text", "")
@@ -154,6 +157,7 @@ class FunctionToolProvider(ToolProvider):
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Get detailed views (info/decompile/disassemble/calls) for one or more functions. Batch via 'functions' array."""
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_get")
         self._require_program()
 
         # Collect all function identifiers: 'functions' array, or single 'function' / 'addressOrSymbol' / etc.
@@ -288,6 +292,7 @@ class FunctionToolProvider(ToolProvider):
         )
 
     async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_info")
         result: dict[str, Any] = {
             "name": target_func.getName(),
             "address": str(target_func.getEntryPoint()),
@@ -305,6 +310,7 @@ class FunctionToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _handle_calls(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_calls")
         callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
         callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
         result: dict[str, Any] = {
@@ -320,41 +326,38 @@ class FunctionToolProvider(ToolProvider):
         return create_success_response(result)
 
     async def _handle_decompile(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_decompile")
         result: dict[str, Any] = {
             "name": target_func.getName(),
             "address": str(target_func.getEntryPoint()),
             "signature": str(target_func.getSignature()),
             "view": "decompile",
         }
+        owns_decomp = False
+        decomp: Any = None
         try:
-            from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+            from agentdecompile_cli.mcp_utils.decompiler_util import (
+                get_decompiled_function_from_results,
+                merge_decompile_dict_keys,
+                open_decompiler_for_program,
+                resolve_decompiler_for_program,
+            )
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             monitor = ConsoleTaskMonitor()
 
             session_decomp = getattr(self.program_info, "decompiler", None)
-            decomp = session_decomp
-            owns_decomp = False
-
-            if decomp is None:
-                decomp = DecompInterface()
-                options = DecompileOptions()
-                options.grabFromProgram(program)
-                decomp.setOptions(options)
-                decomp.openProgram(program)
-                owns_decomp = True
-            else:
-                try:
-                    options = DecompileOptions()
-                    options.grabFromProgram(program)
-                    decomp.setOptions(options)
-                except Exception:
-                    pass
+            decomp, owns_decomp = resolve_decompiler_for_program(session_decomp, program)
 
             dr = decomp.decompileFunction(target_func, timeout, monitor)
             if dr and dr.decompileCompleted():
-                df = dr.getDecompiledFunction()
-                result["decompilation"] = df.getC() if df else "// No output"
+                df = get_decompiled_function_from_results(dr)
+                if df is None:
+                    raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
+                c_out = df.getC()
+                if not (c_out or "").strip():
+                    raise RuntimeError("Decompilation completed but C output was empty")
+                result["decompilation"] = c_out
             else:
                 err_msg = ""
                 if dr is not None:
@@ -366,17 +369,22 @@ class FunctionToolProvider(ToolProvider):
                 # Retry once with a fresh interface if the shared/session
                 # decompiler failed, to recover from stale interface state.
                 if session_decomp is not None:
-                    retry = DecompInterface()
-                    retry_options = DecompileOptions()
-                    retry_options.grabFromProgram(program)
-                    retry.setOptions(retry_options)
-                    retry.openProgram(program)
+                    retry = open_decompiler_for_program(program)
                     retry_dr = retry.decompileFunction(target_func, timeout, monitor)
                     if retry_dr and retry_dr.decompileCompleted():
-                        retry_df = retry_dr.getDecompiledFunction()
-                        result["decompilation"] = retry_df.getC() if retry_df else "// No output"
+                        retry_df = get_decompiled_function_from_results(retry_dr)
+                        if retry_df is None:
+                            retry.dispose()
+                            raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
+                        c_retry = retry_df.getC()
+                        if not (c_retry or "").strip():
+                            retry.dispose()
+                            raise RuntimeError("Decompilation completed but C output was empty")
+                        result["decompilation"] = c_retry
                         retry.dispose()
-                        return create_success_response(result)
+                        if owns_decomp:
+                            decomp.dispose()
+                        return create_success_response(merge_decompile_dict_keys(result))
                     try:
                         retry_err = retry_dr.getErrorMessage() if retry_dr else ""
                     except Exception:
@@ -391,16 +399,30 @@ class FunctionToolProvider(ToolProvider):
                     except Exception:
                         err_msg = ""
 
-                result["decompilation"] = self._build_decompile_fallback(program, target_func, err_msg, max_instructions=400)
+                extras: list[str] = []
+                if dr is not None:
+                    try:
+                        if not dr.decompileCompleted():
+                            extras.append("decompileCompleted=false")
+                    except Exception:
+                        pass
+                detail = "; ".join([p for p in [err_msg, " ".join(extras)] if p]) or "no error message from DecompInterface"
+                raise RuntimeError(f"Decompilation failed for {target_func.getName()}: {detail}")
 
             if owns_decomp:
                 decomp.dispose()
-        except Exception as e:
-            result["decompilation"] = self._build_decompile_fallback(program, target_func, str(e), max_instructions=400)
+        except Exception:
+            if owns_decomp and decomp is not None:
+                try:
+                    decomp.dispose()
+                except Exception:
+                    pass
+            raise
 
-        return create_success_response(result)
+        return create_success_response(merge_decompile_dict_keys(result))
 
     async def _handle_disassemble(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_disassemble")
         instructions: list[dict[str, Any]] = []
         listing: Any = self._get_listing(program)
         body: Any = target_func.getBody()

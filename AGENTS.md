@@ -111,6 +111,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned User Preferences
 
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
+- Do not block the agent's main shell on long proof drivers (e.g. `scripts/lfg_cmd_sequence.ps1`): start them in a separate process, tee output to `.lfg_run/lfg_cmd_<RunId>/driver.log`, tail logs in parallel, and avoid overlapping runs without stopping the prior driver and its MCP server.
 - After fixing an issue, continue with the task without asking; run and verify, and if still broken fix and rerun until functional.
 - Fix the underlying behavior so the same user commands work unchanged; do not only improve error messages or documentation.
 - Complete implementations without placeholders; for features like export, provide fallbacks so the operation does not error or fail.
@@ -125,10 +126,9 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Load Ghidra path from environment (e.g. GHIDRA_INSTALL_DIR); use a top-level .env at repo root; do not hardcode install paths.
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
-- For proxy mode: set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path to the backend; for two simultaneous sessions with different projects run two backends and point each proxy at a different backend URL.
+- For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
-- CLI persists MCP session id per server URL so that open-project then checkout-program in two separate invocations reuse the same server session when the same --server-url is used; when the CLI does not send mcp-session-id, the server uses a single default session so sequential invocations can reuse the same session—for multi-user or multi-session use, send distinct session ids.
-- Before calling domain_file.save() while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction".
+- Before domain_file.save() or shared versioned checkin-program while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction". For shared check-in, the DomainFile used must match the open program being edited—repo-style programPath strings and Program.getDomainFile() pathnames may differ only by basename on Windows; mismatched resolution yields "File has not been modified since checkout" despite successful mutations.
 - get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
 - When Ghidra exposes multiple overloads for the same operation (e.g. Listing.getComment(int, Address) vs getComment(CommentType, Address)), support both with try/fallback for compatibility across backends.
 - Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).

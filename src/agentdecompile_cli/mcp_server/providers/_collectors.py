@@ -30,6 +30,7 @@ _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
 
 def iter_items(source: Any):
     """Yield items from a Java iterator (hasNext/next) or Python iterable so providers can use one loop style."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:iter_items")
     if source is None:
         return
     if hasattr(source, "hasNext") and hasattr(source, "next"):
@@ -42,6 +43,7 @@ def iter_items(source: Any):
 
 def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
     """Collect all comment types (eol, pre, post, plate, repeatable) at the function's entry point."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_comments")
     listing = program.getListing()
     address = func.getEntryPoint()
     comments: dict[str, str] = {}
@@ -57,6 +59,7 @@ def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
 
 def collect_function_tags(func: Any) -> list[str]:
     """Return list of tag names attached to this function (e.g. crypto, network)."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_tags")
     values: list[str] = []
     for tag in list(func.getTags()):
         tag_name = str(tag.getName() or "")
@@ -67,6 +70,7 @@ def collect_function_tags(func: Any) -> list[str]:
 
 def collect_function_call_counts(func: Any) -> dict[str, int]:
     """Return callerCount and calleeCount for a function (number of callers and called functions)."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_call_counts")
     caller_count = 0
     callee_count = 0
     try:
@@ -82,6 +86,7 @@ def collect_function_call_counts(func: Any) -> dict[str, int]:
 
 def _get_function_list(fm: Any) -> list[Any]:
     """Return a list of functions from FunctionManager; try multiple strategies for PyGhidra/JPype iterator quirks."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:_get_function_list")
     count = fm.getFunctionCount() if hasattr(fm, "getFunctionCount") else 0
     out: list[Any] = []
 
@@ -194,6 +199,7 @@ def _get_function_list(fm: Any) -> list[Any]:
 
 def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Single pass over all functions: name, address, signature, params, comments, tags, caller/callee counts. Used by list-functions and others."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_functions")
     fm = program.getFunctionManager()
     results: list[dict[str, Any]] = []
     func_list = _get_function_list(fm)
@@ -235,6 +241,7 @@ def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[st
 
 def collect_bookmarks(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Single pass over bookmarks: address, type, category, comment. Used by manage-bookmarks list/search."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_bookmarks")
     bm_mgr = program.getBookmarkManager()
     results: list[dict[str, Any]] = []
     for bm in iter_items(bm_mgr.getBookmarksIterator()):
@@ -252,6 +259,7 @@ def collect_bookmarks(program: Any, *, limit: int | None = None) -> list[dict[st
 
 
 def collect_comments(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_comments")
     listing = program.getListing()
     mem = program.getMemory()
     fm = program.getFunctionManager()
@@ -283,6 +291,7 @@ def collect_comments(program: Any, *, limit: int | None = None) -> list[dict[str
 
 
 def collect_symbols(program: Any, *, symbol_type: Any | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_symbols")
     st = program.getSymbolTable()
     iterator = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
     results: list[dict[str, Any]] = []
@@ -306,6 +315,7 @@ def collect_symbols(program: Any, *, symbol_type: Any | None = None, limit: int 
 
 
 def collect_imports(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_imports")
     st = program.getSymbolTable()
     results: list[dict[str, Any]] = []
     for sym in iter_items(st.getExternalSymbols() if hasattr(st, "getExternalSymbols") else []):
@@ -323,6 +333,7 @@ def collect_imports(program: Any, *, limit: int | None = None) -> list[dict[str,
 
 
 def collect_exports(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_exports")
     st = program.getSymbolTable()
     results: list[dict[str, Any]] = []
     for sym in iter_items(st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else []):
@@ -341,6 +352,7 @@ def collect_exports(program: Any, *, limit: int | None = None) -> list[dict[str,
 
 
 def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None, ghidra_tools: Any | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_strings")
     if ghidra_tools is not None:
         try:
             result = ghidra_tools.get_all_strings()
@@ -451,6 +463,7 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
 
 
 def collect_data_types(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_data_types")
     dtm = program.getDataTypeManager()
     iterator = dtm.getAllDataTypes() if hasattr(dtm, "getAllDataTypes") else []
     results: list[dict[str, Any]] = []
@@ -470,6 +483,7 @@ def collect_data_types(program: Any, *, limit: int | None = None) -> list[dict[s
 
 
 def collect_data_type_archives(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_data_type_archives")
     dtm = program.getDataTypeManager()
     results: list[dict[str, Any]] = []
     try:
@@ -501,6 +515,7 @@ def collect_data_type_archives(program: Any, *, limit: int | None = None) -> lis
 
 
 def collect_structures(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_structures")
     dtm = program.getDataTypeManager()
     results: list[dict[str, Any]] = []
     for struct in iter_items(dtm.getAllStructures()):
@@ -521,6 +536,7 @@ def collect_structures(program: Any, *, limit: int | None = None) -> list[dict[s
 
 
 def collect_structure_fields(structure: Any) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_structure_fields")
     fields: list[dict[str, Any]] = []
     for index in range(structure.getNumComponents()):
         component = structure.getComponent(index)
@@ -543,6 +559,7 @@ def collect_constants(
     max_instructions: int = 2_000_000,
     samples_per_constant: int = 5,
 ) -> tuple[list[dict[str, Any]], int]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_constants")
     listing = program.getListing()
     predicate = value_filter or (lambda _v: True)
 

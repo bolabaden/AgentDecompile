@@ -30,6 +30,7 @@ class MemoryToolProvider(ToolProvider):
     @staticmethod
     def _set_forwarded_if_missing(forwarded: dict[str, Any], key: str, value: Any) -> None:
         """Set ``key`` in forwarded when it is absent and ``value`` is non-empty (for read-bytes→inspect-memory param mapping)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._set_forwarded_if_missing")
         if key in forwarded and forwarded.get(key) is not None:
             return
         if value is None:
@@ -39,6 +40,7 @@ class MemoryToolProvider(ToolProvider):
             forwarded[key] = text
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.INSPECT_MEMORY.value,
@@ -81,6 +83,7 @@ class MemoryToolProvider(ToolProvider):
 
     async def _handle_read_bytes(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Normalize read-bytes params (binaryName→programPath, address→addressOrSymbol, size→length) and delegate to inspect-memory mode=read."""
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_read_bytes")
         forwarded = dict(args)
         forwarded.setdefault("mode", "read")
         # Map read-bytes-specific param names to what _handle expects
@@ -93,6 +96,7 @@ class MemoryToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Dispatch to blocks/read/data_at/data_items handler; segments is an alias for blocks."""
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="blocks")
         assert self.program_info is not None, "program_info should be set after _require_program()"
@@ -120,6 +124,7 @@ class MemoryToolProvider(ToolProvider):
         Blocks are the program's memory regions (e.g. .text, .data, .rdata); useful to find
         where code vs data lives before reading bytes or applying types.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_blocks")
         blocks = []
         for blk in memory.getBlocks():
             blocks.append(
@@ -137,6 +142,7 @@ class MemoryToolProvider(ToolProvider):
 
     async def _handle_read(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
         """Read raw bytes at address; return hex dump and ASCII view. Cap length at 10000 to avoid huge responses."""
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_read")
         addr_str = self._require_address_or_symbol(args)
         length = self._get_int(args, "length", "size", "len", default=256)
         length = min(length, 10000)
@@ -170,6 +176,7 @@ class MemoryToolProvider(ToolProvider):
 
     async def _handle_data_at(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
         """Return the defined data at this address: type, length, value, label. Exact address first, then containing."""
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_data_at")
         addr_str = self._require_address_or_symbol(args)
         addr = self._resolve_address(addr_str, program=program)
 
@@ -203,6 +210,7 @@ class MemoryToolProvider(ToolProvider):
 
         getDefinedData(True) walks the listing forward; each item has address, dataType, length, label.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_data_items")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         listing = self._get_listing(program)

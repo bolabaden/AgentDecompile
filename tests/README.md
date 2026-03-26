@@ -46,7 +46,6 @@ Tests are organized by functionality (37 test files total):
 - `test_provider_callgraph.py` - Call graph analysis
 - `test_provider_comments.py` - Comments/annotations
 - `test_provider_bookmarks.py` - Bookmarks
-- `test_provider_project.py` - Project management
 - `test_provider_strings.py` - String management
 - `test_provider_structures_datatypes_data.py` - Data types and structures
 - `test_provider_xrefs.py` - Cross-references
@@ -134,7 +133,7 @@ uv run pytest tests/ -k "normalize" -v        # All normalization tests
 ### Run with Timeout
 
 ```bash
-uv run pytest tests/ -v --timeout=180  # 3-minute timeout per test
+uv run pytest tests/ -v --timeout=120  # 2-minute timeout per test (matches pyproject.toml)
 ```
 
 ### Run with Different Output
@@ -177,7 +176,7 @@ Workflow steps:
 3. Setup Python and `uv`
 4. Install Python dependencies (`uv sync`)
 5. Install PyGhidra from local Ghidra when needed
-6. Run pytest (`uv run pytest tests/ -v --timeout=180`)
+6. Run pytest (`uv run pytest tests/ -v --timeout=120`)
 7. Upload test results and artifacts
 
 ## Writing New Tests
@@ -248,7 +247,7 @@ set GHIDRA_INSTALL_DIR=C:\path\to\ghidra   # Windows
 
 ### Tests Timeout
 If tests timeout during CI:
-1. Increase the `--timeout` value (default 180 seconds)
+1. Increase the `--timeout` value (default 120 seconds in pyproject.toml)
 2. Look for slow fixtures or heavy operations
 3. Mark very slow tests with `@pytest.mark.slow`
 

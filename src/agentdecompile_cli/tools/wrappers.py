@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from agentdecompile_cli.context import ProgramInfo
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DecompInterface as GhidraDecompInterface,
-        DecompileResults as GhidraDecompileResults,
     )
     from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         AddressFactory as GhidraAddressFactory,
@@ -57,9 +56,6 @@ if TYPE_CHECKING:
         ReferenceManager as GhidraReferenceManager,
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
-    )
-    from ghidra.util.task import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        ConsoleTaskMonitor as GhidraConsoleTaskMonitor,
     )
     Symbol = GhidraSymbol
 
@@ -78,6 +74,7 @@ def handle_exceptions(func: Callable[..., Any]) -> Callable[..., Any]:
             logger.error(f"Error in {func.__name__}: {e!s}")
             raise
 
+    logger.debug("diag.enter %s", "tools/wrappers.py:handle_exceptions")
     return wrapper
 
 
@@ -90,11 +87,13 @@ class GhidraTools:
 
     def __init__(self, program_info: ProgramInfo):
         """Initialize with the session's ProgramInfo (program + decompiler + metadata)."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.__init__")
         self.program_info: ProgramInfo = program_info
         self.program: GhidraProgram = program_info.program
         self.decompiler: GhidraDecompInterface = program_info.decompiler
 
     def _get_filename(self, func: GhidraFunction) -> str:
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._get_filename")
         max_path_len: int = 50
         return f"{func.getSymbol().getName(True)[:max_path_len]}-{func.entryPoint}"
 
@@ -113,6 +112,7 @@ class GhidraTools:
 
         Address strings use consistent parsing: 0x-prefix = hex, otherwise decimal (see AddressUtil).
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.find_function")
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
         af: GhidraAddressFactory = self.program.getAddressFactory()
@@ -176,6 +176,7 @@ class GhidraTools:
         -------
             A list of unique Symbol objects that match the search criteria.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._lookup_symbols")
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
         st: GhidraSymbolTable = self.program.getSymbolTable()
@@ -223,6 +224,7 @@ class GhidraTools:
         """Return all symbols that match name_or_address (exact or partial).
         Never raises; returns empty list if none.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.find_symbols")
         return self._lookup_symbols(name_or_address, exact=True, partial=True)
 
     @handle_exceptions
@@ -230,6 +232,7 @@ class GhidraTools:
         """Resolve a single symbol by name or address.
         Raises if ambiguous or not found.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.find_symbol")
         matches = self._lookup_symbols(name_or_address, exact=True, partial=True)
 
         if len(matches) == 1:
@@ -246,69 +249,30 @@ class GhidraTools:
         timeout: int = 0,
     ) -> DecompiledFunction:
         """Finds and decompiles a function in a specified binary and returns its pseudo-C code."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.decompile_function_by_name_or_addr")
         from agentdecompile_cli.tools.decompile_tool import DecompileTool
 
         # Create unified tool instance
         decompile_tool = DecompileTool(self.program_info, self.decompiler)
 
-        try:
-            # Use unified tool's MCP interface method
-            return decompile_tool.decompile_function_for_mcp(
-                function_name_or_address=name_or_address,
-                timeout=timeout // 1000 if timeout > 0 else 30,  # Convert ms to seconds
-                include_signature=True,
-            )
-        except Exception as e:
-            # Fallback to legacy implementation if unified tool fails
-            logger.warning(f"Unified decompile tool failed: {e.__class__.__name__}: {e}, falling back to legacy implementation")
-            return self._decompile_function_legacy(name_or_address, timeout)
+        return decompile_tool.decompile_function_for_mcp(
+            function_name_or_address=name_or_address,
+            timeout=timeout // 1000 if timeout > 0 else 30,  # Convert ms to seconds
+            include_signature=True,
+        )
 
     def decompile_function(self, func: GhidraFunction, timeout: int = 0) -> DecompiledFunction:
         """Decompiles a function in a specified binary and returns its pseudo-C code.
 
         This method now uses the unified DecompileTool for consistency.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.decompile_function")
         from agentdecompile_cli.tools.decompile_tool import DecompileTool
 
         # Create unified tool instance
         decompile_tool = DecompileTool(self.program_info, self.decompiler)
 
-        try:
-            # Use unified tool's internal method
-            return decompile_tool._decompile_single_function(func, timeout // 1000 if timeout > 0 else 30)
-        except Exception as e:
-            # Fallback to legacy implementation if unified tool fails
-            logger.warning(f"Unified decompile tool failed: {e.__class__.__name__}: {e}, falling back to legacy implementation")
-            return self._decompile_function_legacy_func(func, timeout)
-
-    def _decompile_function_legacy(
-        self,
-        name_or_address: str,
-        timeout: int = 0,
-    ) -> DecompiledFunction:
-        """Legacy decompile implementation for backward compatibility."""
-        func: GhidraFunction = self.find_function(name_or_address)
-        return self._decompile_function_legacy_func(func, timeout)
-
-    def _decompile_function_legacy_func(
-        self,
-        func: GhidraFunction,
-        timeout: int = 0,
-    ) -> DecompiledFunction:
-        """Legacy decompile function implementation for backward compatibility."""
-        monitor: GhidraConsoleTaskMonitor = GhidraConsoleTaskMonitor()
-        result: GhidraDecompileResults = self.decompiler.decompileFunction(func, timeout, monitor)
-        if result.getErrorMessage() == "":
-            code = result.decompiledFunction.getC()
-            sig = result.decompiledFunction.getSignature()
-        else:
-            code = result.getErrorMessage()
-            sig = None
-        return DecompiledFunction(
-            name=self._get_filename(func),
-            code=code,
-            signature=sig,
-        )
+        return decompile_tool._decompile_single_function(func, timeout // 1000 if timeout > 0 else 30)
 
     @handle_exceptions
     def get_all_functions(
@@ -318,6 +282,7 @@ class GhidraTools:
         """Gets all functions within a binary.
         Returns a python list that doesn't need to be re-intialized
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.get_all_functions")
         funcs: set[GhidraFunction] = set()
         fm: GhidraFunctionManager = self.program.getFunctionManager()
         functions: list[GhidraFunction] = fm.getFunctions(True)
@@ -340,6 +305,7 @@ class GhidraTools:
 
         Returns a python list that doesn't need to be re-initialized.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.get_all_symbols")
         symbols: set[GhidraSymbol] = set()
 
         st: GhidraSymbolTable = self.program.getSymbolTable()
@@ -356,6 +322,7 @@ class GhidraTools:
     @handle_exceptions
     def get_all_strings(self) -> list[StringInfo]:
         """Gets all defined strings for a binary"""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.get_all_strings")
         data_iterator: Any = None
         last_error: Exception | None = None
         try:
@@ -398,6 +365,7 @@ class GhidraTools:
         limit: int = 100,
     ) -> list[SymbolInfo]:
         """Searches for symbols within a binary by name."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.search_symbols_by_name")
         query = "" if query is None else query
         if not query:
             raise ValueError("Query string is required")
@@ -431,6 +399,7 @@ class GhidraTools:
         limit: int = 25,
     ) -> list[ExportInfo]:
         """Lists all exported functions and symbols from a specified binary."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.list_exports")
         exports: list[ExportInfo] = []
         symbols: list[GhidraSymbol] = self.program.getSymbolTable().getAllSymbols(True)
         for symbol in symbols:
@@ -443,6 +412,7 @@ class GhidraTools:
     @handle_exceptions
     def list_imports(self, query: str | None = None, offset: int = 0, limit: int = 25) -> list[ImportInfo]:
         """Lists all imported functions and symbols for a specified binary."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.list_imports")
         imports: list[ImportInfo] = []
         symbols: list[GhidraSymbol] = self.program.getSymbolTable().getExternalSymbols()
         for symbol in symbols:
@@ -453,6 +423,7 @@ class GhidraTools:
 
     def _refs_to_cross_reference_infos(self, references: Any) -> list[CrossReferenceInfo]:
         """Build CrossReferenceInfo list from a reference iterator; deduplicates by from_address."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._refs_to_cross_reference_infos")
         seen: set[str] = set()
         cross_references: list[CrossReferenceInfo] = []
         fm = self.program.getFunctionManager()
@@ -482,6 +453,7 @@ class GhidraTools:
         or address within a binary. For ambiguous names (e.g. imports in multiple
         namespaces), aggregates refs from all matching symbols.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.list_cross_references")
         rm: GhidraReferenceManager = self.program.getReferenceManager()
         try:
             sym: GhidraSymbol = self.find_symbol(name_or_address)
@@ -525,6 +497,7 @@ class GhidraTools:
         include_full_code: bool = True,
         preview_length: int = 500,
     ) -> list[CodeSearchResult] | None:
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._search_code_literal")
         search_results: list[CodeSearchResult] = []
         if literal_results is not None and "documents" in literal_results:
             # Apply offset and limit
@@ -571,6 +544,7 @@ class GhidraTools:
 
         Returns search results and estimated total matches above threshold.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._search_code_semantic")
         assert self.program_info.code_collection is not None
         search_results: list[CodeSearchResult] = []
 
@@ -639,6 +613,7 @@ class GhidraTools:
             similarity_threshold: Minimum similarity score (0.0-1.0) for semantic results.
                                   Results below this threshold are filtered out.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.search_code")
         if not self.program_info.code_collection:
             raise ValueError("Code indexing is not complete for this binary. Please try again later.")
 
@@ -687,6 +662,7 @@ class GhidraTools:
 
     def _build_string_search_result(self, doc: str, metadata: dict[str, Any], similarity: float) -> StringSearchResult:
         """Build a StringSearchResult from document and metadata."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._build_string_search_result")
         return StringSearchResult(
             value=doc,
             address=str(metadata["address"]),
@@ -696,6 +672,7 @@ class GhidraTools:
     @handle_exceptions
     def search_strings(self, query: str, limit: int = 100) -> list[StringSearchResult]:
         """Searches for strings within a binary."""
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.search_strings")
         if not self.program_info.strings_collection:
             raise ValueError("String indexing is not complete for this binary. Please try again later.")
 
@@ -725,6 +702,7 @@ class GhidraTools:
     def read_bytes(self, address: str, size: int = 32) -> BytesReadResult:
         """Reads raw bytes from memory at a specified address."""
         # Maximum size limit to prevent excessive memory reads
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.read_bytes")
         max_read_size = 8192
 
         if size <= 0:
@@ -779,6 +757,7 @@ class GhidraTools:
 
         This method now uses the unified CallGraphTool for consistency.
         """
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.gen_callgraph")
         from agentdecompile_cli.tools.callgraph_tool import CallGraphTool
 
         # Create unified tool instance
@@ -829,6 +808,7 @@ class GhidraTools:
     ) -> CallGraphResult:
         """Legacy callgraph implementation for backward compatibility."""
         # don't really limit the graph
+        logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._gen_callgraph_legacy")
         MAX_DEPTH: int = sys.getrecursionlimit() - 1  # noqa: F841
         MAX_PATH_LEN: int = 50
 

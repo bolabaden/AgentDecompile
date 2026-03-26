@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-from agentdecompile_cli.cli import _build_svr_admin_payload, _get_error_result_message
+from agentdecompile_cli.cli import (
+    _build_svr_admin_payload,
+    _get_error_result_message,
+    _load_tool_seq_steps_arg,
+    _tool_seq_step_succeeded,
+)
 from agentdecompile_cli.registry import (
     TOOLS,
     Tool,
@@ -19,6 +25,77 @@ from agentdecompile_cli.registry import (
 from tests.helpers import assert_mapping_invariants, assert_string_invariants, assert_text_block_invariants
 
 pytestmark = pytest.mark.unit
+
+
+class TestLoadToolSeqStepsArg:
+    def test_passes_through_plain_json(self):
+        raw = '[{"name":"open","arguments":{}}]'
+        assert _load_tool_seq_steps_arg(raw) == raw
+
+    def test_reads_at_file(self, tmp_path: Path) -> None:
+        p = tmp_path / "steps.json"
+        content = '[{"name":"list-project-files","arguments":{}}]'
+        p.write_text(content, encoding="utf-8")
+        out = _load_tool_seq_steps_arg(f"@{p}")
+        assert out == content
+
+
+class TestToolSeqStepSucceeded:
+    def test_none_fails(self):
+        assert _tool_seq_step_succeeded(None) is False
+
+    def test_iserror_true_fails(self):
+        assert _tool_seq_step_succeeded({"isError": True, "content": []}) is False
+
+    def test_nested_json_success_false_fails(self):
+        payload = {
+            "isError": False,
+            "content": [{"type": "text", "text": '{"success": false, "error": "bad"}'}],
+        }
+        assert _tool_seq_step_succeeded(payload) is False
+
+    def test_nested_json_ok_succeeds(self):
+        payload = {
+            "isError": False,
+            "content": [{"type": "text", "text": '{"success": true, "files": []}'}],
+        }
+        assert _tool_seq_step_succeeded(payload) is True
+
+    def test_markdown_error_heading_fails(self):
+        payload = {
+            "isError": False,
+            "content": [
+                {
+                    "type": "text",
+                    "text": "## Error\n\n> **Ghidra server not reachable**\n\n**Tool:** `open`",
+                },
+            ],
+        }
+        assert _tool_seq_step_succeeded(payload) is False
+
+    def test_modification_conflict_markdown_fails(self):
+        payload = {
+            "isError": False,
+            "content": [
+                {
+                    "type": "text",
+                    "text": "## Modification conflict\n\nCreate label would conflict\n\n**conflictId:** `x`",
+                },
+            ],
+        }
+        assert _tool_seq_step_succeeded(payload) is False
+
+    def test_checkin_success_markdown_succeeds(self):
+        payload = {
+            "isError": False,
+            "content": [
+                {
+                    "type": "text",
+                    "text": "## Check-in Result\n\n**Program:** sort.exe\n**Status:** Success\n",
+                },
+            ],
+        }
+        assert _tool_seq_step_succeeded(payload) is True
 
 
 class TestGetErrorResultMessage:
@@ -173,7 +250,7 @@ class TestMigrateMetadataNoArgs:
     """migrate-metadata with no arguments must complete (default limit 50), not hang."""
 
     def test_migrate_metadata_no_args_exits_without_hang(self) -> None:
-        """With no server, migrate-metadata should fail fast with connection error, not hang."""
+        """Fail fast (program validation or connection), not hang."""
         proc = subprocess.run(
             [
                 sys.executable,
@@ -186,4 +263,9 @@ class TestMigrateMetadataNoArgs:
         )
         assert proc.returncode != 0
         out = (proc.stdout + proc.stderr).lower()
-        assert "connect" in out or "refused" in out or "attempt" in out
+        assert (
+            "connect" in out
+            or "refused" in out
+            or "attempt" in out
+            or "program is required" in out
+        )

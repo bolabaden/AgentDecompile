@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types  # pyright: ignore[reportMissingImports]
 
+from agentdecompile_cli.app_logger import basename_hint, norm_arg_keys, redact_session_id
 from agentdecompile_cli.launcher import ProgramInfo  # pyright: ignore[reportMissingImports]
 
 # iter_items imported lazily in _resolve_function to avoid circular import
@@ -111,11 +112,13 @@ _AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
 
 def _get_auto_match_executor() -> ProcessPoolExecutor:
     """Create or return the ProcessPoolExecutor for auto-match (spawn, max_workers=cpu count)."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_get_auto_match_executor")
     global _AUTO_MATCH_EXECUTOR
     if _AUTO_MATCH_EXECUTOR is None:
         ctx = multiprocessing.get_context("spawn")
         cpu_count = multiprocessing.cpu_count()
         _AUTO_MATCH_EXECUTOR = ProcessPoolExecutor(max_workers=cpu_count, mp_context=ctx)
+        logger.info("auto_match_process_pool_init max_workers=%s mp_context=spawn", cpu_count)
     return _AUTO_MATCH_EXECUTOR
 
 
@@ -133,6 +136,7 @@ n = normalize_identifier  # short alias used throughout providers
 
 def recommend_tool(tool_name: str, fallback: str | None = None) -> str:
     """Return an advertised tool name, optionally falling back to another tool."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:recommend_tool")
     if is_tool_advertised(tool_name):
         return tool_name
     if fallback and is_tool_advertised(fallback):
@@ -142,6 +146,7 @@ def recommend_tool(tool_name: str, fallback: str | None = None) -> str:
 
 def filter_recommendations(steps: list[str]) -> list[str]:
     """Remove recommendation lines that reference disabled tools in backticks."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:filter_recommendations")
     filtered: list[str] = []
     for step in steps:
         tools = re.findall(r"`([a-zA-Z0-9_-]+)`", step)
@@ -306,6 +311,7 @@ def _infer_param_schema(param_name: str) -> dict[str, Any]:
     This is the fallback when a parameter from TOOL_PARAMS doesn't match
     any property in the provider's input schema.
     """
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_infer_param_schema")
     norm = n(param_name)
     if norm in _ARRAY_PARAMS:
         return {"type": "array", "items": {"type": "string"}}
@@ -329,6 +335,7 @@ def _infer_param_schema(param_name: str) -> dict[str, Any]:
 
 def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
     """Create a standardized MCP success response."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:create_success_response")
     return [types.TextContent(type="text", text=_json.dumps(data))]
 
 
@@ -339,6 +346,7 @@ def create_conflict_response(
     next_step: str,
 ) -> list[types.TextContent]:
     """Create a two-step conflict response: modification would overwrite custom data; client must call resolve-modification-conflict."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:create_conflict_response")
     data: dict[str, Any] = {
         "success": False,
         "modificationConflict": True,
@@ -402,6 +410,7 @@ class ActionableError(Exception):
         context: dict[str, Any] | None = None,
         next_steps: list[str] | None = None,
     ) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ActionableError.__init__")
         super().__init__(message)
         self.message = message
         self.context = context or {}
@@ -412,6 +421,7 @@ def _merge_context(
     base: dict[str, Any] | None,
     extra: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_merge_context")
     merged: dict[str, Any] = {}
     if isinstance(base, dict):
         merged.update(base)
@@ -422,6 +432,7 @@ def _merge_context(
 
 def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] | None:
     """Merge base and extra recommendation steps, deduplicated and trimmed; return None if empty."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_merge_steps")
     seen: set[str] = set()
     merged: list[str] = []
     for step in base or []:
@@ -441,6 +452,7 @@ def _merge_steps(base: list[str] | None, extra: list[str] | None) -> list[str] |
 
 def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] | None]:
     """Map common error phrases to (context dict, recommended next steps). Used by create_error_response."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_default_error_guidance")
     lowered = msg.lower()
 
     if "unknown tool" in lowered:
@@ -557,6 +569,7 @@ def create_error_response(
     next_steps: list[str] | None = None,
 ) -> list[types.TextContent]:
     """Create a standardized MCP error response with optional actionable metadata."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:create_error_response")
     if isinstance(error, ActionableError):
         msg = error.message
         context = _merge_context(error.context, context)
@@ -589,6 +602,7 @@ _TRUTHY = frozenset({"true", "1", "yes", "on", "enabled"})
 
 
 def _coerce_bool(v: Any) -> bool:
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_coerce_bool")
     if isinstance(v, bool):
         return v
     if isinstance(v, str):
@@ -599,6 +613,7 @@ def _coerce_bool(v: Any) -> bool:
 
 
 def _coerce_int(v: Any, default: int = 0) -> int:
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_coerce_int")
     if isinstance(v, int):
         return v
     try:
@@ -609,6 +624,7 @@ def _coerce_int(v: Any, default: int = 0) -> int:
 
 def _coerce_list(v: Any) -> list:
     """Coerce to list.  Handles: list, tuple, comma-separated string, scalar."""
+    logger.debug("diag.enter %s", "mcp_server/tool_providers.py:_coerce_list")
     if isinstance(v, list):
         return v
     if isinstance(v, tuple):
@@ -672,6 +688,7 @@ class ToolProvider:
     """
 
     def __init__(self, program_info: ProgramInfo | None = None) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.__init__")
         self.program_info: ProgramInfo | None = program_info
         self.ghidra_tools: Any | None = None
         self._manager: ToolProviderManager | None = None  # set by manager._register
@@ -679,6 +696,7 @@ class ToolProvider:
             self._init_ghidra_tools()
 
     def _init_ghidra_tools(self) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._init_ghidra_tools")
         try:
             if self.program_info is None:
                 raise ValueError("Program info is required to initialize Ghidra tools")
@@ -689,10 +707,12 @@ class ToolProvider:
             self.ghidra_tools = None
 
     def set_program_info(self, program_info: ProgramInfo) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.set_program_info")
         self.program_info = program_info
         self._init_ghidra_tools()
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.list_tools")
         return []
 
     # ------------------------------------------------------------------
@@ -705,6 +725,7 @@ class ToolProvider:
         arguments: dict[str, Any],
     ) -> list[types.TextContent]:
         """Normalize name + args, dispatch to handler, catch errors."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.call_tool")
         norm_name: str = n(name)
         handler_method_name: str | None = self.HANDLERS.get(norm_name)
         if handler_method_name is None:
@@ -777,6 +798,7 @@ class ToolProvider:
     @staticmethod
     def _extract_path_hint_from_context(context: dict[str, Any] | None, args: dict[str, Any] | None) -> str | None:
         """Extract a directory path from error context or args (e.g. for suggesting list-project-files with a path)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._extract_path_hint_from_context")
         context_path = ""
         if isinstance(context, dict):
             value = context.get("path")
@@ -811,6 +833,7 @@ class ToolProvider:
 
         Parses phrases like 'Call `list-project-files`' or 'Call `get-current-program`' and optional path hints.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._build_prerequisite_call_plan")
         plan: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         path_hint = self._extract_path_hint_from_context(context, args)
@@ -855,6 +878,7 @@ class ToolProvider:
 
     async def _run_prerequisite_call(self, tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
         """Run a single prerequisite tool (e.g. list_tools or list-project-files) and return a result dict for error context."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._run_prerequisite_call")
         if tool_name == "list_tools":
             tools = self._manager.list_tools() if self._manager is not None else []
             return {
@@ -899,6 +923,7 @@ class ToolProvider:
 
     async def _build_prerequisite_call_context(self, error: ActionableError, args: dict[str, Any]) -> dict[str, Any] | None:
         """Build error context with prerequisiteCalls: merge error's next_steps with inferred steps, run suggested tools, attach outputs."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._build_prerequisite_call_context")
         inferred_context, inferred_steps = _default_error_guidance(error.message)
         combined_steps = _merge_steps(error.next_steps, inferred_steps)
         combined_context = _merge_context(error.context, inferred_context)
@@ -929,6 +954,7 @@ class ToolProvider:
     @staticmethod
     def _get(args: dict[str, Any], *keys: str, default: Any | None = None) -> Any:
         """First non-None value matching any *keys* (normalized before lookup)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get")
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -938,6 +964,7 @@ class ToolProvider:
     @staticmethod
     def _get_str(args: dict[str, Any], *keys: str, default: str = "") -> str:
         """First non-empty string value for any of the given keys (normalized)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_str")
         for k in keys:
             v = args.get(n(k))
             if v is not None and str(v).strip():
@@ -947,6 +974,7 @@ class ToolProvider:
     @staticmethod
     def _get_int(args: dict[str, Any], *keys: str, default: int | None = 0) -> int | None:
         """First value that coerces to int for any of the given keys (normalized). Returns default when no key present (default can be None)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_int")
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -956,6 +984,7 @@ class ToolProvider:
     @staticmethod
     def _get_bool(args: dict[str, Any], *keys: str, default: bool | None = False) -> bool:
         """First value that coerces to bool for any of the given keys (normalized)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_bool")
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -965,6 +994,7 @@ class ToolProvider:
     @staticmethod
     def _get_list(args: dict[str, Any], *keys: str) -> list[Any] | None:
         """First value that coerces to list for any of the given keys (normalized)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_list")
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -974,6 +1004,7 @@ class ToolProvider:
     @staticmethod
     def _require(args: dict[str, Any], *keys: str, name: str = "") -> Any:
         """Like ``_get`` but raises ``ValueError`` if nothing found."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require")
         for k in keys:
             v = args.get(n(k))
             if v is not None:
@@ -983,6 +1014,7 @@ class ToolProvider:
 
     @staticmethod
     def _require_str(args: dict[str, Any], *keys: str, name: str = "") -> str:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_str")
         for k in keys:
             v = args.get(n(k))
             if v is not None and str(v).strip():
@@ -1022,6 +1054,7 @@ class ToolProvider:
             >>> addr = self._get_address_or_symbol(args)
             >>> # Automatically tries: addressorsymbol, address, addr, symbol, etc.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_address_or_symbol")
         return self._get_str(
             args,
             "addressorsymbol",
@@ -1037,6 +1070,7 @@ class ToolProvider:
 
     def _require_address_or_symbol(self, args: dict[str, Any]) -> str:
         """Like _get_address_or_symbol but raises ValueError if not found."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_address_or_symbol")
         result = self._get_address_or_symbol(args)
         if not result:
             raise ValueError("Required parameter missing: `address` or `symbol`")
@@ -1066,6 +1100,7 @@ class ToolProvider:
             >>> offset, limit = self._get_pagination_params(args, default_limit=50)
             >>> results = all_results[offset : offset + limit]
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_pagination_params")
         offset = self._get_int(args, "offset", "startindex", default=0)
         limit = self._get_int(args, "limit", "maxresults", "maxcount", "max", default=DEFAULT_PAGE_LIMIT if default_limit is None else default_limit)
         return offset if offset is not None else 0, limit if limit is not None else 0
@@ -1092,14 +1127,17 @@ class ToolProvider:
             ActionableError: If mode/key not found in dispatch
         """
         # Pattern 1: (dispatch_dict, key, param_name) → returns handler callable for caller to invoke
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._dispatch_handler")
         if len(args) == 3 and isinstance(args[0], dict) and isinstance(args[1], str) and isinstance(args[2], str):
             dispatch: dict[str, Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]]]
             key: str
             param_name: str
             dispatch, key, param_name = args
-            handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] | None = dispatch.get(key)
+            # Normalize keys and lookup (e.g. conflict replay stores mode "create_label"; table uses "createlabel").
+            normalized_dispatch = {n(k): v for k, v in dispatch.items()}
+            handler: Callable[[dict[str, Any]], Awaitable[list[types.TextContent]]] | None = normalized_dispatch.get(n(key))
             if handler is None:
-                available: list[str] = list(dispatch.keys())
+                available: list[str] = list(normalized_dispatch.keys())
                 raise ActionableError(
                     f"Unsupported {param_name}: '{key}'",
                     context={"state": "unsupported-parameter-value", "parameter": param_name, "value": key, "available": available},
@@ -1142,6 +1180,7 @@ class ToolProvider:
         program_info is set by the manager from SessionContext (active or programPath) before
         dispatching to the handler; if still None here, the client must open a program first.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_program")
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
             raise ActionableError(
                 "No program loaded",
@@ -1154,6 +1193,7 @@ class ToolProvider:
 
     def _require_ghidra(self) -> None:
         """Ensure GhidraTools wrapper is available; used by providers that need script/analysis beyond raw program API."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_ghidra")
         if self.ghidra_tools is None:
             raise ActionableError(
                 "No program loaded (Ghidra tools unavailable)",
@@ -1180,6 +1220,7 @@ class ToolProvider:
         address equality so 0x00401000 matches 00401000), then AddressUtil
         (hex address or symbol name) and getFunctionContaining(addr).
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._resolve_function")
         if not function_identifier:
             return None
 
@@ -1256,6 +1297,7 @@ class ToolProvider:
         (e.g. 0x48f1fc): when an IAT slot is given, resolves to the thunk address so
         list-cross-references and get-call-graph use the same logical target.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._resolve_address")
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
@@ -1272,6 +1314,7 @@ class ToolProvider:
 
         Eliminates boilerplate and ensures consistent error handling.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_function_manager")
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
@@ -1283,6 +1326,7 @@ class ToolProvider:
         Consolidates 15+ repeated patterns of:
             listing = program.getListing()
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_listing")
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
@@ -1294,6 +1338,7 @@ class ToolProvider:
         Consolidates repeated memory access patterns:
             memory = program.getMemory()
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_memory")
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
@@ -1305,6 +1350,7 @@ class ToolProvider:
         Consolidates patterns like:
             st = program.getSymbolTable()
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_symbol_table")
         target_program = program or getattr(self.program_info, "program", None)
         if target_program is None:
             raise ValueError("No program loaded")
@@ -1313,51 +1359,27 @@ class ToolProvider:
     @staticmethod
     def _run_program_transaction(program: Any, label: str, operation: Callable[[], Any]) -> Any:
         """Run an operation inside a Ghidra transaction with consistent commit/rollback."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._run_program_transaction")
         tx = program.startTransaction(label)
         try:
             result = operation()
             program.endTransaction(tx, True)
             return result
-        except Exception:
+        except Exception as exc:
             program.endTransaction(tx, False)
+            prog_tail = "—"
+            try:
+                if hasattr(program, "getName"):
+                    prog_tail = basename_hint(str(program.getName()))
+            except Exception:
+                pass
+            logger.warning(
+                "ghidra_transaction_rollback tx_label=%s program_tail=%s exc_type=%s",
+                (label or "")[:80],
+                prog_tail,
+                type(exc).__name__,
+            )
             raise
-
-    @staticmethod
-    def _build_decompile_fallback(
-        program: Any,
-        target_func: Any,
-        reason: str | None = None,
-        max_instructions: int = 300,
-    ) -> str:
-        """When DecompInterface is unavailable, return a comment block + disassembly up to max_instructions."""
-        listing = program.getListing()
-        body = target_func.getBody()
-        lines: list[str] = []
-
-        if body:
-            instr_iter = listing.getInstructions(body, True)
-            count = 0
-            while instr_iter.hasNext() and count < max_instructions:
-                instr = instr_iter.next()
-                lines.append(f"{instr.getAddress()}: {instr}")
-                count += 1
-
-        reason_text = reason.strip() if reason else "native decompiler unavailable"
-        signature = str(target_func.getSignature())
-        fallback = [
-            f"/* Fallback decompilation ({reason_text}) */",
-            f"/* Function: {target_func.getName()} @ {target_func.getEntryPoint()} */",
-            f"/* Signature: {signature} */",
-            "",
-            "/* Disassembly */",
-        ]
-
-        if lines:
-            fallback.extend(lines)
-        else:
-            fallback.append("<no instructions available>")
-
-        return "\n".join(fallback)
 
     def _paginate_results(
         self,
@@ -1389,6 +1411,7 @@ class ToolProvider:
             >>> results, has_more = self._paginate_results(all_users, offset=10, limit=20)
             >>> response = {"users": results, "count": len(results), "hasMore": has_more}
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._paginate_results")
         paginated = all_results[offset : offset + limit]
         has_more = offset + len(paginated) < len(all_results)
         return paginated, has_more
@@ -1424,6 +1447,7 @@ class ToolProvider:
         -------
             Paginated MCP response
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._handle_paginated_search")
         self._require_program()
         offset, limit = self._get_pagination_params(args)
         results = await search_func(args)
@@ -1475,6 +1499,7 @@ class ToolProvider:
             >>> results, has_more = self._paginate_results(all_items, offset, limit)
             >>> return self._create_paginated_response(results, offset, limit, total=len(all_items), mode="search")
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._create_paginated_response")
         if total is None:
             total = len(results)  # Assume results is the full set if total not provided
         response = {
@@ -1495,9 +1520,11 @@ class ToolProvider:
     # ------------------------------------------------------------------
 
     def program_opened(self, program_path: str) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.program_opened")
         pass
 
     def program_closed(self, program_path: str) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.program_closed")
         pass
 
     def cleanup(self) -> None:
@@ -1513,6 +1540,7 @@ class ToolProviderManager:
     """Routes MCP tool calls to the correct ToolProvider by normalized name."""
 
     def __init__(self) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.__init__")
         self.providers: list[ToolProvider] = []
         self._tool_map: dict[str, ToolProvider] = {}  # normalized tool name → provider; filled by _register()
         self.program_info: ProgramInfo | None = None
@@ -1521,10 +1549,12 @@ class ToolProviderManager:
 
     def set_ghidra_project(self, project: Any) -> None:
         """Store the GhidraProject reference so providers can use it for checkout."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.set_ghidra_project")
         self.ghidra_project = project
 
     def _register(self, provider: ToolProvider) -> None:
         """Register a provider: store back-reference for prerequisite calls, then map each of its tool names to this provider."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._register")
         provider._manager = self
         self.providers.append(provider)
         for tool in provider.list_tools():
@@ -1532,6 +1562,7 @@ class ToolProviderManager:
 
     def register_all_providers(self) -> None:
         """Import and register every concrete provider; called at server startup so _tool_map has all HANDLERS."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.register_all_providers")
         from agentdecompile_cli.mcp_server.providers import (
             BookmarkToolProvider,
             CallGraphToolProvider,
@@ -1595,6 +1626,7 @@ class ToolProviderManager:
         self,
         program_info: ProgramInfo,
     ) -> None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.set_program_info")
         logger.info("Setting program info: %s", program_info)
         self.program_info = program_info
         for p in self.providers:
@@ -1610,6 +1642,7 @@ class ToolProviderManager:
 
     def _get_project_provider(self) -> Any | None:
         """Return the provider that handles open and shared checkout (ProjectToolProvider)."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._get_project_provider")
         for provider in self.providers:
             if hasattr(provider, "_handle_open") and hasattr(provider, "_checkout_shared_program"):
                 return provider
@@ -1621,6 +1654,7 @@ class ToolProviderManager:
         requested_program_key: str,
     ) -> None:
         """Connect to shared server from request auth context (X-Ghidra-* headers) or env, then checkout the requested program in this session."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._bootstrap_shared_session_from_env")
         project_provider = self._get_project_provider()
         if project_provider is None:
             return
@@ -1689,7 +1723,12 @@ class ToolProviderManager:
         try:
             await project_provider._handle_open_project(open_args)
         except Exception as e:
-            logger.debug("Shared-session bootstrap (open) failed: %s", e)
+            logger.warning(
+                "shared_env_bootstrap_outcome ok=False phase=open session_id=%s program_tail=%s exc_type=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+                type(e).__name__,
+            )
             return
 
         session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -1700,18 +1739,35 @@ class ToolProviderManager:
                 try:
                     await project_provider._checkout_shared_program(repository_adapter, requested_program_key, session_id)
                 except Exception as e:
-                    logger.debug("Shared-session bootstrap (checkout program) failed for %s: %s", requested_program_key, e)
+                    logger.warning(
+                        "shared_env_bootstrap_outcome ok=False phase=checkout session_id=%s program_tail=%s exc_type=%s",
+                        redact_session_id(session_id),
+                        basename_hint(requested_program_key),
+                        type(e).__name__,
+                    )
+        if SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) is not None:
+            logger.info(
+                "shared_env_bootstrap_outcome ok=True session_id=%s program_tail=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+            )
 
     def _resolve_project_data(self) -> Any | None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._resolve_project_data")
         ghidra_project = self.ghidra_project
         if ghidra_project is None:
             return None
         try:
             return ghidra_project.getProject().getProjectData()
-        except Exception:
+        except Exception as e_primary:
             try:
                 return ghidra_project.getProjectData()
-            except Exception:
+            except Exception as e_fallback:
+                logger.warning(
+                    "pyghidra_project_data_unavailable exc_primary=%s exc_fallback=%s",
+                    type(e_primary).__name__,
+                    type(e_fallback).__name__,
+                )
                 return None
 
     def _find_domain_file_by_name(
@@ -1720,6 +1776,7 @@ class ToolProviderManager:
         file_name: str,
         max_results: int = 5000,
     ) -> Any | None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._find_domain_file_by_name")
         stack: list[Any] = [folder]
         visited = 0
         while stack and visited < max_results:
@@ -1731,7 +1788,12 @@ class ToolProviderManager:
                         return domain_file
                 for subfolder in current.getFolders() or []:
                     stack.append(subfolder)
-            except Exception:
+            except Exception as ex:
+                logger.debug(
+                    "pyghidra_domain_tree_skip visited=%s exc_type=%s",
+                    visited,
+                    type(ex).__name__,
+                )
                 continue
         return None
 
@@ -1740,8 +1802,13 @@ class ToolProviderManager:
         session_id: str,
         requested_program_key: str,
     ) -> ProgramInfo | None:
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._activate_local_program_by_path")
         project_data: Any = self._resolve_project_data()
         if project_data is None:
+            logger.warning(
+                "pyghidra_activate_program_failed stage=project_data_unavailable program_tail=%s",
+                basename_hint(str(requested_program_key).strip()),
+            )
             return None
 
         normalized: str = str(requested_program_key).strip()
@@ -1771,6 +1838,10 @@ class ToolProviderManager:
                     domain_file = None
 
         if domain_file is None:
+            logger.warning(
+                "pyghidra_activate_program_failed stage=domain_file_not_found program_tail=%s",
+                basename_hint(normalized),
+            )
             return None
 
         program: Any = None
@@ -1790,15 +1861,23 @@ class ToolProviderManager:
                 program = None
 
         if program is None:
+            logger.warning(
+                "pyghidra_activate_program_failed stage=open_program program_tail=%s",
+                basename_hint(normalized),
+            )
             return None
 
+        decompiler = None
         try:
-            from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+            from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
 
-            decompiler = DecompInterface()
-            decompiler.openProgram(program)
-        except Exception:
-            decompiler = None
+            decompiler = open_decompiler_for_program(program)
+        except Exception as exc:
+            logger.warning(
+                "pyghidra_activate_program_decompiler_open_failed program_tail=%s exc_type=%s (continuing with decompiler=None; tools will open per-call)",
+                basename_hint(normalized),
+                type(exc).__name__,
+            )
 
         program_path = normalized
         try:
@@ -1830,14 +1909,21 @@ class ToolProviderManager:
         requested_program_key: str,
     ) -> ProgramInfo | None:
         """Resolve and activate a program by path: cache → shared checkout → bootstrap → local path."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._activate_requested_program")
         existing = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if existing is not None:
-            _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
-            logger.debug("program already in session: session_id=%s program=%s", _sid_hint, requested_program_key)
+            logger.info(
+                "activate_requested_program route=cache session_id=%s program_tail=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+            )
             return existing
 
-        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
-        logger.debug("activating program: session_id=%s program=%s", _sid_hint, requested_program_key)
+        logger.debug(
+            "activating program: session_id=%s program=%s",
+            redact_session_id(session_id),
+            requested_program_key,
+        )
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         project_provider = self._get_project_provider()
@@ -1848,22 +1934,48 @@ class ToolProviderManager:
                 try:
                     await project_provider._checkout_shared_program(repository_adapter, requested_program_key, session_id)
                 except Exception as e:
-                    logger.debug("Shared checkout attempt failed for %s: %s", requested_program_key, e)
+                    logger.warning(
+                        "activate_requested_program shared_checkout_failed session_id=%s program_tail=%s exc_type=%s",
+                        redact_session_id(session_id),
+                        basename_hint(requested_program_key),
+                        type(e).__name__,
+                    )
 
         activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
         if activated is not None:
-            logger.debug("program activated via shared checkout: program=%s", requested_program_key)
+            logger.info(
+                "activate_requested_program route=shared_checkout session_id=%s program_tail=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+            )
             return activated
 
         if project_provider is not None:
             await self._bootstrap_shared_session_from_env(session_id, requested_program_key)
             activated = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key)
             if activated is not None:
-                logger.debug("program activated via bootstrap: program=%s", requested_program_key)
+                logger.info(
+                    "activate_requested_program route=bootstrap session_id=%s program_tail=%s",
+                    redact_session_id(session_id),
+                    basename_hint(requested_program_key),
+                )
                 return activated
 
         logger.debug("activating program via local path: program=%s", requested_program_key)
-        return self._activate_local_program_by_path(session_id, requested_program_key)
+        local_result = self._activate_local_program_by_path(session_id, requested_program_key)
+        if local_result is not None:
+            logger.info(
+                "activate_requested_program route=local_domain_file session_id=%s program_tail=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+            )
+        else:
+            logger.warning(
+                "activate_requested_program failed route=local_domain_file session_id=%s program_tail=%s",
+                redact_session_id(session_id),
+                basename_hint(requested_program_key),
+            )
+        return local_result
 
     async def get_or_open_program(
         self,
@@ -1875,6 +1987,7 @@ class ToolProviderManager:
         Used by match-function for cross-program matching: open each target program,
         read its functions, then restore the original active program.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.get_or_open_program")
         existing = SESSION_CONTEXTS.get_program_info(session_id, program_path)
         if existing is not None:
             return existing
@@ -1884,14 +1997,28 @@ class ToolProviderManager:
         activated = await self._activate_requested_program(session_id, program_path)
         if activated is None:
             return None
-        if saved_key and saved_info:
+        had_saved = bool(saved_key and saved_info)
+        if had_saved:
             # Restore previous active program so this call didn't change the session's "current" program
             SESSION_CONTEXTS.set_active_program_info(session_id, saved_key, saved_info)
             self.set_program_info(saved_info)
+            logger.info(
+                "match_helper_program_context_restore session_id=%s opened_tail=%s restored_active_tail=%s had_saved_active=True",
+                redact_session_id(session_id),
+                basename_hint(program_path),
+                basename_hint(saved_key),
+            )
+        else:
+            logger.info(
+                "match_helper_program_context_restore session_id=%s opened_tail=%s restored_active_tail=— had_saved_active=False",
+                redact_session_id(session_id),
+                basename_hint(program_path),
+            )
         return activated
 
     def list_tools(self) -> list[types.Tool]:
         """Build the MCP tools/list response: merge all providers' tools, then return only ADVERTISED_TOOLS with normalized params and format option."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.list_tools")
         provider_tools: list[types.Tool] = []
         for p in self.providers:
             provider_tools.extend(p.list_tools())
@@ -1941,12 +2068,17 @@ class ToolProviderManager:
 
             # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema
             required_norm: frozenset[str] = frozenset(n(str(item)) for item in required)
+            _optional_program_norm: frozenset[str] = frozenset(
+                n(x) for x in ("programPath", "program_path", "binaryName", "binary_name")
+            )
             advertised_required: list[str] = []
             for param in canonical_params:
                 normalized_param = n(param)
                 is_required = normalized_param in required_norm
                 if not is_required and normalized_param == "mode":
                     is_required = any(selector_alias in required_norm for selector_alias in _SELECTOR_PARAM_ALIASES)
+                if normalized_param in _optional_program_norm:
+                    is_required = False
                 if is_required:
                     advertised_required.append(to_snake_case(param))
 
@@ -1982,6 +2114,7 @@ class ToolProviderManager:
           (6) If a program was requested but not open, try _activate_requested_program (open/import).
           (7) Set provider's program_info and call provider.call_tool; optionally apply markdown formatting.
         """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.call_tool")
         if program_info is not None and program_info is not self.program_info:
             self.set_program_info(program_info)
 
@@ -2000,8 +2133,13 @@ class ToolProviderManager:
                 ),
             )
         # Security: do not log full session id (log redacted hint only)
-        _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
-        logger.info("mcp call_tool tool=%s session_id=%s", resolved_name, _sid_hint)
+        _sid_hint = redact_session_id(session_id)
+        logger.info(
+            "mcp call_tool tool=%s session_id=%s arg_keys=%s",
+            resolved_name,
+            _sid_hint,
+            norm_arg_keys(arguments),
+        )
         SESSION_CONTEXTS.add_tool_history(session_id, n(resolved_name), arguments or {})
 
         norm_name: str = n(resolved_name)
@@ -2043,7 +2181,7 @@ class ToolProviderManager:
             )
 
         norm_args: dict[str, Any] = {n(k): v for k, v in (arguments or {}).items()}
-        logger.debug("normalized args: %s", norm_args)
+        logger.debug("normalized arg keys: %s", norm_arg_keys(norm_args))
 
         # Program resolution order: args (programPath/binary/path) → session active → manager default
         requested_program_key: str | None = None
@@ -2095,6 +2233,15 @@ class ToolProviderManager:
             except Exception as prereq_exc:
                 logger.debug("Failed auto prerequisite list-project-files call: %s", prereq_exc)
 
+            logger.warning(
+                "program resolution failed tool=%s requested_key=%s basename=%s session_id=%s list_project_files_prereq=%s open_programs=%d",
+                resolved_name,
+                requested_program_key[:200] + ("…" if len(requested_program_key) > 200 else ""),
+                basename_hint(requested_program_key),
+                _sid_hint,
+                bool(prereq_calls),
+                len(SESSION_CONTEXTS.get_or_create(session_id).open_programs or {}),
+            )
             return create_error_response(
                 ActionableError(
                     f"Program path '{requested_program_key}' was provided but could not be resolved in this session. Sessions are fully isolated: this session has no project or program open for that path.",
@@ -2118,6 +2265,12 @@ class ToolProviderManager:
 
         # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)
+        logger.info(
+            "mcp provider returned tool=%s provider=%s response_parts=%s",
+            resolved_name,
+            provider.__class__.__name__,
+            len(result) if result else 0,
+        )
 
         # Auto match-function: when env AGENTDECOMPILE_AUTO_MATCH_PROPAGATE or header
         # X-AgentDecompile-Auto-Match-Propagate is set and this tool+mode is a trigger (e.g. managefunction+rename),
@@ -2129,19 +2282,37 @@ class ToolProviderManager:
             if _propagate_raw is None:
                 _propagate_raw = os.environ.get(_ENV_AUTO_MATCH_PROPAGATE, "")
             env_propagate = (_propagate_raw or "").strip().lower() in ("1", "true", "yes")
-            if env_propagate and norm_name in _AUTO_MATCH_TRIGGER_MODES:
+            if not env_propagate:
+                logger.debug("auto_match_propagate_gating reason=disabled_env tool=%s", resolved_name)
+            elif norm_name not in _AUTO_MATCH_TRIGGER_MODES:
+                logger.debug("auto_match_propagate_gating reason=not_trigger_tool tool=%s", resolved_name)
+            else:
                 allowed_modes = _AUTO_MATCH_TRIGGER_MODES[norm_name]
                 mode_val = norm_args.get("mode") or norm_args.get("action") or ""
                 mode_str = (str(mode_val).strip().lower() if mode_val is not None else "") or ""
                 mode_norm = n(mode_str) if mode_str else ""
                 if mode_norm in allowed_modes:
                     _run_auto_match = True
+                elif mode_str:
+                    logger.debug(
+                        "auto_match_propagate_gating reason=mode_not_allowed tool=%s mode_norm=%s",
+                        resolved_name,
+                        mode_norm,
+                    )
             if _run_auto_match and result and isinstance(result[0], types.TextContent):
                 try:
                     parsed = _json.loads(result[0].text)
                     tool_success = parsed.get("success", True) is not False and "error" not in (parsed.get("error") or "")
-                except Exception:
+                except Exception as parse_exc:
                     tool_success = True
+                    _tl = len(result[0].text or "")
+                    _bucket = "0" if _tl == 0 else ("large" if _tl > 10_000 else "small")
+                    logger.warning(
+                        "mcp_auto_match_parse_assume_success parent_tool=%s exc_type=%s text_len_bucket=%s",
+                        resolved_name,
+                        type(parse_exc).__name__,
+                        _bucket,
+                    )
                 if tool_success and effective_program_info is not None:
                     current_path = getattr(effective_program_info, "file_path", None) or getattr(effective_program_info, "path", None)
                     if current_path is not None:
@@ -2184,6 +2355,12 @@ class ToolProviderManager:
                             await self.call_tool(Tool.MATCH_FUNCTION.value, match_args, program_info=effective_program_info)
                         except Exception as auto_match_exc:
                             logger.warning("Auto match-function propagation failed (best-effort): %s", auto_match_exc)
+                    elif tool_success and effective_program_info is not None:
+                        logger.debug(
+                            "auto_match_propagate_gating reason=no_function_or_targets func_present=%s target_count=%s",
+                            bool(func_id),
+                            len(target_paths),
+                        )
 
         # Auto check-in: when AGENTDECOMPILE_AUTO_CHECKIN is set, run checkin-program after any modifying tool succeeds.
         if (
@@ -2225,6 +2402,7 @@ class ToolProviderManager:
 
     def program_opened(self, program_info_or_path: ProgramInfo | os.PathLike | str) -> None:
         """Notify all providers that a program was opened; accept path string or ProgramInfo/PathLike."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.program_opened")
         if isinstance(program_info_or_path, str):
             for p in self.providers:
                 p.program_opened(program_info_or_path)
@@ -2249,11 +2427,13 @@ class ToolProviderManager:
 
     def program_closed(self, program_path: str) -> None:
         """Notify all providers that a program was closed so they can clear cached state."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.program_closed")
         for p in self.providers:
             p.program_closed(program_path)
 
     def cleanup(self) -> None:
         """Call cleanup() on all providers; exceptions are swallowed so one failure does not block others."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.cleanup")
         for p in self.providers:
             try:
                 p.cleanup()

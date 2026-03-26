@@ -47,6 +47,7 @@ class MemoryUtil:
         Returns:
             The bytes read, or None if reading fails
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.read_memory_bytes")
         if program is None or address is None or length <= 0:
             return None
 
@@ -82,6 +83,7 @@ class MemoryUtil:
         Returns:
             Formatted hex string
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.format_hex_string")
         if not data:
             return ""
 
@@ -103,6 +105,7 @@ class MemoryUtil:
         Returns:
             List of integers (0-255)
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.byte_array_to_int_list")
         return list(data)
 
     @staticmethod
@@ -116,6 +119,7 @@ class MemoryUtil:
         Returns:
             The memory block, or None if not found
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.find_block_by_name")
         if program is None or block_name is None:
             return None
 
@@ -137,6 +141,7 @@ class MemoryUtil:
         Returns:
             The memory block containing the address, or None
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.get_block_containing")
         if program is None or address is None:
             return None
 
@@ -160,6 +165,7 @@ class MemoryUtil:
             chunk_size: Size of each chunk
             processor: Function to call for each chunk
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.process_memory_in_chunks")
         if program is None or start_address is None or total_length <= 0 or chunk_size <= 0:
             return
 
@@ -206,6 +212,7 @@ class MemoryUtil:
         Returns:
             True if the address is in executable memory
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.is_address_in_executable_memory")
         block = MemoryUtil.get_block_containing(program, address)
         return block is not None and block.isExecute()
 
@@ -220,6 +227,7 @@ class MemoryUtil:
         Returns:
             True if the address is in writable memory
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.is_address_in_writable_memory")
         block = MemoryUtil.get_block_containing(program, address)
         return block is not None and block.isWrite()
 
@@ -234,6 +242,7 @@ class MemoryUtil:
         Returns:
             Dictionary with block information, or None if not in any block
         """
+        logger.debug("diag.enter %s", "mcp_utils/memory_util.py:MemoryUtil.get_memory_block_info")
         block = MemoryUtil.get_block_containing(program, address)
         if block is None:
             return None

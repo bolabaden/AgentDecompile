@@ -34,12 +34,14 @@ _SUMMARY_TEXT_LIMIT = 6000
 
 def get_profile_storage_dir() -> Path:
     """Directory where cProfile .prof files and analysis outputs are written; overridable via AGENTDECOMPILE_PROFILE_DIR."""
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:get_profile_storage_dir")
     override = str(os.getenv("AGENTDECOMPILE_PROFILE_DIR", "")).strip()
     return Path(override) if override else _DEFAULT_PROFILE_DIR
 
 
 def get_profile_analyzer_path() -> Path | None:
     """Path to optional external script that post-processes .prof files; overridable via AGENTDECOMPILE_PROFILE_ANALYZER. Returns None if not set or path missing."""
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:get_profile_analyzer_path")
     override = str(os.getenv("AGENTDECOMPILE_PROFILE_ANALYZER", "")).strip()
     candidate = Path(override) if override else _DEFAULT_ANALYZER_PATH
     return candidate if candidate.exists() else None
@@ -47,12 +49,14 @@ def get_profile_analyzer_path() -> Path | None:
 
 def list_recent_profiles() -> list[dict[str, Any]]:
     """Return a copy of the recent profile runs (for debug-info resource or tooling). Thread-safe."""
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:list_recent_profiles")
     with _PROFILE_LOCK:
         return [dict(entry) for entry in _RECENT_PROFILE_RUNS]
 
 
 def _fallback_summary_json(profile_path: Path, *, top_n: int = 10) -> dict[str, Any]:
     """Build a small JSON summary from pstats when no external analyzer is available."""
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:_fallback_summary_json")
     stats = pstats.Stats(str(profile_path))
     stats_dict = getattr(stats, "stats", {})
     by_cumulative = sorted(stats_dict.items(), key=lambda item: item[1][3], reverse=True)[:top_n]
@@ -75,6 +79,7 @@ def _fallback_summary_json(profile_path: Path, *, top_n: int = 10) -> dict[str, 
 
 
 def _fallback_summary_text(profile_path: Path, *, top_n: int = 20) -> str:
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:_fallback_summary_text")
     stream = io.StringIO()
     stats = pstats.Stats(str(profile_path), stream=stream)
     stats.strip_dirs()
@@ -85,6 +90,7 @@ def _fallback_summary_text(profile_path: Path, *, top_n: int = 20) -> str:
 
 def _summarize_profile(profile_path: Path) -> tuple[str, dict[str, Any], str]:
     """Produce (text_summary, json_summary, mode). Uses external analyzer if configured, else pstats fallback."""
+    logger.debug("diag.enter %s", "mcp_server/profiling.py:_summarize_profile")
     analyzer_path = get_profile_analyzer_path()
     if analyzer_path is not None:
         text_output = profile_path.with_suffix(".analysis.txt")
@@ -161,6 +167,7 @@ class ProfileCapture:
     """
 
     def __init__(self, operation: str, *, target: str = "", metadata: dict[str, Any] | None = None) -> None:
+        logger.debug("diag.enter %s", "mcp_server/profiling.py:ProfileCapture.__init__")
         self.operation = operation
         self.target = target
         self.metadata: dict[str, Any] = dict(metadata or {})
@@ -168,14 +175,17 @@ class ProfileCapture:
         self._start = 0.0
 
     def add_metadata(self, **kwargs: Any) -> None:
+        logger.debug("diag.enter %s", "mcp_server/profiling.py:ProfileCapture.add_metadata")
         self.metadata.update(kwargs)
 
     def __enter__(self) -> ProfileCapture:
+        logger.debug("diag.enter %s", "mcp_server/profiling.py:ProfileCapture.__enter__")
         self._start = time.perf_counter()
         self._profiler.enable()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        logger.debug("diag.enter %s", "mcp_server/profiling.py:ProfileCapture.__exit__")
         self._profiler.disable()
         duration = time.perf_counter() - self._start
         timestamp = time.strftime("%Y%m%d-%H%M%S")

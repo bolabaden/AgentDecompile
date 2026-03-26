@@ -103,21 +103,18 @@ def normalize_string_arg(value: Any, default: str = "") -> str:
     return str(value).lower().strip() if value is not None else default.lower().strip()
 
 
-def validate_required_program_path(program_path: str | None) -> str:
-    """Validate that a program path is provided and non-empty.
+def validate_required_program_path(program_path: str | None) -> str | None:
+    """Normalize program path when present; omitting is allowed (session resolves active program).
 
     Args:
         program_path: The program path to validate
 
     Returns:
-        The validated program path
-
-    Raises:
-        ValueError: If program_path is None or empty
+        Stripped path, or None if absent/blank
     """
-    if not program_path or not program_path.strip():
-        raise ValueError("programPath is required")
-    return program_path
+    if not program_path or not str(program_path).strip():
+        return None
+    return str(program_path).strip()
 
 
 def validate_required_address_or_symbol(address_or_symbol: str | None, context: str = "") -> str:

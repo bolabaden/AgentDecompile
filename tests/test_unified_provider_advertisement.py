@@ -34,18 +34,37 @@ def _is_snake_case(identifier: str) -> bool:
     return bool(re.fullmatch(r"[a-z][a-z0-9_]*", identifier))
 
 
-def _extract_canonical_tools_from_docs(markdown_text: str) -> list[str]:
-    marker = "## canonical tools"
-    lower_text = markdown_text.lower()
-    if marker not in lower_text:
-        raise AssertionError("TOOLS_LIST.md missing 'Canonical Tools' section")
+def _is_canonical_tool_name(identifier: str) -> bool:
+    """MCP canonical tool ids are kebab-case (hyphens); allow a-z, digits, hyphens."""
+    return bool(re.fullmatch(r"[a-z][a-z0-9-]*", identifier))
 
-    lines_after_marker = markdown_text.splitlines()[lower_text.splitlines().index(next(l for l in lower_text.splitlines() if marker in l)) :]
+
+def _is_advertised_property_key(key: str) -> bool:
+    """Unified provider uses snake_case param keys plus camelCase ``responseFormat`` for output shape."""
+    return key == "responseFormat" or _is_snake_case(key)
+
+
+def _extract_canonical_tools_from_docs(markdown_text: str) -> list[str]:
+    lower_text = markdown_text.lower()
+    # Heading evolved: was "## Canonical Tools", now "## Canonical Tool Docs"
+    marker_line_idx: int | None = None
+    for i, line in enumerate(lower_text.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("## ") and "canonical tool" in stripped:
+            marker_line_idx = i
+            break
+    if marker_line_idx is None:
+        raise AssertionError("TOOLS_LIST.md missing a 'Canonical Tool…' section heading")
+
+    lines_after_marker = markdown_text.splitlines()[marker_line_idx:]
     extracted: list[str] = []
 
     for raw_line in lines_after_marker:
-        line = raw_line.strip()
-        match: re.Match | None = re.match(r"^###\s+`([^`]+)`\s*$", line)
+        line_stripped = raw_line.strip()
+        # Do not scan past the canonical docs region (later `### ...` headings exist in skills).
+        if line_stripped.lower() == "## usage tips":
+            break
+        match: re.Match | None = re.match(r"^###\s+`([^`]+)`\s*$", line_stripped)
         if match:
             extracted.append(match.group(1))
 
@@ -61,14 +80,14 @@ class TestUnifiedProviderAdvertisement:
 
         assert advertised_tools, "Expected non-empty advertised tools list"
         for tool in advertised_tools:
-            assert _is_snake_case(tool.name), f"Tool {tool.name!r} should be snake_case"
+            assert _is_canonical_tool_name(tool.name), f"Tool {tool.name!r} should be a canonical kebab-case id"
             assert_string_invariants(tool.name)
 
     def test_all_advertised_tool_names_map_to_schema_tools(self):
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
 
-        expected_advertised_names = {to_snake_case(tool_name) for tool_name in ADVERTISED_TOOLS}
+        expected_advertised_names = set(ADVERTISED_TOOLS)
         actual_advertised_names = {tool.name for tool in advertised_tools}
 
         assert actual_advertised_names == expected_advertised_names
@@ -78,9 +97,8 @@ class TestUnifiedProviderAdvertisement:
     def test_advertised_argument_keys_are_snake_case_and_cover_schema(self, tool_name: str):
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
-        advertised_name = to_snake_case(tool_name)
 
-        matched = [tool for tool in advertised_tools if tool.name == advertised_name]
+        matched = [tool for tool in advertised_tools if tool.name == tool_name]
         assert len(matched) == 1, f"Expected exactly one advertised tool for {tool_name!r}"
 
         tool = matched[0]
@@ -88,11 +106,13 @@ class TestUnifiedProviderAdvertisement:
         assert properties, f"Tool {tool_name!r} should advertise properties"
 
         for arg_name in properties:
-            assert _is_snake_case(arg_name), f"Tool {tool_name!r} advertised arg {arg_name!r} should be snake_case"
+            assert _is_advertised_property_key(arg_name), (
+                f"Tool {tool_name!r} advertised arg {arg_name!r} should be snake_case or responseFormat"
+            )
             assert_string_invariants(arg_name)
 
         expected_args = {to_snake_case(param_name) for param_name in ADVERTISED_TOOL_PARAMS[tool_name]}
-        expected_args.add("format")
+        expected_args.add("responseFormat")
         assert set(properties.keys()) == expected_args
         assert_mapping_invariants({"expected": list(expected_args), "actual": list(properties.keys())})
 
@@ -117,7 +137,7 @@ class TestUnifiedProviderAdvertisement:
         for alias_name in NON_ADVERTISED_TOOL_ALIASES:
             if alias_name in tools_set:
                 continue  # legitimately advertised
-            assert to_snake_case(alias_name) not in advertised_names
+            assert alias_name not in advertised_names
 
     def test_gui_only_tools_are_not_advertised(self):
         provider = UnifiedToolProvider()
@@ -125,7 +145,7 @@ class TestUnifiedProviderAdvertisement:
 
         for gui_tool in DISABLED_GUI_ONLY_TOOLS:
             gui_tool_name = gui_tool.value
-            assert to_snake_case(gui_tool_name) not in advertised_names
+            assert gui_tool_name not in advertised_names
 
 
 class TestToolsListParity:

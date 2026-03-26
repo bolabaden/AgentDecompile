@@ -35,6 +35,7 @@ class CrossReferencesToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.GET_REFERENCES.value,
@@ -78,11 +79,13 @@ class CrossReferencesToolProvider(ToolProvider):
 
     async def _handle_list_cross_references(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Alias for get-references with mode=both (refs to and from the address)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_list_cross_references")
         updated = dict(args)
         updated.setdefault("mode", "both")
         return await self._handle(updated)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle")
         self._require_program()
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "target", "symbol", "importname", name="addressOrSymbol")
         mode = self._get_str(args, "mode", "direction", default="to")
@@ -121,6 +124,7 @@ class CrossReferencesToolProvider(ToolProvider):
 
     def _is_address_in_rsrc(self, program: Any, addr: Any) -> bool:
         """True if the address lies in a memory block that looks like the PE .rsrc section."""
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._is_address_in_rsrc")
         try:
             block = program.getMemory().getBlock(addr)
             if block is None:
@@ -134,6 +138,7 @@ class CrossReferencesToolProvider(ToolProvider):
         self, program: Any, ref_mgr: Any, fm: Any, seen_from: set[str], max_results: int
     ) -> list[dict[str, Any]]:
         """Collect call sites of LoadStringA/LoadStringW for .rsrc string referencers (indirect refs)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._get_loadstring_indirect_refs")
         indirect: list[dict[str, Any]] = []
         try:
             st = program.getSymbolTable()
@@ -179,6 +184,7 @@ class CrossReferencesToolProvider(ToolProvider):
         # Use ref_mgr with already-resolved addr so raw addresses (e.g. 0x004a2a62) and
         # symbol names both work; avoid ghidra_tools.list_cross_references(addr_str)
         # which looks up by symbol name only and fails for addresses with no symbol.
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_to")
         refs_to: list[dict[str, Any]] = []
         seen_from: set[str] = set()
         for ref in ref_mgr.getReferencesTo(addr):
@@ -204,6 +210,7 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "to", "target": str(addr), "references": refs_to, "count": len(refs_to)})
 
     async def _handle_from(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_from")
         refs_from: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesFrom(addr):
             if len(refs_from) >= max_results:
@@ -219,6 +226,7 @@ class CrossReferencesToolProvider(ToolProvider):
 
     async def _handle_both(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
         # Use ref_mgr with already-resolved addr (see _handle_to).
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_both")
         refs_to: list[dict[str, Any]] = []
         seen_from: set[str] = set()
         for ref in ref_mgr.getReferencesTo(addr):
@@ -255,6 +263,7 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "both", "target": str(addr), "referencesTo": refs_to, "referencesFrom": refs_from})
 
     async def _handle_function(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_function")
         func = fm.getFunctionContaining(addr)
         if func is None:
             func = fm.getFunctionAt(addr)
@@ -283,10 +292,13 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "function", "function": func.getName(), "references": refs, "count": len(refs)})
 
     async def _handle_referencers_decomp(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_referencers_decomp")
         results = []
         try:
             from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+            from agentdecompile_cli.mcp_utils.decompiler_util import get_decompiled_function_from_results
 
             decomp = DecompInterface()
             decomp.openProgram(program)
@@ -304,7 +316,7 @@ class CrossReferencesToolProvider(ToolProvider):
                         dr = decomp.decompileFunction(func, 30, monitor)
                         code = ""
                         if dr and dr.decompileCompleted():
-                            df = dr.getDecompiledFunction()
+                            df = get_decompiled_function_from_results(dr)
                             code = df.getC() if df else ""
                         results.append(
                             {
@@ -342,7 +354,7 @@ class CrossReferencesToolProvider(ToolProvider):
                             dr = decomp.decompileFunction(func, 30, monitor)
                             code = ""
                             if dr and dr.decompileCompleted():
-                                df = dr.getDecompiledFunction()
+                                df = get_decompiled_function_from_results(dr)
                                 code = df.getC() if df else ""
                             results.append(
                                 {
@@ -361,6 +373,7 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "referencers_decomp", "target": str(addr), "referencers": results, "count": len(results)})
 
     async def _handle_import(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_import")
         refs = []
         st = self._get_symbol_table(program)
         for sym in st.getExternalSymbols():
@@ -380,6 +393,7 @@ class CrossReferencesToolProvider(ToolProvider):
         return create_success_response({"mode": "import", "references": refs, "count": len(refs)})
 
     async def _handle_thunk(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_thunk")
         func = fm.getFunctionAt(addr)
         if func is None:
             func = fm.getFunctionContaining(addr)

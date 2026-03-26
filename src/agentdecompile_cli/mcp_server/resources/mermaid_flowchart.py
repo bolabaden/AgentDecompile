@@ -58,6 +58,7 @@ _BORDER_PALETTE = [
 
 def _sanitize_node_id(s: str, max_len: int = 60) -> str:
     """Return a Mermaid-safe node id (alphanumeric + underscore)."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_sanitize_node_id")
     out = _ID_RE.sub("_", s)[:max_len].strip("_") or "n"
     if out.lower() == "end":
         out = "n_end"
@@ -66,6 +67,7 @@ def _sanitize_node_id(s: str, max_len: int = 60) -> str:
 
 def _escape_label(text: str) -> str:
     """Escape special chars for use inside Mermaid quoted labels."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_escape_label")
     if not text:
         return ""
     return text.translate(_LABEL_ESCAPE).replace("\n", "<br>").strip()
@@ -73,6 +75,7 @@ def _escape_label(text: str) -> str:
 
 def _border_class_for_bookmarks(bookmark_types: set[str]) -> str:
     """Deterministic class name from bookmark types (hash → palette index)."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_border_class_for_bookmarks")
     if not bookmark_types:
         return "default"
     key = "|".join(sorted(bookmark_types))
@@ -83,6 +86,7 @@ def _border_class_for_bookmarks(bookmark_types: set[str]) -> str:
 
 def _get_program_entry_point(program: Any) -> Any:
     """Return the Function at program entry, or None. Uses GhidraProgramUtilities or first function by address."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_get_program_entry_point")
     fm = program.getFunctionManager()
     try:
         from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
@@ -109,6 +113,7 @@ def _get_program_entry_point(program: Any) -> Any:
 
 def _function_body_text(program: Any, func: Any) -> str:
     """Single body string from function comment, repeatable comment, and entry-point code unit comments."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_function_body_text")
     parts: list[str] = []
     try:
         c = func.getComment()
@@ -131,6 +136,7 @@ def _function_body_text(program: Any, func: Any) -> str:
 
 def _bookmarks_at_address(program: Any, addr: Any) -> list[tuple[str, str, str]]:
     """Return list of (type, category, comment) for bookmarks at address."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_bookmarks_at_address")
     out: list[tuple[str, str, str]] = []
     try:
         bm_mgr = program.getBookmarkManager()
@@ -151,6 +157,7 @@ def _build_mermaid_for_program(
     program: Any, program_label: str, program_id: str
 ) -> tuple[list[str], list[str], dict[str, str], list[str]]:
     """Build Mermaid lines for one program: node defs, edge lines, classDef lines, and entry node ids."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_build_mermaid_for_program")
     from agentdecompile_cli.mcp_server.providers._collectors import _get_function_list
 
     node_lines: list[str] = []
@@ -249,6 +256,7 @@ class MermaidFlowchartResource(ResourceProvider):
     """MCP resource that returns a Mermaid flowchart of all open programs: functions as nodes, calls as edges."""
 
     def list_resources(self) -> list[types.Resource]:
+        logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:MermaidFlowchartResource.list_resources")
         return [
             types.Resource(
                 uri=AnyUrl(url=_URI),
@@ -259,6 +267,7 @@ class MermaidFlowchartResource(ResourceProvider):
         ]
 
     async def read_resource(self, uri: str) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:MermaidFlowchartResource.read_resource")
         if str(uri).strip() != _URI:
             raise NotImplementedError(f"Unknown resource: {uri}")
 
@@ -309,6 +318,7 @@ class MermaidFlowchartResource(ResourceProvider):
 
 def _wrap_mermaid(diagram: str, note: str = "") -> str:
     """Wrap Mermaid code in optional note and code block."""
+    logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_wrap_mermaid")
     out = []
     if note:
         out.append(f"<!-- {note} -->\n")

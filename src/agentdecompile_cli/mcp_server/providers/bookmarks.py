@@ -34,6 +34,7 @@ class BookmarkToolProvider(ToolProvider):
     HANDLERS: ClassVar[dict[str, str]] = {"managebookmarks": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_BOOKMARKS.value,
@@ -66,6 +67,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Route to the correct sub-handler based on mode (set/get/remove/categories/etc.)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", "action", "operation")
         if not mode:
@@ -92,6 +94,7 @@ class BookmarkToolProvider(ToolProvider):
 
     def _require_explicit_remove_all_intent(self, args: dict[str, Any]) -> None:
         """Enforce safety: clear-all requires confirmRemoveAll=true and exact token to avoid accidental wipe."""
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._require_explicit_remove_all_intent")
         confirmed = self._get_bool(args, "confirmremoveall", "allowdestructive", "force", default=False)
         token = self._get_str(args, "removealltoken", "confirmationtoken", "safetytoken")
         if not confirmed or token != "REMOVE_ALL_BOOKMARKS":
@@ -101,6 +104,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Create one bookmark or a batch; single bookmark uses addressOrSymbol + type/category/comment."""
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle_set")
         bookmarks = self._get_list(args, "bookmarks")
         if bookmarks and isinstance(bookmarks[0], dict):
             # Batch: each element is a dict with addressOrSymbol, type, category, comment
@@ -171,6 +175,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _add_single(self, bm: dict[str, Any]) -> dict[str, Any]:
         """Resolve address, then set a bookmark via BookmarkManager inside a program transaction."""
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._add_single")
         norm: dict[str, Any] = {n(k): v for k, v in bm.items()}
         addr_str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
         if not addr_str:
@@ -213,6 +218,7 @@ class BookmarkToolProvider(ToolProvider):
             }
 
     async def _remove(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._remove")
         if self._get_bool(args, "removeAll"):
             self._require_explicit_remove_all_intent(args)
             return await self._remove_all(args)
@@ -241,6 +247,7 @@ class BookmarkToolProvider(ToolProvider):
         )
 
     async def _remove_all(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._remove_all")
         self._require_explicit_remove_all_intent(args)
         try:
             assert self.program_info is not None  # for type checker
@@ -261,6 +268,7 @@ class BookmarkToolProvider(ToolProvider):
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         """List/search bookmarks with optional filter by type, category, or text in comment; paginated."""
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle_get")
         search: str = self._get_str(args, "searchText", "search", "query", "pattern")
         offset: int = self._get_pagination_params(args, default_limit=100)[0]
         limit: int = self._get_pagination_params(args, default_limit=100)[1]
@@ -285,6 +293,7 @@ class BookmarkToolProvider(ToolProvider):
             )
 
     async def _handle_categories(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle_categories")
         try:
             assert self.program_info is not None  # for type checker
             bm_mgr = self.program_info.program.getBookmarkManager()

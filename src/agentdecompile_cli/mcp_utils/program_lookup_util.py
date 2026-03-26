@@ -8,6 +8,12 @@ available programs comes from SessionContext or ProjectManager.
 
 from __future__ import annotations
 
+import logging
+
+from agentdecompile_cli.app_logger import basename_hint
+
+logger = logging.getLogger(__name__)
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,6 +29,7 @@ class ProgramValidationException(Exception):
     """Exception raised when program validation fails."""
 
     def __init__(self, message: str):
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramValidationException.__init__")
         super().__init__(message)
         self.message: str = message
 
@@ -47,7 +54,9 @@ class ProgramLookupUtil:
         Raises:
             ProgramValidationException: If program cannot be found or validated
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil.get_validated_program")
         if not program_path or not program_path.strip():
+            logger.warning("program_lookup_rejected reason=empty_path")
             raise ProgramValidationException("Program path cannot be empty")
 
         program_path = program_path.strip()
@@ -59,6 +68,16 @@ class ProgramLookupUtil:
             if program:
                 DebugLogger.debug(ProgramLookupUtil, f"Found program in available list: {program.getName()}")
                 return program
+            logger.warning(
+                "program_lookup_rejected reason=not_in_list program_tail=%s open_count=%s",
+                basename_hint(program_path),
+                len(available_programs),
+            )
+        else:
+            logger.warning(
+                "program_lookup_rejected reason=no_program_list program_tail=%s",
+                basename_hint(program_path),
+            )
 
         # If we don't have a list of available programs, we can't validate
         # This is a limitation compared to the Java version which has access to the plugin system
@@ -77,6 +96,7 @@ class ProgramLookupUtil:
         Returns:
             The matching program, or None if not found
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil._find_program_in_list")
         if not programs:
             return None
 
@@ -109,6 +129,7 @@ class ProgramLookupUtil:
         Returns:
             Formatted string with program information
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil.get_available_programs_info")
         if not available_programs:
             return "No programs are currently open."
 
@@ -133,6 +154,7 @@ class ProgramLookupUtil:
         Returns:
             List of suggested program names
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil.suggest_similar_programs")
         if not available_programs:
             return []
 
@@ -163,6 +185,7 @@ class ProgramLookupUtil:
         Returns:
             True if the path format is valid
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil.validate_program_path_format")
         if not program_path or not program_path.strip():
             return False
 
@@ -190,6 +213,7 @@ class ProgramLookupUtil:
         Returns:
             Display name string
         """
+        logger.debug("diag.enter %s", "mcp_utils/program_lookup_util.py:ProgramLookupUtil.get_program_display_name")
         if program is None:
             return "unknown program"
 

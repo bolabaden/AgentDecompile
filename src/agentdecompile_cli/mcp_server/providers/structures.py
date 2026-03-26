@@ -40,6 +40,7 @@ class StructureToolProvider(ToolProvider):
         **Performance**: O(n) where n = number of structures in the data type manager.
         For programs with many structures, this may be slow. Consider caching if needed.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._find_structure")
         assert self.program_info is not None
         for row in collect_structures(self.program_info.program):
             struct = row.get("structure")
@@ -50,11 +51,13 @@ class StructureToolProvider(ToolProvider):
     @staticmethod
     def _new_data_type_parser(dtm: Any) -> Any:
         """Create a ``DataTypeParser`` configured for broad type support."""
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._new_data_type_parser")
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
         return DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_STRUCTURES.value,
@@ -103,6 +106,7 @@ class StructureToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._handle")
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
 
@@ -124,6 +128,7 @@ class StructureToolProvider(ToolProvider):
         return await handler(args)
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._list")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         max_results = self._get_int(args, "maxresults", "limit", default=100)
@@ -150,6 +155,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "list", "structures": results, "count": len(results)})
 
     async def _info(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._info")
         name = self._require_str(args, "name", "structurename", "structure", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -176,6 +182,7 @@ class StructureToolProvider(ToolProvider):
         )
 
     async def _create(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._create")
         name = self._require_str(args, "name", "structurename", name="name")
         size = self._get_int(args, "size", default=0)
         cat_path = self._get_str(args, "categorypath", "category", default="/")
@@ -231,6 +238,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "create", "name": name, "size": size, "isUnion": is_union, "success": True})
 
     async def _add_field(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._add_field")
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -276,6 +284,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "add_field", "structure": struct_name, "field": field_name, "type": field_type, "success": True})
 
     async def _modify_field(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._modify_field")
         struct_name = self._require_str(args, "name", "structurename", name="name")
         field_offset = self._get_int(args, "fieldoffset", "offset")
         field_name = self._get_str(args, "fieldname", "field")
@@ -309,6 +318,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "modify_field", "structure": struct_name, "offset": field_offset, "success": True})
 
     async def _modify_from_c(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._modify_from_c")
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", "c", name="cDefinition")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -336,12 +346,15 @@ class StructureToolProvider(ToolProvider):
             raise ValueError("CParser not available in this environment")
 
     async def _parse(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._parse")
         return await self._modify_from_c(args)
 
     async def _parse_header(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._parse_header")
         return await self._modify_from_c(args)
 
     async def _validate(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._validate")
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", name="cDefinition")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -357,6 +370,7 @@ class StructureToolProvider(ToolProvider):
             return create_success_response({"action": "validate", "valid": False, "error": str(e)})
 
     async def _apply(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._apply")
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         assert self.program_info is not None  # for type checker
@@ -430,6 +444,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "apply", "structure": struct_name, "address": str(addr), "success": True})
 
     async def _delete(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._delete")
         name = self._require_str(args, "name", "structurename", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program

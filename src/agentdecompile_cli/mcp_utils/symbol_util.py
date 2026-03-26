@@ -8,6 +8,9 @@ DEFAULT_SYMBOL_PATTERNS / COMPILED_DEFAULT_SYMBOL_PATTERNS drive is_default_symb
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 import re
 
 from typing import TYPE_CHECKING
@@ -51,6 +54,7 @@ class SymbolUtil:
         -------
             True if this is a default Ghidra symbol name
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.is_default_symbol_name")
         if symbol_name is None:
             return False
 
@@ -74,6 +78,7 @@ class SymbolUtil:
         -------
             List of symbols with user-defined names only
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.filter_default_symbol_names")
         if symbols is None:
             return []
 
@@ -91,6 +96,7 @@ class SymbolUtil:
         -------
             Human-readable type name
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.get_symbol_type_name")
         if symbol is None:
             return "unknown"
 
@@ -123,6 +129,7 @@ class SymbolUtil:
         -------
             Full namespace path as a string
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.get_symbol_namespace_path")
         if symbol is None:
             return ""
 
@@ -157,6 +164,7 @@ class SymbolUtil:
         -------
             True if both symbols have the same address
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.symbols_have_same_address")
         if symbol1 is None or symbol2 is None:
             return False
 
@@ -181,6 +189,7 @@ class SymbolUtil:
         -------
             List of symbols at the given address
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.get_symbols_at_address")
         if symbols is None or address is None:
             return []
 
@@ -199,6 +208,7 @@ class SymbolUtil:
         -------
             Sorted list of symbols
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.sort_symbols_by_relevance")
         if symbols is None:
             return []
 
@@ -230,6 +240,7 @@ class SymbolUtil:
         -------
             Dictionary mapping namespace paths to lists of symbols
         """
+        logger.debug("diag.enter %s", "mcp_utils/symbol_util.py:SymbolUtil.group_symbols_by_namespace")
         if symbols is None:
             return {}
 

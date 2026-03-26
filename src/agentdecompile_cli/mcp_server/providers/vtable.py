@@ -29,6 +29,7 @@ class VtableToolProvider(ToolProvider):
     HANDLERS = {"analyzevtables": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.ANALYZE_VTABLES.value,
@@ -61,6 +62,7 @@ class VtableToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="analyze")
         addr_str = self._get_address_or_symbol(args)
@@ -98,6 +100,7 @@ class VtableToolProvider(ToolProvider):
         max_results: int,
     ) -> list[types.TextContent]:
         # Scan all defined data; keep items whose type name suggests a vtable (user- or analyzer-named)
+        logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider._handle_containing")
         all_results: list[dict[str, Any]] = []
         for data in listing.getDefinedData(True):
             dt = data.getDataType()
@@ -126,6 +129,7 @@ class VtableToolProvider(ToolProvider):
         offset: int,
         max_results: int,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider._handle_analyze")
         if not addr_str:
             raise ValueError("addressOrSymbol required for analyze mode")
 
@@ -179,6 +183,7 @@ class VtableToolProvider(ToolProvider):
         offset: int,
         max_results: int,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider._handle_callers")
         if not addr_str:
             raise ValueError("addressOrSymbol required for callers mode")
 

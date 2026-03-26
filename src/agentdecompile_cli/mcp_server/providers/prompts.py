@@ -6,6 +6,9 @@ available reverse-engineering workflow prompts (names and descriptions).
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from typing import Any
 
 from mcp import types
@@ -26,6 +29,7 @@ class PromptToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/prompts.py:PromptToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.LIST_PROMPTS.value,
@@ -38,6 +42,7 @@ class PromptToolProvider(ToolProvider):
         ]
 
     async def _handle_list_prompts(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/prompts.py:PromptToolProvider._handle_list_prompts")
         prompts = prompt_providers.list_prompts()
         payload: list[dict[str, Any]] = []
         for p in prompts:

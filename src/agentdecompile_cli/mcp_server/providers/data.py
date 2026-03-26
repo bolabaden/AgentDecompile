@@ -36,6 +36,7 @@ class DataToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/data.py:DataToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.GET_DATA.value,
@@ -92,6 +93,7 @@ class DataToolProvider(ToolProvider):
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Read raw bytes at address; include hex/ascii/both per format. Cap length at 10000."""
+        logger.debug("diag.enter %s", "mcp_server/providers/data.py:DataToolProvider._handle_get")
         self._require_program()
         addr_str = self._require_address_or_symbol(args)
         length = self._get_int(args, "length", "size", "len", default=16)
@@ -123,6 +125,7 @@ class DataToolProvider(ToolProvider):
 
     async def _handle_apply(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Apply a data type at the given address: clear existing code units there, then createData with the parsed type."""
+        logger.debug("diag.enter %s", "mcp_server/providers/data.py:DataToolProvider._handle_apply")
         self._require_program()
         addr_str = self._require_address_or_symbol(args)
         dt_name = self._require_str(args, "datatype", "datatypestring", "type", "typename", name="dataType")

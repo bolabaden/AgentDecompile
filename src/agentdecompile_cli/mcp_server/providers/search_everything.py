@@ -85,13 +85,10 @@ _OPTIONAL_SCOPES: tuple[str, ...] = (
 
 
 class SearchEverythingToolProvider(ToolProvider):
-    HANDLERS = {
-        "searcheverything": "_handle",
-        "globalsearch": "_handle",
-        "searchanything": "_handle",
-    }
+    HANDLERS = {"searcheverything": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.SEARCH_EVERYTHING.value,
@@ -155,6 +152,7 @@ class SearchEverythingToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._handle")
         queries = self._collect_queries(args)
         if not queries:
             raise ValueError("query or queries is required")
@@ -238,6 +236,7 @@ class SearchEverythingToolProvider(ToolProvider):
         )
 
     async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_target_programs")
         warnings: list[str] = []
         requested_program_keys = self._collect_requested_program_keys(args)
 
@@ -293,6 +292,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return targets, warnings
 
     def _collect_requested_program_keys(self, args: dict[str, Any]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_requested_program_keys")
         keys: list[str] = []
 
         for alias in ("programpath", "programname", "binaryname"):
@@ -323,6 +323,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return unique
 
     def _collect_project_program_paths(self) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_project_program_paths")
         manager = getattr(self, "_manager", None)
         if manager is None:
             return []
@@ -369,6 +370,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return unique
 
     def _collect_queries(self, args: dict[str, Any]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_queries")
         queries: list[str] = []
         raw_list = self._get_list(args, "queries", "patterns", "terms") or []
         for value in raw_list:
@@ -411,6 +413,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return unique
 
     def _collect_scopes(self, args: dict[str, Any]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_scopes")
         raw_scopes = self._get_list(args, "scopes", "scope", "domains", "sources", "types")
         if not raw_scopes:
             return list(_ALL_SCOPES)
@@ -484,6 +487,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return resolved or list(_ALL_SCOPES)
 
     def _compile_regexes(self, queries: list[str], mode: str, case_sensitive: bool) -> dict[str, re.Pattern[str]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._compile_regexes")
         if mode not in {"regex", "auto"}:
             return {}
 
@@ -525,6 +529,7 @@ class SearchEverythingToolProvider(ToolProvider):
         decompile_timeout: int,
     ) -> list[dict[str, Any]]:
         """Dispatch to the _search_* method for the given scope; program-agnostic scopes (processors, project_files) omit program."""
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_scope")
         if scope == "functions":
             return self._search_functions(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "function_signatures":
@@ -571,6 +576,7 @@ class SearchEverythingToolProvider(ToolProvider):
 
     @staticmethod
     def _iter_items(source: Any):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._iter_items")
         if source is None:
             return
         if hasattr(source, "hasNext") and hasattr(source, "next"):
@@ -590,6 +596,7 @@ class SearchEverythingToolProvider(ToolProvider):
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
     ) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._match_text")
         if not text:
             return None
 
@@ -631,6 +638,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return best
 
     def _search_functions(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_functions")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
@@ -643,6 +651,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_function_signatures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_signatures")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
@@ -656,6 +665,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_function_parameters(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_parameters")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
@@ -685,6 +695,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_tags(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_tags")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
@@ -700,6 +711,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_bookmarks(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_bookmarks")
         results: list[dict[str, Any]] = []
         for bm in collect_bookmarks(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -716,6 +728,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_comments(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_comments")
         results: list[dict[str, Any]] = []
         for comment in collect_comments(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -739,6 +752,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_constants(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_instructions_scan: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_constants")
         constants, _instr_count = collect_constants(program, max_instructions=max_instructions_scan)
         results: list[dict[str, Any]] = []
         for item in constants:
@@ -756,10 +770,13 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_decompilation(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, decompile_timeout: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_decompilation")
         results: list[dict[str, Any]] = []
         try:
             from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+
+            from agentdecompile_cli.mcp_utils.decompiler_util import get_decompiled_function_from_results
 
             fm = self._get_function_manager(program)
             decomp = DecompInterface()
@@ -778,7 +795,7 @@ class SearchEverythingToolProvider(ToolProvider):
                     dr = decomp.decompileFunction(func, decompile_timeout, monitor)
                     if not dr or not dr.decompileCompleted():
                         continue
-                    decompiled = dr.getDecompiledFunction()
+                    decompiled = get_decompiled_function_from_results(dr)
                     text = decompiled.getC() if decompiled else ""
                     match = self._match_text(text=str(text), queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
                     if not match:
@@ -793,6 +810,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_disassembly(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, max_instructions_scan: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_disassembly")
         fm = self._get_function_manager(program)
         listing = self._get_listing(program)
         results: list[dict[str, Any]] = []
@@ -819,6 +837,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_symbols(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_symbols")
         results: list[dict[str, Any]] = []
         for sym in collect_symbols(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -831,6 +850,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_imports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_imports")
         results: list[dict[str, Any]] = []
         for sym in collect_imports(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -843,6 +863,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_exports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_exports")
         results: list[dict[str, Any]] = []
         for sym in collect_exports(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -855,6 +876,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_namespaces(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_namespaces")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
         except Exception:
@@ -871,6 +893,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_classes(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_classes")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
         except Exception:
@@ -887,6 +910,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_strings(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_strings")
         results: list[dict[str, Any]] = []
         for data in collect_strings(program, min_len=1, limit=per_scope_limit, ghidra_tools=self.ghidra_tools):
             if len(results) >= per_scope_limit:
@@ -899,6 +923,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_data_types(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_types")
         results: list[dict[str, Any]] = []
         for dt in collect_data_types(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -915,6 +940,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_data_type_archives(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_type_archives")
         results: list[dict[str, Any]] = []
         for archive in collect_data_type_archives(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -927,6 +953,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_structures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structures")
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -955,6 +982,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_structure_fields(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structure_fields")
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program):
             struct_obj = struct.get("structure")
@@ -987,6 +1015,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _function_base_result(self, function: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._function_base_result")
         return {
             "name": str(function.get("name", "")),
             "function": str(function.get("name", "")),
@@ -1008,6 +1037,7 @@ class SearchEverythingToolProvider(ToolProvider):
         }
 
     def _attach_next_tools(self, row: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._attach_next_tools")
         result_type = str(row.get("resultType", ""))
         address = str(row.get("functionAddress") or row.get("address") or "")
         function_name = str(row.get("function") or row.get("name") or "")
@@ -1060,6 +1090,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return enriched
 
     def _group_function_results(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._group_function_results")
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         remainder: list[dict[str, Any]] = []
 
@@ -1099,6 +1130,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return [*grouped.values(), *remainder]
 
     def _search_processors(self, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_processors")
         results: list[dict[str, Any]] = []
         try:
             from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
@@ -1121,6 +1153,7 @@ class SearchEverythingToolProvider(ToolProvider):
         return results
 
     def _search_project_files(self, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_project_files")
         results: list[dict[str, Any]] = []
         manager = getattr(self, "_manager", None)
         if manager is None:
