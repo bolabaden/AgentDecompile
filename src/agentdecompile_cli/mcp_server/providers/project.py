@@ -3199,6 +3199,73 @@ class ProjectToolProvider(ToolProvider):
         except Exception as exc:
             logger.debug("import_export domain-file transaction drain: %s", exc)
 
+    def _drain_all_domain_file_handles_for_sync_push(self, source_file: Any, session_id: str) -> None:
+        """Call ``_end_open_transactions_on_domain_file_consumers`` on every DomainFile identity that aliases ``source_file``.
+
+        ``project_data.getFile()`` and ``Program.getDomainFile()`` can be distinct Java objects for the same binary;
+        Ghidra attaches open Programs as consumers only on the instance they were opened from, so draining only
+        ``source_file`` leaves active transactions on the other handle and ``save()`` fails to lock.
+        """
+        mgr = self._manager
+        if mgr is None or source_file is None:
+            return
+        consumer_fn = None
+        try:
+            for pr in getattr(mgr, "providers", None) or []:
+                fn = getattr(pr, "_end_open_transactions_on_domain_file_consumers", None)
+                if callable(fn):
+                    consumer_fn = fn
+                    break
+        except Exception as exc:
+            logger.debug("sync-project push: resolve consumer drain fn: %s", exc)
+            return
+        if consumer_fn is None:
+            return
+        seen: set[int] = set()
+        frames: list[Any] = []
+
+        def add_frame(df: Any) -> None:
+            if df is None:
+                return
+            i = id(df)
+            if i in seen:
+                return
+            seen.add(i)
+            frames.append(df)
+
+        add_frame(source_file)
+        try:
+            session = SESSION_CONTEXTS.get_or_create(session_id)
+            for _path_key, info in list((session.open_programs or {}).items()):
+                prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                if prog is None or not hasattr(prog, "getDomainFile"):
+                    continue
+                try:
+                    df = prog.getDomainFile()
+                except Exception:
+                    df = None
+                if df is not None and self._domain_files_same_pull(df, source_file):
+                    add_frame(df)
+            for pr in getattr(mgr, "providers", None) or []:
+                opi = getattr(pr, "program_info", None)
+                prog = getattr(opi, "program", None) if opi is not None else None
+                if prog is None or not hasattr(prog, "getDomainFile"):
+                    continue
+                try:
+                    df = prog.getDomainFile()
+                except Exception:
+                    df = None
+                if df is not None and self._domain_files_same_pull(df, source_file):
+                    add_frame(df)
+        except Exception as exc:
+            logger.debug("sync-project push: collect domain file handles: %s", exc)
+
+        for df in frames:
+            try:
+                consumer_fn(df)
+            except Exception as exc:
+                logger.debug("sync-project push: domain consumer drain id=%s: %s", id(df), exc)
+
     @staticmethod
     def _end_all_transactions_on_program_for_sync_push(program: Any, *, max_rounds: int = 64) -> None:
         """Drain nested Ghidra transactions until none remain (tool tx inside GhidraProject batch tx, etc.)."""
@@ -3699,6 +3766,18 @@ class ProjectToolProvider(ToolProvider):
                         if tx is not None:
                             has_tx = True
                             break
+                    if not has_tx and mgr is not None:
+                        for pr in getattr(mgr, "providers", None) or []:
+                            opi = getattr(pr, "program_info", None)
+                            prog = getattr(opi, "program", None) if opi is not None else None
+                            if prog is None or not hasattr(prog, "getCurrentTransaction"):
+                                continue
+                            try:
+                                if prog.getCurrentTransaction() is not None:
+                                    has_tx = True
+                                    break
+                            except Exception:
+                                continue
                     if not has_tx:
                         break
                     time.sleep(1)
@@ -3708,6 +3787,12 @@ class ProjectToolProvider(ToolProvider):
                     if prog is None:
                         continue
                     self._end_all_transactions_on_program_for_sync_push(prog)
+                if mgr is not None:
+                    for pr in getattr(mgr, "providers", None) or []:
+                        opi = getattr(pr, "program_info", None)
+                        prog = getattr(opi, "program", None) if opi is not None else None
+                        if prog is not None:
+                            self._end_all_transactions_on_program_for_sync_push(prog)
                 if mgr is not None:
                     try:
                         for pr in getattr(mgr, "providers", None) or []:
@@ -3828,7 +3913,7 @@ class ProjectToolProvider(ToolProvider):
                     except Exception as tx_exc:
                         logger.debug("shared-sync push could not flush/drain for %s (continuing): %s", source_path, tx_exc)
 
-                    self._invoke_import_export_end_transactions_on_domain_file(source_file)
+                    self._drain_all_domain_file_handles_for_sync_push(source_file, session_id)
 
                     source_file.save(TaskMonitor.DUMMY)
                 else:
@@ -4040,15 +4125,18 @@ class ProjectToolProvider(ToolProvider):
                 len(push_result.get("errors", [])),
                 time.time() - sync_start,
             )
-            return create_success_response(
-                {
-                    "operation": "sync-project",
-                    "mode": mode,
-                    "direction": "local-to-shared",
-                    "success": len(push_result["errors"]) == 0,
-                    **push_result,
-                },
-            )
+            push_errors = push_result.get("errors") or []
+            push_payload: dict[str, Any] = {
+                "operation": "sync-project",
+                "mode": mode,
+                "direction": "local-to-shared",
+                "success": len(push_errors) == 0,
+                **push_result,
+            }
+            if push_errors and not push_payload.get("error"):
+                fe = push_errors[0]
+                push_payload["error"] = str(fe.get("error", fe) if isinstance(fe, dict) else fe)
+            return create_success_response(push_payload)
 
         logger.info("shared-sync executing bidirectional pull phase repository=%s", repository_name)
         pull_result = self._pull_shared_repository_to_local(args, repository_adapter, repository_name, project_data)
@@ -4066,25 +4154,34 @@ class ProjectToolProvider(ToolProvider):
             time.time() - sync_start,
         )
 
-        return create_success_response(
-            {
-                "operation": "sync-project",
-                "mode": "bidirectional",
-                "direction": "shared-and-local",
-                "success": len(pull_result["errors"]) == 0 and len(push_result["errors"]) == 0,
-                "repository": repository_name,
-                "phases": {
-                    "pull": pull_result,
-                    "push": push_result,
-                },
-                "totals": {
-                    "requested": int(pull_result.get("requested", 0)) + int(push_result.get("requested", 0)),
-                    "transferred": int(pull_result.get("transferred", 0)) + int(push_result.get("transferred", 0)),
-                    "skipped": int(pull_result.get("skipped", 0)) + int(push_result.get("skipped", 0)),
-                    "errors": len(pull_result.get("errors", [])) + len(push_result.get("errors", [])),
-                },
+        pull_errs = pull_result.get("errors") or []
+        push_errs = push_result.get("errors") or []
+        bi_ok = len(pull_errs) == 0 and len(push_errs) == 0
+        bi_payload: dict[str, Any] = {
+            "operation": "sync-project",
+            "mode": "bidirectional",
+            "direction": "shared-and-local",
+            "success": bi_ok,
+            "repository": repository_name,
+            "phases": {
+                "pull": pull_result,
+                "push": push_result,
             },
-        )
+            "totals": {
+                "requested": int(pull_result.get("requested", 0)) + int(push_result.get("requested", 0)),
+                "transferred": int(pull_result.get("transferred", 0)) + int(push_result.get("transferred", 0)),
+                "skipped": int(pull_result.get("skipped", 0)) + int(push_result.get("skipped", 0)),
+                "errors": len(pull_errs) + len(push_errs),
+            },
+        }
+        if not bi_ok and not bi_payload.get("error"):
+            if push_errs:
+                fe = push_errs[0]
+                bi_payload["error"] = f"push: {fe.get('error', fe) if isinstance(fe, dict) else fe}"
+            elif pull_errs:
+                fe = pull_errs[0]
+                bi_payload["error"] = f"pull: {fe.get('error', fe) if isinstance(fe, dict) else fe}"
+        return create_success_response(bi_payload)
 
     async def _download_shared_repository_to_local(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._download_shared_repository_to_local")
