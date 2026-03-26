@@ -72,6 +72,7 @@ _QUOTED_PATH_PATTERN = re.compile(r'"[^"]+"|\'[^\']+\'')
 @lru_cache(maxsize=512)
 def _compile_nl_phrase_pattern(phrase: str) -> re.Pattern[str]:
     """Return cached regex used to capture values for a normalized NL phrase."""
+    logger.debug("diag.enter %s", "registry.py:_compile_nl_phrase_pattern")
     phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
     pattern_text = _NL_PHRASE_VALUE_PATTERN_TEMPLATE.replace("__PHRASE_RE__", phrase_re)
     return re.compile(
@@ -162,41 +163,49 @@ class Tool(str, Enum):
     @property
     def wire_name(self) -> str:
         """Canonical kebab-case name for MCP/CLI wire (same as .value)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.wire_name")
         return self.value
 
     @property
     def normalized(self) -> str:
         """Alpha-only lowercase form for matching (normalize_identifier(.value))."""
+        logger.debug("diag.enter %s", "registry.py:Tool.normalized")
         return normalize_identifier(self.value)
 
     @property
     def snake_name(self) -> str:
         """Snake_case form for display/CLI (to_snake_case(.value))."""
+        logger.debug("diag.enter %s", "registry.py:Tool.snake_name")
         return to_snake_case(self.value)
 
     @property
     def params(self) -> list[str]:
         """Parameter names (camelCase) for this tool. Returns a copy."""
+        logger.debug("diag.enter %s", "registry.py:Tool.params")
         return list(TOOL_PARAMS.get(self, []))
 
     @property
     def is_hidden(self) -> bool:
         """True if this tool is in the default hidden set (curated commands)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_hidden")
         return self in _DEFAULT_HIDDEN_TOOLS
 
     @property
     def is_gui_only_disabled(self) -> bool:
         """True if this tool is disabled in headless (GUI-only)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_gui_only_disabled")
         return self in DISABLED_GUI_ONLY_TOOLS
 
     @property
     def is_advertised(self) -> bool:
         """True if this tool is currently advertised (env-aware)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_advertised")
         return any(normalize_identifier(t) == self.normalized for t in ADVERTISED_TOOLS)
 
     @classmethod
     def from_string(cls, s: str) -> Tool | None:
         """Resolve any alias/variant to canonical Tool, or None if unknown."""
+        logger.debug("diag.enter %s", "registry.py:Tool.from_string")
         resolved = resolve_tool_name(s)
         if resolved is None:
             return None
@@ -208,6 +217,7 @@ class Tool(str, Enum):
     @classmethod
     def advertised(cls) -> list[Tool]:
         """Tools currently advertised (env-aware). Same logic as ADVERTISED_TOOLS but returns list[Tool]."""
+        logger.debug("diag.enter %s", "registry.py:Tool.advertised")
         return [t for t in cls if t.is_advertised]
 
 
@@ -240,6 +250,7 @@ RESOURCE_URIS: list[str] = [u.value for u in ResourceUri]
 
 
 def _params(*names: str) -> list[str]:
+    logger.debug("diag.enter %s", "registry.py:_params")
     return list(names)
 
 
@@ -282,12 +293,13 @@ NATURAL_LANGUAGE_INPUT_KEYS: frozenset[str] = frozenset(
 
 
 def _canonical_param_name(param: str) -> str:
+    logger.debug("diag.enter %s", "registry.py:_canonical_param_name")
     if normalize_identifier(param) in MODE_PARAM_ALIASES:
         return "mode"
     return param
 
 
-# Required / common: programPath is optional in GUI, required in headless for program-scoped tools
+# programPath is optional everywhere: headless resolves active session program when omitted.
 # Built as str keys for _merge_tools_list_params; then converted to dict[Tool, list[str]] below.
 _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.ANALYZE_DATA_FLOW.value: _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
@@ -313,7 +325,19 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.GET_DATA.value: _params("programPath", "addressOrSymbol"),
     Tool.GET_FUNCTIONS.value: _params("programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose"),
     Tool.GET_REFERENCES.value: _params("programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow"),
-    Tool.IMPORT_BINARY.value: _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
+    Tool.IMPORT_BINARY.value: _params(
+        "path",
+        "programPath",
+        "programName",
+        "destinationFolder",
+        "recursive",
+        "maxDepth",
+        "analyzeAfterImport",
+        "stripLeadingPath",
+        "stripAllContainerPath",
+        "mirrorFs",
+        "enableVersionControl",
+    ),
     Tool.INSPECT_MEMORY.value: _params("programPath", "mode", "address", "length", "offset", "limit"),
     Tool.LIST_CROSS_REFERENCES.value: _params("programPath", "address", "direction", "maxResults"),
     Tool.LIST_EXPORTS.value: _params("programPath", "filter", "maxResults", "offset", "startIndex"),
@@ -443,6 +467,7 @@ TOOL_ALIASES: dict[str, str] = {}
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
     "open": Tool.OPEN.value,
+    "open-project": Tool.OPEN.value,  # e.g. Open_Project / open_project → normalize_identifier → openproject
     "switch-project": Tool.OPEN.value,  # folded into open
     "download-shared-repository": Tool.SYNC_PROJECT.value,
     "sync-shared-repository": Tool.SYNC_PROJECT.value,
@@ -565,12 +590,14 @@ DISABLED_GUI_ONLY_TOOLS: frozenset[Tool] = frozenset(
 
 def to_camel_case_key(key: str) -> str:
     """Convert snake_case to camelCase for MCP payload keys."""
+    logger.debug("diag.enter %s", "registry.py:to_camel_case_key")
     parts = key.split("_")
     return parts[0].lower() + "".join(p.capitalize() for p in parts[1:])
 
 
 def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Convert CLI kwargs (snake_case) to MCP payload (camelCase), dropping None."""
+    logger.debug("diag.enter %s", "registry.py:build_tool_payload")
     out: dict[str, Any] = {}
     for k, v in snake_kwargs.items():
         if v is None:
@@ -581,11 +608,13 @@ def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
 
 def resolve_tool_name_enum(tool_name: str) -> Tool | None:
     """Resolve arbitrary tool name/alias to canonical Tool enum, or None if unknown. Thin wrapper for Tool.from_string()."""
+    logger.debug("diag.enter %s", "registry.py:resolve_tool_name_enum")
     return Tool.from_string(tool_name)
 
 
 def get_tool_params(tool_name: Tool | str) -> list[str]:
     """Return the list of parameter names (camelCase) for a tool, or empty if unknown. Prefer tool.params when you have a Tool."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_params")
     if isinstance(tool_name, Tool):
         return tool_name.params
     resolved = Tool.from_string(tool_name)
@@ -613,6 +642,7 @@ def normalize_identifier(s: str) -> str:
         normalize_identifier("program_path")        # -> "programpath"
         normalize_identifier("PROGRAM PATH")        # -> "programpath"
     """
+    logger.debug("diag.enter %s", "registry.py:normalize_identifier")
     return _NON_ALPHA_PATTERN.sub("", s.lower().strip())
 
 
@@ -626,6 +656,7 @@ def _find_repo_root_for_tools_list() -> Path | None:
     Returns:
         Path to the repository root directory, or None if TOOLS_LIST.md not found
     """
+    logger.debug("diag.enter %s", "registry.py:_find_repo_root_for_tools_list")
     current: Path = Path(__file__).resolve()
     for parent in [current.parent, *current.parents]:
         candidate = parent / "TOOLS_LIST.md"
@@ -650,6 +681,7 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
         - param_aliases_by_tool_norm: dict[normalized_tool_name, dict[normalized_alias, set[normalized_canonicals]]]
         - tool_aliases_by_norm: dict[normalized_alias_tool, canonical_tool_name]
     """
+    logger.debug("diag.enter %s", "registry.py:_extract_tools_list_sync_data")
     root: Path | None = _find_repo_root_for_tools_list()
     if root is None:
         return {}, {}, {}
@@ -756,6 +788,7 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
     Returns:
         Merged parameter dictionary with all parameters from both sources
     """
+    logger.debug("diag.enter %s", "registry.py:_merge_tools_list_params")
     merged = {k: list(v) for k, v in base.items()}
     for tool, params in extra.items():
         if tool not in merged:
@@ -800,6 +833,7 @@ def _add_builtin_param_aliases() -> None:
         per_tool.setdefault(alias_norm, set()).add(canonical_norm)
 
     # Correct import-binary aliases even if TOOLS_LIST-derived aliases were polluted.
+    logger.debug("diag.enter %s", "registry.py:_add_builtin_param_aliases")
     for alias_name, canonical_param in (
         ("filePath", "path"),
         ("binaryPath", "path"),
@@ -871,23 +905,27 @@ _AUTO_CHECKIN_ENV_VARS: tuple[str, ...] = (
 
 def _auto_checkin_enabled() -> bool:
     """True if AGENTDECOMPILE_AUTO_CHECKIN (or alias) is set; then checkin-program is hidden and run after setters."""
+    logger.debug("diag.enter %s", "registry.py:_auto_checkin_enabled")
     return any(
         _is_truthy_env(os.getenv(var_name)) for var_name in _AUTO_CHECKIN_ENV_VARS
     )
 
 
 def _is_truthy_env(value: str | None) -> bool:
+    logger.debug("diag.enter %s", "registry.py:_is_truthy_env")
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _legacy_tools_advertised() -> bool:
+    logger.debug("diag.enter %s", "registry.py:_legacy_tools_advertised")
     return any(_is_truthy_env(os.getenv(var_name)) for var_name in _LEGACY_TOOLS_ENV_VARS)
 
 
 def _get_disabled_tools() -> set[str]:
     """Parse AGENTDECOMPILE_DISABLE_TOOLS env var and return normalized tool names to disable."""
+    logger.debug("diag.enter %s", "registry.py:_get_disabled_tools")
     disable_env = os.getenv("AGENT_DECOMPILE_DISABLE_TOOLS", os.getenv("AGENTDECOMPILE_DISABLE_TOOLS", "")).strip()
     if not disable_env:
         return set()
@@ -906,6 +944,7 @@ def _get_explicit_enabled_tools() -> set[str] | None:
     taking priority over default/hidden filtering and DISABLE_TOOLS.
     Returns None when the var is unset or empty.
     """
+    logger.debug("diag.enter %s", "registry.py:_get_explicit_enabled_tools")
     raw = os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS") or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS") or ""
     enable_env = raw.strip()
     if not enable_env:
@@ -925,6 +964,7 @@ def _build_advertised_tools() -> list[str]:
     Otherwise: start from all canonical tools, remove disabled, then either hide
     _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
     """
+    logger.debug("diag.enter %s", "registry.py:_build_advertised_tools")
     canonical_visible: list[str] = [t.value for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
     hidden_set: set[str] = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
     disabled_set: set[str] = _get_disabled_tools()
@@ -961,16 +1001,19 @@ _ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ()
 
 def is_tool_advertised(tool_name: str) -> bool:
     """Check if a tool is currently advertised based on env var configuration. Prefer tool.is_advertised when you have a Tool."""
+    logger.debug("diag.enter %s", "registry.py:is_tool_advertised")
     t = Tool.from_string(tool_name)
     return t.is_advertised if t is not None else False
 
 
 def get_advertised_tools() -> list[str]:
     """Get the list of currently advertised tools."""
+    logger.debug("diag.enter %s", "registry.py:get_advertised_tools")
     return list(ADVERTISED_TOOLS)
 
 
 def _build_advertised_tool_params() -> dict[str, list[str]]:
+    logger.debug("diag.enter %s", "registry.py:_build_advertised_tool_params")
     advertised: dict[str, list[str]] = {}
     advertised_set = set(ADVERTISED_TOOLS)
     for tool, params in TOOL_PARAMS.items():
@@ -1005,6 +1048,7 @@ def _build_tool_match_candidates() -> list[tuple[str, str, str]]:
     Returns tuples of ``(canonical_tool_name, raw_variant, normalized_variant)``
     ordered by descending variant length so more specific names win first.
     """
+    logger.debug("diag.enter %s", "registry.py:_build_tool_match_candidates")
     candidates: list[tuple[str, str, str]] = []
     for tool_name in TOOLS:
         seen: set[str] = set()
@@ -1053,8 +1097,13 @@ def resolve_tool_name(tool_name: str) -> str | None:
     Returns:
         The canonical kebab-case tool name, or None if no match found
     """
+    logger.debug("diag.enter %s", "registry.py:resolve_tool_name")
     norm = normalize_identifier(tool_name)
     if not norm:
+        logger.debug(
+            "registry_tool_name_unresolved reason=empty_after_normalize input_stripped_len=%s",
+            len((tool_name or "").strip()),
+        )
         return None
 
     direct: str | None = _TOOLS_BY_NORMALIZED.get(norm)
@@ -1092,6 +1141,12 @@ def resolve_tool_name(tool_name: str) -> str | None:
         if aliased is not None:
             return aliased
 
+    logger.debug(
+        "registry_tool_name_unresolved reason=no_match norm_len=%s stripped_len=%s strip_changed=%s",
+        len(norm),
+        len(stripped),
+        stripped != norm,
+    )
     return None
 
 
@@ -1105,6 +1160,7 @@ def to_snake_case(s: str) -> str:
     - snake_case:   returned unchanged
     """
     # Replace hyphens and spaces with underscores
+    logger.debug("diag.enter %s", "registry.py:to_snake_case")
     s = s.replace("-", "_").replace(" ", "_")
     # Insert underscore before uppercase letters (camelCase / PascalCase)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
@@ -1120,6 +1176,7 @@ class ToolRegistry:
     """Unified tool registry and argument parsing system."""
 
     def __init__(self):
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.__init__")
         self._tool_params: dict[str, list[str]] = {t.value: list(p) for t, p in TOOL_PARAMS.items()}
         self._tools: list[str] = list(ADVERTISED_TOOLS)
         self._tool_aliases: dict[str, str] = TOOL_ALIASES.copy()
@@ -1132,6 +1189,7 @@ class ToolRegistry:
 
     def get_tools(self) -> list[str]:
         """Get all available tool names."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_tools")
         return list(self._tools)
 
     def get_tool_params(self, tool_name: str) -> list[str]:
@@ -1141,6 +1199,7 @@ class ToolRegistry:
         Performs an exact match first, then a normalized (alpha-only, lowercase)
         fallback so callers using the internal alpha-only form still resolve.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_tool_params")
         resolved_tool: str = self.resolve_tool_name(tool_name) or tool_name
 
         # Fast path: exact match on the storage key (kebab-case)
@@ -1158,6 +1217,7 @@ class ToolRegistry:
 
         Returns the input unchanged if no mapping is found.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_display_name")
         return self._display_name_by_norm.get(
             normalize_identifier(normalized_name),
             normalized_name,
@@ -1165,10 +1225,12 @@ class ToolRegistry:
 
     def is_valid_tool(self, tool_name: str) -> bool:
         """Check if a tool name is valid (with fuzzy matching)."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.is_valid_tool")
         return self.resolve_tool_name(tool_name) is not None
 
     def resolve_tool_name(self, tool_name: str) -> str | None:
         """Resolve any supported alias/noisy variation to canonical kebab-case name."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.resolve_tool_name")
         resolved: str | None = resolve_tool_name(tool_name)
         if resolved is not None:
             return resolved
@@ -1203,6 +1265,7 @@ class ToolRegistry:
         -------
             The canonicalized tool name (only a-z letters, lowercase)
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.canonicalize_tool_name")
         if not tool_name or not tool_name.strip():
             return ""
         return normalize_identifier(tool_name)
@@ -1223,6 +1286,7 @@ class ToolRegistry:
         -------
             True if the tool names match (after canonicalization), False otherwise
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.match_tool_name")
         resolved_tool: str | None = self.resolve_tool_name(tool_name)
         resolved_canonical: str | None = self.resolve_tool_name(canonical_name)
         if resolved_canonical is None:
@@ -1249,6 +1313,7 @@ class ToolRegistry:
         -------
             Parsed and validated arguments dictionary
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.parse_arguments")
         resolved_tool = self.resolve_tool_name(tool_name)
         if resolved_tool is None:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -1312,6 +1377,7 @@ class ToolRegistry:
         "naturalLanguage", "instruction", etc. Explicit structured arguments
         always win; extracted values only fill missing keys.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._expand_natural_language_arguments")
         expanded: dict[str, Any] = dict(arguments)
 
         expected_params = self.get_tool_params(tool_name)
@@ -1349,6 +1415,7 @@ class ToolRegistry:
         expected_params: list[str],
     ) -> dict[str, str]:
         """Build normalized alias->canonical-param map for NL extraction."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._build_natural_language_alias_map")
         map_out: dict[str, str] = {}
         tool_norm: str = normalize_identifier(tool_name)
         tool_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(tool_norm, {})
@@ -1381,6 +1448,7 @@ class ToolRegistry:
         - "target is main"
         - "with include ref context true and max results 5"
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_natural_language_pairs")
         extracted: dict[str, Any] = {}
 
         # Use precompiled pattern for KV extraction to avoid repeated compilation
@@ -1436,6 +1504,7 @@ class ToolRegistry:
 
     def _capture_nl_pattern(self, text: str, extracted: dict[str, Any], param_name: str, pattern: str, flags: int = re.IGNORECASE) -> None:
         """Capture a natural language pattern and extract the value if not already present."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._capture_nl_pattern")
         m = re.search(pattern, text, flags=flags)
         if not m:
             return
@@ -1446,6 +1515,7 @@ class ToolRegistry:
 
     def _extract_common_nl_patterns(self, text: str, extracted: dict[str, Any]) -> None:
         """Extract common natural language patterns using predefined capture rules."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_common_nl_patterns")
         capture_patterns: list[tuple[str, str]] = [
             # Path/program patterns
             ("programPath", r"\bprogram\s+path\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)"),
@@ -1485,6 +1555,7 @@ class ToolRegistry:
     ) -> Any:
         """Normalize natural-language extracted ``programPath`` values."""
         # Use precompiled pattern for cleanup step
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._normalize_extracted_program_path")
         cleaned: str = _PROGRAM_PATH_CLEANUP_PATTERN.sub("", raw_value).strip()
         # Use precompiled pattern to split on "to" keyword
         cleaned = _PROGRAM_PATH_SCOPE_PATTERN.split(cleaned, maxsplit=1)[0].strip()
@@ -1518,6 +1589,7 @@ class ToolRegistry:
         Returns:
             Coerced value in appropriate Python type, or original string if coercion fails
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._coerce_natural_language_value")
         value: str = raw_value.strip()
         if not value:
             return value
@@ -1577,6 +1649,7 @@ class ToolRegistry:
             The argument value or None if not found
         """
         # Try exact match first
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_argument_value")
         if param_name in arguments:
             return arguments[param_name]
 
@@ -1626,6 +1699,7 @@ class ToolRegistry:
         -------
             List of parameter name variations
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._generate_param_variations")
         variations: list[str] = [param_name]
 
         # Convert camelCase to snake_case using precompiled pattern
@@ -1656,9 +1730,8 @@ class ToolRegistry:
         """Validate that required arguments are present for a tool.
 
         Checks that all mandatory parameters for a given tool are provided in the
-        arguments dictionary. Required parameters vary by tool - for example,
-        most program-scoped tools require a programPath, while some operations
-        require additional parameters like mode or addressOrSymbol.
+        arguments dictionary. programPath is never validated here (session/backend
+        resolves the active program when omitted).
 
         Args:
             arguments: Parsed arguments dictionary to validate
@@ -1668,6 +1741,7 @@ class ToolRegistry:
             ValueError: If any required arguments are missing, with details about
                        which parameters are required for the tool
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.validate_required_arguments")
         resolved_tool = self.resolve_tool_name(tool_name) or tool_name
         canonical_name: str = self.canonicalize_tool_name(resolved_tool)
         expected_params: list[str] = self.get_tool_params(canonical_name)  # noqa: F841
@@ -1678,21 +1752,21 @@ class ToolRegistry:
         # always succeeds.
         # TODO: use the enum here and add more methods/functions/normalizing pipelines into the enum class itself.
         required_params: dict[str, list[str]] = {
-            "analyzedataflow": ["programPath"],
-            "analyzeprogram": ["programPath"],
-            "analyzevtables": ["programPath", "mode"],
-            "applydatatype": ["programPath", "addressOrSymbol", "dataTypeString"],
-            "createlabel": ["programPath", "addressOrSymbol", "labelName"],
-            "decompile": ["programPath"],
-            "getcallgraph": ["programPath"],
-            "getdata": ["programPath", "addressOrSymbol"],
-            "getreferences": ["programPath", "target"],
-            "inspectmemory": ["programPath", "mode"],
-            "managebookmarks": ["programPath", "mode"],
-            "managecomments": ["programPath", "mode"],
-            "managestructures": ["programPath", "mode"],
+            "analyzedataflow": [],
+            "analyzeprogram": [],
+            "analyzevtables": ["mode"],
+            "applydatatype": ["addressOrSymbol", "dataTypeString"],
+            "createlabel": ["addressOrSymbol", "labelName"],
+            "decompile": [],
+            "getcallgraph": [],
+            "getdata": ["addressOrSymbol"],
+            "getreferences": ["target"],
+            "inspectmemory": ["mode"],
+            "managebookmarks": ["mode"],
+            "managecomments": ["mode"],
+            "managestructures": ["mode"],
             "open": ["path"],
-            "searchconstants": ["programPath", "mode"],
+            "searchconstants": ["mode"],
         }
 
         required: list[str] = required_params.get(canonical_name, [])
@@ -1718,6 +1792,7 @@ class ToolRegistry:
         -------
             Tool call payload dictionary
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.create_tool_call")
         if validate:
             resolved_tool = self.resolve_tool_name(tool_name) or tool_name
             parsed_args: dict[str, Any] = self.parse_arguments(arguments, resolved_tool)
@@ -1753,6 +1828,7 @@ class ToolRegistry:
         -------
             Tuple of (resolved_tool_name, arguments_dict), or (None, {}) if no tool matched
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.parse_natural_language_tool_call")
         if not text or not text.strip():
             return None, {}
 
@@ -1801,6 +1877,7 @@ class ToolRegistry:
         - "at address 0x1000" → "with address 0x1000"
         - "for function main" → "with function main"
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._preprocess_nl_phrases")
         if not text or not text.strip():
             return text
 
@@ -1834,6 +1911,7 @@ class ToolRegistry:
         Raises:
             ValueError: If client is not provided or tool execution fails
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.execute_tool_cli")
         if client is None:
             raise ValueError("MCP client is required")
 
@@ -1861,6 +1939,7 @@ class ToolRegistry:
         Returns:
             Formatted response string suitable for CLI display
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.format_tool_response")
         if not response:
             return ""
 

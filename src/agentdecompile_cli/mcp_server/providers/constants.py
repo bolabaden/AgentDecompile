@@ -33,6 +33,7 @@ class ConstantSearchToolProvider(ToolProvider):
     HANDLERS = {"searchconstants": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.SEARCH_CONSTANTS.value,
@@ -69,6 +70,7 @@ class ConstantSearchToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="common")
 
@@ -91,6 +93,7 @@ class ConstantSearchToolProvider(ToolProvider):
         Performance: O(max_instructions) scan with O(samples_per_constant * unique_values) storage.
         Uses heapq.nlargest implicitly via sorting for top-K by frequency.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider._collect_constants")
         offset, max_results = self._get_pagination_params(args, default_limit=DEFAULT_LARGE_PAGE_LIMIT)
         max_instr = self._get_int(args, "maxinstructions", default=DEFAULT_MAX_INSTRUCTIONS)
         samples_per = self._get_int(args, "samplesperconstant", default=DEFAULT_SAMPLES_PER_CONSTANT)
@@ -108,6 +111,7 @@ class ConstantSearchToolProvider(ToolProvider):
         return all_results, instr_count
 
     async def _handle_specific(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider._handle_specific")
         target = self._get_int(args, "value", default=0)
         all_results, instr_count = self._collect_constants(args, lambda v: v == target)
         offset, max_results = self._get_pagination_params(args, default_limit=DEFAULT_LARGE_PAGE_LIMIT)
@@ -115,6 +119,7 @@ class ConstantSearchToolProvider(ToolProvider):
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="specific", instructionsScanned=instr_count)
 
     async def _handle_range(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider._handle_range")
         min_v = self._get_int(args, "minvalue", default=0)
         max_v = self._get_int(args, "maxvalue", default=0xFFFFFFFF)
         all_results, instr_count = self._collect_constants(args, lambda v: min_v <= v <= max_v)
@@ -123,6 +128,7 @@ class ConstantSearchToolProvider(ToolProvider):
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="range", instructionsScanned=instr_count)
 
     async def _handle_common(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/constants.py:ConstantSearchToolProvider._handle_common")
         all_results, instr_count = self._collect_constants(args, lambda v: True)
         offset, max_results = self._get_pagination_params(args, default_limit=DEFAULT_LARGE_PAGE_LIMIT)
         paginated, has_more = self._paginate_results(all_results, offset, max_results)

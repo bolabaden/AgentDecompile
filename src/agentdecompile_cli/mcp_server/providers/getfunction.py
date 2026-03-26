@@ -32,11 +32,13 @@ from typing import Any, ClassVar, cast
 
 from mcp import types
 
+from agentdecompile_cli.app_logger import basename_hint, redact_session_id
 from agentdecompile_cli.mcp_server.providers._collectors import iter_items
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
+    get_current_request_auto_match_propagate,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     FORCE_APPLY_CONFLICT_ID_KEY,
@@ -56,6 +58,7 @@ def _detail_limits(result_count: int) -> tuple[int | None, int | None, int]:
 
     Fewer results get more detail; many results get tighter caps to keep output usable.
     """
+    logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:_detail_limits")
     if result_count <= 1:
         return (None, None, 2000)
     if result_count <= 10:
@@ -112,6 +115,7 @@ class GetFunctionToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_FUNCTION.value,
@@ -249,6 +253,7 @@ class GetFunctionToolProvider(ToolProvider):
         self,
         args: dict[str, Any],
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_manage")
         self._require_program()
         action = self._require_str(args, "mode", "action", "operation", name="mode")
         func_id = self._get_address_or_symbol(args)
@@ -303,6 +308,7 @@ class GetFunctionToolProvider(ToolProvider):
         func: Any,
         func_id: str,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_rename")
         new_name = self._require_str(args, "newname", "name", name="newName")
 
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
@@ -355,6 +361,7 @@ class GetFunctionToolProvider(ToolProvider):
         func: Any,
         func_id: str,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_prototype")
         proto = self._require_str(args, "prototype", "signature", name="prototype")
 
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
@@ -405,6 +412,7 @@ class GetFunctionToolProvider(ToolProvider):
         func: Any,
         func_id: str,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_calling_convention")
         cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
 
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
@@ -455,6 +463,7 @@ class GetFunctionToolProvider(ToolProvider):
         func: Any,
         func_id: str,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_return_type")
         rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
@@ -509,6 +518,7 @@ class GetFunctionToolProvider(ToolProvider):
         def _delete_function() -> None:
             self._get_function_manager(program).removeFunction(func.getEntryPoint())
 
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_delete")
         self._run_program_transaction(program, "delete-function", _delete_function)
         return create_success_response(
             {
@@ -519,6 +529,7 @@ class GetFunctionToolProvider(ToolProvider):
         )
 
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_tags")
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
         func_id = self._get_address_or_symbol(args)
@@ -609,6 +620,7 @@ class GetFunctionToolProvider(ToolProvider):
         signature and call-graph similarity. Cache is keyed by program id; we invalidate when
         function count changes (e.g. after analysis or import).
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._get_match_index")
         cache_key: int = id(program)
         function_count: int = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
         cached: _FunctionMatchIndex | None = self._MATCH_INDEX_CACHE.get(cache_key)
@@ -664,6 +676,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     def _normalize_min_similarity(self, args: dict[str, Any]) -> float:
         """Return minSimilarity in 0.0–1.0 (accepts 0–100 or 0–1)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._normalize_min_similarity")
         raw = self._get_str(args, "minsimilarity", "similaritythreshold", default="")
         if not raw:
             return 0.7
@@ -675,6 +688,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     def _discover_target_paths(self, source_path: str) -> list[str]:
         """Discover target program paths from session (list-project-files style); exclude source; filter to common binaries."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._discover_target_paths")
         session_id = get_current_mcp_session_id()
         binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         source_norm = (source_path or "").strip().lower().replace("\\", "/")
@@ -704,6 +718,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     def _source_call_graph_sets(self, source_func: Any) -> tuple[frozenset[str], frozenset[str]]:
         """Return (callers, callees) as frozensets of function names for cross-program call-graph scoring."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._source_call_graph_sets")
         callers = frozenset(c.getName() for c in source_func.getCallingFunctions(None))
         callees = frozenset(c.getName() for c in source_func.getCalledFunctions(None))
         return callers, callees
@@ -715,6 +730,7 @@ class GetFunctionToolProvider(ToolProvider):
         target_feature: _FunctionMatchFeature,
     ) -> float:
         """Return overlap in [0, 1]: shared callers + shared callees over source total. Used to rank same-signature candidates."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._call_graph_overlap")
         if not source_callers and not source_callees:
             return 0.0
         shared_calls = len(source_callers & target_feature.callers) + len(source_callees & target_feature.callees)
@@ -728,6 +744,7 @@ class GetFunctionToolProvider(ToolProvider):
         limit: int | None = None,
     ) -> list[str]:
         """List function identifiers (name or address) from source program for bulk match."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._list_source_function_identifiers")
         fm = self._get_function_manager(program)
         identifiers: list[str] = []
         for func in iter_items(fm.getFunctions(include_externals)):
@@ -757,6 +774,7 @@ class GetFunctionToolProvider(ToolProvider):
         detail_result_count: int | None = None,
     ) -> list[types.TextContent]:
         """Match source function to equivalent functions in target programs; optionally propagate name, tags, comments, prototype, bookmarks."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_match_cross_program")
         session_id = get_current_mcp_session_id()
         manager = getattr(self, "_manager", None)
         if manager is None:
@@ -833,20 +851,11 @@ class GetFunctionToolProvider(ToolProvider):
                 )
                 if is_versioned and domain_file is not None and we_did_checkout:
                     try:
-                        from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                        from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
                         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
-                        class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
-                            def getComment(self) -> str:  # noqa: N802
-                                return "Auto match-function propagation"
-
-                            def keepCheckedOut(self) -> bool:  # noqa: N802
-                                return False
-
-                            def createKeepFile(self) -> bool:  # noqa: N802
-                                return False
-
-                        domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
+                        handler = DefaultCheckinHandler("Auto match-function propagation", False, False)
+                        domain_file.checkin(handler, TaskMonitor.DUMMY)
                     except Exception as e:
                         logger.warning("Checkin after no-match (target %s) failed: %s", target_path, e)
                 continue
@@ -1002,22 +1011,12 @@ class GetFunctionToolProvider(ToolProvider):
 
             if is_versioned and domain_file is not None and (we_did_checkout or did_propagate):
                 try:
-                    from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                    from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
                     from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
                     keep_out = not we_did_checkout and did_propagate
-
-                    class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
-                        def getComment(self) -> str:  # noqa: N802
-                            return "Auto match-function propagation"
-
-                        def keepCheckedOut(self) -> bool:  # noqa: N802
-                            return keep_out
-
-                        def createKeepFile(self) -> bool:  # noqa: N802
-                            return False
-
-                    domain_file.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
+                    handler = DefaultCheckinHandler("Auto match-function propagation", keep_out, False)
+                    domain_file.checkin(handler, TaskMonitor.DUMMY)
                 except Exception as e:
                     logger.warning("Checkin after propagation (target %s) failed: %s", target_path, e)
 
@@ -1037,11 +1036,13 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_migrate_metadata(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Bulk metadata migration: delegate to match-function with no functionIdentifier so it iterates all functions."""
         # Omit any function identifier so _handle_match always takes the bulk path
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_migrate_metadata")
         bulk_args: dict[str, Any] = {k: v for k, v in args.items() if n(k) not in ("functionidentifier", "function", "addressorsymbol", "address")}
         return await self._handle_match(bulk_args)
 
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Entry for match-function: cross-program (targetProgramPaths set) or single-program (similar/callers/callees/signature)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_match")
         self._require_program()
         raw_targets: list[str] | str | None = args.get(n("targetprogrampaths"))
         target_paths: list[str] = []
@@ -1076,6 +1077,14 @@ class GetFunctionToolProvider(ToolProvider):
                 propagate_comments = self._get_bool(args, "propagatecomments", "propagatecomment", default=False)
                 propagate_prototype = self._get_bool(args, "propagateprototype", "propagatesignature", default=False)
                 propagate_bookmarks = self._get_bool(args, "propagatebookmarks", default=False)
+                src_tail = basename_hint(source_path) if source_path else basename_hint(str(program.getName()) if hasattr(program, "getName") else "")
+                logger.info(
+                    "match_function_cross_program_single session_id=%s source_tail=%s target_count=%s auto_match_propagate_header=%s",
+                    redact_session_id(get_current_mcp_session_id()),
+                    src_tail,
+                    len(resolved_targets),
+                    bool(get_current_request_auto_match_propagate()),
+                )
                 return await self._handle_match_cross_program(
                     func,
                     program,

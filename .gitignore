@@ -276,6 +276,7 @@ gradle/wrapper/
 
 # AgentDecompile local project directories
 .agentdecompile/
+.lfg_run/
 .history/
 .env
 __init__.pyi

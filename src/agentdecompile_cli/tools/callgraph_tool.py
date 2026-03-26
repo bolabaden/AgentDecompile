@@ -9,6 +9,9 @@ Provides a single, consistent interface for callgraph generation.
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 import base64
 import re
 import sys
@@ -44,12 +47,14 @@ class CallGraphTool:
     """Unified CallGraph tool handling both MCP and CLI interfaces."""
 
     def __init__(self, program_info: ProgramInfo | None = None):
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.__init__")
         self.program_info = program_info
         self.program = getattr(program_info, "current_program", None) or getattr(program_info, "program", None) if program_info else None
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Add callgraph arguments to CLI parser."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.add_cli_args")
         group = parser.add_argument_group("Callgraph Options")
         group.add_argument(
             "--callgraphs",
@@ -138,6 +143,7 @@ class CallGraphTool:
         Returns:
             CallGraphResult with graph data and mermaid URL
         """
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.generate_for_mcp")
         if not self.program:
             raise ValueError("No program loaded")
 
@@ -184,6 +190,7 @@ class CallGraphTool:
         Returns:
             Dictionary with callgraph results
         """
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.generate_for_cli")
         if not self.program:
             raise ValueError("No program loaded")
 
@@ -222,6 +229,7 @@ class CallGraphTool:
 
     def _resolve_function(self, name_or_address: str) -> GhidraFunction | None:
         """Resolve function by name or address. Supports both thunk and IAT addresses."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._resolve_function")
         if not self.program:
             return None
 
@@ -260,6 +268,7 @@ class CallGraphTool:
         wrap_mermaid: bool = False,
     ) -> dict[str, Any]:
         """Core callgraph generation logic."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._gen_callgraph")
         if name is None:
             name = f"{func.getName()[:MAX_PATH_LEN]}-{func.entryPoint}"
 
@@ -327,6 +336,7 @@ class CallGraphTool:
         """Get calling callgraph for function."""
         # Implementation would use Ghidra's callgraph analysis
         # This is a placeholder - actual implementation would be complex
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._get_calling")
         return None
 
     def _get_called(
@@ -338,4 +348,5 @@ class CallGraphTool:
         """Get called callgraph for function."""
         # Implementation would use Ghidra's callgraph analysis
         # This is a placeholder - actual implementation would be complex
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._get_called")
         return None

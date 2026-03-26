@@ -27,6 +27,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
 from starlette.types import Message
 
+from agentdecompile_cli.app_logger import redact_session_id
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 from agentdecompile_cli.mcp_server.auth import AuthMiddleware
 from agentdecompile_cli.mcp_server.server import _validate_session_id
@@ -44,6 +45,7 @@ _MCP_SESSION_COOKIE_NAME = "mcp_session_id"
 
 def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
     """Parse Cookie header and return the value for mcp_session_id, or None."""
+    logger.debug("diag.enter %s", "mcp_server/proxy_server.py:_parse_mcp_session_cookie_from_scope")
     if scope.get("type") != "http":
         return None
     for key_b, value_b in scope.get("headers", []):
@@ -59,6 +61,7 @@ def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
 
 
 def _proxy_mcp_post_openapi_extra() -> dict[str, Any]:
+    logger.debug("diag.enter %s", "mcp_server/proxy_server.py:_proxy_mcp_post_openapi_extra")
     return {
         "requestBody": {
             "required": True,
@@ -143,6 +146,7 @@ class AgentDecompileMcpProxyServer:
     """Run a local MCP server that proxies requests to a remote MCP server."""
 
     def __init__(self, config: ProxyServerConfig, auth_config: AuthConfig | None = None):
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer.__init__")
         self.config: ProxyServerConfig = config
         self.auth_config: AuthConfig | None = auth_config
         self.app: FastAPI = FastAPI(
@@ -173,6 +177,7 @@ class AgentDecompileMcpProxyServer:
     @staticmethod
     async def _mcp_openapi_stub() -> dict[str, Any]:
         """Schema-only MCP route stub for OpenAPI visibility."""
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._mcp_openapi_stub")
         return {
             "detail": "MCP proxy requests are handled by the outer transport middleware before FastAPI routing.",
         }
@@ -293,6 +298,7 @@ class AgentDecompileMcpProxyServer:
             """Backward-compatible alias for the API index."""
             return await api_info()
 
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._setup_routes")
         for method in ("GET", "POST", "DELETE"):
             self.app.add_api_route(
                 "/mcp",
@@ -396,6 +402,12 @@ class AgentDecompileMcpProxyServer:
                 )
                 for new_sid in new_sids:
                     SESSION_CONTEXTS.bind_fingerprint(new_sid, fingerprint)
+                logger.info(
+                    "proxy_fingerprint_bind_batch new_session_count=%s remote_present=%s ua_present=%s",
+                    len(new_sids),
+                    bool(remote_addr),
+                    bool(user_agent),
+                )
             removed_sids = pre_sessions - post_sessions
             for gone_sid in removed_sids:
                 SESSION_CONTEXTS.evict_to_grace(gone_sid)
@@ -419,17 +431,30 @@ class AgentDecompileMcpProxyServer:
 
             @staticmethod
             def _handle_stale_session(scope: dict[str, Any]) -> dict[str, Any]:
+                logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._MCPRoutingMiddleware._handle_stale_session")
                 raw_headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
                 for key_b, value_b in raw_headers:
                     if key_b.lower() == b"mcp-session-id":
                         sid = value_b.decode("latin1", errors="replace").strip()
                         if sid and sid not in session_manager._server_instances:
                             cleaned = [(k, v) for k, v in raw_headers if k.lower() != b"mcp-session-id"]
+                            in_grace = SESSION_CONTEXTS.is_in_grace(sid)
+                            if in_grace:
+                                logger.info(
+                                    "stripped_stale_mcp_session_header session_id=%s proxy_sdk_instance=missing context_grace=True",
+                                    redact_session_id(sid),
+                                )
+                            else:
+                                logger.warning(
+                                    "stripped_stale_mcp_session_header session_id=%s proxy_sdk_instance=missing context_grace=False",
+                                    redact_session_id(sid),
+                                )
                             return {**scope, "headers": cleaned}
                         break
                 return scope
 
             async def __call__(self, scope: dict[str, Any], receive: Callable[[], Awaitable[Message]], send: Callable[[Message], Awaitable[None]]) -> None:
+                logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._MCPRoutingMiddleware.__call__")
                 if scope.get("type") == "http":
                     path = (scope.get("path") or "").rstrip("/") or "/"
                     if path in mcp_paths:
@@ -442,19 +467,28 @@ class AgentDecompileMcpProxyServer:
         self.app = _MCPRoutingMiddleware()  # type: ignore[assignment]
 
     def _is_port_available(self, host: str, port: int) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._is_port_available")
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.bind((host, int(port)))
                 return True
-        except OSError:
+        except OSError as e:
+            logger.debug(
+                "mcp_proxy_bind_false exc_type=%s host=%s port=%s",
+                type(e).__name__,
+                host,
+                port,
+            )
             return False
 
     def _find_free_port(self, host: str) -> int:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._find_free_port")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.bind((host, 0))
             return int(sock.getsockname()[1])
 
     def _is_server_ready(self) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._is_server_ready")
         if not self._running:
             return False
 
@@ -468,10 +502,17 @@ class AgentDecompileMcpProxyServer:
                     timeout=1.0,
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                "mcp_proxy_health_probe exc_type=%s host=%s port=%s",
+                type(e).__name__,
+                self.config.host,
+                self.config.port,
+            )
             return False
 
     def _run_server(self) -> None:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer._run_server")
         import uvicorn
 
         uvicorn_kwargs: dict[str, Any] = {
@@ -489,11 +530,17 @@ class AgentDecompileMcpProxyServer:
         try:
             asyncio.run(self._uvicorn_server.serve())
         except Exception as e:
-            logger.error("Proxy server error: %s", e)
+            logger.error(
+                "mcp_proxy_uvicorn exc_type=%s host=%s port=%s",
+                type(e).__name__,
+                self.config.host,
+                self.config.port,
+            )
         finally:
             self._running = False
 
     def start(self) -> int:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer.start")
         if self._running:
             logger.warning("Proxy server is already running")
             return self.config.port
@@ -523,6 +570,7 @@ class AgentDecompileMcpProxyServer:
         return self.config.port
 
     def stop(self) -> None:
+        logger.debug("diag.enter %s", "mcp_server/proxy_server.py:AgentDecompileMcpProxyServer.stop")
         if not self._running:
             return
 

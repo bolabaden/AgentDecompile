@@ -20,9 +20,10 @@ MCP session and no access to the main process's ProgramInfo objects.
 from __future__ import annotations
 
 import logging
-
 from collections import defaultdict
 from typing import Any
+
+from agentdecompile_cli.app_logger import basename_hint
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 def _run_program_transaction(program: Any, label: str, operation: Any) -> Any:
     """Run an operation inside a Ghidra transaction; commit on success, rollback on exception."""
+    logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_run_program_transaction")
     tx: Any = program.startTransaction(label)
     try:
         result: Any = operation()
@@ -46,6 +48,7 @@ def _run_program_transaction(program: Any, label: str, operation: Any) -> Any:
 
 def _resolve_function(program: Any, function_identifier: str) -> Any | None:
     """Resolve function by exact name, entry point string, or symbol/address via AddressUtil."""
+    logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_resolve_function")
     if not function_identifier or not program:
         return None
     fm: Any = program.getFunctionManager()
@@ -67,6 +70,7 @@ def _resolve_function(program: Any, function_identifier: str) -> Any | None:
 
 def _build_by_signature(program: Any) -> dict[tuple[int, str], list[Any]]:
     """Build index (param_count, return_type) → list of functions for fast signature-based matching."""
+    logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_build_by_signature")
     fm: Any = program.getFunctionManager()
     if fm is None:
         return {}
@@ -99,7 +103,18 @@ def run_auto_match_subprocess(
     arguments (strings, lists, floats). Returns a dict with success, error,
     results (list of per-target entries), count, and sourceFunction.
     """
+    logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:run_auto_match_subprocess")
     result: dict[str, Any] = {"success": False, "error": None, "results": [], "count": 0}
+    logger.debug(
+        "auto_match_worker_ipc_entry target_count=%s min_similarity=%s flags=name=%s tags=%s comments=%s proto=%s bookmarks=%s",
+        len(target_program_paths),
+        min_similarity,
+        propagate_names,
+        propagate_tags,
+        propagate_comments,
+        propagate_prototype,
+        propagate_bookmarks,
+    )
     logger.info(
         "auto_match_subprocess project=%s source=%s function=%s targets=%s",
         project_name,
@@ -136,6 +151,11 @@ def run_auto_match_subprocess(
             result["error"] = f"Failed to open source program: {source_program_path}"
             return result
 
+        logger.info(
+            "pyghidra_auto_match_worker_stage stage=source_open_ok path_tail=%s",
+            basename_hint(source_program_path),
+        )
+
         try:
             source_func = _resolve_function(source_program, function_identifier)
             if source_func is None:
@@ -147,7 +167,7 @@ def run_auto_match_subprocess(
             sig_key = (source_func.getParameterCount(), str(source_func.getReturnType()))
             results_per_target: list[dict[str, Any]] = []
 
-            for target_path in target_program_paths:
+            for target_index, target_path in enumerate(target_program_paths, start=1):
                 target_path = str(target_path).strip()
                 if not target_path:
                     continue
@@ -162,9 +182,20 @@ def run_auto_match_subprocess(
                         # Some Ghidra API versions require programName and readOnly
                         target_program = ghidra_project.openProgram(tgt_df, programName=target_path, readOnly=False)
                     if target_program is None:
+                        logger.warning(
+                            "pyghidra_auto_match_worker_stage stage=open_target path_tail=%s target_index=%s outcome=null_program",
+                            basename_hint(target_path),
+                            target_index,
+                        )
                         results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": "Failed to open"})
                         continue
                 except Exception as outer_e:
+                    logger.warning(
+                        "pyghidra_auto_match_worker_stage stage=target_loop_outer exc_type=%s target_index=%s path_tail=%s",
+                        type(outer_e).__name__,
+                        target_index,
+                        basename_hint(target_path),
+                    )
                     results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": str(outer_e)})
                     continue
 
@@ -310,23 +341,13 @@ def run_auto_match_subprocess(
                     # If we modified the target (or checked it out), checkin so changes are committed to the repo
                     if is_versioned and domain_file_tgt is not None and (we_did_checkout or did_propagate):
                         try:
-                            from ghidra.framework.data import CheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                            from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
                             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
                             # keepCheckedOut=true when we only propagated (didn't checkout ourselves) so caller can keep editing
                             keep_out = not we_did_checkout and did_propagate
-
-                            class _MatchCheckinHandler(CheckinHandler):  # type: ignore[misc]
-                                def getComment(self) -> str:
-                                    return "Auto match-function propagation"
-
-                                def keepCheckedOut(self) -> bool:
-                                    return keep_out
-
-                                def createKeepFile(self) -> bool:
-                                    return False
-
-                            domain_file_tgt.checkin(_MatchCheckinHandler(), TaskMonitor.DUMMY)
+                            handler = DefaultCheckinHandler("Auto match-function propagation", keep_out, False)
+                            domain_file_tgt.checkin(handler, TaskMonitor.DUMMY)
                         except Exception as e:
                             logger.debug("Checkin after propagation failed: %s", e)
 

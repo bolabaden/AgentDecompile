@@ -9,6 +9,9 @@ Provides a single, consistent interface for function decompilation.
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.models import DecompiledFunction
@@ -38,6 +41,7 @@ class DecompileTool:
     """
 
     def __init__(self, program_info: ProgramInfo | None = None, decompiler: GhidraDecompInterface | None = None):
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool.__init__")
         self.program_info = program_info
         self.program = getattr(program_info, "program", None) if program_info else None
         self.decompiler = decompiler if decompiler is not None else (getattr(program_info, "decompiler", None) if program_info else None)
@@ -45,6 +49,7 @@ class DecompileTool:
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Add decompilation arguments to CLI parser."""
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool.add_cli_args")
         group = parser.add_argument_group("Decompilation Options")
         group.add_argument(
             "--decompile-timeout",
@@ -75,8 +80,9 @@ class DecompileTool:
         Returns:
             DecompiledFunction with name, code, and signature
         """
-        if not self.program or not self.decompiler:
-            raise ValueError("Program and decompiler must be set")
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool.decompile_function_for_mcp")
+        if not self.program:
+            raise ValueError("Program must be set")
 
         func = self._resolve_function(function_name_or_address)
         if not func:
@@ -104,6 +110,7 @@ class DecompileTool:
         Returns:
             List of [function_name, decompiled_code, signature]
         """
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool.decompile_function_for_cli")
         if thread_id not in decompilers:
             raise ValueError(f"No decompiler available for thread {thread_id}")
 
@@ -121,16 +128,26 @@ class DecompileTool:
         timeout: int = 30,
     ) -> DecompiledFunction:
         """Core single function decompilation logic."""
-        if not self.decompiler:
-            raise ValueError("Decompiler not available")
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._decompile_single_function")
+        from agentdecompile_cli.mcp_utils.decompiler_util import resolve_decompiler_for_program
 
-        result = self._decompile_with_decompiler(func, self.decompiler, timeout)
+        if not self.program:
+            raise ValueError("Program must be set")
 
-        return DecompiledFunction(
-            name=self._get_function_name(func),
-            code=result["code"],
-            signature=result["signature"],
-        )
+        decompiler, owns_ephemeral = resolve_decompiler_for_program(self.decompiler, self.program)
+        try:
+            result = self._decompile_with_decompiler(func, decompiler, timeout)
+            return DecompiledFunction(
+                name=self._get_function_name(func),
+                code=result["code"],
+                signature=result["signature"],
+            )
+        finally:
+            if owns_ephemeral:
+                try:
+                    decompiler.dispose()
+                except Exception:
+                    logger.debug("ephemeral_decompiler_dispose_failed", exc_info=True)
 
     def _decompile_with_decompiler(
         self,
@@ -140,7 +157,10 @@ class DecompileTool:
         monitor: Any | None = None,
     ) -> dict[str, Any]:
         """Core decompilation logic with a specific decompiler instance."""
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._decompile_with_decompiler")
         from ghidra.util.task import ConsoleTaskMonitor
+
+        from agentdecompile_cli.mcp_utils.decompiler_util import get_decompiled_function_from_results
 
         if monitor is None:
             monitor = ConsoleTaskMonitor()
@@ -148,22 +168,50 @@ class DecompileTool:
         # Perform the decompilation
         decompile_result = decompiler.decompileFunction(func, timeout, monitor)
 
-        # Extract results
-        if decompile_result.getErrorMessage() == "":
-            code = decompile_result.decompiledFunction.getC()
-            signature = decompile_result.decompiledFunction.getSignature()
-        else:
-            code = decompile_result.getErrorMessage()
-            signature = None
+        err = ""
+        try:
+            err = decompile_result.getErrorMessage() or ""
+        except Exception:
+            err = ""
 
-        return {
-            "code": code,
-            "signature": signature,
-            "error_message": decompile_result.getErrorMessage(),
-        }
+        completed = False
+        try:
+            completed = bool(decompile_result.decompileCompleted())
+        except Exception:
+            completed = False
+
+        df = get_decompiled_function_from_results(decompile_result) if completed else None
+
+        if completed and df is not None:
+            code = df.getC()
+            signature = df.getSignature()
+            if (code or "").strip():
+                if err:
+                    logger.debug("decompile_completed_with_nonempty_error_message: %s", err[:500])
+                return {
+                    "code": code,
+                    "signature": signature,
+                    "error_message": err or "",
+                }
+            raise RuntimeError("Decompilation completed but C output was empty")
+
+        extra = ""
+        for attr in ("timedOut", "isTimedOut", "wasCancelled", "isCancelled"):
+            if hasattr(decompile_result, attr):
+                try:
+                    if bool(getattr(decompile_result, attr)()):
+                        extra = f"{attr}=true"
+                        break
+                except Exception:
+                    pass
+        msg = err or decompiler.getLastMessage() or "decompileCompleted() is false"
+        if extra:
+            msg = f"{msg} ({extra})" if msg else extra
+        raise RuntimeError(msg or "Decompilation failed")
 
     def _resolve_function(self, name_or_address: str) -> GhidraFunction | None:
         """Resolve function by name or address. Address strings: 0x = hex, else decimal (AddressUtil)."""
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._resolve_function")
         if not self.program:
             return None
 
@@ -195,5 +243,6 @@ class DecompileTool:
 
     def _get_function_name(self, func: GhidraFunction) -> str:
         """Get a standardized function name."""
+        logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._get_function_name")
         MAX_PATH_LEN = 50
         return f"{func.getName()[:MAX_PATH_LEN]}-{func.entryPoint}"

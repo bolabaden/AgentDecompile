@@ -41,6 +41,7 @@ def _get_listing_comment(listing: Any, comment_type_code: int, addr: Any) -> str
     """Get comment at address for the given type. Supports both Listing overloads:
     getComment(int, Address) and getComment(CommentType, Address).
     """
+    logger.debug("diag.enter %s", "mcp_server/providers/comments.py:_get_listing_comment")
     try:
         return listing.getComment(comment_type_code, addr)
     except Exception as e:
@@ -68,6 +69,7 @@ class CommentToolProvider(ToolProvider):
     HANDLERS = {"managecomments": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_COMMENTS.value,
@@ -100,9 +102,11 @@ class CommentToolProvider(ToolProvider):
         ]
 
     def _resolve_comment_type(self, type_str: str) -> int:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._resolve_comment_type")
         return _COMMENT_TYPES.get(n(type_str), 0)
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", "action", "operation", default="get")
 
@@ -123,6 +127,7 @@ class CommentToolProvider(ToolProvider):
         )
 
     async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle_set")
         assert self.program_info is not None, "Program info is required to set comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -192,6 +197,7 @@ class CommentToolProvider(ToolProvider):
         return create_success_response({"action": "set", "address": str(addr), "type": ctype, "comment": text, "success": True})
 
     async def _handle_get(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle_get")
         assert self.program_info is not None, "Program info is required to get comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -205,6 +211,7 @@ class CommentToolProvider(ToolProvider):
         return create_success_response({"action": "get", "address": str(addr), "comments": comments})
 
     async def _handle_remove(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle_remove")
         assert self.program_info is not None, "Program info is required to remove comments"
         program = self.program_info.program
         listing = self._get_listing(program)
@@ -245,6 +252,7 @@ class CommentToolProvider(ToolProvider):
         -------
         Paginated response with matching comments
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle_search")
         assert self.program_info is not None, "Program info is required to search comments"
         program = self.program_info.program
         query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
@@ -266,6 +274,7 @@ class CommentToolProvider(ToolProvider):
 
     async def _handle_search_decomp(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Search comments in decompiled output."""
+        logger.debug("diag.enter %s", "mcp_server/providers/comments.py:CommentToolProvider._handle_search_decomp")
         assert self.program_info is not None, "Program info is required for decomp search"
         program = self.program_info.program
         query = self._get_str(args, "searchtext", "query", "search", "text", "pattern")
@@ -274,6 +283,8 @@ class CommentToolProvider(ToolProvider):
         results: list[dict[str, str]] = []
         try:
             from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingModuleSource]
+
+            from agentdecompile_cli.mcp_utils.decompiler_util import get_decompiled_function_from_results
 
             decomp = DecompInterface()
             decomp.openProgram(program)
@@ -287,7 +298,8 @@ class CommentToolProvider(ToolProvider):
                 try:
                     dr = decomp.decompileFunction(func, 30, monitor)
                     if dr and dr.decompileCompleted():
-                        code = dr.getDecompiledFunction().getC()
+                        df = get_decompiled_function_from_results(dr)
+                        code = df.getC() if df else ""
                         if code and query.lower() in code.lower():
                             results.append(
                                 {

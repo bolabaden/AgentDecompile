@@ -27,6 +27,7 @@ class DataTypeToolProvider(ToolProvider):
     HANDLERS = {"managedatatypes": "_handle"}
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.MANAGE_DATA_TYPES.value,
@@ -53,6 +54,7 @@ class DataTypeToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._handle")
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
         # Pattern 1 dispatch: get handler by action, then call with args
@@ -66,6 +68,7 @@ class DataTypeToolProvider(ToolProvider):
         return await handler(args)
 
     async def _archives(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._archives")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         archives = collect_data_type_archives(program)
@@ -73,6 +76,7 @@ class DataTypeToolProvider(ToolProvider):
         return create_success_response({"action": "archives", "archives": archives, "count": len(archives)})
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._list")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         dtm = program.getDataTypeManager()
@@ -138,6 +142,7 @@ class DataTypeToolProvider(ToolProvider):
         )
 
     async def _by_string(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._by_string")
         dt_str = self._require_str(args, "datatypestring", "datatype", "typestring", "type", name="dataTypeString")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -165,6 +170,7 @@ class DataTypeToolProvider(ToolProvider):
             raise ValueError(f"Could not parse data type '{dt_str}': {e}")
 
     async def _apply(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._apply")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         dt_str = self._require_str(args, "datatypestring", "datatype", "type", name="dataTypeString")
         assert self.program_info is not None  # for type checker

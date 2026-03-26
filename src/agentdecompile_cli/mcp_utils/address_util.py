@@ -10,6 +10,9 @@ via AddressUtil.format_address for consistency.
 
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -42,6 +45,7 @@ class AddressUtil:
         Returns:
             A hex string representation with "0x" prefix, or None if address is None
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.format_address")
         if address is None:
             return None
         return address.toString("0x")
@@ -60,6 +64,7 @@ class AddressUtil:
         Returns:
             The parsed GhidraAddress object, or None if parsing fails
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.parse_address")
         if address_string is None or not address_string.strip():
             return None
 
@@ -91,6 +96,7 @@ class AddressUtil:
         Returns:
             True if the address string can be parsed, False otherwise
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.is_valid_address")
         return AddressUtil.parse_address(program, address_string) is not None
 
     @staticmethod
@@ -107,6 +113,7 @@ class AddressUtil:
         Returns:
             The resolved GhidraAddress object, or None if neither symbol nor address is valid
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_address_or_symbol")
         if address_or_symbol is None or not address_or_symbol.strip():
             return None
 
@@ -141,7 +148,14 @@ class AddressUtil:
             pass
 
         # If not found as a symbol, try to parse as an address
-        return AddressUtil.parse_address(program, input_str)
+        final_addr = AddressUtil.parse_address(program, input_str)
+        if final_addr is None:
+            logger.debug(
+                "addr_resolve_unresolved input_len=%s starts_0x=%s",
+                len(input_str),
+                input_str.lower().startswith("0x"),
+            )
+        return final_addr
 
     @staticmethod
     def resolve_iat_to_thunk(program: GhidraProgram, address: GhidraAddress) -> GhidraAddress | None:
@@ -158,6 +172,7 @@ class AddressUtil:
         Returns:
             The thunk/external address the IAT points to, or None if not an IAT slot
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_iat_to_thunk")
         if program is None or address is None:
             return None
         ref_mgr = program.getReferenceManager()
@@ -183,6 +198,7 @@ class AddressUtil:
         Enables list-cross-references and get-call-graph to support both thunk addresses
         (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc) by normalizing IAT to thunk.
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_address_or_symbol_prefer_thunk")
         addr = AddressUtil.resolve_address_or_symbol(program, address_or_symbol)
         if addr is None:
             return None
@@ -200,6 +216,7 @@ class AddressUtil:
         Returns:
             The containing function, or None if the address is not within a function
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.get_containing_function")
         if program is None or address is None:
             return None
 
@@ -216,6 +233,7 @@ class AddressUtil:
         Returns:
             The data at or containing the address, or None if no data exists there
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.get_containing_data")
         if program is None or address is None:
             return None
 
@@ -245,6 +263,7 @@ class AddressUtil:
         Returns:
             True if this appears to be an undefined function location
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.is_undefined_function_address")
         if program is None or address_or_symbol is None or not address_or_symbol.strip():
             return False
 
@@ -265,6 +284,7 @@ class AddressUtil:
         Returns:
             True if this appears to be an undefined function location
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil._is_undefined_function_address")
         if program is None or address is None:
             return False
 

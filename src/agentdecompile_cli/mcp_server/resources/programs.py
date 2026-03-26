@@ -31,6 +31,7 @@ class ProgramListResource(ResourceProvider):
     @staticmethod
     def _is_programs_uri(uri: str) -> bool:
         """Return True if URI is ghidra://programs (scheme ghidra, path/netloc 'programs')."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource._is_programs_uri")
         parsed = urlsplit(uri)
         if parsed.scheme.lower() != "ghidra":
             return False
@@ -39,6 +40,7 @@ class ProgramListResource(ResourceProvider):
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of program resources."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource.list_resources")
         return [
             types.Resource(
                 uri="ghidra://programs",  # pyright: ignore[reportArgumentType]
@@ -50,6 +52,7 @@ class ProgramListResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the program list resource."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource.read_resource")
         uri_text = str(uri)
         if not self._is_programs_uri(uri_text):
             raise NotImplementedError(f"Unknown resource: {uri}")

@@ -19,6 +19,7 @@ class AgentDecompileInternalServiceRegistry:
     @staticmethod
     def _service_name(service_class: type[Any]) -> str:
         """Return a stable display name for a service class."""
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry._service_name")
         return getattr(service_class, "__name__", str(service_class))
 
     @staticmethod
@@ -29,6 +30,7 @@ class AgentDecompileInternalServiceRegistry:
             service_class: The service interface/class type
             service_instance: The service implementation instance
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.register_service")
         AgentDecompileInternalServiceRegistry._services[service_class] = service_instance
         logger.debug("Registered service: %s", AgentDecompileInternalServiceRegistry._service_name(service_class))
 
@@ -39,6 +41,7 @@ class AgentDecompileInternalServiceRegistry:
         Args:
             service_class: The service interface/class type to unregister
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.unregister_service")
         services = AgentDecompileInternalServiceRegistry._services
         if service_class in services:
             del services[service_class]
@@ -56,6 +59,7 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             The service instance, or None if not registered
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.get_service")
         return AgentDecompileInternalServiceRegistry._services.get(service_class)
 
     @staticmethod
@@ -68,11 +72,13 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             True if the service is registered
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.has_service")
         return service_class in AgentDecompileInternalServiceRegistry._services
 
     @staticmethod
     def clear_all_services() -> None:
         """Clear all registered services (primarily for testing)."""
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.clear_all_services")
         AgentDecompileInternalServiceRegistry._services.clear()
         logger.debug("Cleared all services")
 
@@ -83,6 +89,7 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             Dictionary mapping service class names to service instance types
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.list_services")
         return {AgentDecompileInternalServiceRegistry._service_name(service_class): type(service_instance).__name__ for service_class, service_instance in AgentDecompileInternalServiceRegistry._services.items()}
 
     @staticmethod
@@ -92,4 +99,5 @@ class AgentDecompileInternalServiceRegistry:
         Returns:
             Number of registered services
         """
+        logger.debug("diag.enter %s", "mcp_utils/service_registry.py:AgentDecompileInternalServiceRegistry.get_service_count")
         return len(AgentDecompileInternalServiceRegistry._services)

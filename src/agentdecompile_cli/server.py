@@ -87,6 +87,7 @@ def init_agentdecompile_context(
 
     Returns (launcher, project_manager). project_manager is only set when not using a .gpr.
     """
+    logger.debug("diag.enter %s", "server.py:init_agentdecompile_context")
     bin_paths: list[Path] = [Path(p) for p in input_paths]
     logger.info("Project: %s", project_name)
     logger.info("Project location: %s", project_directory)
@@ -172,6 +173,7 @@ def init_agentdecompile_context(
 
 def _env_port() -> int:
     """Default port from AGENT_DECOMPILE_PORT (1:1 Java applyHeadlessServerEnvOverrides)."""
+    logger.debug("diag.enter %s", "server.py:_env_port")
     v = os.environ.get("AGENT_DECOMPILE_PORT")
     if not v:
         return 8080
@@ -184,6 +186,7 @@ def _env_port() -> int:
 
 def _env_host() -> str:
     """Default host from AGENT_DECOMPILE_HOST (1:1 Java applyHeadlessServerEnvOverrides)."""
+    logger.debug("diag.enter %s", "server.py:_env_host")
     return (os.environ.get("AGENT_DECOMPILE_HOST") or "").strip() or "127.0.0.1"
 
 
@@ -196,6 +199,7 @@ def _resolve_proxy_backend_url(
     Priority: --backend-url > --mcp-server-url > AGENT_DECOMPILE_* env
               > AGENTDECOMPILE_* env (compact form, e.g. AGENTDECOMPILE_MCP_SERVER_URL).
     """
+    logger.debug("diag.enter %s", "server.py:_resolve_proxy_backend_url")
     raw = explicit_backend_url
     if not raw or not raw.strip():
         raw = explicit_mcp_server_url
@@ -215,6 +219,7 @@ def _resolve_default_project_path(project_path_arg: Path) -> Path:
     ``agentdecompile_projects``) and a mounted ``/projects`` directory exists,
     prefer that persistent location so domain storage survives container restarts.
     """
+    logger.debug("diag.enter %s", "server.py:_resolve_default_project_path")
     raw: str = str(project_path_arg).strip()
     is_builtin_default = raw in {"agentdecompile_projects", "./agentdecompile_projects"}
     if not is_builtin_default:
@@ -232,6 +237,7 @@ def _resolve_default_project_path(project_path_arg: Path) -> Path:
 
 
 def _configure_http_debug_logging(verbose: bool) -> None:
+    logger.debug("diag.enter %s", "server.py:_configure_http_debug_logging")
     level = logging.INFO if verbose else logging.WARNING
     logging.getLogger("httpx").setLevel(level)
     logging.getLogger("httpcore").setLevel(level)
@@ -239,6 +245,7 @@ def _configure_http_debug_logging(verbose: bool) -> None:
 
 def _configure_logging(verbose: bool) -> None:
     """Configure root and HTTP client logging levels."""
+    logger.debug("diag.enter %s", "server.py:_configure_logging")
     logging.getLogger().setLevel(logging.DEBUG if verbose else logging.WARNING)
     _configure_http_debug_logging(verbose)
 
@@ -247,14 +254,17 @@ class CredentialSanitizer(logging.Filter):
     """Logging filter that redacts registered sensitive strings from all log records."""
 
     def __init__(self) -> None:
+        logger.debug("diag.enter %s", "server.py:CredentialSanitizer.__init__")
         super().__init__()
         self._secrets: set[str] = set()
 
     def register(self, value: str) -> None:
+        logger.debug("diag.enter %s", "server.py:CredentialSanitizer.register")
         if value and value.strip():
             self._secrets.add(value.strip())
 
     def filter(self, record: logging.LogRecord) -> bool:
+        logger.debug("diag.enter %s", "server.py:CredentialSanitizer.filter")
         if not self._secrets:
             return True
         try:
@@ -269,6 +279,7 @@ class CredentialSanitizer(logging.Filter):
 
 
 def _redact_args(args: Any, secret: str) -> Any:
+    logger.debug("diag.enter %s", "server.py:_redact_args")
     if args is None:
         return args
     if isinstance(args, str):
@@ -286,6 +297,7 @@ _credential_sanitizer = CredentialSanitizer()
 
 
 def _first_non_empty_env(*keys: str) -> str | None:
+    logger.debug("diag.enter %s", "server.py:_first_non_empty_env")
     for key in keys:
         value = os.environ.get(key)
         if value is not None and value.strip():
@@ -294,6 +306,7 @@ def _first_non_empty_env(*keys: str) -> str | None:
 
 
 def _set_env_if_missing(target: str, *sources: str) -> None:
+    logger.debug("diag.enter %s", "server.py:_set_env_if_missing")
     current = os.environ.get(target)
     if current is not None and current.strip():
         logger.debug("env-alias: %s already set (value length=%d), skipping sources %s", target, len(current.strip()), sources)
@@ -319,6 +332,7 @@ def _normalize_shared_server_env_aliases() -> None:
     # Canonical Ghidra-prefixed env vars used by server/launcher/auth logic.
     # Includes AGENTDECOMPILE_HTTP_GHIDRA_SERVER_* variants used by MCP
     # launcher configs (e.g. VS Code mcp.json).
+    logger.debug("diag.enter %s", "server.py:_normalize_shared_server_env_aliases")
     _set_env_if_missing(
         "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
         "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST",
@@ -396,6 +410,7 @@ def _set_env_from_args(args: Any) -> None:
     cannot appear in process listings, debug logs, or exception tracebacks, and
     installs a root logging filter that redacts any residual occurrences.
     """
+    logger.debug("diag.enter %s", "server.py:_set_env_from_args")
     _SENSITIVE_ARGS = {"ghidra_server_username", "ghidra_server_password"}
     mappings = {
         "ghidra_server_host": "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
@@ -434,6 +449,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
     # For each name like "ghidra_server_password", generate:
     #   --ghidra-server-password, --ghidra_server_password (current forms)
     #   --ghidra-server-password, --ghidra-server_password (legacy forms, for safety)
+    logger.debug("diag.enter %s", "server.py:_scrub_argv")
     flag_variants: set[str] = set()
     for name in sensitive_arg_names:
         base = name.replace("_", "-")
@@ -471,6 +487,7 @@ def _scrub_argv(sensitive_arg_names: set[str]) -> None:
 
 def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]:
     """Resolve and validate project path inputs into directory/name/.gpr tuple."""
+    logger.debug("diag.enter %s", "server.py:_setup_project_paths")
     project_path = _resolve_default_project_path(args.project_path).resolve()
     sys.stderr.write(f"[project-paths] raw='{args.project_path}' \u2192 resolved='{project_path}' (suffix='{project_path.suffix}', project_name='{args.project_name}')\n")
     if project_path.suffix.lower() == ".gpr":
@@ -495,6 +512,7 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
 
 def _initialize_pyghidra(verbose_analysis: bool) -> None:
     """Initialize PyGhidra and apply session/output patches."""
+    logger.debug("diag.enter %s", "server.py:_initialize_pyghidra")
     from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
 
     _apply_mcp_session_fix()
@@ -526,11 +544,14 @@ def _initialize_pyghidra(verbose_analysis: bool) -> None:
             _redirect_java_outputs()
         sys.stderr.write("PyGhidra initialized\n")
     except Exception:
+        raise
+    finally:
+        # Always restore stdio after PyGhidra bootstrap (success or failure). Leaving StderrFilter
+        # installed breaks normal logging and can interfere with readiness / diagnostics.
         if sys.stdout != original_stdout:
             sys.stdout = original_stdout
         if sys.stderr != original_stderr:
             sys.stderr = original_stderr
-        raise
 
 
 async def _run_stdio_mode(
@@ -539,6 +560,7 @@ async def _run_stdio_mode(
     backend: str | int,
 ) -> None:
     """Run stdio MCP bridge mode."""
+    logger.debug("diag.enter %s", "server.py:_run_stdio_mode")
     from agentdecompile_cli.__main__ import AgentDecompileCLI
 
     cli = AgentDecompileCLI(
@@ -551,6 +573,7 @@ async def _run_stdio_mode(
 
 async def _run_http_mode(host: str, port: int | None) -> None:
     """Run HTTP mode loop after launcher startup."""
+    logger.debug("diag.enter %s", "server.py:_run_http_mode")
     if port is None:
         raise RuntimeError("Launcher did not provide a server port")
     sys.stderr.write(f"AgentDecompile server running at http://{host}:{port}/mcp/message\n")
@@ -564,6 +587,7 @@ def _cleanup_resources(
     project_manager: ProjectManager | None,
 ) -> None:
     """Release launcher and project manager resources."""
+    logger.debug("diag.enter %s", "server.py:_cleanup_resources")
     if launcher:
         launcher.stop()
     if project_manager and hasattr(project_manager, "cleanup"):
@@ -575,6 +599,7 @@ def _cleanup_resources(
 
 def main() -> None:
     """Parse server options and run init + transport."""
+    logger.debug("diag.enter %s", "server.py:main")
     import argparse
 
     try:
@@ -844,6 +869,7 @@ def proxy_main() -> None:
     or HTTP without running a local Ghidra instance. Backend URL is required via
     --backend-url, --mcp-server-url, or env AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL.
     """
+    logger.debug("diag.enter %s", "server.py:proxy_main")
     import argparse
 
     parser = argparse.ArgumentParser(

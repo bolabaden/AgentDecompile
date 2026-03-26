@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(r"c:/GitHub/agentdecompile")
+ROOT = Path(__file__).resolve().parent.parent
 TOOLS_LIST = ROOT / "TOOLS_LIST.md"
 TOOLS_LIST_GENERATED = ROOT / "TOOLS_LIST_GENERATED.md"
 DIFF_OUT = ROOT / "tmp" / "TOOLS_LIST_GENERATED.diff"

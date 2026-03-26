@@ -32,6 +32,7 @@ _URI = "ghidra://analysis-dump"
 
 def _collect_bookmarks_fast(program: Any) -> list[dict[str, Any]]:
     """Single-pass bookmark iteration. Keys a/t/c/m match keyLegend (address, type, category, comment)."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_bookmarks_fast")
     out: list[dict[str, Any]] = []
     try:
         bm_mgr = program.getBookmarkManager()
@@ -54,6 +55,7 @@ def _collect_bookmarks_fast(program: Any) -> list[dict[str, Any]]:
 
 def _collect_symbols_fast(program: Any) -> list[dict[str, Any]]:
     """Single-pass symbol/label iteration."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_symbols_fast")
     out: list[dict[str, Any]] = []
     try:
         st = program.getSymbolTable()
@@ -75,6 +77,7 @@ def _collect_symbols_fast(program: Any) -> list[dict[str, Any]]:
 
 def _collect_comments_fast(program: Any) -> list[dict[str, Any]]:
     """Single-pass comment iteration over code units."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_comments_fast")
     out: list[dict[str, Any]] = []
     try:
         listing = program.getListing()
@@ -107,6 +110,7 @@ def _collect_comments_fast(program: Any) -> list[dict[str, Any]]:
 
 def _collect_functions_fast(program: Any) -> list[dict[str, Any]]:
     """Single-pass function iteration, minimal fields."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_functions_fast")
     out: list[dict[str, Any]] = []
     try:
         fm = program.getFunctionManager()
@@ -132,6 +136,7 @@ def _collect_functions_fast(program: Any) -> list[dict[str, Any]]:
 
 def _collect_data_types_fast(program: Any) -> list[dict[str, Any]]:
     """Single-pass data type names (path + name only). Recursively walks category tree."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_data_types_fast")
     out: list[dict[str, Any]] = []
     try:
         dtm = program.getDataTypeManager()
@@ -154,6 +159,7 @@ def _collect_data_types_fast(program: Any) -> list[dict[str, Any]]:
 
 def _collect_strings_fast(program: Any, limit: int = 50000) -> list[dict[str, Any]]:
     """Bounded string iteration; stops at limit to avoid huge dumps in string-heavy binaries."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_strings_fast")
     out: list[dict[str, Any]] = []
     try:
         from ghidra.program.util import DefinedDataIterator  # pyright: ignore[reportMissingModuleSource]
@@ -171,6 +177,7 @@ def _collect_strings_fast(program: Any, limit: int = 50000) -> list[dict[str, An
 
 def _collect_programs_from_session(session_id: str) -> list[dict[str, Any]]:
     """Program paths from session (open + project binaries)."""
+    logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_programs_from_session")
     out: list[dict[str, Any]] = []
     try:
         session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -193,6 +200,7 @@ class AnalysisDumpResource(ResourceProvider):
     """MCP resource that returns all analysis data as one JSON document."""
 
     def list_resources(self) -> list[types.Resource]:
+        logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:AnalysisDumpResource.list_resources")
         return [
             types.Resource(
                 uri=AnyUrl(url=_URI),
@@ -203,6 +211,7 @@ class AnalysisDumpResource(ResourceProvider):
         ]
 
     async def read_resource(self, uri: str) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:AnalysisDumpResource.read_resource")
         if str(uri) != _URI:
             raise NotImplementedError(f"Unknown resource: {uri}")
 

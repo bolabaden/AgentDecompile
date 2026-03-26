@@ -16,6 +16,7 @@ from typing import Any
 
 from mcp import types
 
+from agentdecompile_cli.app_logger import norm_arg_keys
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -31,6 +32,7 @@ class ScriptToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/script.py:ScriptToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.EXECUTE_SCRIPT.value,
@@ -105,6 +107,7 @@ class ScriptToolProvider(ToolProvider):
         Returns:
             dict[str, Any]: Namespace ready for eval/exec of script code.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/script.py:ScriptToolProvider._build_namespace")
         ns: dict[str, Any] = {"__builtins__": __builtins__}
 
         program = None
@@ -284,6 +287,7 @@ class ScriptToolProvider(ToolProvider):
         This is intentional for the script sandbox – validation should happen
         at the tool invocation layer (not in this provider).
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/script.py:ScriptToolProvider._handle_execute")
         code = self._require_str(args, "code", "script", "expression", "source", name="code")
         timeout = self._get_int(args, "timeout", default=30)
 
@@ -306,11 +310,16 @@ class ScriptToolProvider(ToolProvider):
                     # This handles: for loops, assignments, multiline scripts
                     exec(code, ns)  # noqa: S102
                     result = ns.get("__result__")
-        except Exception:
+        except Exception as script_exc:
             # Any exception (not just SyntaxError) → capture traceback to stderr
             tb = traceback.format_exc()
             stderr_capture.write(tb)
             result = None
+            logger.warning(
+                "pyghidra_script_execute_fail exc_type=%s arg_keys=%s",
+                type(script_exc).__name__,
+                norm_arg_keys(args),
+            )
 
         stdout_text = stdout_capture.getvalue()
         stderr_text = stderr_capture.getvalue()
@@ -364,6 +373,7 @@ def _serialize_result(obj: Any, max_depth: int = 3, max_items: int = 200) -> str
         _serialize_result(b"hello") → "68656c6c6f"
         _serialize_result(java_iterator) → "[item1, item2, ...]"
     """
+    logger.debug("diag.enter %s", "mcp_server/providers/script.py:_serialize_result")
     if obj is None:
         return "None"
 

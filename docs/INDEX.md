@@ -37,9 +37,11 @@ This index now reflects the files that actually exist in the repository. Referen
 
 1. [../CONTRIBUTING.md](../CONTRIBUTING.md)
   - Dev setup, testing, release process, and tool-doc sync workflow.
-2. [../src/CLAUDE.md](../src/CLAUDE.md)
+2. [./e2e_shared_local_checkout_sync.md](./e2e_shared_local_checkout_sync.md)
+  - Manual E2E: shared vs local `.gpr` checkout/checkin, MCP restart persistence, `sync-project`, PowerShell runner (`scripts/e2e_checkout_sync_plan_runner.ps1`).
+3. [../src/CLAUDE.md](../src/CLAUDE.md)
   - Source layout and architecture overview.
-3. [../src/agentdecompile_cli/CLAUDE.md](../src/agentdecompile_cli/CLAUDE.md)
+4. [../src/agentdecompile_cli/CLAUDE.md](../src/agentdecompile_cli/CLAUDE.md)
   - Registry, provider, and normalization rules.
 
 ### MCP debugging (agent skill)
@@ -68,7 +70,7 @@ When docs and prose disagree, use the code and tests:
 - `src/agentdecompile_cli/registry.py` for canonical tool names, aliases, and parameters.
 - `src/agentdecompile_cli/cli.py` for convenience commands and CLI help text.
 - `src/agentdecompile_cli/server.py` and `src/agentdecompile_cli/__main__.py` for server and stdio runtime options.
-- `helper_scripts/generate_tools_list.py` plus `tests/test_tools_list_generation_sync.py` for tool-doc parity.
+- `helper_scripts/reorder_tools_list_canonical.py` (canonical section order vs `registry.TOOLS`), `helper_scripts/generate_tools_list.py`, `tests/test_tools_list_generation_sync.py`, and `tests/test_unified_provider_advertisement.py` (`TestToolsListParity`) for tool-doc parity.
 
 ## Quick navigation
 
@@ -77,4 +79,5 @@ When docs and prose disagree, use the code and tests:
 - Need MCP/editor config details: open [./MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md).
 - Need import/export specifics: open [./IMPORT_EXPORT_GUIDE.md](./IMPORT_EXPORT_GUIDE.md).
 - Need the fastest import/export examples: open [./QUICKSTART_IMPORT_EXPORT.md](./QUICKSTART_IMPORT_EXPORT.md).
+- Need shared/local checkout + sync manual E2E: open [./e2e_shared_local_checkout_sync.md](./e2e_shared_local_checkout_sync.md).
 - Debugging MCP servers / self-healing: use skill `/mcp-debugging` or open [../.cursor/skills/mcp-debugging/](../.cursor/skills/mcp-debugging/).

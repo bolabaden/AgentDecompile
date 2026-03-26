@@ -228,6 +228,7 @@ markers = [
     "e2e: End-to-end tests via subprocess",
     "gui: marks tests that require a GUI (deselect with '-m \"not gui\"')",
     "integration: Integration tests with real PyGhidra",
+    "lfg: Full Ghidra Server + MCP shared/local collaboration stack (strict /lfg; very slow)",
     "slow: marks tests that are slow (deselect with '-m \"not slow\"')",
     "unit: Fast unit tests with mocked dependencies",
 ]

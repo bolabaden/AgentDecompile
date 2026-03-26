@@ -29,6 +29,7 @@ class SuggestionToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/suggestions.py:SuggestionToolProvider.list_tools")
         return [
             types.Tool(
                 name="suggest",
@@ -62,6 +63,7 @@ class SuggestionToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/suggestions.py:SuggestionToolProvider._handle")
         program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
         suggestion_type_raw = self._require_str(args, "suggestiontype", "type", name="suggestion_type")
 

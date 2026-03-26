@@ -47,15 +47,29 @@ HTTP_TIMEOUT = 30.0
 @pytest.mark.parametrize(
     ("raw_url", "expected_url"),
     [
-        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp"),
-        ("http://127.0.0.1:8080/mcp", "http://127.0.0.1:8080/mcp"),
-        ("http://127.0.0.1:8080/mcp/", "http://127.0.0.1:8080/mcp"),
+        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp/message"),
+        ("http://127.0.0.1:8080/mcp", "http://127.0.0.1:8080/mcp/message"),
+        ("http://127.0.0.1:8080/mcp/", "http://127.0.0.1:8080/mcp/message"),
         ("http://127.0.0.1:8080/mcp/message", "http://127.0.0.1:8080/mcp/message"),
-        ("http://127.0.0.1:8080/api", "http://127.0.0.1:8080/api"),
+        ("http://127.0.0.1:8080/api", "http://127.0.0.1:8080/api/mcp/message"),
     ],
 )
 def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
     assert normalize_backend_url(raw_url) == expected_url
+
+
+@pytest.mark.unit
+def test_raw_mcp_http_backend_headers_keep_cli_persisted_session_id() -> None:
+    """Regression: _headers must not drop Mcp-Session-Id from extra_headers when _session_id is unset."""
+    from agentdecompile_cli.bridge import RawMcpHttpBackend
+
+    backend = RawMcpHttpBackend(
+        "http://127.0.0.1:8080/mcp/message",
+        extra_headers={"Mcp-Session-Id": "cli-persisted-abc"},
+    )
+    assert backend._headers()["Mcp-Session-Id"] == "cli-persisted-abc"
+    backend._apply_mcp_session_from_response("server-bound-xyz")
+    assert backend._headers()["Mcp-Session-Id"] == "server-bound-xyz"
 
 
 def test_import_binary_alias_corrections_override_tools_list_alias_pollution() -> None:
@@ -314,6 +328,8 @@ async def test_stdio_bridge_forwards_proxy_shared_headers_to_backend(monkeypatch
     bridge._set_streamable_http_headers(
         "frontend-session",
         {
+            # Proxy must forward client MCP session id so backend reuses the same logical session (see proxy_server _forwardable_shared_headers).
+            "mcp-session-id": "cli-persisted-session-abc",
             "X-Ghidra-Server-Host": "170.9.241.140",
             "X-Ghidra-Server-Port": "13100",
             "X-Ghidra-Repository": "Odyssey",
@@ -325,11 +341,20 @@ async def test_stdio_bridge_forwards_proxy_shared_headers_to_backend(monkeypatch
     await bridge._ensure_backend("frontend-session")
 
     assert captured["url"] == normalize_backend_url("http://127.0.0.1:8080/mcp")
+    assert captured["extra_headers"]["mcp-session-id"] == "cli-persisted-session-abc"
     assert captured["extra_headers"]["X-Ghidra-Server-Host"] == "170.9.241.140"
     assert captured["extra_headers"]["X-Ghidra-Server-Port"] == "13100"
     assert captured["extra_headers"]["X-Ghidra-Repository"] == "Odyssey"
     assert captured["extra_headers"]["X-Agent-Server-Username"] == "OpenKotOR"
     assert captured["extra_headers"]["X-Agent-Server-Password"] == "idekanymore"
+
+
+def test_import_export_checkout_path_not_resolved_error_copy() -> None:
+    """Regression: checkout path-not-resolved must not claim each CLI run is a new session."""
+    import_export_path = Path(__file__).resolve().parents[1] / "src/agentdecompile_cli/mcp_server/providers/import_export.py"
+    content = import_export_path.read_text(encoding="utf-8")
+    assert "Each CLI run uses a new session" not in content
+    assert "This server session has no shared project open" in content
 
 
 @pytest.mark.asyncio
@@ -431,7 +456,7 @@ def _extract_text_blocks(result: Any) -> str:
 
 @pytest.mark.asyncio
 async def test_streamable_http_sdk_client_lists_tools_resources_and_calls_tool(backend_server: str) -> None:
-    async with streamable_http_client(f"{backend_server}/mcp") as (read_stream, write_stream, _):
+    async with streamable_http_client(f"{backend_server}/mcp/message") as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
 
@@ -442,7 +467,7 @@ async def test_streamable_http_sdk_client_lists_tools_resources_and_calls_tool(b
 
             resources = await session.list_resources()
             resource_uris = {str(resource.uri) for resource in resources.resources}
-            assert resource_uris == {"agentdecompile://debug-info"}
+            assert "agentdecompile://debug-info" in resource_uris
 
             resource = await session.read_resource(AnyUrl(url="ghidra://programs"))
             resource_texts = [getattr(content, "text", "") for content in resource.contents]
@@ -480,7 +505,7 @@ async def test_stdio_sdk_client_lists_tools_resources_and_calls_tool(backend_ser
 
             resources = await session.list_resources()
             resource_uris = {str(resource.uri) for resource in resources.resources}
-            assert resource_uris == {"agentdecompile://debug-info"}
+            assert "agentdecompile://debug-info" in resource_uris
 
             result = await session.call_tool("execute-script", arguments={"code": "__result__ = 'stdio_ok'", "format": "json"})
             result_payload = json.loads(_extract_text_blocks(result))

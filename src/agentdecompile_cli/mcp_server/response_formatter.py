@@ -24,6 +24,7 @@ import re
 
 from typing import TYPE_CHECKING, Any, cast
 
+from agentdecompile_cli.app_logger import norm_arg_keys
 from agentdecompile_cli.registry import Tool, is_tool_advertised, normalize_identifier
 
 if TYPE_CHECKING:
@@ -37,22 +38,27 @@ logger = logging.getLogger(__name__)
 
 
 def _md_heading(level: int, text: str) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_heading")
     return f"{'#' * level} {text}"
 
 
 def _md_bold_kv(key: str, value: Any) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_bold_kv")
     return f"**{key}:** {value}"
 
 
 def _md_code_inline(text: str) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_code_inline")
     return f"`{text}`"
 
 
 def _md_code_block(code: str, lang: str = "") -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_code_block")
     return f"```{lang}\n{code}\n```"
 
 
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_table")
     if not headers:
         return ""
     header_row: str = "| " + " | ".join(headers) + " |"
@@ -62,16 +68,30 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _md_bullet_list(items: list[str]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_bullet_list")
     return "\n".join(f"- {item}" for item in items)
 
 
 def _truncate(s: str, max_len: int = 120) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_truncate")
     if len(s) <= max_len:
         return s
     return s[: max_len - 3] + "..."
 
 
+def _decompilation_text_embeds_disassembly(decomp: str) -> bool:
+    """True when the decompilation string already carries a disassembly listing (skip duplicate ### Disassembly)."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_decompilation_text_embeds_disassembly")
+    if not (decomp and isinstance(decomp, str)):
+        return False
+    d = decomp.strip()
+    if "/* Disassembly */" in d:
+        return True
+    return False
+
+
 def _pagination_footer(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_pagination_footer")
     parts: list[str] = []
     count: int = data.get("count", 0)
     total: int = data.get("total", count)
@@ -106,6 +126,7 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
     Also drops steps that mention get-functions (e.g. `get-functions mode=decompile address=...`)
     when that tool is not advertised (legacy mode off).
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_filter_disabled_tool_recommendations")
     filtered: list[str] = []
     for step in steps:
         mentioned = re.findall(r"`([A-Za-z0-9_-]+)`", step)
@@ -131,6 +152,7 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
 
 
 def _next_steps_execute_script(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_execute_script")
     steps: list[str] = []
     has_error = bool(data.get("stderr"))
     has_output = bool(data.get("stdout") or data.get("result"))
@@ -144,6 +166,7 @@ def _next_steps_execute_script(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_decompile")
     func_name: str = data.get("function", "")
     addr: str = data.get("address", "")
     steps: list[str] = []
@@ -160,6 +183,7 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
 def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
     # Prefer decompile-function and get-current-program; get-functions is legacy and regression
     # often reintroduces it in suggested next steps — do not suggest get-functions here.
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_list_functions")
     total: int = data.get("total", data.get("count", 0))
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -177,6 +201,7 @@ def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_get_functions(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_get_functions")
     view: str = data.get("view", "info")
     name: str = data.get("name", "")
     addr: str = data.get("address", "")
@@ -204,6 +229,7 @@ def _next_steps_get_functions(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_symbols")
     mode: str = data.get("mode", "symbols")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -238,6 +264,7 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_search_everything")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
     if results:
@@ -261,6 +288,7 @@ def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_memory(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_memory")
     mode: str = data.get("mode", "blocks")
     steps: list[str] = []
     if mode == "blocks":
@@ -288,6 +316,7 @@ def _next_steps_memory(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_callgraph(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_callgraph")
     mode: str = data.get("mode", "graph")
     func_name: str = data.get("function", data.get("functionName", ""))
     steps: list[str] = []
@@ -315,6 +344,7 @@ def _next_steps_callgraph(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_comments(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_comments")
     action: str = data.get("action", data.get("mode", ""))
     steps: list[str] = []
     if action == "set":
@@ -340,6 +370,7 @@ def _next_steps_comments(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_bookmarks(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_bookmarks")
     action: str = data.get("action", data.get("mode", ""))
     steps: list[str] = []
     if action in ("set", "add_batch"):
@@ -362,6 +393,7 @@ def _next_steps_bookmarks(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_structures(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_structures")
     action: str = data.get("action", "")
     steps: list[str] = []
     if action == "list":
@@ -387,6 +419,7 @@ def _next_steps_structures(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_constants(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_constants")
     mode: str = data.get("mode", "")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -403,6 +436,7 @@ def _next_steps_constants(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_dataflow(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_dataflow")
     direction: str = data.get("direction", "")
     steps: list[str] = []
     if direction == "backward":
@@ -420,6 +454,7 @@ def _next_steps_dataflow(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_datatypes(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_datatypes")
     action: str = data.get("action", "")
     steps: list[str] = []
     if action == "list":
@@ -441,6 +476,7 @@ def _next_steps_datatypes(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_vtable")
     mode: str = data.get("mode", "")
     steps: list[str] = []
     if mode == "containing":
@@ -465,6 +501,7 @@ def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
 
 def _strings_no_results_suggestions(query: str) -> list[str]:
     """Build context-aware next-step suggestions when a string search returns no results."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_strings_no_results_suggestions")
     steps: list[str] = []
     q = (query or "").strip()
     # Partial / shorter query: try first word or first token (e.g. "patching complete" -> "patching")
@@ -508,6 +545,7 @@ def _strings_no_results_suggestions(query: str) -> list[str]:
 
 
 def _next_steps_strings(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_strings")
     mode: str = data.get("mode", "")
     results: list[dict[str, Any]] = data.get("results", [])
     query: str = (data.get("query") or data.get("pattern") or "").strip()
@@ -537,6 +575,7 @@ def _next_steps_strings(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_import_export(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_import_export")
     action = data.get("action", data.get("operation", ""))
     steps: list[str] = []
     if action == "import":
@@ -555,6 +594,7 @@ def _next_steps_import_export(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_project(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_project")
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     steps: list[str] = []
@@ -576,6 +616,7 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_search_code(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_search_code")
     results = data.get("results", [])
     steps: list[str] = []
     if results:
@@ -588,6 +629,7 @@ def _next_steps_search_code(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_data(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_data")
     steps: list[str] = []
     if "definedType" in data:
         steps.append("Use `apply-data-type` to change the interpretation if the type is wrong.")
@@ -599,6 +641,7 @@ def _next_steps_data(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_suggestions")
     return [
         "The suggest tool provides AI-suggested names/types — review and apply with `rename-function` or `set-function-prototype`.",
         "Use `manage-comments` to document your naming decisions.",
@@ -606,6 +649,7 @@ def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_match_function")
     steps: list[str] = []
     error: str = data.get("error", "")
     mode: str = data.get("mode", "")
@@ -825,6 +869,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
 
 def _render_execute_script(data: dict[str, Any]) -> str:
     """Render execute-script response: status, combined stdout/stderr, and return value as code blocks."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_execute_script")
     lines: list[str] = []
     lines.append(_md_heading(2, "Script Execution Result"))
     lines.append("")
@@ -866,6 +911,7 @@ def _render_execute_script(data: dict[str, Any]) -> str:
 
 def _render_decompile(data: dict[str, Any]) -> str:
     """Render get-functions response in decompile mode as rich markdown."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_decompile")
     lines: list[str] = []
     func_name = data.get("function", data.get("name", "unknown"))
     addr = data.get("address", "")
@@ -880,7 +926,7 @@ def _render_decompile(data: dict[str, Any]) -> str:
         lines.append(_md_bold_kv("Signature", _md_code_inline(sig)))
     lines.append("")
 
-    code = str(data.get("decompilation", ""))
+    code = str(data.get("decompilation") or data.get("code") or "")
     if code:
         lines.append(_md_heading(3, "C Pseudocode"))
         lines.append("")
@@ -895,6 +941,7 @@ def _render_decompile(data: dict[str, Any]) -> str:
 
 def _render_list_functions(data: dict[str, Any]) -> str:
     """Render list-functions response as markdown table."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_list_functions")
     lines: list[str] = []
     lines.append(_md_heading(2, "Function Listing"))
     lines.append("")
@@ -924,6 +971,7 @@ def _render_list_functions(data: dict[str, Any]) -> str:
 
 def _render_get_functions(data: dict[str, Any]) -> str:
     """Render get-functions response based on view."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_functions")
     view = data.get("view", "info")
     if view == "decompile":
         return _render_decompile(data)
@@ -935,6 +983,7 @@ def _render_get_functions(data: dict[str, Any]) -> str:
 
 
 def _render_function_info(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_info")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Function Info: `{name}`"))
@@ -967,6 +1016,7 @@ def _render_function_info(data: dict[str, Any]) -> str:
 
 
 def _render_function_calls(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_calls")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Call Relationships: `{name}`"))
@@ -1000,6 +1050,7 @@ def _render_function_calls(data: dict[str, Any]) -> str:
 
 
 def _render_disassemble(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_disassemble")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Disassembly: `{name}`"))
@@ -1024,6 +1075,7 @@ def _render_disassemble(data: dict[str, Any]) -> str:
 
 def _render_symbols(data: dict[str, Any]) -> str:
     """Render manage-symbols response."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_symbols")
     mode = data.get("mode", "symbols")
     lines: list[str] = []
 
@@ -1101,6 +1153,7 @@ def _render_symbols(data: dict[str, Any]) -> str:
 
 
 def _render_search_everything(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_search_everything")
     lines: list[str] = []
     lines.append(_md_heading(2, "Search Results"))
     lines.append("")
@@ -1134,6 +1187,7 @@ def _render_search_everything(data: dict[str, Any]) -> str:
 
 
 def _render_memory(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_memory")
     mode = data.get("mode", "blocks")
     lines: list[str] = []
 
@@ -1145,7 +1199,7 @@ def _render_memory(data: dict[str, Any]) -> str:
         lines.append("")
         if blocks:
             headers = ["Name", "Start", "End", "Size", "Perms", "Init", "Type"]
-            rows: list[list[str]] = [
+            rows: list[list[str]] = [  # pyright: ignore[reportRedeclaration]
                 [
                     b.get("name", ""),
                     b.get("start", ""),
@@ -1219,6 +1273,7 @@ def _render_memory(data: dict[str, Any]) -> str:
 
 
 def _render_callgraph(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_callgraph")
     mode = data.get("mode", "graph")
     func_name = data.get("function", data.get("functionName", ""))
     lines: list[str] = []
@@ -1234,8 +1289,8 @@ def _render_callgraph(data: dict[str, Any]) -> str:
             lines.append(_md_bold_kv("Direction", direction))
 
         # If we have callers/callees directly
-        callers: list[dict[str, Any]] = data.get("callers", [])
-        callees: list[dict[str, Any]] = data.get("callees", [])
+        callers: list[dict[str, Any]] = data.get("callers", [])  # pyright: ignore[reportRedeclaration]
+        callees: list[dict[str, Any]] = data.get("callees", [])  # pyright: ignore[reportRedeclaration]
 
         if callers or (callees and not graph_data):
             return _render_function_calls(data)
@@ -1300,6 +1355,7 @@ def _render_callgraph(data: dict[str, Any]) -> str:
 
 
 def _render_comments(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_comments")
     action = data.get("action", data.get("mode", ""))
     lines: list[str] = []
 
@@ -1307,7 +1363,7 @@ def _render_comments(data: dict[str, Any]) -> str:
         lines.append(_md_heading(2, "Comment Set"))
         lines.append("")
         if data.get("batch"):
-            results: list[dict[str, Any]] = data.get("results", [])
+            results: list[dict[str, Any]] = data.get("results", [])  # pyright: ignore[reportRedeclaration]
             for r in results:
                 status = "OK" if r.get("success") else f"FAIL: {r.get('error', '')}"
                 lines.append(f"- `{r.get('address', '')}`: {status}")
@@ -1365,6 +1421,7 @@ def _render_comments(data: dict[str, Any]) -> str:
 
 
 def _render_bookmarks(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_bookmarks")
     action = data.get("action", data.get("mode", ""))
     lines: list[str] = []
 
@@ -1425,6 +1482,7 @@ def _render_bookmarks(data: dict[str, Any]) -> str:
 
 
 def _render_structures(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_structures")
     action = data.get("action", "")
     lines: list[str] = []
 
@@ -1465,7 +1523,7 @@ def _render_structures(data: dict[str, Any]) -> str:
             lines.append(_md_heading(3, "Fields"))
             lines.append("")
             headers = ["Offset", "Name", "Type", "Size", "Comment"]
-            rows: list[list[str]] = [
+            rows = [
                 [
                     str(f.get("offset", "")),
                     f.get("name", ""),
@@ -1506,6 +1564,7 @@ def _render_structures(data: dict[str, Any]) -> str:
 
 
 def _render_constants(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_constants")
     lines: list[str] = []
     mode = data.get("mode", "")
     lines.append(_md_heading(2, f"Constant Search ({mode})"))
@@ -1541,6 +1600,7 @@ def _render_constants(data: dict[str, Any]) -> str:
 
 
 def _render_dataflow(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_dataflow")
     lines: list[str] = []
     direction = data.get("direction", "")
     func_name = data.get("function", "")
@@ -1586,6 +1646,7 @@ def _render_dataflow(data: dict[str, Any]) -> str:
 
 
 def _render_strings(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_strings")
     mode = data.get("mode", "")
     lines: list[str] = []
 
@@ -1640,6 +1701,7 @@ def _render_strings(data: dict[str, Any]) -> str:
 
 
 def _render_datatypes(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_datatypes")
     action = data.get("action", "")
     lines: list[str] = []
 
@@ -1690,7 +1752,7 @@ def _render_datatypes(data: dict[str, Any]) -> str:
         lines.append(_md_heading(2, "Data Type Applied"))
         lines.append("")
         if data.get("batch"):
-            results: list[dict[str, Any]] = data.get("results", [])
+            results = data.get("results", [])
             for r in results:
                 status = "OK" if r.get("success") else f"FAIL: {r.get('error', '')}"
                 lines.append(f"- `{r.get('address', '')}`: {status}")
@@ -1703,6 +1765,7 @@ def _render_datatypes(data: dict[str, Any]) -> str:
 
 
 def _render_vtable(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_vtable")
     mode = data.get("mode", "")
     lines: list[str] = []
 
@@ -1743,7 +1806,7 @@ def _render_vtable(data: dict[str, Any]) -> str:
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
             headers: list[str] = ["From Address", "Function", "Ref Type"]
-            rows: list[list[str]] = [[r.get("fromAddress", ""), r.get("function", ""), r.get("refType", "")] for r in results]
+            rows = [[r.get("fromAddress", ""), r.get("function", ""), r.get("refType", "")] for r in results]
             lines.append(_md_table(headers, rows))
         return "\n".join(lines)
 
@@ -1751,6 +1814,7 @@ def _render_vtable(data: dict[str, Any]) -> str:
 
 
 def _render_import_export(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_import_export")
     action = data.get("action", data.get("operation", ""))
     lines: list[str] = []
 
@@ -1824,6 +1888,7 @@ def _render_import_export(data: dict[str, Any]) -> str:
 
 
 def _render_project(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_project")
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     lines: list[str] = []
@@ -1900,6 +1965,7 @@ def _render_project(data: dict[str, Any]) -> str:
 
 
 def _render_suggestions(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_suggestions")
     lines: list[str] = []
     lines.append(_md_heading(2, "Suggestion Context"))
     lines.append("")
@@ -1920,6 +1986,7 @@ def _render_suggestions(data: dict[str, Any]) -> str:
 
 def _render_data(data: dict[str, Any]) -> str:
     """Render get-data or apply-data-type response: address, type, value, optional hex/ascii dump."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_data")
     lines: list[str] = []
     if data.get("success") is not None and "address" in data and "dataType" in data:
         # apply-data-type success: address + type applied
@@ -1959,6 +2026,7 @@ def _render_conflict(data: dict[str, Any]) -> str:
 
     Shows conflictSummary (udiff-style), nextStep (how to resolve), and conflictId/tool.
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_conflict")
     lines: list[str] = []
     lines.append(_md_heading(2, "Modification conflict"))
     lines.append("")
@@ -1992,6 +2060,7 @@ def _render_error(data: dict[str, Any]) -> str:
     Shows error message, optional state/tool, then any context keys (connection, auth,
     server reachable, etc.) and a 'How to Fix' list from nextSteps when present.
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_error")
     lines: list[str] = []
     lines.append(_md_heading(2, "Error"))
     lines.append("")
@@ -2044,6 +2113,7 @@ def _render_error(data: dict[str, Any]) -> str:
 
 def _render_get_function(data: dict[str, Any]) -> str:
     """Render get-function (dissect) response as markdown. Avoids raw JSON when format=markdown."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_function")
     lines: list[str] = []
     name = data.get("name", "unknown")
     addr = data.get("address", "")
@@ -2091,7 +2161,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
             lines.append(_md_code_inline(str(path_str)))
             lines.append("")
 
-    decomp = data.get("decompilation", "")
+    decomp = data.get("decompilation", "") or data.get("code", "")
     if isinstance(decomp, str) and decomp.strip():
         lines.append(_md_heading(3, "Decompilation"))
         lines.append("")
@@ -2100,7 +2170,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
 
     disasm: dict[str, Any] = data.get("disassembly") or {}
     instructions: list[dict[str, Any]] = disasm.get("instructions") or []
-    if instructions:
+    if instructions and not _decompilation_text_embeds_disassembly(str(decomp)):
         lines.append(_md_heading(3, "Disassembly"))
         lines.append("")
         count = disasm.get("count", len(instructions))
@@ -2229,6 +2299,7 @@ def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
     (2) single key-value payload → bold key: value; (3) nested lists/dicts → subheadings
     and tables. Title comes from mode/action or normalized tool name.
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_generic")
     lines: list[str] = []
 
     # Title from mode/action or tool name so the user knows which tool produced this
@@ -2270,7 +2341,7 @@ def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
                     lines.append(_md_heading(3, key.replace("_", " ").title()))
                     lines.append("")
                     headers = list(value[0].keys())
-                    rows: list[list[str]] = [[_truncate(str(item.get(h, "")), 60) for h in headers] for item in cast("list[dict[str, Any]]", value)]
+                    rows = [[_truncate(str(item.get(h, "")), 60) for h in headers] for item in cast("list[dict[str, Any]]", value)]
                     lines.append(_md_table(headers, rows))
                 elif isinstance(value, dict):
                     lines.append("")
@@ -2369,6 +2440,7 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     Returns:
         A markdown string suitable for returning as TextContent.text.
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:render_tool_response")
     logger.debug("render_tool_response tool=%s", normalized_tool_name)
     # Modification conflicts get their own renderer (udiff + nextStep)
     if data.get("modificationConflict") is True or (data.get("success") is False and data.get("conflictId")):
@@ -2381,7 +2453,13 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         if renderer is not None:
             try:
                 body = renderer(data)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "tool_markdown_render_fallback normalized_tool=%s exc_type=%s payload_keys=%s",
+                    normalized_tool_name,
+                    type(exc).__name__,
+                    norm_arg_keys(data),
+                )
                 body = _render_generic(data, normalized_tool_name)
         else:
             body = _render_generic(data, normalized_tool_name)

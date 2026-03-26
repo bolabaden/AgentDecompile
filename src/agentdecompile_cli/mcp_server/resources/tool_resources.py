@@ -78,6 +78,7 @@ TOOLS_ELIGIBLE_FOR_RESOURCE: frozenset[str] = TOOLS_RESOURCE_SESSION_SCOPED | TO
 
 def _parse_tool_response(response: Any) -> Any:
     """Extract and parse tool response (list of TextContent -> JSON or raw text)."""
+    logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:_parse_tool_response")
     if not isinstance(response, list):
         return response
     text_parts: list[str] = []
@@ -103,6 +104,7 @@ class ToolOutputResource(ResourceProvider):
 
     def list_resources(self) -> list[types.Resource]:
         """Return one resource per qualifying tool at agentdecompile://<resource-name>."""
+        logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:ToolOutputResource.list_resources")
         resources: list[types.Resource] = []
         
         # Direct tool names (session and program scoped)
@@ -201,6 +203,7 @@ class ToolOutputResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read agentdecompile://<resource-name> by calling the tool (once or per open program)."""
+        logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:ToolOutputResource.read_resource")
         uri_str = str(uri).strip()
         if not uri_str.lower().startswith(_RESOURCE_URI_PREFIX.lower()):
             raise NotImplementedError(f"Not a tool resource URI: {uri}")
@@ -229,6 +232,7 @@ class ToolOutputResource(ResourceProvider):
 
     async def _read_session_scoped(self, tool_name: str) -> str:
         """Call tool once with minimal args; return JSON."""
+        logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:ToolOutputResource._read_session_scoped")
         args: dict[str, Any] = {"format": "json"}
         if tool_name == "manage-files":
             args.setdefault("mode", "list")
@@ -245,6 +249,7 @@ class ToolOutputResource(ResourceProvider):
 
     async def _read_program_scoped(self, tool_name: str, extra_args: dict[str, Any] | None = None) -> str:
         """Call tool for each open program; return JSON keyed by program path."""
+        logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:ToolOutputResource._read_program_scoped")
         if self.tool_provider_manager is None:
             return json.dumps({"success": False, "error": "tool_provider_manager unavailable", "tool": tool_name}, indent=2)
         session_id = get_current_mcp_session_id()

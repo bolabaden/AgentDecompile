@@ -31,11 +31,13 @@ class CallGraphToolProvider(ToolProvider):
     }
 
     def __init__(self, program_info=None):
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider.__init__")
         super().__init__(program_info)
         self._callgraph_tool = None
 
     def _get_callgraph_tool(self):
         """Lazy-init CallGraphTool so we only load it when a call-graph tool is actually used."""
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._get_callgraph_tool")
         if self._callgraph_tool is None:
             try:
                 from agentdecompile_cli.tools.callgraph_tool import CallGraphTool
@@ -46,6 +48,7 @@ class CallGraphToolProvider(ToolProvider):
         return self._callgraph_tool
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider.list_tools")
         schema = {
             "type": "object",
             "properties": {
@@ -81,6 +84,7 @@ class CallGraphToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle")
         self._require_program()
         # function/addressOrSymbol: resolved via AddressUtil (0x=hex, else decimal) in CallGraphTool or _resolve_function
         func = self._get_address_or_symbol(args)
@@ -186,6 +190,7 @@ class CallGraphToolProvider(ToolProvider):
             )
 
     async def _handle_callers(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callers")
         callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
         caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
 
@@ -202,12 +207,14 @@ class CallGraphToolProvider(ToolProvider):
         return create_success_response({"function": func, "mode": mode, "callers": caller_info, "count": len(caller_info)})
 
     async def _handle_callees(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callees")
         callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
         callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
         mode = self._get_str(args, "mode", default="callees")
         return create_success_response({"function": func, "mode": mode, "callees": callee_info, "count": len(callee_info)})
 
     async def _handle_graph(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_graph")
         callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
         callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
         return create_success_response(

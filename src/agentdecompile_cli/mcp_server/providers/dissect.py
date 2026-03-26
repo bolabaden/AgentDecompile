@@ -37,6 +37,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider.list_tools")
         return [
             types.Tool(
                 name=Tool.GET_FUNCTION.value,
@@ -105,6 +106,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     # ------------------------------------------------------------------
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._handle")
         self._require_program()
 
         func_id = self._get_address_or_symbol(args)
@@ -191,6 +193,7 @@ class GetFunctionAioToolProvider(ToolProvider):
 
     @staticmethod
     def _collect_metadata(func: Any) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_metadata")
         body = func.getBody()
         return {
             "size": int(body.getNumAddresses()) if body else 0,
@@ -216,6 +219,7 @@ class GetFunctionAioToolProvider(ToolProvider):
 
     @staticmethod
     def _collect_namespace(func: Any) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_namespace")
         ns = func.getParentNamespace()
         parts: list[str] = []
         while ns is not None and hasattr(ns, "getName"):
@@ -231,35 +235,26 @@ class GetFunctionAioToolProvider(ToolProvider):
         }
 
     def _decompile(self, func: Any, program: Any, timeout: int | None = None) -> str:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._decompile")
         try:
-            from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+            from agentdecompile_cli.mcp_utils.decompiler_util import (
+                get_decompiled_function_from_results,
+                open_decompiler_for_program,
+                resolve_decompiler_for_program,
+            )
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             monitor = ConsoleTaskMonitor()
 
             session_decomp = getattr(self.program_info, "decompiler", None)
-            decomp = session_decomp
-            owns = False
-
-            if decomp is None:
-                decomp = DecompInterface()
-                opts = DecompileOptions()
-                opts.grabFromProgram(program)
-                decomp.setOptions(opts)
-                decomp.openProgram(program)
-                owns = True
-            else:
-                try:
-                    opts = DecompileOptions()
-                    opts.grabFromProgram(program)
-                    decomp.setOptions(opts)
-                except Exception:
-                    pass
+            decomp, owns = resolve_decompiler_for_program(session_decomp, program)
 
             dr: Any = decomp.decompileFunction(func, timeout or 60, monitor)
             if dr and dr.decompileCompleted():
-                df = dr.getDecompiledFunction()
-                code = df.getC() if df else None
+                df = get_decompiled_function_from_results(dr)
+                if df is None:
+                    raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
+                code = df.getC()
                 if code is not None and code.strip():
                     if owns:
                         decomp.dispose()
@@ -267,34 +262,54 @@ class GetFunctionAioToolProvider(ToolProvider):
 
             # Retry with fresh interface if session decomp failed
             if session_decomp is not None:
-                retry = DecompInterface()
-                retry_opts = DecompileOptions()
-                retry_opts.grabFromProgram(program)
-                retry.setOptions(retry_opts)
-                retry.openProgram(program)
-                retry_dr = retry.decompileFunction(func, timeout or 60, monitor)
-                if retry_dr and retry_dr.decompileCompleted():
-                    retry_df = retry_dr.getDecompiledFunction()
-                    code = retry_df.getC() if retry_df else None
-                    retry.dispose()
-                    if code is not None and code.strip():
-                        if owns:
-                            decomp.dispose()
-                        return str(code)
-                retry.dispose()
+                retry = open_decompiler_for_program(program)
+                try:
+                    retry_dr = retry.decompileFunction(func, timeout or 60, monitor)
+                    if retry_dr and retry_dr.decompileCompleted():
+                        retry_df = get_decompiled_function_from_results(retry_dr)
+                        if retry_df is None:
+                            if owns:
+                                decomp.dispose()
+                            raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
+                        code = retry_df.getC()
+                        if code is not None and code.strip():
+                            if owns:
+                                decomp.dispose()
+                            return str(code)
+                finally:
+                    try:
+                        retry.dispose()
+                    except Exception:
+                        pass
 
+            extras: list[str] = []
+            if dr is not None:
+                try:
+                    if not dr.decompileCompleted():
+                        extras.append("decompileCompleted=false")
+                except Exception:
+                    pass
+            err_tail = ""
+            try:
+                err_tail = dr.getErrorMessage() or "" if dr is not None else ""
+            except Exception:
+                err_tail = ""
+            if not err_tail:
+                try:
+                    err_tail = decomp.getLastMessage() or ""
+                except Exception:
+                    err_tail = ""
             if owns:
                 decomp.dispose()
+            detail = "; ".join([p for p in [err_tail, " ".join(extras)] if p]) or "no error message from DecompInterface"
+            raise RuntimeError(f"Decompilation failed for {func.getName()}: {detail}")
 
-        except ImportError:
-            pass
-        except Exception as exc:
-            logger.debug("Decompiler error in get-function: %s", exc)
-
-        return self._build_decompile_fallback(program, func, "decompiler unavailable", max_instructions=400)
+        except ImportError as exc:
+            raise RuntimeError("Ghidra DecompInterface is not available (PyGhidra / Ghidra classpath)") from exc
 
     @staticmethod
     def _disassemble(func: Any, program: Any, max_insns: int | None = None) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._disassemble")
         listing = program.getListing()
         body = func.getBody()
         instructions: list[dict[str, Any]] = []
@@ -319,6 +334,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_all_comments(func: Any, program: Any, body: Any) -> dict[str, Any]:
         """Collect entry-point comments + inline comments across the function body."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_all_comments")
         listing = program.getListing()
         _TYPES = (
             ("eol", 0),
@@ -358,6 +374,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_labels(program: Any, body: Any) -> list[dict[str, Any]]:
         """Collect all symbols/labels within the function address range."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_labels")
         st = program.getSymbolTable()
         labels: list[dict[str, Any]] = []
         if body is None:
@@ -382,15 +399,18 @@ class GetFunctionAioToolProvider(ToolProvider):
 
     @staticmethod
     def _collect_callers(func: Any, max_callers: int | None = None) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callers")
         return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCallingFunctions(None), max_callers)]
 
     @staticmethod
     def _collect_callees(func: Any, max_callees: int | None = None) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callees")
         return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCalledFunctions(None), max_callees)]
 
     @staticmethod
     def _collect_xrefs(program: Any, entry: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
         """Inbound cross-references to the function entry point."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_xrefs")
         ref_mgr: Any = program.getReferenceManager()
         refs: list[dict[str, Any]] = []
         for ref in islice(ref_mgr.getReferencesTo(entry), max_refs):
@@ -410,6 +430,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_outbound_refs(program: Any, body: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
         """Outbound cross-references from code inside the function body to other addresses."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_outbound_refs")
         if body is None:
             return []
         ref_mgr: Any = program.getReferenceManager()
@@ -441,6 +462,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_bookmarks(program: Any, body: Any) -> list[dict[str, Any]]:
         """Bookmarks within the function's address range."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_bookmarks")
         bm_mgr: Any = program.getBookmarkManager()
         bookmarks: list[dict[str, Any]] = []
         if body is None:
@@ -465,6 +487,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_stack_frame(func: Any, max_variables: int | None = None) -> dict[str, Any]:
         """Stack frame layout: local variables, parameters, and frame size."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_stack_frame")
         frame: Any = func.getStackFrame()
         if frame is None:
             return {
@@ -501,6 +524,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_memory_block(program: Any, address: Any) -> dict[str, Any] | None:
         """Info about the memory block containing the function entry point."""
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_memory_block")
         mem: Any = program.getMemory()
         block: Any = mem.getBlock(address)
         if block is None:

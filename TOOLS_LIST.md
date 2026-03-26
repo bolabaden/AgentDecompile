@@ -44,17 +44,21 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`apply-data-type`](#apply-data-type)
     - [`change-processor`](#change-processor)
     - [`checkin-program`](#checkin-program)
+    - [`checkout-program`](#checkout-program)
+    - [`checkout-status`](#checkout-status)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
+    - [`delete-project-binary`](#delete-project-binary)
     - [`sync-project`](#sync-project)
     - [`export`](#export)
-    - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
     - [`get-call-graph`](#get-call-graph)
+    - [`remove-program-binary`](#remove-program-binary)
     - [`get-current-address`](#get-current-address)
     - [`get-current-function`](#get-current-function)
     - [`get-current-program`](#get-current-program)
     - [`get-data`](#get-data)
+    - [`get-function`](#get-function)
     - [`get-functions`](#get-functions)
     - [`get-references`](#get-references)
     - [`import-binary`](#import-binary)
@@ -63,16 +67,25 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`list-exports`](#list-exports)
     - [`list-functions`](#list-functions)
     - [`list-imports`](#list-imports)
-    - [`list-open-programs`](#list-open-programs)
-    - [`list-project-binaries`](#list-project-binaries)
-    - [`list-project-binary-metadata`](#list-project-binary-metadata)
     - [`list-project-files`](#list-project-files)
     - [`list-processors`](#list-processors)
     - [`list-prompts`](#list-prompts)
     - [`list-strings`](#list-strings)
+    - [`manage-bookmarks`](#manage-bookmarks)
+    - [`manage-comments`](#manage-comments)
+    - [`manage-data-types`](#manage-data-types)
+    - [`manage-files`](#manage-files)
+    - [`manage-function-tags`](#manage-function-tags)
+    - [`manage-function`](#manage-function)
+    - [`manage-strings`](#manage-strings)
+    - [`manage-structures`](#manage-structures)
+    - [`manage-symbols`](#manage-symbols)
     - [`match-function`](#match-function)
+    - [`migrate-metadata`](#migrate-metadata)
     - [`execute-script`](#execute-script)
     - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser)
+    - [`open-program-in-code-browser`](#open-program-in-code-browser)
+    - [`open`](#open)
     - [`read-bytes`](#read-bytes)
     - [`resolve-modification-conflict`](#resolve-modification-conflict)
     - [`search-code`](#search-code)
@@ -80,7 +93,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`search-everything`](#search-everything)
     - [`search-strings`](#search-strings)
     - [`search-symbols`](#search-symbols)
-    - [`search-symbols-by-name`](#search-symbols-by-name)
+    - [`svr-admin`](#svr-admin)
     - [`suggest`](#suggest)
   - [Usage Tips](#usage-tips)
     - [Start with High-Level Analysis](#start-with-high-level-analysis)
@@ -360,6 +373,37 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
   - `getFile(String path)` → `DomainFile`
   - `getFolder(String path)` → `DomainFolder`
 - **PyGhidra**: `with pyghidra.open(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
+### `checkout-program`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exclusive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `checkout-program(programPath, exclusive)` canonical signature.
+
+**Synonyms**: `checkout-program`
+
+**Examples**:
+- `checkout-program`
+
+### `checkout-status`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `checkout-status(programPath)` canonical signature.
+
+**Synonyms**: `checkout-status`
+
+**Examples**:
+- `checkout-status`
+
 ### `create-label`
 
 **Description**: Legacy compatibility forward. Use `create-label`.
@@ -411,6 +455,22 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
 
+### `delete-project-binary`
+
+**Description**: Deletes a binary file from the project, including all associated analysis data and versions. This tool is used for cleaning up projects, removing obsolete imports, or managing storage. It requires confirmation for safety and handles dependencies like open programs. Non-reversible, so use with caution in versioned projects.
+
+**Parameters**:
+- `programPath` (string, required): Path to the binary to delete.
+  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
+- `confirm` (boolean, optional): Confirm deletion (default: false).
+  - Synonyms: `binaryPath`, `force`, `confirm`
+**Overloads**:
+- `delete_project_binary(binary_name)` → forwards to `delete-project-binary`.
+
+**Synonyms**: `delete-project-binary`, `tool_delete_project_binary`, `delete_project_binary_tool`, `cmd_delete_project_binary`, `run_delete_project_binary`, `do_delete_project_binary`, `api_delete_project_binary`, `mcp_delete_project_binary`, `ghidra_delete_project_binary`, `agentdecompile_delete_project_binary`, `delete_project_binary_command`, `delete_project_binary_action`, `delete_project_binary_op`, `delete_project_binary_task`, `execute_delete_project_binary`, `delete_project_binary`
+
+**Examples**:
+- Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `sync-project`
 
 **Description**: Transfers and synchronizes content between local and/or shared Ghidra projects. Supports pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning. Works with shared repository sessions (shared↔local) and local-only projects.
@@ -476,22 +536,6 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - **`ghidra.app.util.exporter.GzfExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/GzfExporter)
 - **`ghidra.app.util.exporter.CppExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/CppExporter)
 
-### `delete-project-binary`
-
-**Description**: Deletes a binary file from the project, including all associated analysis data and versions. This tool is used for cleaning up projects, removing obsolete imports, or managing storage. It requires confirmation for safety and handles dependencies like open programs. Non-reversible, so use with caution in versioned projects.
-
-**Parameters**:
-- `programPath` (string, required): Path to the binary to delete.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `confirm` (boolean, optional): Confirm deletion (default: false).
-  - Synonyms: `binaryPath`, `force`, `confirm`
-**Overloads**:
-- `delete_project_binary(binary_name)` → forwards to `delete-project-binary`.
-
-**Synonyms**: `delete-project-binary`, `tool_delete_project_binary`, `delete_project_binary_tool`, `cmd_delete_project_binary`, `run_delete_project_binary`, `do_delete_project_binary`, `api_delete_project_binary`, `mcp_delete_project_binary`, `ghidra_delete_project_binary`, `agentdecompile_delete_project_binary`, `delete_project_binary_command`, `delete_project_binary_action`, `delete_project_binary_op`, `delete_project_binary_task`, `execute_delete_project_binary`, `delete_project_binary`
-
-**Examples**:
-- Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `gen-callgraph`
 
 **Description**: Legacy compatibility alias (non-advertised by default). Use `get-call-graph`.
@@ -538,6 +582,22 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**:
 - Get caller tree: `get-call-graph programPath="/bin.exe" functionIdentifier="0x401000" mode="tree" direction="callers" maxDepth=5`.
+
+### `remove-program-binary`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `confirm` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `remove-program-binary(programPath, confirm)` canonical signature.
+
+**Synonyms**: `remove-program-binary`
+
+**Examples**:
+- `remove-program-binary`
 
 ### `get-current-address`
 
@@ -599,6 +659,27 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**:
 - Get data at address: `get-data programPath="/bin.exe" addressOrSymbol="0x404000" view="hex"`.
+### `get-function`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functionIdentifier` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `timeout` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxInstructions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRefs` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `get-function(programPath, function, addressOrSymbol, functionIdentifier, timeout, maxInstructions, maxRefs)` canonical signature.
+
+**Synonyms**: `get-function`
+
+**Examples**:
+- `get-function`
+
 ### `get-functions`
 
 **Description**: Retrieves decompilation, disassembly, info, or call details for one or more functions, supporting batch processing and pagination. This tool is central for function-level analysis, with options for callers/callees, comments, and references. It resolves identifiers by address or name, handling arrays for multi-function queries, and limits output for large decompilations.
@@ -833,50 +914,6 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `list-imports(programPath, libraryFilter, maxResults, startIndex, groupByLibrary)` → forwards to `list-imports`.
 
 **Examples**: `list-imports programPath="/bin.exe"`.
-### `list-open-programs`
-
-**Description**: Lists all currently open programs in the Ghidra tool (GUI mode), including paths and status. This tool is useful for managing multiple open binaries during sessions.
-
-**Parameters**:
-- None (GUI context implied).
-  - Synonyms: N/A.
-
-**Overloads**:
-- `list-open-programs()` → forwards to `list-open-programs`.
-
-**Synonyms**: `list-open-programs`, `tool_list_open_programs`, `list_open_programs_tool`, `cmd_list_open_programs`, `run_list_open_programs`, `do_list_open_programs`, `api_list_open_programs`, `mcp_list_open_programs`, `ghidra_list_open_programs`, `agentdecompile_list_open_programs`, `list_open_programs_command`, `list_open_programs_action`, `list_open_programs_op`, `list_open_programs_task`, `execute_list_open_programs`
-
-**Examples**:
-- List open: `list-open-programs`.
-### `list-project-binaries`
-
-**Description**: Lists all binaries in the project, including metadata like size and import time. This tool provides an overview of project contents for management.
-
-**Parameters**:
-- None (project-wide).
-  - Synonyms: N/A.
-
-**Overloads**:
-- `list_project_binaries()` → forwards to `list-project-binaries`.
-
-**Synonyms**: `list-project-binaries`, `tool_list_project_binaries`, `list_project_binaries_tool`, `cmd_list_project_binaries`, `run_list_project_binaries`, `do_list_project_binaries`, `api_list_project_binaries`, `mcp_list_project_binaries`, `ghidra_list_project_binaries`, `agentdecompile_list_project_binaries`, `list_project_binaries_command`, `list_project_binaries_action`, `list_project_binaries_op`, `list_project_binaries_task`, `execute_list_project_binaries`, `list_project_binaries`
-
-**Examples**:
-- List binaries: `list-project-binaries`.
-### `list-project-binary-metadata`
-
-**Description**: Retrieves detailed metadata for project binaries, such as language, compiler, and analysis info. This tool aids in auditing project state.
-
-**Parameters**:
-- `programPath` (string, required): Binary path.
-  - Synonyms: `path`, `programPath`, `programp`, `program`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-**Overloads**:
-- `list_project_binary_metadata(binary_name)` → forwards to `list-project-binary-metadata`.
-
-**Synonyms**: `list-project-binary-metadata`, `tool_list_project_binary_metadata`, `list_project_binary_metadata_tool`, `cmd_list_project_binary_metadata`, `run_list_project_binary_metadata`, `do_list_project_binary_metadata`, `api_list_project_binary_metadata`, `mcp_list_project_binary_metadata`, `ghidra_list_project_binary_metadata`, `agentdecompile_list_project_binary_metadata`, `list_project_binary_metadata_command`, `list_project_binary_metadata_action`, `list_project_binary_metadata_op`, `list_project_binary_metadata_task`, `execute_list_project_binary_metadata`, `list_project_binary_metadata`
-
-**Examples**:
-- Get metadata: `list-project-binary-metadata programPath="/bin.exe"`.
 ### `list-project-files`
 
 **Description**: Lists all files in the project, including folders and non-binary files. This tool is for project navigation and cleanup.
@@ -906,6 +943,18 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 **Examples**:
 - List all processors: `list-processors`.
 - Filter to x86 processors: `list-processors filter="x86"`.
+### `list-prompts`
+
+**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator).
+
+**Parameters**: None.
+
+**Overloads**:
+- `list-prompts()` canonical signature.
+
+
+**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`).
+
 ### `list-strings`
 
 **Description**: Legacy compatibility forward. Use `manage-strings` with `mode="list"`.
@@ -917,6 +966,280 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `list_strings(offset, limit, filter)` → forwards to `list-strings`.
 
 **Examples**: `list-strings programPath="/bin.exe"`.
+
+### `manage-bookmarks`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `type` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `category` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `bookmarks` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchText` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `removeAll` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressRange` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `categories` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `types` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-bookmarks(programPath, mode, addressOrSymbol, type, category, comment, bookmarks, searchText, maxResults, removeAll, addressRange, categories, types)` canonical signature.
+
+**Synonyms**: `manage-bookmarks`
+
+**Examples**:
+- `manage-bookmarks`
+
+### `manage-comments`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `lineNumber` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `commentType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `start` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `end` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `commentTypes` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchText` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `pattern` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `caseSensitive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `overrideMaxFunctionsLimit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressRange` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-comments(programPath, mode, addressOrSymbol, function, lineNumber, comment, commentType, comments, start, end, commentTypes, searchText, pattern, caseSensitive, maxResults, overrideMaxFunctionsLimit, addressRange)` canonical signature.
+
+**Synonyms**: `manage-comments`
+
+**Examples**:
+- `manage-comments`
+
+### `manage-data-types`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `archiveName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `categoryPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeSubcategories` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dataTypeString` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-data-types(programPath, mode, archiveName, categoryPath, includeSubcategories, startIndex, maxCount, offset, limit, dataTypeString, addressOrSymbol)` canonical signature.
+
+**Synonyms**: `manage-data-types`
+
+**Examples**:
+- `manage-data-types`
+
+### `manage-files`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `path` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `sourcePath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filePath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `content` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `encoding` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `createParents` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `keep` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `force` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exclusive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dryRun` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationFolder` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `recursive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `stripLeadingPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `stripAllContainerPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mirrorFs` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `enableVersionControl` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exportType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `format` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeParameters` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeVariables` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeComments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `processor` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `languageId` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `compilerSpecId` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `endian` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-files(mode, path, sourcePath, filePath, programPath, newPath, destinationPath, newName, content, encoding, createParents, keep, force, exclusive, dryRun, maxResults, destinationFolder, recursive, maxDepth, analyzeAfterImport, stripLeadingPath, stripAllContainerPath, mirrorFs, enableVersionControl, exportType, format, includeParameters, includeVariables, includeComments, processor, languageId, compilerSpecId, endian)` canonical signature.
+
+**Synonyms**: `manage-files`
+
+**Examples**:
+- `manage-files`
+
+### `manage-function-tags`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `tags` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-function-tags(programPath, function, mode, tags)` canonical signature.
+
+**Synonyms**: `manage-function-tags`
+
+**Examples**:
+- `manage-function-tags`
+
+### `manage-function`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `address` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functionIdentifier` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `name` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `oldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `variableMappings` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `prototype` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `variableName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `datatypeMappings` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `archiveName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `createIfNotExists` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagate` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateProgramPaths` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateMaxCandidates` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateMaxInstructions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-function(programPath, mode, address, functionIdentifier, name, functions, oldName, newName, variableMappings, prototype, variableName, newType, datatypeMappings, archiveName, createIfNotExists, propagate, propagateProgramPaths, propagateMaxCandidates, propagateMaxInstructions)` canonical signature.
+
+**Synonyms**: `manage-function`
+
+**Examples**:
+- `manage-function`
+
+### `manage-strings`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `pattern` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchString` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `query` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeReferencingFunctions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-strings(programPath, mode, pattern, searchString, filter, query, startIndex, maxCount, offset, limit, includeReferencingFunctions)` canonical signature.
+
+**Synonyms**: `manage-strings`
+
+**Examples**:
+- `manage-strings`
+
+### `manage-structures`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `cDefinition` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `headerContent` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `structureName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `name` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `size` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `type` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `category` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `packed` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `description` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `fields` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `clearExisting` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `force` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `nameFilter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeBuiltIn` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `fieldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dataType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `bitfield` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newDataType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newFieldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newComment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newLength` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-structures(programPath, mode, cDefinition, headerContent, structureName, name, size, type, category, packed, description, fields, addressOrSymbol, clearExisting, force, nameFilter, includeBuiltIn, fieldName, dataType, offset, comment, bitfield, newDataType, newFieldName, newComment, newLength)` canonical signature.
+
+**Synonyms**: `manage-structures`
+
+**Examples**:
+- `manage-structures`
+
+### `manage-symbols`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `address` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `labelName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `libraryFilter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `groupByLibrary` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeExternal` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filterDefaultNames` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `demangleAll` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `manage-symbols(programPath, mode, address, labelName, newName, libraryFilter, startIndex, maxCount, offset, limit, groupByLibrary, includeExternal, filterDefaultNames, demangleAll)` canonical signature.
+
+**Synonyms**: `manage-symbols`
+
+**Examples**:
+- `manage-symbols`
 
 ### `match-function`
 
@@ -955,6 +1278,30 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**:
 - Match function: `match-function programPath="/bin1.exe" functionIdentifier="main" targetProgramPaths=["/bin2.exe"] minSimilarity=0.9 propagateNames=true`.
+### `migrate-metadata`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `targetProgramPaths` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `minSimilarity` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeExternals` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateNames` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateTags` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateComments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagatePrototype` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateBookmarks` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `migrate-metadata(programPath, targetProgramPaths, minSimilarity, limit, includeExternals, propagateNames, propagateTags, propagateComments, propagatePrototype, propagateBookmarks)` canonical signature.
+
+**Synonyms**: `migrate-metadata`
+
+**Examples**:
+- `migrate-metadata`
+
 ### `execute-script`
 
 **Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.
@@ -986,6 +1333,47 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**:
 - Open all: `open-all-programs-in-code-browser`.
+### `open-program-in-code-browser`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `open-program-in-code-browser(programPath)` canonical signature.
+
+**Synonyms**: `open-program-in-code-browser`
+
+**Examples**:
+- `open-program-in-code-browser`
+
+### `open`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `path` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `shared` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `extensions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `openAllPrograms` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationFolder` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `enableVersionControl` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverUsername` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverPassword` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverHost` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverPort` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `repositoryName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `open(path, shared, extensions, openAllPrograms, destinationFolder, analyzeAfterImport, enableVersionControl, serverUsername, serverPassword, serverHost, serverPort, repositoryName)` canonical signature.
+
+**Synonyms**: `open`
+
+**Examples**:
+- `open`
+
 ### `read-bytes`
 
 **Description**: Legacy compatibility forward for byte reads. Prefer `inspect-memory` with `mode="read"`.
@@ -1007,15 +1395,11 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `resolution` (string, required): `overwrite` = apply the stored modification; `skip` = discard and remove from store.
 - `programPath` (string, optional): Optional override for program context when resolving.
 
+**Overloads**:
+- `resolve-modification-conflict(conflictId, resolution, programPath)` canonical signature.
+
+
 **Examples**: After `manage-symbols` (rename) returns a conflict, call `resolve-modification-conflict conflictId="<uuid>" resolution=overwrite` to apply, or `resolution=skip` to discard.
-
-### `list-prompts`
-
-**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator).
-
-**Parameters**: None.
-
-**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`).
 
 ### `search-code`
 
@@ -1152,17 +1536,23 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**: `search-symbols programPath="/bin.exe" query="main"`.
 
-### `search-symbols-by-name`
+### `svr-admin`
 
-**Description**: Legacy compatibility alias (non-advertised by default). Use `search-symbols`.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
-**Parameters**: Same as `manage-symbols`.
-  - Synonyms: All from `manage-symbols`.
+**Parameters**:
+- `args` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `command` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `timeoutSeconds` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
 **Overloads**:
-- `search_symbols_by_name(binary_name, query, offset, limit)` → forwards to `search-symbols`.
+- `svr-admin(args, command, timeoutSeconds)` canonical signature.
 
-**Examples**: `search-symbols-by-name programPath="/bin.exe" query="entry"`.
+**Synonyms**: `svr-admin`
+
+**Examples**:
+- `svr-admin`
+
 ### `suggest`
 
 **Description**: Legacy hidden tool (not advertised by default). Enable with `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.

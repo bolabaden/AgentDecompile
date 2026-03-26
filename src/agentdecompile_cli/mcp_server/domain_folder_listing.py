@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 def walk_domain_folder_tree(root_folder: DomainFolder, max_results: int) -> list[dict[str, Any]]:
     """Walk a DomainFolder recursively; return dicts compatible with list-project-files."""
+    logger.debug("diag.enter %s", "mcp_server/domain_folder_listing.py:walk_domain_folder_tree")
     items: list[dict[str, Any]] = []
 
     def walk(folder: DomainFolder) -> None:
@@ -54,6 +55,7 @@ def walk_domain_folder_tree(root_folder: DomainFolder, max_results: int) -> list
 
 def _domain_root_folders(ghidra_project: GhidraProject) -> list[DomainFolder]:
     """Return distinct DomainFolder roots that may contain project files."""
+    logger.debug("diag.enter %s", "mcp_server/domain_folder_listing.py:_domain_root_folders")
     roots: list[DomainFolder] = []
     seen: set[int] = set()
 
@@ -85,6 +87,7 @@ def _domain_root_folders(ghidra_project: GhidraProject) -> list[DomainFolder]:
 
 def _resolve_subfolder(root: DomainFolder, normalized_folder: str) -> DomainFolder | None:
     """Resolve a folder under root; normalized_folder must match ProjectToolProvider._normalize_repo_path()."""
+    logger.debug("diag.enter %s", "mcp_server/domain_folder_listing.py:_resolve_subfolder")
     if normalized_folder.strip() in ("", "/"):
         return root
     if not hasattr(root, "getFolder"):
@@ -102,6 +105,7 @@ def list_project_tree_from_ghidra(
     max_results: int,
 ) -> list[dict[str, str | int]]:
     """Enumerate domain folders/files under each known project root, merging unique paths."""
+    logger.debug("diag.enter %s", "mcp_server/domain_folder_listing.py:list_project_tree_from_ghidra")
     roots = _domain_root_folders(ghidra_project)
     if not roots:
         return []

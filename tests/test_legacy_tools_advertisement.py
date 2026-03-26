@@ -198,13 +198,13 @@ class TestLegacyToolsProviderIntegration:
     def test_provider_respects_default_advertisement(self, clean_env):
         """UnifiedToolProvider should advertise minimal set by default."""
         from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProvider
-        from agentdecompile_cli.registry import ADVERTISED_TOOLS, to_snake_case
+        from agentdecompile_cli.registry import ADVERTISED_TOOLS
         
         provider = UnifiedToolProvider()
         advertised_tools = provider.list_tools()
         advertised_names = {tool.name for tool in advertised_tools}
         
-        expected_names = {to_snake_case(name) for name in ADVERTISED_TOOLS}
+        expected_names = set(ADVERTISED_TOOLS)
         assert advertised_names == expected_names, "Provider should match registry advertisement"
     
     def test_provider_respects_legacy_tools_enabled(self, clean_env):

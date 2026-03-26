@@ -25,6 +25,7 @@ from urllib.parse import urlparse, urlunparse
 
 from mcp import types
 
+from agentdecompile_cli.app_logger import norm_arg_keys
 from agentdecompile_cli.registry import (
     Tool,
     normalize_identifier,
@@ -47,11 +48,13 @@ logger = logging.getLogger(__name__)
 
 def create_success_response(data: dict[str, Any]) -> list[types.TextContent]:
     """Create a standardized MCP success response (single TextContent with JSON body)."""
+    logger.debug("diag.enter %s", "executor.py:create_success_response")
     return [types.TextContent(type="text", text=_json.dumps(data))]
 
 
 def create_error_response(error: str | Exception) -> list[types.TextContent]:
     """Create a standardized MCP error response."""
+    logger.debug("diag.enter %s", "executor.py:create_error_response")
     error_msg = str(error) if isinstance(error, Exception) else error
     return [types.TextContent(type="text", text=_json.dumps({"success": False, "error": error_msg}))]
 
@@ -63,6 +66,7 @@ def create_error_response(error: str | Exception) -> list[types.TextContent]:
 
 def get_server_start_message() -> str:
     """Return the standardized server start message."""
+    logger.debug("diag.enter %s", "executor.py:get_server_start_message")
     return (
         "Please start the AgentDecompile server first:\n\n"
         "  agentdecompile-server --transport streamable-http\n\n"
@@ -75,6 +79,7 @@ def get_server_start_message() -> str:
 
 def build_backend_url(host: str, port: int, use_tls: bool = False) -> str:
     """Build MCP backend URL from host and port (for connect mode)."""
+    logger.debug("diag.enter %s", "executor.py:build_backend_url")
     scheme = "https" if use_tls else "http"
     return f"{scheme}://{host}:{port}"
 
@@ -85,6 +90,7 @@ def normalize_backend_url(value: str) -> str:
     Ensures scheme (http/https), netloc, and path: empty path → /mcp/message;
     /mcp or /mcp/message left as-is; other paths get /mcp/message appended.
     """
+    logger.debug("diag.enter %s", "executor.py:normalize_backend_url")
     raw = value.strip()
     if not raw:
         raise ValueError("Backend URL cannot be empty")
@@ -127,6 +133,7 @@ def resolve_backend_url(
     Returns None if no connect-mode option is set (so __main__ will spawn local server).
     Result is always a full URL with path /mcp/message when missing.
     """
+    logger.debug("diag.enter %s", "executor.py:resolve_backend_url")
     if server_url and server_url.strip():
         return server_url.strip()
     for key in env_url_keys:
@@ -154,6 +161,7 @@ def format_output(data: Any, fmt: str, verbose: bool = False) -> str:
     fmt: 'shell' (default) | 'json' | 'markdown' | 'xml' | legacy aliases ('text', 'table').
     Used by CLI commands to present tool results in the requested format.
     """
+    logger.debug("diag.enter %s", "executor.py:format_output")
     normalized: str = (fmt or "shell").strip().lower()
 
     # MCP tool result shape: {content: [{type: "text", text: "..."}], isError: bool}
@@ -229,6 +237,7 @@ def handle_noisy_mcp_errors(error_msg: str) -> bool:
 
     Returns True if the error was handled (was noisy), False otherwise.
     """
+    logger.debug("diag.enter %s", "executor.py:handle_noisy_mcp_errors")
     noisy_patterns: list[str] = [
         "async_generator",
         "GeneratorExit",
@@ -259,6 +268,7 @@ def handle_noisy_mcp_errors(error_msg: str) -> bool:
 
 def show_connection_error() -> None:
     """Display a standardized connection error message to stderr."""
+    logger.debug("diag.enter %s", "executor.py:show_connection_error")
     sys.stderr.write(
         f"Error: Cannot connect to AgentDecompile backend.\n\n{get_server_start_message()}\n",
     )
@@ -276,6 +286,7 @@ def run_async(coro: Any) -> Any:
     Returns:
         The result of the coroutine execution
     """
+    logger.debug("diag.enter %s", "executor.py:run_async")
     return asyncio.run(coro)
 
 
@@ -284,21 +295,29 @@ def handle_command_error(error: BaseException) -> None:
 
     Order: connection-related → CancelledError → noisy MCP/async patterns → known client exceptions → generic message.
     """
+    logger.debug("diag.enter %s", "executor.py:handle_command_error")
     error_msg = str(error)
+    _exc = type(error).__name__
     if isinstance(error, (ConnectionRefusedError, ConnectionError, OSError)) or "ConnectError" in error_msg or "connection refused" in error_msg.lower() or "all connection attempts failed" in error_msg.lower():
+        logger.info("cli_error_route branch=connection exc_type=%s", _exc)
         show_connection_error()
         return
     if isinstance(error, asyncio.exceptions.CancelledError):
+        logger.info("cli_error_route branch=cancelled exc_type=%s", _exc)
         show_connection_error()
         return
     if handle_noisy_mcp_errors(error_msg):
+        logger.info("cli_error_route branch=noisy_mcp exc_type=%s", _exc)
         return
     if type(error).__name__ == "ServerNotRunningError":
+        logger.info("cli_error_route branch=server_not_running exc_type=%s", _exc)
         sys.stderr.write(f"Error: {error}\n")
         return
     if type(error).__name__ == "ClientError":
+        logger.info("cli_error_route branch=client_error exc_type=%s", _exc)
         sys.stderr.write(f"Error: {error}\n")
         return
+    logger.info("cli_error_route branch=generic exc_type=%s", _exc)
     sys.stderr.write(f"Error: {error_msg}\n")
 
 
@@ -311,6 +330,7 @@ def get_client(
     cookie_file: Path | None = None,
 ) -> Any:
     """Create and return an AgentDecompileMcpClient instance (not connected)."""
+    logger.debug("diag.enter %s", "executor.py:get_client")
     from agentdecompile_cli.bridge import AgentDecompileMcpClient
 
     return AgentDecompileMcpClient(
@@ -329,11 +349,13 @@ def get_client(
 
 def canonicalize_tool_name(tool_name: str) -> str:
     """Canonicalize tool name using dynamic executor."""
+    logger.debug("diag.enter %s", "executor.py:canonicalize_tool_name")
     return dynamic_executor._resolve_tool_name(tool_name) or ""
 
 
 def match_tool_name(tool_name: str, canonical_name: str) -> bool:
     """Check tool name match using dynamic executor."""
+    logger.debug("diag.enter %s", "executor.py:match_tool_name")
     return dynamic_executor._registry.match_tool_name(tool_name, canonical_name)
 
 
@@ -348,6 +370,7 @@ def execute_tool_dynamically(
     context: dict[str, Any] | None = None,
 ) -> Any:
     """Execute any tool dynamically using the unified executor."""
+    logger.debug("diag.enter %s", "executor.py:execute_tool_dynamically")
     return dynamic_executor.execute_tool(tool_name, arguments, context)
 
 
@@ -369,6 +392,7 @@ def safe_int_conversion(value: Any, default: int = 0) -> int:
     Returns:
         Integer representation of value, or default if conversion fails
     """
+    logger.debug("diag.enter %s", "executor.py:safe_int_conversion")
     try:
         return int(value) if value is not None else default
     except (ValueError, TypeError):
@@ -388,6 +412,7 @@ def safe_bool_conversion(value: Any, default: bool = False) -> bool:
     Returns:
         Boolean representation of value
     """
+    logger.debug("diag.enter %s", "executor.py:safe_bool_conversion")
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -407,6 +432,7 @@ def safe_str_conversion(value: Any, default: str = "") -> str:
     Returns:
         String representation of value, or default if value is None
     """
+    logger.debug("diag.enter %s", "executor.py:safe_str_conversion")
     return str(value) if value is not None else default
 
 
@@ -426,6 +452,7 @@ def extract_json_from_response(response_text: str) -> dict[str, Any] | None:
     Returns:
         Parsed JSON dictionary, or None if parsing fails
     """
+    logger.debug("diag.enter %s", "executor.py:extract_json_from_response")
     try:
         return _json.loads(response_text)
     except _json.JSONDecodeError:
@@ -444,6 +471,7 @@ def build_http_url(base_url: str, endpoint: str) -> str:
     Returns:
         Complete URL with proper slash handling
     """
+    logger.debug("diag.enter %s", "executor.py:build_http_url")
     if not base_url.endswith("/"):
         base_url += "/"
     endpoint = endpoint.removeprefix("/")
@@ -462,18 +490,31 @@ def parse_http_response(response: Any) -> dict[str, Any] | None:
     Returns:
         Parsed JSON dictionary, or None if parsing fails
     """
-    if hasattr(response, "json"):
+    logger.debug("diag.enter %s", "executor.py:parse_http_response")
+    _had_json_method = hasattr(response, "json")
+    _json_exc_type = "—"
+    if _had_json_method:
         try:
             return response.json()
-        except Exception:
-            pass
+        except Exception as e:
+            _json_exc_type = type(e).__name__
 
     if hasattr(response, "text"):
-        return extract_json_from_response(response.text)
+        _from_text = extract_json_from_response(response.text)
+        if _from_text is not None:
+            return _from_text
 
     if isinstance(response, str):
-        return extract_json_from_response(response)
+        _from_str = extract_json_from_response(response)
+        if _from_str is not None:
+            return _from_str
 
+    logger.debug(
+        "cli_http_parse_miss had_json_method=%s json_attempt_exc_type=%s had_text_attr=%s",
+        _had_json_method,
+        _json_exc_type,
+        hasattr(response, "text"),
+    )
     return None
 
 
@@ -497,6 +538,7 @@ async def run_async_in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
     Returns:
         The result of the function execution
     """
+    logger.debug("diag.enter %s", "executor.py:run_async_in_thread")
     loop = asyncio.new_event_loop()
     try:
         return await loop.run_in_executor(None, func, *args, **kwargs)
@@ -518,6 +560,7 @@ def run_sync_in_async(func: Any, *args: Any, **kwargs: Any) -> Any:
     Returns:
         A coroutine that resolves to the function result
     """
+    logger.debug("diag.enter %s", "executor.py:run_sync_in_async")
     return asyncio.get_event_loop().run_in_executor(None, func, *args, **kwargs)
 
 
@@ -539,6 +582,7 @@ def get_argument_variations(arguments: dict[str, Any], *keys: str) -> Any:
         # Matches "program_path", "programPath", "program-path", etc.
     """
     # Fast path: exact match
+    logger.debug("diag.enter %s", "executor.py:get_argument_variations")
     for key in keys:
         val = arguments.get(key)
         if val is not None:
@@ -567,6 +611,7 @@ def get_optional_bool(
         include_externals = get_optional_bool(args, ("include_externals", False))
         # Matches "include_externals", "includeExternals", "include-externals", etc.
     """
+    logger.debug("diag.enter %s", "executor.py:get_optional_bool")
     fallback: bool = key_defaults[0][1] if key_defaults else False
 
     def _to_bool(raw: Any) -> bool:
@@ -611,6 +656,7 @@ def get_optional_int(
     Returns:
         The first int value found for any of the keys, or the default from the first pair if none found.
     """
+    logger.debug("diag.enter %s", "executor.py:get_optional_int")
     fallback: int = key_defaults[0][1] if key_defaults else 0
     # Fast path: exact match
     for key, _ in key_defaults:
@@ -652,6 +698,7 @@ def get_optional_str(
     -------
         The first non-empty string value found for any of the keys, or the default from the first pair if none found.
     """
+    logger.debug("diag.enter %s", "executor.py:get_optional_str")
     fallback: str = key_defaults[0][1] if key_defaults else ""
     # Fast path: exact match
     for key, _ in key_defaults:
@@ -682,6 +729,7 @@ def validate_required_argument(value: Any, name: str) -> None:
     ------
         ValueError: If the value is None or an empty string.
     """
+    logger.debug("diag.enter %s", "executor.py:validate_required_argument")
     if value is None or (isinstance(value, str) and not value.strip()):
         raise ValueError(f"'{name}' is required")
 
@@ -703,6 +751,7 @@ class DynamicToolExecutor:
     """
 
     def __init__(self):
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor.__init__")
         self._registry: ToolRegistry = tool_registry
 
     def execute_tool(
@@ -723,11 +772,14 @@ class DynamicToolExecutor:
         -------
             Tool execution result as list of TextContent
         """
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor.execute_tool")
+        logger.info("DynamicToolExecutor.execute_tool start tool=%s", tool_name)
         try:
             # Step 1: Resolve tool name (alias / casing / separators → canonical kebab-case)
             canonical_name: str | None = self._resolve_tool_name(tool_name)
             if not canonical_name or not canonical_name.strip():
                 raise ValueError(f"Unknown tool: {tool_name}")
+            logger.debug("DynamicToolExecutor resolved tool=%s", canonical_name)
 
             # Step 2: Map raw args to canonical param names (camelCase/snake/kebab + normalized fallback)
             parsed_args = self._parse_arguments_dynamically(canonical_name, raw_arguments)
@@ -738,10 +790,22 @@ class DynamicToolExecutor:
             # Step 4: Delegate to registry/backend (HTTP or in-process) and return TextContent list
             result = self._execute_tool_dynamically(canonical_name, parsed_args, context)
 
+            logger.info("DynamicToolExecutor.execute_tool ok tool=%s", canonical_name)
             return result
 
         except Exception as e:
-            logger.error("Tool execution failed: %s - %s", tool_name, e)
+            resolved_name: str | None = None
+            try:
+                resolved_name = self._resolve_tool_name(tool_name)
+            except Exception:
+                pass
+            logger.warning(
+                "dynamic_tool_executor_failed tool_requested=%s canonical_resolved=%s exc_type=%s",
+                tool_name,
+                resolved_name or "—",
+                type(e).__name__,
+            )
+            logger.exception("DynamicToolExecutor.execute_tool failed tool=%s", tool_name)
             return self._create_error_response(e)
 
     def _resolve_tool_name(self, tool_name: str) -> str | None:
@@ -759,6 +823,7 @@ class DynamicToolExecutor:
         -------
             Canonical registry tool name (kebab-case), or None if no match found.
         """
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._resolve_tool_name")
         return resolve_tool_name(tool_name)
 
     def _parse_arguments_dynamically(
@@ -782,6 +847,7 @@ class DynamicToolExecutor:
         """
         # Resolve noisy tool name variants (e.g. GET-DATA, get_data) to the
         # actual registry key so param lookup always succeeds.
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._parse_arguments_dynamically")
         resolved = self._resolve_tool_name(canonical_tool_name)
         if resolved is not None:
             canonical_tool_name = resolved
@@ -832,6 +898,7 @@ class DynamicToolExecutor:
         -------
             A list of possible parameter name variations to check against input arguments.
         """
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._generate_param_variations")
         variations: list[str] = [param_name]
 
         # Convert camelCase to snake_case
@@ -866,6 +933,7 @@ class DynamicToolExecutor:
         value: Any,
     ) -> Any:
         """Coerce value to appropriate type based on parameter name patterns."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._coerce_value_dynamically")
         if value is None:
             return None
 
@@ -886,6 +954,7 @@ class DynamicToolExecutor:
 
     def _is_array_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as an array."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._is_array_parameter")
         array_params: set[str] = {
             "address",
             "labelname",
@@ -909,6 +978,7 @@ class DynamicToolExecutor:
 
     def _is_boolean_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as a boolean."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._is_boolean_parameter")
         boolean_keywords: set[str] = {
             "analyze",
             "disable",
@@ -925,6 +995,7 @@ class DynamicToolExecutor:
 
     def _is_integer_parameter(self, param_name: str) -> bool:
         """Check if parameter should be treated as an integer."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._is_integer_parameter")
         integer_keywords: set[str] = {
             "count",
             "depth",
@@ -941,6 +1012,7 @@ class DynamicToolExecutor:
 
     def _coerce_to_boolean(self, value: Any) -> bool:
         """Coerce value to boolean with intelligent string parsing."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._coerce_to_boolean")
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -956,6 +1028,7 @@ class DynamicToolExecutor:
 
     def _coerce_to_integer(self, value: Any) -> Any:
         """Coerce value to integer if possible."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._coerce_to_integer")
         if isinstance(value, int):
             return value
         if isinstance(value, str):
@@ -971,6 +1044,7 @@ class DynamicToolExecutor:
         parsed_args: dict[str, Any],
     ) -> None:
         """Validate arguments dynamically based on tool requirements: all required params present, then type/constraint checks."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._validate_arguments_dynamically")
         tool = Tool.from_string(canonical_tool_name)
         normalized_tool_name = tool.normalized if tool is not None else normalize_identifier(canonical_tool_name)
         required_params = self._get_required_params_for_tool(normalized_tool_name)
@@ -985,6 +1059,7 @@ class DynamicToolExecutor:
 
     def _get_required_params_for_tool(self, normalized_tool_name: str) -> list[str]:
         """Get the list of required parameters for a tool (alpha-only normalized name → list of param names)."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._get_required_params_for_tool")
         required_params_map: dict[str, list[str]] = {
             "analyzedataflow": ["programpath"],
             "analyzeprogram": ["programpath"],
@@ -1018,6 +1093,7 @@ class DynamicToolExecutor:
 
     def _validate_parameter_constraints(self, parsed_args: dict[str, Any]) -> None:
         """Validate parameter values based on their types and constraints."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._validate_parameter_constraints")
         for param_name, value in parsed_args.items():
             if "path" in param_name.lower() and value is not None:
                 if not isinstance(value, str) or not value.strip():
@@ -1036,6 +1112,7 @@ class DynamicToolExecutor:
 
         Priority: ghidra_tools (full in-process) → program_info (program only) → placeholder (e.g. CLI connect mode).
         """
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._execute_tool_dynamically")
         context = {} if context is None else context
 
         if "ghidra_tools" in context:
@@ -1051,6 +1128,7 @@ class DynamicToolExecutor:
         context: dict[str, Any],
     ) -> list[types.TextContent]:
         """Execute tool using GhidraTools instance."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._execute_with_ghidra_tools")
         parsed_tool_name = self._resolve_tool_name(tool_name)
         if not parsed_tool_name:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -1142,6 +1220,12 @@ class DynamicToolExecutor:
                 },
             )
         except Exception as e:
+            logger.warning(
+                "pyghidra_dynamic_tool_exception canonical_tool=%s exc_type=%s arg_keys=%s",
+                parsed_tool_name or tool_name,
+                type(e).__name__,
+                norm_arg_keys(args),
+            )
             return self._create_error_response(e)
 
     def _execute_with_program_info(
@@ -1151,6 +1235,7 @@ class DynamicToolExecutor:
         context: dict[str, Any],
     ) -> list[types.TextContent]:
         """Execute tool using only program info."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._execute_with_program_info")
         return self._create_success_response(
             {
                 "tool": tool_name,
@@ -1165,6 +1250,7 @@ class DynamicToolExecutor:
         args: dict[str, Any],
     ) -> list[types.TextContent]:
         """Execute placeholder for unimplemented tools."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._execute_placeholder")
         return self._create_success_response(
             {
                 "tool": tool_name,
@@ -1176,10 +1262,12 @@ class DynamicToolExecutor:
 
     def _create_success_response(self, data: dict[str, Any]) -> list[types.TextContent]:
         """Create standardized success response."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._create_success_response")
         return create_success_response(data)
 
     def _create_error_response(self, error: str | Exception) -> list[types.TextContent]:
         """Create standardized error response."""
+        logger.debug("diag.enter %s", "executor.py:DynamicToolExecutor._create_error_response")
         return create_error_response(error)
 
 
