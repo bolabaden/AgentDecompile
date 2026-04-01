@@ -30,6 +30,9 @@ from typing import TYPE_CHECKING, Any
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
 
 if TYPE_CHECKING:
+    from ghidra.framework.remote import RepositoryItem as GhidraRepositoryItem  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+
     from agentdecompile_cli.launcher import ProgramInfo
 
 logger = logging.getLogger(__name__)
@@ -134,7 +137,7 @@ class SessionContext:
     """
 
     session_id: str
-    project_handle: Any | None = None
+    project_handle: dict[str, Any] | None = None
     open_programs: dict[str, ProgramInfo] = field(default_factory=dict)
     active_program_key: str | None = None
     preferences: dict[str, Any] = field(default_factory=dict)
@@ -402,11 +405,7 @@ class SessionContextStore:
             # Without rebinding, open/checkout state stays under "default" while follow-up tools use the UUID.
             if normalized != "default":
                 default_ctx = self._sessions.get("default")
-                if default_ctx is not None and (
-                    default_ctx.project_handle
-                    or default_ctx.open_programs
-                    or default_ctx.project_binaries
-                ):
+                if default_ctx is not None and (default_ctx.project_handle or default_ctx.open_programs or default_ctx.project_binaries):
                     default_ctx.session_id = normalized
                     self._sessions[normalized] = default_ctx
                     del self._sessions["default"]
@@ -430,19 +429,19 @@ class SessionContextStore:
             if len(session.tool_history) > 250:
                 session.tool_history = session.tool_history[-250:]
 
-    def set_project_handle(self, session_id: str, handle: Any) -> None:
+    def set_project_handle(self, session_id: str, handle: dict[str, Any] | None) -> None:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.set_project_handle")
         session = self.get_or_create(session_id)
         with self._lock:
             session.project_handle = handle
 
-    def get_project_handle(self, session_id: str) -> Any | None:
+    def get_project_handle(self, session_id: str) -> dict[str, Any] | None:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.get_project_handle")
         session = self.get_or_create(session_id)
         with self._lock:
             return session.project_handle
 
-    def set_project_binaries(self, session_id: str, binaries: list[dict[str, Any]]) -> None:
+    def set_project_binaries(self, session_id: str, binaries: list[dict[str, GhidraRepositoryItem]]) -> None:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.set_project_binaries")
         session = self.get_or_create(session_id)
         with self._lock:
@@ -568,8 +567,8 @@ class SessionContextStore:
                     return info
 
                 try:
-                    program = getattr(info, "program", None)
-                    if program is not None and hasattr(program, "getName"):
+                    program: GhidraProgram = getattr(info, "program", None)
+                    if program is not None:
                         # Match by last path component (e.g. "binary.exe") vs program.getName()
                         if str(program.getName()).strip().lower() == key_l.split("/")[-1]:
                             return info
@@ -579,14 +578,14 @@ class SessionContextStore:
             return None
 
 
-def is_shared_server_handle(handle: Any) -> bool:
+def is_shared_server_handle(handle: dict[str, Any] | None) -> bool:
     """Return True if the session project handle represents a shared Ghidra server connection.
 
     Accepts both "shared-server" and "sharedserver" so all code paths recognize
     the session as shared regardless of which string is stored.
     """
     logger.debug("diag.enter %s", "mcp_server/session_context.py:is_shared_server_handle")
-    if not isinstance(handle, dict):
+    if not handle:
         return False
     mode = (str(handle.get("mode", "") or "").strip().lower()).replace("-", "")
     return mode == "sharedserver"

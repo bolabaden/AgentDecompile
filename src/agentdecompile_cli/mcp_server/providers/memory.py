@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -18,6 +18,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.mem import Memory as GhidraMemory  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +122,7 @@ class MemoryToolProvider(ToolProvider):
             memory=memory,
         )
 
-    async def _handle_blocks(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+    async def _handle_blocks(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Return memory map: each block has name, start, end, size, r/w/x permissions, initialized flag.
 
         Blocks are the program's memory regions (e.g. .text, .data, .rdata); useful to find
@@ -140,7 +144,7 @@ class MemoryToolProvider(ToolProvider):
             )
         return create_success_response({"mode": "blocks", "blocks": blocks, "count": len(blocks)})
 
-    async def _handle_read(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+    async def _handle_read(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Read raw bytes at address; return hex dump and ASCII view. Cap length at 10000 to avoid huge responses."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_read")
         addr_str = self._require_address_or_symbol(args)
@@ -174,7 +178,7 @@ class MemoryToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_data_at(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+    async def _handle_data_at(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Return the defined data at this address: type, length, value, label. Exact address first, then containing."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_data_at")
         addr_str = self._require_address_or_symbol(args)
@@ -205,7 +209,7 @@ class MemoryToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_data_items(self, args: dict[str, Any], program: Any, memory: Any) -> list[types.TextContent]:
+    async def _handle_data_items(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """List all memory locations that have a data type applied (getDefinedData), paginated.
 
         getDefinedData(True) walks the listing forward; each item has address, dataType, length, label.

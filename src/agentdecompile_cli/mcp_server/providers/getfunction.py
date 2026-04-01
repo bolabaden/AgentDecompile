@@ -28,7 +28,14 @@ from collections import defaultdict
 from pathlib import Path
 from dataclasses import dataclass
 from itertools import islice
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
 
 from mcp import types
 
@@ -77,7 +84,7 @@ def _detail_limits(result_count: int) -> tuple[int | None, int | None, int]:
 class _FunctionMatchFeature:
     """One function's extracted features for matching (signature, callers, callees)."""
 
-    function: Any
+    function: GhidraFunction
     name: str
     address: str
     signature: str
@@ -304,8 +311,8 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_rename(
         self,
         args: dict[str, Any],
-        program: Any,
-        func: Any,
+        program: GhidraProgram,
+        func: GhidraFunction,
         func_id: str,
     ) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_rename")
@@ -317,17 +324,8 @@ class GetFunctionToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Rename would overwrite existing custom function name:\n\n"
-                    "```diff\n"
-                    f"- {current_name}\n"
-                    f"+ {new_name}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Rename would overwrite existing custom function name:\n\n```diff\n- {current_name}\n+ {new_name}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
                 conflict_store_store(
                     get_current_mcp_session_id(),
@@ -357,8 +355,8 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_set_prototype(
         self,
         args: dict[str, Any],
-        program: Any,
-        func: Any,
+        program: GhidraProgram,
+        func: GhidraFunction,
         func_id: str,
     ) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_prototype")
@@ -370,17 +368,8 @@ class GetFunctionToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Set prototype would overwrite existing signature:\n\n"
-                    "```diff\n"
-                    f"- {current_sig}\n"
-                    f"+ {proto}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Set prototype would overwrite existing signature:\n\n```diff\n- {current_sig}\n+ {proto}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
                 conflict_store_store(
                     get_current_mcp_session_id(),
@@ -408,8 +397,8 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_set_calling_convention(
         self,
         args: dict[str, Any],
-        program: Any,
-        func: Any,
+        program: GhidraProgram,
+        func: GhidraFunction,
         func_id: str,
     ) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_calling_convention")
@@ -421,17 +410,8 @@ class GetFunctionToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Set calling convention would overwrite existing:\n\n"
-                    "```diff\n"
-                    f"- {current_cc}\n"
-                    f"+ {cc}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Set calling convention would overwrite existing:\n\n```diff\n- {current_cc}\n+ {cc}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
                 conflict_store_store(
                     get_current_mcp_session_id(),
@@ -459,8 +439,8 @@ class GetFunctionToolProvider(ToolProvider):
     async def _handle_set_return_type(
         self,
         args: dict[str, Any],
-        program: Any,
-        func: Any,
+        program: GhidraProgram,
+        func: GhidraFunction,
         func_id: str,
     ) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_return_type")
@@ -477,17 +457,8 @@ class GetFunctionToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Set return type would overwrite existing:\n\n"
-                    "```diff\n"
-                    f"- {current_rt}\n"
-                    f"+ {rt_str}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Set return type would overwrite existing:\n\n```diff\n- {current_rt}\n+ {rt_str}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
                 conflict_store_store(
                     get_current_mcp_session_id(),
@@ -514,7 +485,7 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_delete(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_delete(self, args: dict[str, Any], program: GhidraProgram, func: GhidraFunction, func_id: str) -> list[types.TextContent]:
         def _delete_function() -> None:
             self._get_function_manager(program).removeFunction(func.getEntryPoint())
 
@@ -610,8 +581,8 @@ class GetFunctionToolProvider(ToolProvider):
 
     def _get_match_index(
         self,
-        program: Any,
-        fm: Any,
+        program: GhidraProgram,
+        fm: GhidraFunctionManager,
     ) -> tuple[_FunctionMatchIndex, bool]:
         """Build or return cached match index for this program.
 
@@ -716,7 +687,7 @@ class GetFunctionToolProvider(ToolProvider):
             return []
         return paths
 
-    def _source_call_graph_sets(self, source_func: Any) -> tuple[frozenset[str], frozenset[str]]:
+    def _source_call_graph_sets(self, source_func: GhidraFunction) -> tuple[frozenset[str], frozenset[str]]:
         """Return (callers, callees) as frozensets of function names for cross-program call-graph scoring."""
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._source_call_graph_sets")
         callers = frozenset(c.getName() for c in source_func.getCallingFunctions(None))
@@ -739,7 +710,7 @@ class GetFunctionToolProvider(ToolProvider):
 
     def _list_source_function_identifiers(
         self,
-        program: Any,
+        program: GhidraProgram,
         include_externals: bool = True,
         limit: int | None = None,
     ) -> list[str]:
@@ -762,8 +733,8 @@ class GetFunctionToolProvider(ToolProvider):
 
     async def _handle_match_cross_program(
         self,
-        source_func: Any,
-        source_program: Any,
+        source_func: GhidraFunction,
+        source_program: GhidraProgram,
         target_paths: list[str],
         min_similarity: float,
         propagate_names: bool,
@@ -976,9 +947,7 @@ class GetFunctionToolProvider(ToolProvider):
                 gf_name: str = (matched_info.get("name") or gf_address or "").strip()
                 if gf_name or gf_address:
                     try:
-                        result_count: int = (
-                            detail_result_count if detail_result_count is not None else len(target_paths)
-                        )
+                        result_count: int = detail_result_count if detail_result_count is not None else len(target_paths)
                         max_callers: int | None = None
                         max_callees: int | None = None
                         max_instructions: int = 0
@@ -1053,13 +1022,8 @@ class GetFunctionToolProvider(ToolProvider):
                 target_paths = [str(raw_targets).strip()]
         # Cross-program: single function or all functions (when no functionIdentifier given)
         assert self.program_info is not None
-        program: Any = self.program_info.program
-        source_path: str = (
-            self._get_str(args, "programpath", "programpath", default="")
-            or getattr(self.program_info, "file_path", None)
-            or getattr(self.program_info, "path", None)
-            or ""
-        )
+        program: GhidraProgram = self.program_info.program
+        source_path: str = self._get_str(args, "programpath", "programpath", default="") or getattr(self.program_info, "file_path", None) or getattr(self.program_info, "path", None) or ""
         source_path = str(source_path).strip() if source_path else ""
         # Resolve targets: from args or discover from session (so bulk works without targetProgramPaths)
         resolved_targets: list[str] = target_paths if target_paths else self._discover_target_paths(source_path or "unknown")
@@ -1068,7 +1032,7 @@ class GetFunctionToolProvider(ToolProvider):
             func_id: str = self._get_address_or_symbol(args)
             if func_id:
                 # Single function: existing behavior
-                func: Any | None = self._resolve_function(func_id)
+                func: GhidraFunction | None = self._resolve_function(func_id)
                 if func is None:
                     raise ValueError(f"Function not found: {func_id}")
                 min_sim = self._normalize_min_similarity(args)
@@ -1137,7 +1101,7 @@ class GetFunctionToolProvider(ToolProvider):
             for idx, ident in enumerate(identifiers):
                 if progress_interval and (idx + 1) % progress_interval == 0:
                     logger.info("match-function bulk progress: %d/%d", idx + 1, len(identifiers))
-                func: Any | None = self._resolve_function(ident)
+                func: GhidraFunction | None = self._resolve_function(ident)
                 if func is None:
                     continue
                 try:
@@ -1202,11 +1166,7 @@ class GetFunctionToolProvider(ToolProvider):
         # No targets: bulk was intended but session has no other binaries (or targetProgramPaths not passed)
         func_id_any = self._get_address_or_symbol(args)
         if not func_id_any and source_path:
-            raise ValueError(
-                "No target programs found for bulk migration. Open a project with multiple binaries, "
-                "or pass targetProgramPaths (e.g. CLI: --target-paths /path/to/other.exe). "
-                "For single-function match, pass function or addressOrSymbol."
-            )
+            raise ValueError("No target programs found for bulk migration. Open a project with multiple binaries, or pass targetProgramPaths (e.g. CLI: --target-paths /path/to/other.exe). For single-function match, pass function or addressOrSymbol.")
         # Single-program: similar (rank by signature + call graph), callers, callees, or signature-only
         func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")

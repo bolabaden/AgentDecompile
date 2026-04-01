@@ -14,7 +14,7 @@ import difflib
 import logging
 import re
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -25,6 +25,11 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     n,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import ReferenceManager as GhidraReferenceManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -226,29 +231,24 @@ class StringToolProvider(ToolProvider):
 
         # Add diagnostic if no strings were found - could indicate collection failure
         if not strings:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.debug(
+            logging.getLogger(__name__).debug(
                 "String collection returned empty results. This may indicate: (1) binary contains no strings, or (2) string iterators unavailable in current program context (shared-server/proxy mode).",
             )
 
         return strings
 
-    def _attach_references_to_string_results(
-        self, strings: list[dict[str, Any]], ref_limit: int = 25
-    ) -> None:
+    def _attach_references_to_string_results(self, strings: list[dict[str, Any]], ref_limit: int = 25) -> None:
         """Attach referencesTo (get-references style) to each string result."""
         logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._attach_references_to_string_results")
         if not strings or not self.program_info:
             return
         try:
-            program: Any = self.program_info.program
-            ref_mgr: Any = program.getReferenceManager()
+            program: GhidraProgram = self.program_info.program
+            ref_mgr: GhidraReferenceManager = program.getReferenceManager()
             fm = self._get_function_manager(program)
             for s in strings:
                 try:
-                    addr: Any = self._resolve_address(s.get("address"), program=program)
+                    addr: GhidraAddress = self._resolve_address(s.get("address"), program=program)
                     if addr is None:
                         continue
                     refs_to: list[dict[str, Any]] = []
@@ -389,9 +389,7 @@ class StringToolProvider(ToolProvider):
                     total = len(strings)
                     strings, has_more = self._paginate_results(strings, offset, max_results)
                     self._attach_references_to_string_results(strings)
-                    return self._create_paginated_response(
-                        strings, offset, max_results, total=total, mode=mode, query=pattern
-                    )
+                    return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, query=pattern)
                 except re.error:
                     pass
 
@@ -412,9 +410,7 @@ class StringToolProvider(ToolProvider):
             strings = [s for _, s in scored]
             strings, has_more = self._paginate_results(strings, offset, max_results)
             self._attach_references_to_string_results(strings)
-            return self._create_paginated_response(
-                strings, offset, max_results, total=total, mode=mode, query=pattern
-            )
+            return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, query=pattern)
 
         if mode_n == "regex" and pattern:
             try:
@@ -458,6 +454,4 @@ class StringToolProvider(ToolProvider):
         extra: dict[str, Any] = {}
         if pattern:
             extra["query"] = pattern
-        return self._create_paginated_response(
-            strings, offset, max_results, total=total, mode=mode, **extra
-        )
+        return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, **extra)

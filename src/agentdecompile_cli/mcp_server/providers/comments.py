@@ -11,7 +11,15 @@ from __future__ import annotations
 import logging
 import uuid
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Address as GhidraAddress,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Listing as GhidraListing,
+    )
 
 from mcp import types
 
@@ -37,7 +45,7 @@ _COMMENT_TYPES = {
 }
 
 
-def _get_listing_comment(listing: Any, comment_type_code: int, addr: Any) -> str | None:
+def _get_listing_comment(listing: GhidraListing, comment_type_code: int, addr: GhidraAddress) -> str | None:
     """Get comment at address for the given type. Supports both Listing overloads:
     getComment(int, Address) and getComment(CommentType, Address).
     """
@@ -49,17 +57,17 @@ def _get_listing_comment(listing: Any, comment_type_code: int, addr: Any) -> str
         if "no matching overloads" not in err_msg and "getcomment" not in err_msg:
             raise
         try:
-            from ghidra.program.model.listing import CommentType  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.program.model.listing import CommentType as GhidraCommentType  # pyright: ignore[reportMissingModuleSource]
 
             # CommentType enum order: EOL=0, PRE=1, POST=2, PLATE=3, REPEATABLE=4
             _by_code = (
-                CommentType.EOL,
-                CommentType.PRE,
-                CommentType.POST,
-                CommentType.PLATE,
-                CommentType.REPEATABLE,
+                GhidraCommentType.EOL,
+                GhidraCommentType.PRE,
+                GhidraCommentType.POST,
+                GhidraCommentType.PLATE,
+                GhidraCommentType.REPEATABLE,
             )
-            ctype_enum = _by_code[comment_type_code] if 0 <= comment_type_code < 5 else CommentType.EOL
+            ctype_enum = _by_code[comment_type_code] if 0 <= comment_type_code < 5 else GhidraCommentType.EOL
             return listing.getComment(ctype_enum, addr)
         except Exception:
             raise e
@@ -93,7 +101,11 @@ class CommentToolProvider(ToolProvider):
                         },
                         "comments": {"type": "array", "description": "Batch creation parameter for multiple comments at once.", "items": {"type": "object"}},
                         "query": {"type": "string", "description": "If searching, the word, phrase, or regular expression you are looking for."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of comment search results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Number of comment search results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                        },
                         "offset": {"type": "integer", "default": 0, "description": "Pagination tracking index."},
                     },
                     "required": [],
@@ -168,17 +180,8 @@ class CommentToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Set comment would overwrite existing comment at (address, type):\n\n"
-                    "```diff\n"
-                    f"- {existing}\n"
-                    f"+ {text}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Set comment would overwrite existing comment at (address, type):\n\n```diff\n- {existing}\n+ {text}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                 conflict_store_store(
                     get_current_mcp_session_id(),

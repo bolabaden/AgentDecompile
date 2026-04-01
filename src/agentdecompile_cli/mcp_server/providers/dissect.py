@@ -11,7 +11,25 @@ from __future__ import annotations
 from itertools import islice
 import logging
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompileResults as GhidraDecompileResults,
+    )
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Address as GhidraAddress,
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Bookmark as GhidraBookmark,
+        BookmarkManager as GhidraBookmarkManager,
+        Function as GhidraFunction,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        ReferenceManager as GhidraReferenceManager,
+    )
 
 from mcp import types
 
@@ -127,10 +145,7 @@ class GetFunctionAioToolProvider(ToolProvider):
 
         target = self._resolve_function(func_id, program=program)
         if target is None:
-            program_path = (
-                getattr(self.program_info, "file_path", None)
-                or getattr(self.program_info, "path", None)
-            )
+            program_path = getattr(self.program_info, "file_path", None) or getattr(self.program_info, "path", None)
             if not program_path and program is not None:
                 try:
                     df = program.getDomainFile()
@@ -139,16 +154,146 @@ class GetFunctionAioToolProvider(ToolProvider):
                 except Exception:
                     pass
             program_path = str(program_path) if program_path else "current program"
-            msg = f"Function not found: {func_id} (program: {program_path}). Use list-functions with this program to see available functions and addresses."
-            msg += " If you requested a common base address (e.g. 0x401000), the executable entry point may be at a different address; use get-current-program or list-functions to find it."
+
+            # --- Diagnostic: collect what IS at this address ---
+            from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
+
+            addr = None
             try:
-                fm = program.getFunctionManager()
-                count = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else 0
-                if count == 0:
-                    msg += " The program has no functions yet; run analyze-program first, then try get-function again."
+                addr = AddressUtil.resolve_address_or_symbol(program, func_id)
             except Exception:
                 pass
-            raise ValueError(msg)
+
+            diag: dict[str, Any] = {
+                "found": False,
+                "requestedIdentifier": func_id,
+                "programPath": program_path,
+            }
+
+            if addr is not None:
+                diag["resolvedAddress"] = str(addr)
+
+                # What memory block is this in?
+                try:
+                    mem = program.getMemory()
+                    block = mem.getBlock(addr)
+                    if block is not None:
+                        diag["memoryBlock"] = {
+                            "name": str(block.getName()),
+                            "start": str(block.getStart()),
+                            "end": str(block.getEnd()),
+                            "readable": bool(block.isRead()),
+                            "writable": bool(block.isWrite()),
+                            "executable": bool(block.isExecute()),
+                        }
+                except Exception:
+                    pass
+
+                # Data / defined type at this address
+                try:
+                    listing = program.getListing()
+                    data = listing.getDataAt(addr)
+                    if data is not None:
+                        dt = data.getDataType()
+                        diag["dataAtAddress"] = {
+                            "dataType": str(dt.getName()) if dt is not None else "unknown",
+                            "length": int(data.getLength()),
+                            "value": str(data.getValue()) if not isinstance(data.getValue(), type(None)) else None,
+                        }
+                except Exception:
+                    pass
+
+                # All comments at this address
+                try:
+                    listing = program.getListing()
+                    cmt_types = {
+                        "plateComment": 0,
+                        "preComment": 1,
+                        "postComment": 2,
+                        "eolComment": 3,
+                        "repeatableComment": 4,
+                    }
+                    comments: dict[str, str] = {}
+                    for cname, ctype in cmt_types.items():
+                        try:
+                            cval = listing.getComment(ctype, addr)
+                            if cval:
+                                comments[cname] = str(cval)
+                        except Exception:
+                            pass
+                    if comments:
+                        diag["commentsAtAddress"] = comments
+                except Exception:
+                    pass
+
+                # Labels / symbols at this address
+                try:
+                    sym_table = program.getSymbolTable()
+                    syms = list(sym_table.getSymbols(addr))
+                    if syms:
+                        diag["labelsAtAddress"] = [
+                            {
+                                "name": str(s.getName()),
+                                "namespace": str(s.getParentNamespace()) if hasattr(s, "getParentNamespace") else "",
+                                "source": str(s.getSource()),
+                                "isPrimary": bool(s.isPrimary()),
+                            }
+                            for s in syms[:20]
+                        ]
+                except Exception:
+                    pass
+
+                # Cross-references TO this address
+                try:
+                    ref_mgr = program.getReferenceManager()
+                    refs_to = list(islice(ref_mgr.getReferencesTo(addr), 20))
+                    if refs_to:
+                        diag["referencesToAddress"] = [{"from": str(r.getFromAddress()), "type": str(r.getReferenceType())} for r in refs_to]
+                except Exception:
+                    pass
+
+                # Nearest functions before/after this address
+                try:
+                    fm = program.getFunctionManager()
+                    nearby: list[dict[str, str]] = []
+                    f_before = fm.getFunctionBefore(addr)
+                    f_after = fm.getFunctionAfter(addr)
+                    if f_before is not None:
+                        nearby.append(
+                            {
+                                "direction": "before",
+                                "name": str(f_before.getName()),
+                                "address": str(f_before.getEntryPoint()),
+                            }
+                        )
+                    if f_after is not None:
+                        nearby.append(
+                            {
+                                "direction": "after",
+                                "name": str(f_after.getName()),
+                                "address": str(f_after.getEntryPoint()),
+                            }
+                        )
+                    if nearby:
+                        diag["nearbyFunctions"] = nearby
+                except Exception:
+                    pass
+
+                # Function count
+                try:
+                    fm2 = program.getFunctionManager()
+                    count = int(fm2.getFunctionCount()) if hasattr(fm2, "getFunctionCount") else 0
+                    diag["programFunctionCount"] = count
+                    if count == 0:
+                        diag["hint"] = "Program has no functions yet; run analyze-program first."
+                    else:
+                        diag["hint"] = "No function is defined at this address. Use nearbyFunctions above or list-functions to find addressable functions."
+                except Exception:
+                    pass
+            else:
+                diag["hint"] = f"Could not resolve {func_id!r} to an address in this program. Check the address format or use list-functions to browse available functions."
+
+            return create_success_response(diag)
 
         entry = target.getEntryPoint()
         body = target.getBody()
@@ -181,9 +326,20 @@ class GetFunctionAioToolProvider(ToolProvider):
             "memoryBlock": self._collect_memory_block(program, entry) or {},
         }
         result["sectionsIncluded"] = [
-            "metadata", "namespace", "decompilation", "disassembly", "comments",
-            "labels", "callers", "callees", "crossReferences", "outboundReferences",
-            "tags", "bookmarks", "stackFrame", "memoryBlock",
+            "metadata",
+            "namespace",
+            "decompilation",
+            "disassembly",
+            "comments",
+            "labels",
+            "callers",
+            "callees",
+            "crossReferences",
+            "outboundReferences",
+            "tags",
+            "bookmarks",
+            "stackFrame",
+            "memoryBlock",
         ]
         return create_success_response(result)
 
@@ -192,7 +348,7 @@ class GetFunctionAioToolProvider(ToolProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _collect_metadata(func: Any) -> dict[str, Any]:
+    def _collect_metadata(func: GhidraFunction) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_metadata")
         body = func.getBody()
         return {
@@ -218,7 +374,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         }
 
     @staticmethod
-    def _collect_namespace(func: Any) -> dict[str, Any]:
+    def _collect_namespace(func: GhidraFunction) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_namespace")
         ns = func.getParentNamespace()
         parts: list[str] = []
@@ -234,7 +390,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             "segments": parts,
         }
 
-    def _decompile(self, func: Any, program: Any, timeout: int | None = None) -> str:
+    def _decompile(self, func: GhidraFunction, program: GhidraProgram, timeout: int | None = None) -> str:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._decompile")
         try:
             from agentdecompile_cli.mcp_utils.decompiler_util import (
@@ -249,7 +405,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             session_decomp = getattr(self.program_info, "decompiler", None)
             decomp, owns = resolve_decompiler_for_program(session_decomp, program)
 
-            dr: Any = decomp.decompileFunction(func, timeout or 60, monitor)
+            dr: GhidraDecompileResults = decomp.decompileFunction(func, timeout or 60, monitor)
             if dr and dr.decompileCompleted():
                 df = get_decompiled_function_from_results(dr)
                 if df is None:
@@ -308,7 +464,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             raise RuntimeError("Ghidra DecompInterface is not available (PyGhidra / Ghidra classpath)") from exc
 
     @staticmethod
-    def _disassemble(func: Any, program: Any, max_insns: int | None = None) -> dict[str, Any]:
+    def _disassemble(func: GhidraFunction, program: GhidraProgram, max_insns: int | None = None) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._disassemble")
         listing = program.getListing()
         body = func.getBody()
@@ -332,7 +488,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         }
 
     @staticmethod
-    def _collect_all_comments(func: Any, program: Any, body: Any) -> dict[str, Any]:
+    def _collect_all_comments(func: GhidraFunction, program: GhidraProgram, body: GhidraAddressSetView) -> dict[str, Any]:
         """Collect entry-point comments + inline comments across the function body."""
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_all_comments")
         listing = program.getListing()
@@ -372,7 +528,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         }
 
     @staticmethod
-    def _collect_labels(program: Any, body: Any) -> list[dict[str, Any]]:
+    def _collect_labels(program: GhidraProgram, body: GhidraAddressSetView) -> list[dict[str, Any]]:
         """Collect all symbols/labels within the function address range."""
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_labels")
         st = program.getSymbolTable()
@@ -398,20 +554,20 @@ class GetFunctionAioToolProvider(ToolProvider):
         return labels
 
     @staticmethod
-    def _collect_callers(func: Any, max_callers: int | None = None) -> list[dict[str, Any]]:
+    def _collect_callers(func: GhidraFunction, max_callers: int | None = None) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callers")
         return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCallingFunctions(None), max_callers)]
 
     @staticmethod
-    def _collect_callees(func: Any, max_callees: int | None = None) -> list[dict[str, Any]]:
+    def _collect_callees(func: GhidraFunction, max_callees: int | None = None) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callees")
         return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCalledFunctions(None), max_callees)]
 
     @staticmethod
-    def _collect_xrefs(program: Any, entry: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
+    def _collect_xrefs(program: GhidraProgram, entry: GhidraAddress, max_refs: int | None = None) -> list[dict[str, Any]]:
         """Inbound cross-references to the function entry point."""
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_xrefs")
-        ref_mgr: Any = program.getReferenceManager()
+        ref_mgr: GhidraReferenceManager = program.getReferenceManager()
         refs: list[dict[str, Any]] = []
         for ref in islice(ref_mgr.getReferencesTo(entry), max_refs):
             if max_refs is not None and len(refs) >= max_refs:
@@ -428,12 +584,12 @@ class GetFunctionAioToolProvider(ToolProvider):
         return refs
 
     @staticmethod
-    def _collect_outbound_refs(program: Any, body: Any, max_refs: int | None = None) -> list[dict[str, Any]]:
+    def _collect_outbound_refs(program: GhidraProgram, body: GhidraAddressSetView, max_refs: int | None = None) -> list[dict[str, Any]]:
         """Outbound cross-references from code inside the function body to other addresses."""
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_outbound_refs")
         if body is None:
             return []
-        ref_mgr: Any = program.getReferenceManager()
+        ref_mgr: GhidraReferenceManager = program.getReferenceManager()
         listing = program.getListing()
         refs: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -460,16 +616,16 @@ class GetFunctionAioToolProvider(ToolProvider):
         return refs
 
     @staticmethod
-    def _collect_bookmarks(program: Any, body: Any) -> list[dict[str, Any]]:
+    def _collect_bookmarks(program: GhidraProgram, body: GhidraAddressSetView) -> list[dict[str, Any]]:
         """Bookmarks within the function's address range."""
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_bookmarks")
-        bm_mgr: Any = program.getBookmarkManager()
+        bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
         bookmarks: list[dict[str, Any]] = []
         if body is None:
             return bookmarks
-        it: Any = bm_mgr.getBookmarksIterator(body.getMinAddress(), True)
+        it = bm_mgr.getBookmarksIterator(body.getMinAddress(), True)
         while it.hasNext():
-            bm: Any = it.next()
+            bm: GhidraBookmark = it.next()
             addr = bm.getAddress()
             if body.contains(addr):
                 bookmarks.append(

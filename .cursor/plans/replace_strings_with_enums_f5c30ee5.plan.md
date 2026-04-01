@@ -26,7 +26,7 @@ isProject: false
 
 ### New considerations (third pass)
 
-- **response_formatter.py:** `action` comes from `data.get("action", data.get("operation", ""))` (wire string). Use `action == ToolName.OPEN_PROJECT.value` for comparison.  
+- **response_formatter.py:** `action` comes from `data.get("action", data.get("operation", ""))` (wire string). Use `action == ToolName.OPEN.value` for comparison.  
 - **Aliases / TOOLS_LIST.md:** New tools or aliases added only in TOOLS_LIST.md may not have a `ToolName` member until registry is updated; keep `resolve_tool_name_enum` returning `None` for unknown names and handle gracefully at call sites.  
 - **Tools not in ToolName:** `connect-shared-project`, `list-open-programs` are used in [project.py](src/agentdecompile_cli/mcp_server/providers/project.py) and [bridge.py](src/agentdecompile_cli/bridge.py) but have no `ToolName` member today; either add enum members and use `.value` or keep as string literals until registry is updated. `search-symbols-by-name` is an advertised alias (resolves to manage-symbols); can remain string for the advertised alias name.  
 - **TOOL_RENDERERS:** [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) uses normalized str keys (e.g. `"inspectmemory"`). Optional: build from `ToolName` via `normalize_identifier(ToolName.XXX.value)` to avoid drift.
@@ -55,7 +55,7 @@ Audit does not change the enum-replacement implementation; it is recorded here f
 
 ## Design (unchanged)
 
-- **Enum type:** `ToolName(str, Enum)` with `.value` as kebab-case wire format; member names PascalCase-from-kebab (e.g. `OPEN_PROJECT`, `GET_FUNCTIONS`).
+- **Enum type:** `ToolName(str, Enum)` with `.value` as kebab-case wire format; member names PascalCase-from-kebab (e.g. `OPEN`, `GET_FUNCTIONS`).
 - **Boundary:** MCP and CLI continue to use strings; conversion at registry boundary via `resolve_tool_name()` (str) and `resolve_tool_name_enum()` (ToolName | None).
 - **Scope:** Tool names are the main target; ResourceUri already enum-based; parameter/mode enums deferred.
 
@@ -71,7 +71,7 @@ Audit does not change the enum-replacement implementation; it is recorded here f
 
 **Best practices (Python str Enum + type checkers):**
 
-- Use enum members in internal APIs and `.value` only at the MCP/CLI boundary (e.g. `call_tool(ToolName.OPEN_PROJECT.value, payload)`).
+- Use enum members in internal APIs and `.value` only at the MCP/CLI boundary (e.g. `call_tool(ToolName.OPEN.value, payload)`).
 - For functions that accept both wire input and internal callers, `ToolName | str` with `resolve_tool_name_enum()` keeps backward compatibility and enables gradual tightening to `ToolName` where appropriate.
 - StrEnum compares equal to strings; type checkers and IDEs get better autocomplete and typo detection when signatures use `ToolName` or `ToolName | None` rather than raw `str` for canonical tool names.
 - Keep a single source of truth: registry owns `ToolName` and enum-keyed structures; tools_schema and **init** re-export and expose str-keyed views only where needed for backward compat.
@@ -110,15 +110,15 @@ if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
 
 **CLI / bridge / server / launcher (wire boundary: keep .value for call_tool / MCP):**
 
-- [cli.py](src/agentdecompile_cli/cli.py): Replace `"open"` in `call_tool(...)` and any help/example strings with `ToolName.OPEN_PROJECT.value`. Same for any other hardcoded tool names in this file.
+- [cli.py](src/agentdecompile_cli/cli.py): Replace `"open"` in `call_tool(...)` and any help/example strings with `ToolName.OPEN.value`. Same for any other hardcoded tool names in this file.
 - [bridge.py](src/agentdecompile_cli/bridge.py): Replace `"get-functions"` (and any other tool name literals) with `ToolName.GET_FUNCTIONS.value` (or appropriate enum).
-- [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py): Replace `"open"` in test/example payloads with `ToolName.OPEN_PROJECT.value`.
-- [launcher.py](src/agentdecompile_cli/launcher.py) and [server.py](src/agentdecompile_cli/server.py): Replace `"open"` in `call_tool(...)` with `ToolName.OPEN_PROJECT.value`.
-- [mcp_server/proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py): Replace `"open"` in example/tool list with `ToolName.OPEN_PROJECT.value`.
+- [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py): Replace `"open"` in test/example payloads with `ToolName.OPEN.value`.
+- [launcher.py](src/agentdecompile_cli/launcher.py) and [server.py](src/agentdecompile_cli/server.py): Replace `"open"` in `call_tool(...)` with `ToolName.OPEN.value`.
+- [mcp_server/proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py): Replace `"open"` in example/tool list with `ToolName.OPEN.value`.
 
 **Response formatter:**
 
-- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): Replace `action == "open"` with comparison using `ToolName.OPEN_PROJECT.value` (or a normalized form if that is what `action` holds).
+- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): Replace `action == "open"` with comparison using `ToolName.OPEN.value` (or a normalized form if that is what `action` holds).
 
 **Providers (list_tools / tool metadata):**
 
@@ -197,7 +197,7 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 
 ### B.3 Call-site replacements (Phase B)
 
-- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): `normalize_identifier(ToolName.XXX.value)` → `Tool.XXX.normalized` (lines 91–99); `action == ToolName.OPEN_PROJECT.value` → `Tool.OPEN_PROJECT.value` (499, 1749); `is_tool_advertised(token)` optionally → `Tool.from_string(token).is_advertised` (112).
+- [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py): `normalize_identifier(ToolName.XXX.value)` → `Tool.XXX.normalized` (lines 91–99); `action == ToolName.OPEN.value` → `Tool.OPEN.value` (499, 1749); `is_tool_advertised(token)` optionally → `Tool.from_string(token).is_advertised` (112).
 - [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py): `tool_enum = Tool.from_string(name)`; `tool_enum.is_gui_only_disabled`; `tool_enum.snake_name` instead of `to_snake_case(resolved_name)` (117, 119, 129, 1841–1846).
 - [executor.py](src/agentdecompile_cli/executor.py): Line 768 `_registry.get_tool_params(canonical_tool_name)` → `Tool.from_string(canonical_tool_name).params` where a Tool is available; 951, 953, 956 `normalize_identifier(canonical_tool_name)` → `tool.normalized`.
 - [cli.py](src/agentdecompile_cli/cli.py), [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py): Where a Tool is available, use `tool.params`; else keep thin wrapper.
@@ -241,7 +241,7 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py)             | 1215, 1310, 1731, 1755, 1974, 1976, 2039 | `recommend_tool("manage-files", "list-project-files")` → `ToolName.MANAGE_FILES.value`, `ToolName.LIST_PROJECT_FILES.value`                                                       |
 | [symbols.py](src/agentdecompile_cli/mcp_server/providers/symbols.py)             | 89                                       | `name="search-symbols-by-name"` — advertised alias; can stay string                                                                                                               |
 | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 1155, 1236                               | `_render_generic(data, "inspect-memory")`, `_render_generic(data, "get-call-graph")` → `ToolName.INSPECT_MEMORY.value`, `ToolName.GET_CALL_GRAPH.value`                           |
-| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638                                      | Example JSON in docstring: `"name":"open"`, `"name":"list-functions"` → `ToolName.OPEN_PROJECT.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
+| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638                                      | Example JSON in docstring: `"name":"open"`, `"name":"list-functions"` → `ToolName.OPEN.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
 | [cli.py](src/agentdecompile_cli/cli.py)                                          | 1953, 2194, 3658                         | Help/command/example strings: `"list-functions"`, `"match-function"`, `"inspect-memory"` → `ToolName.LIST_FUNCTIONS.value` etc.                                                   |
 | [bridge.py](src/agentdecompile_cli/bridge.py)                                    | 862                                      | `call_tool("connect-shared-project", ...)` — no `ToolName` member; keep string or add enum                                                                                        |
 | [debug_info.py](src/agentdecompile_cli/mcp_server/resources/debug_info.py)       | 78                                       | `"name": "manage-files"` → `ToolName.MANAGE_FILES.value`                                                                                                                          |
@@ -251,7 +251,7 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 
 ## Edge cases
 
-- **Wire string in response_formatter:** `action` is from `data.get("action", data.get("operation", ""))`. Compare with `ToolName.OPEN_PROJECT.value`; if the wire ever sends a different casing or alias, normalize first (e.g. `resolve_tool_name(action) == ToolName.OPEN_PROJECT.value`) or keep string comparison for flexibility.  
+- **Wire string in response_formatter:** `action` is from `data.get("action", data.get("operation", ""))`. Compare with `ToolName.OPEN.value`; if the wire ever sends a different casing or alias, normalize first (e.g. `resolve_tool_name(action) == ToolName.OPEN.value`) or keep string comparison for flexibility.  
 - **Unknown tools / TOOLS_LIST-only aliases:** `resolve_tool_name_enum()` returns `None` for names not in the enum. Call sites that branch on tool type must handle `None` (e.g. fallback to generic handling or error). When adding a new tool in TOOLS_LIST.md, add a corresponding `ToolName` member in registry to avoid drift.  
 - **Provider `name=` in list_tools:** Use `ToolName.XXX.value` so the advertised name remains the same string; no change to MCP schema or client behavior.  
 - **Tools not in ToolName:** `connect-shared-project`, `list-open-programs` (project.py, bridge.py) and advertised alias `search-symbols-by-name` (symbols.py) have no enum member today; either add `ToolName` members and use `.value` or keep as string literals until registry is updated.

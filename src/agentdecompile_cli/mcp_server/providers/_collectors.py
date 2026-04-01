@@ -16,6 +16,50 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        DecompInterface as GhidraDecompInterface,
+        DecompileResults as GhidraDecompileResults,
+        DecompiledFunction as GhidraDecompiledFunction,
+    )
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Address as GhidraAddress,
+        AddressSet as GhidraAddressSet,
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        DataType as GhidraDataType,
+        DataTypeManager as GhidraDataTypeManager,
+        StringDataInstance as GhidraStringDataInstance,
+        Structure as GhidraStructure,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Bookmark as GhidraBookmark,
+        BookmarkManager as GhidraBookmarkManager,
+        CodeUnit as GhidraCodeUnit,
+        CodeUnitIterator as GhidraCodeUnitIterator,
+        Data as GhidraData,
+        DataIterator as GhidraDataIterator,
+        Function as GhidraFunction,
+        FunctionIterator as GhidraFunctionIterator,
+        FunctionManager as GhidraFunctionManager,
+        FunctionTag as GhidraFunctionTag,
+        InstructionIterator as GhidraInstructionIterator,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+        Variable as GhidraVariable,
+    )
+    from ghidra.program.model.mem import Memory as GhidraMemory  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Symbol as GhidraSymbol,
+        SymbolIterator as GhidraSymbolIterator,
+        SymbolTable as GhidraSymbolTable,
+        SymbolType as GhidraSymbolType,
+    )
+    from ghidra.program.util import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        DefinedDataIterator as GhidraDefinedDataIterator,
+        ProgramMemoryUtil as GhidraProgramMemoryUtil,  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    )
+
 logger = logging.getLogger(__name__)
 
 # Ghidra CodeUnit comment type (name, code): eol=end-of-line, pre/post=block, plate=header, repeatable=ref
@@ -41,13 +85,13 @@ def iter_items(source: Any):
         yield item
 
 
-def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
+def collect_function_comments(program: GhidraProgram, func: GhidraFunction) -> dict[str, str]:
     """Collect all comment types (eol, pre, post, plate, repeatable) at the function's entry point."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_comments")
-    listing = program.getListing()
-    address = func.getEntryPoint()
+    listing: GhidraListing = program.getListing()
+    address: GhidraAddress = func.getEntryPoint()
     comments: dict[str, str] = {}
-    code_unit = listing.getCodeUnitAt(address)
+    code_unit: GhidraCodeUnit = listing.getCodeUnitAt(address)
     if code_unit is None:
         return comments
     for label, code in _COMMENT_TYPES:
@@ -57,10 +101,11 @@ def collect_function_comments(program: Any, func: Any) -> dict[str, str]:
     return comments
 
 
-def collect_function_tags(func: Any) -> list[str]:
+def collect_function_tags(func: GhidraFunction) -> list[str]:
     """Return list of tag names attached to this function (e.g. crypto, network)."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_tags")
     values: list[str] = []
+    tag: GhidraFunctionTag
     for tag in list(func.getTags()):
         tag_name = str(tag.getName() or "")
         if tag_name:
@@ -68,11 +113,11 @@ def collect_function_tags(func: Any) -> list[str]:
     return values
 
 
-def collect_function_call_counts(func: Any) -> dict[str, int]:
+def collect_function_call_counts(func: GhidraFunction) -> dict[str, int]:
     """Return callerCount and calleeCount for a function (number of callers and called functions)."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_call_counts")
-    caller_count = 0
-    callee_count = 0
+    caller_count: int = 0
+    callee_count: int = 0
     try:
         caller_count = len(list(func.getCallingFunctions(None)))
     except Exception:
@@ -84,11 +129,11 @@ def collect_function_call_counts(func: Any) -> dict[str, int]:
     return {"callerCount": caller_count, "calleeCount": callee_count}
 
 
-def _get_function_list(fm: Any) -> list[Any]:
+def _get_function_list(fm: GhidraFunctionManager) -> list[GhidraFunction]:
     """Return a list of functions from FunctionManager; try multiple strategies for PyGhidra/JPype iterator quirks."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:_get_function_list")
-    count = fm.getFunctionCount() if hasattr(fm, "getFunctionCount") else 0
-    out: list[Any] = []
+    count: int = fm.getFunctionCount() if hasattr(fm, "getFunctionCount") else 0
+    out: list[GhidraFunction] = []
 
     # Strategy 1: direct Python for-loop (works when Java iterable implements __iter__)
     try:
@@ -98,11 +143,9 @@ def _get_function_list(fm: Any) -> list[Any]:
             return out
     except Exception:
         pass
-    out = []
-
     # Strategy 2: iter_items (hasNext/next) for Java Iterator
     try:
-        it = fm.getFunctions(True)
+        it: GhidraFunctionIterator = fm.getFunctions(True)
         out = list(iter_items(it))
         if out:
             return out
@@ -112,9 +155,10 @@ def _get_function_list(fm: Any) -> list[Any]:
     if count > 0:
         # Strategy 2b: consume iterator on Java side via ArrayList (PyGhidra/JPype often break on Java iterators in Python)
         try:
-            from java.util import ArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+            from java.util import ArrayList as JavaArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+
             it = fm.getFunctions(True)
-            arr = ArrayList()
+            arr = JavaArrayList()
             while it.hasNext():
                 arr.add(it.next())
             out = [arr.get(i) for i in range(arr.size())]
@@ -126,18 +170,19 @@ def _get_function_list(fm: Any) -> list[Any]:
 
         # Strategy 2c: getFunctions(AddressSetView, forward) over full memory (sometimes different iterator impl)
         try:
-            program = fm.getProgram() if hasattr(fm, "getProgram") else None
+            program: GhidraProgram = fm.getProgram() if hasattr(fm, "getProgram") else None
             if program is not None and hasattr(program, "getMemory"):
-                mem = program.getMemory()
+                mem: GhidraProgramMemoryUtil = program.getMemory()
                 if hasattr(mem, "getAddressSet"):
-                    addr_set = mem.getAddressSet()
+                    addr_set: GhidraAddressSet = mem.getAddressSet()
                     if addr_set is not None:
                         it = fm.getFunctions(addr_set, True)
                         out = list(iter_items(it))
                         if not out:
-                            from java.util import ArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+                            from java.util import ArrayList as JavaArrayList  # noqa: PLC0415  # type: ignore[reportMissingImports]
+
                             it2 = fm.getFunctions(addr_set, True)
-                            arr = ArrayList()
+                            arr = JavaArrayList()
                             while it2.hasNext():
                                 arr.add(it2.next())
                             out = [arr.get(i) for i in range(arr.size())]
@@ -170,13 +215,13 @@ def _get_function_list(fm: Any) -> list[Any]:
 
         # Strategy 3: getFunctionAt/getFunctionAfter walk when iterators fail (e.g. PyGhidra/JPype)
         try:
-            program = fm.getProgram() if hasattr(fm, "getProgram") else None
+            program: GhidraProgram = fm.getProgram() if hasattr(fm, "getProgram") else None
             if program is not None and hasattr(program, "getMemory") and hasattr(fm, "getFunctionAfter"):
                 mem = program.getMemory()
                 min_addr = mem.getMinAddress() if hasattr(mem, "getMinAddress") else None
                 if min_addr is not None:
                     out = []
-                    func = fm.getFunctionAt(min_addr) if hasattr(fm, "getFunctionAt") else None
+                    func: GhidraFunction | None = fm.getFunctionAt(min_addr) if hasattr(fm, "getFunctionAt") else None
                     if func is None:
                         func = fm.getFunctionAfter(min_addr)
                     max_iters = count + 1000 if count else 10000
@@ -197,17 +242,17 @@ def _get_function_list(fm: Any) -> list[Any]:
     return []
 
 
-def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_functions(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Single pass over all functions: name, address, signature, params, comments, tags, caller/callee counts. Used by list-functions and others."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_functions")
-    fm = program.getFunctionManager()
+    fm: GhidraFunctionManager = program.getFunctionManager()
     results: list[dict[str, Any]] = []
-    func_list = _get_function_list(fm)
+    func_list: list[GhidraFunction] = _get_function_list(fm)
 
     for func in func_list:
         if not hasattr(func, "getName"):
             continue
-        params = []
+        params: list[dict[str, Any]] = []
         for p in list(func.getParameters() if hasattr(func, "getParameters") else []):  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             params.append(
                 {
@@ -239,11 +284,12 @@ def collect_functions(program: Any, *, limit: int | None = None) -> list[dict[st
     return results
 
 
-def collect_bookmarks(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_bookmarks(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Single pass over bookmarks: address, type, category, comment. Used by manage-bookmarks list/search."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_bookmarks")
-    bm_mgr = program.getBookmarkManager()
+    bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
     results: list[dict[str, Any]] = []
+    bm: GhidraBookmark
     for bm in iter_items(bm_mgr.getBookmarksIterator()):
         results.append(
             {
@@ -258,17 +304,17 @@ def collect_bookmarks(program: Any, *, limit: int | None = None) -> list[dict[st
     return results
 
 
-def collect_comments(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_comments(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_comments")
-    listing = program.getListing()
-    mem = program.getMemory()
-    fm = program.getFunctionManager()
+    listing: GhidraListing = program.getListing()
+    mem: GhidraMemory = program.getMemory()
+    fm: GhidraFunctionManager = program.getFunctionManager()
     results: list[dict[str, Any]] = []
 
-    cu_iter = listing.getCodeUnits(mem, True)
+    cu_iter: GhidraCodeUnitIterator = listing.getCodeUnits(mem, True)
     while cu_iter.hasNext():
-        cu = cu_iter.next()
-        address = cu.getAddress()
+        cu: GhidraCodeUnit = cu_iter.next()
+        address: GhidraAddress = cu.getAddress()
         container = fm.getFunctionContaining(address)
         function_name = str(container.getName()) if container else ""
         function_address = str(container.getEntryPoint()) if container else ""
@@ -290,11 +336,17 @@ def collect_comments(program: Any, *, limit: int | None = None) -> list[dict[str
     return results
 
 
-def collect_symbols(program: Any, *, symbol_type: Any | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_symbols(
+    program: GhidraProgram,
+    *,
+    symbol_type: GhidraSymbolType | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_symbols")
-    st = program.getSymbolTable()
-    iterator = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
+    st: GhidraSymbolTable = program.getSymbolTable()
+    iterator: GhidraSymbolIterator = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
     results: list[dict[str, Any]] = []
+    sym: GhidraSymbol
     for sym in iter_items(iterator):
         if symbol_type is not None and sym.getSymbolType() != symbol_type:
             continue
@@ -314,10 +366,11 @@ def collect_symbols(program: Any, *, symbol_type: Any | None = None, limit: int 
     return results
 
 
-def collect_imports(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_imports(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_imports")
-    st = program.getSymbolTable()
+    st: GhidraSymbolTable = program.getSymbolTable()
     results: list[dict[str, Any]] = []
+    sym: GhidraSymbol
     for sym in iter_items(st.getExternalSymbols() if hasattr(st, "getExternalSymbols") else []):
         results.append(
             {
@@ -332,10 +385,15 @@ def collect_imports(program: Any, *, limit: int | None = None) -> list[dict[str,
     return results
 
 
-def collect_exports(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_exports(
+    program: GhidraProgram,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_exports")
-    st = program.getSymbolTable()
+    st: GhidraSymbolTable = program.getSymbolTable()
     results: list[dict[str, Any]] = []
+    sym: GhidraSymbol
     for sym in iter_items(st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else []):
         if not sym.isExternalEntryPoint():
             continue
@@ -351,7 +409,13 @@ def collect_exports(program: Any, *, limit: int | None = None) -> list[dict[str,
     return results
 
 
-def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None, ghidra_tools: Any | None = None) -> list[dict[str, Any]]:
+def collect_strings(
+    program: GhidraProgram,
+    *,
+    min_len: int = 1,
+    limit: int | None = None,
+    ghidra_tools: Any | None = None,
+) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_strings")
     if ghidra_tools is not None:
         try:
@@ -393,9 +457,10 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
     # Fallback 1: Try direct DefinedDataIterator access
     results: list[dict[str, Any]] = []
     try:
-        from ghidra.program.util import DefinedDataIterator  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+        from ghidra.program.util import DefinedDataIterator as GhidraDefinedDataIterator  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
 
-        for data in DefinedDataIterator.definedStrings(program):
+        data: GhidraData
+        for data in GhidraDefinedDataIterator.definedStrings(program):
             value = str(data.getValue() or "")
             if len(value) < min_len:
                 continue
@@ -416,11 +481,11 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
     # Fallback 2: Listing-based traversal for environments where iterators are unavailable
     # This provides coverage for shared-server/proxy contexts
     try:
-        listing = program.getListing()
-        memory = program.getMemory()
+        listing: GhidraListing = program.getListing()
+        memory: GhidraMemory = program.getMemory()
 
         # Iterate through all data in the program
-        data_iter = listing.getDefinedData(memory, True)
+        data_iter: GhidraDataIterator = listing.getDefinedData(memory, True)
         while data_iter.hasNext() if hasattr(data_iter, "hasNext") else len(results) < (limit or 10000):
             if not hasattr(data_iter, "hasNext"):
                 break
@@ -443,7 +508,7 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
                             )
                             if limit is not None and len(results) >= limit:
                                 break
-            except Exception as item_exc:
+            except Exception:
                 # Skip individual items that fail
                 continue
 
@@ -462,11 +527,12 @@ def collect_strings(program: Any, *, min_len: int = 1, limit: int | None = None,
     return results
 
 
-def collect_data_types(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_data_types(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_data_types")
     dtm = program.getDataTypeManager()
     iterator = dtm.getAllDataTypes() if hasattr(dtm, "getAllDataTypes") else []
     results: list[dict[str, Any]] = []
+    dt: GhidraDataType
     for dt in iter_items(iterator):
         results.append(
             {
@@ -482,7 +548,7 @@ def collect_data_types(program: Any, *, limit: int | None = None) -> list[dict[s
     return results
 
 
-def collect_data_type_archives(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_data_type_archives(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_data_type_archives")
     dtm = program.getDataTypeManager()
     results: list[dict[str, Any]] = []
@@ -501,6 +567,7 @@ def collect_data_type_archives(program: Any, *, limit: int | None = None) -> lis
     except Exception:
         pass
 
+    archive: GhidraDataTypeManager
     for archive in iter_items(dtm.getSourceArchives() if hasattr(dtm, "getSourceArchives") else []):
         results.append(
             {
@@ -514,10 +581,11 @@ def collect_data_type_archives(program: Any, *, limit: int | None = None) -> lis
     return results
 
 
-def collect_structures(program: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+def collect_structures(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_structures")
-    dtm = program.getDataTypeManager()
+    dtm: GhidraDataTypeManager = program.getDataTypeManager()
     results: list[dict[str, Any]] = []
+    struct: GhidraStructure
     for struct in iter_items(dtm.getAllStructures()):
         results.append(
             {
@@ -526,7 +594,7 @@ def collect_structures(program: Any, *, limit: int | None = None) -> list[dict[s
                 "description": str(struct.getDescription() or ""),
                 "length": int(struct.getLength()),
                 "numComponents": int(struct.getNumComponents()),
-                "isUnion": bool(struct.isUnion()),
+                "isUnion": bool(struct.isUnion()) if hasattr(struct, "isUnion") else False,
                 "structure": struct,
             },
         )
@@ -535,7 +603,7 @@ def collect_structures(program: Any, *, limit: int | None = None) -> list[dict[s
     return results
 
 
-def collect_structure_fields(structure: Any) -> list[dict[str, Any]]:
+def collect_structure_fields(structure: GhidraStructure) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_structure_fields")
     fields: list[dict[str, Any]] = []
     for index in range(structure.getNumComponents()):
@@ -553,20 +621,20 @@ def collect_structure_fields(structure: Any) -> list[dict[str, Any]]:
 
 
 def collect_constants(
-    program: Any,
+    program: GhidraProgram,
     *,
     value_filter: Callable[[int], bool] | None = None,
     max_instructions: int = 2_000_000,
     samples_per_constant: int = 5,
 ) -> tuple[list[dict[str, Any]], int]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_constants")
-    listing = program.getListing()
-    predicate = value_filter or (lambda _v: True)
+    listing: GhidraListing = program.getListing()
+    predicate: Callable[[int], bool] = value_filter or (lambda _v: True)
 
     constants: dict[int, list[dict[str, Any]]] = {}
     instr_count = 0
     try:
-        instr_iter = listing.getInstructions(True)
+        instr_iter: GhidraInstructionIterator = listing.getInstructions(True)
         while instr_iter.hasNext() and instr_count < max_instructions:
             instr = instr_iter.next()
             instr_count += 1

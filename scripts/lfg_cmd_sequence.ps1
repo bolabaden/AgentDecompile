@@ -11,7 +11,7 @@ param(
     [string]$RunId = "lfgcmd$(Get-Date -Format 'HHmmss')",
     [string]$ServerUrl = "http://127.0.0.1:8099",
     [string]$GhidraHost = "127.0.0.1",
-    [int]$GhidraPort = 23100,
+    [int]$GhidraPort = 25100,
     [string]$Repo = "agentrepo",
     [string]$GhidraUser = "ghidra",
     # Plain string default for /lfg automation (avoids ConvertTo-SecureString when PS.Security module is unavailable).
@@ -88,8 +88,10 @@ if (-not (Test-LfgMcpPortBindAvailable -Port $McpPort)) {
     $ephemeral = Get-LfgEphemeralTcpPort
     Write-Host "MCP port $McpPort is not bindable; LFG using ephemeral port $ephemeral (CLI --server-url updated)." -ForegroundColor Yellow
     $McpPort = $ephemeral
-    $ServerUrl = "http://127.0.0.1:$McpPort"
 }
+
+# Always derive ServerUrl from McpPort (handles explicit -McpPort and auto-selected ports).
+$ServerUrl = "http://127.0.0.1:$McpPort"
 
 # Launcher reads AGENT_DECOMPILE_PORT from the environment; inherited 8099 would override --port if unset.
 $env:AGENT_DECOMPILE_PORT = "$McpPort"
@@ -130,17 +132,22 @@ function Test-LfgTcpOpen {
 
 function Find-LfgFreeGhidraBasePort {
     <#
-    Picks the first TCP base port in [StartPort .. StartPort+MaxSpan-1] with nothing accepting connections.
-    Ghidra uses the base port and typically the next ports for RMI/registry; LFG only probes the base.
+    Picks the first TCP base port where base, base+1 (RMI SSL), and base+2 (Block Stream) are all free.
+    Uses both connect-probe AND bind-probe: a port may fail to bind even if nothing is listening
+    (e.g. TIME_WAIT, ephemeral range overlap, or OS reservation).
     #>
     param(
         [int]$StartPort,
         [int]$MaxSpan = 80
     )
-    for ($p = $StartPort; $p -lt ($StartPort + $MaxSpan); $p++) {
-        if (-not (Test-LfgTcpOpen $GhidraHost $p)) {
-            return $p
+    for ($p = $StartPort; $p -lt ($StartPort + $MaxSpan); $p += 3) {
+        $allFree = $true
+        for ($offset = 0; $offset -le 2; $offset++) {
+            $candidate = $p + $offset
+            if (Test-LfgTcpOpen $GhidraHost $candidate) { $allFree = $false; break }
+            if (-not (Test-LfgMcpPortBindAvailable -Port $candidate)) { $allFree = $false; break }
         }
+        if ($allFree) { return $p }
     }
     throw "No free Ghidra base port found in range ${StartPort}-$(($StartPort + $MaxSpan - 1))"
 }
@@ -429,10 +436,12 @@ function Invoke-LfgPushFifthVerifySequence {
 "@
     $ec = Invoke-LfgSeqUnchecked -Name "09_push_label_checkin" -Json $pushLabelCheckin
     if ($ec -eq 0) {
-        Invoke-LfgSeq "09_push_checkout_after_checkin" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedPath`",`"exclusive`":true}}]"
+        # Do NOT re-checkout before sync-project push: the checkin ended the active transaction;
+        # a new checkout would create a new transaction that blocks sync-project's lock acquisition.
         $pushSyncVerify = @"
 [
   {"name":"sync-project","arguments":{"mode":"push","path":"/","recursive":true,"dryRun":false}},
+  {"name":"checkout-program","arguments":{"programPath":"$SharedPath","exclusive":true}},
   {"name":"checkout-status","arguments":{"programPath":"$SharedPath","responseFormat":"json"}},
   {"name":"search-symbols","arguments":{"programPath":"$SharedPath","query":"loc_${RunIdPart}_PUSH"}}
 ]
@@ -455,10 +464,11 @@ function Invoke-LfgPushFifthVerifySequence {
 ]
 "@
         Invoke-LfgSeq -Name "09_push_retry_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$SharedPath`",`"comment`":`"sh_${RunIdPart}_after_pull_local_edit`"}}]"
-        Invoke-LfgSeq "09_push_checkout_after_resolve" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedPath`",`"exclusive`":true}}]"
+        # Do NOT re-checkout before push: same active-transaction lock issue as success path.
         $pushAfterResolve = @"
 [
   {"name":"sync-project","arguments":{"mode":"push","path":"/","recursive":true,"dryRun":false}},
+  {"name":"checkout-program","arguments":{"programPath":"$SharedPath","exclusive":true}},
   {"name":"checkout-status","arguments":{"programPath":"$SharedPath","responseFormat":"json"}},
   {"name":"search-symbols","arguments":{"programPath":"$SharedPath","query":"loc_${RunIdPart}_PUSH"}}
 ]
@@ -524,6 +534,24 @@ if (-not $AutoStartGhidraServer) {
     $ecAd = Invoke-LfgGhidraSvrAdmin -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -AdminArgs @('-add', $GhidraUser)
     if (($null -ne $ecAd) -and ($ecAd -ne 0)) {
         Write-Host "svrAdmin -add $GhidraUser exit $ecAd (OK if user already exists)." -ForegroundColor DarkYellow
+    }
+    # Poll until the server has processed the queued -add (YAJSW queues commands asynchronously)
+    $userConfirmed = $false
+    for ($uPoll = 0; $uPoll -lt 30; $uPoll++) {
+        $listOut = & cmd.exe /c "call `"$(Join-Path $ghidraRoot 'support\launch.bat')`" fg jre svrAdmin 128M `"-DUserAdmin.invocation=svrAdmin`" ghidra.server.ServerAdmin `"$dstConfFull`" -list" 2>&1
+        $listText = ($listOut | Out-String)
+        if ($listText -match "\b$GhidraUser\b") {
+            $userConfirmed = $true
+            Write-Host "svrAdmin -list confirms user '$GhidraUser' exists (poll $uPoll)." -ForegroundColor Green
+            break
+        }
+        if ($uPoll -gt 0 -and ($uPoll % 5) -eq 0) {
+            Write-Host "  waiting for server to process -add (svrAdmin -list poll $uPoll/30)..." -ForegroundColor DarkYellow
+        }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $userConfirmed) {
+        Write-Host "WARNING: svrAdmin -list did not confirm user '$GhidraUser' after 60s. Proceeding anyway." -ForegroundColor Red
     }
     $GhidraPassword = 'changeme'
     $GhidraPasswordPlain = 'changeme'
@@ -684,6 +712,164 @@ Invoke-LfgPushFifthVerifySequence -SharedPath $SharedProgramPath -RunIdPart $Run
 Start-LfgMcp -ProjectPath $McpWsJson
 Clear-LfgCliState
 Invoke-LfgSeq "10_assert_local_persistence" $assertLocalAgain
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXTENDED TOOL COVERAGE — exercise every safe tool against the local binary.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+$exportPath = (Join-Path $Evidence "export_out.sarif") -replace '\\', '/'
+
+# Phase A: analyze + read-only query tools (no checkout needed)
+Start-LfgMcp -ProjectPath $McpWsJson
+Clear-LfgCliState
+$extFail = 0
+Invoke-LfgSeq "11_ext_open_analyze" @"
+[
+  {"name":"open","arguments":{"path":"$LocalDirJson"}},
+  {"name":"analyze-program","arguments":{"programPath":"/sort.exe","force":true}}
+]
+"@
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_list_functions" @"
+[
+  {"name":"list-functions","arguments":{"programPath":"/sort.exe","limit":5}},
+  {"name":"list-exports","arguments":{"programPath":"/sort.exe","limit":5}},
+  {"name":"list-imports","arguments":{"programPath":"/sort.exe","limit":5}},
+  {"name":"list-strings","arguments":{"programPath":"/sort.exe","limit":5}},
+  {"name":"list-project-files","arguments":{}},
+  {"name":"get-current-program","arguments":{}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_list_functions had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_memory_bytes" @"
+[
+  {"name":"inspect-memory","arguments":{"programPath":"/sort.exe","mode":"read","address":"0x140001000","length":64}},
+  {"name":"inspect-memory","arguments":{"programPath":"/sort.exe","mode":"data_at","address":"0x140001000"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_memory_bytes had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_decompile_callgraph" @"
+[
+  {"name":"decompile-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry","limit":50}},
+  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry"}},
+  {"name":"get-call-graph","arguments":{"programPath":"/sort.exe","function":"0x140001300","mode":"graph"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_decompile_callgraph had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_search_tools" @"
+[
+  {"name":"search-strings","arguments":{"programPath":"/sort.exe","query":"sort","limit":10}},
+  {"name":"search-constants","arguments":{"programPath":"/sort.exe","mode":"common","topN":5}},
+  {"name":"search-everything","arguments":{"programPath":"/sort.exe","query":"main","limit":10}},
+  {"name":"search-code","arguments":{"programPath":"/sort.exe","pattern":"CALL","maxResults":5}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_search_tools had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_refs_xrefs" @"
+[
+  {"name":"get-references","arguments":{"programPath":"/sort.exe","target":"entry","direction":"from","limit":10}},
+  {"name":"list-cross-references","arguments":{"programPath":"/sort.exe","target":"entry","limit":10}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_refs_xrefs had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_data_types_structures" @"
+[
+  {"name":"manage-data-types","arguments":{"programPath":"/sort.exe","mode":"list","limit":5}},
+  {"name":"manage-structures","arguments":{"programPath":"/sort.exe","mode":"list"}},
+  {"name":"list-project-files","arguments":{}},
+  {"name":"manage-files","arguments":{"mode":"list","path":"C:/Windows"}},
+  {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"symbols","limit":5}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_data_types_structures had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_manage_readonly" @"
+[
+  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"list","maxResults":5}},
+  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"search","query":"sort","maxResults":5}},
+  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"list"}},
+  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_manage_readonly had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_export_suggest" @"
+[
+  {"name":"export","arguments":{"programPath":"/sort.exe","outputPath":"$exportPath","format":"sarif"}},
+  {"name":"suggest","arguments":{"programPath":"/sort.exe","suggestionType":"function_name","address":"entry"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_export_suggest had failures (exit $ec)" -ForegroundColor Yellow }
+
+$ec = Invoke-LfgSeqUnchecked "11_ext_processors" @"
+[
+  {"name":"list-processors","arguments":{"filter":"x86"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_processors had failures (exit $ec)" -ForegroundColor Yellow }
+
+# Phase B: mutation tools (need checkout)
+$ec = Invoke-LfgSeqUnchecked "12_ext_checkout_mutate" @"
+[
+  {"name":"checkout-program","arguments":{"programPath":"/sort.exe","exclusive":false}},
+  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"set","addressOrSymbol":"entry","type":"Note","category":"LFG","comment":"lfg_ext_bookmark"}},
+  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"set","addressOrSymbol":"entry","comment":"lfg_ext_comment","commentType":"eol"}},
+  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"add","function":"entry","tags":"LFG_TEST"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_checkout_mutate had failures (exit $ec)" -ForegroundColor Yellow }
+
+# Verify mutation results
+$ec = Invoke-LfgSeqUnchecked "12_ext_verify_mutations" @"
+[
+  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"list","maxResults":5}},
+  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"get","addressOrSymbol":"entry"}},
+  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"list","function":"entry"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_verify_mutations had failures (exit $ec)" -ForegroundColor Yellow }
+
+# Check in after mutations
+Invoke-LfgSeq "12_ext_checkin" @"
+[
+  {"name":"checkin-program","arguments":{"programPath":"/sort.exe","comment":"lfg_extended_tool_coverage"}}
+]
+"@
+
+# Phase C: shared-side extended queries (reuse last MCP)
+Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
+$ec = Invoke-LfgSeqUnchecked "13_ext_shared_open_analyze" @"
+[
+  {"name":"open","arguments":{"shared":true,"path":"$Repo","serverHost":"$GhidraHost","serverPort":$GhidraPort,"serverUsername":"$GhidraUser","serverPassword":"$GhidraPasswordPlain"}},
+  {"name":"checkout-program","arguments":{"programPath":"$SharedProgramPath","exclusive":true}},
+  {"name":"analyze-program","arguments":{"programPath":"$SharedProgramPath","force":true}},
+  {"name":"list-functions","arguments":{"programPath":"$SharedProgramPath","limit":5}},
+  {"name":"list-imports","arguments":{"programPath":"$SharedProgramPath","limit":5}},
+  {"name":"decompile-function","arguments":{"programPath":"$SharedProgramPath","functionIdentifier":"entry","limit":30}},
+  {"name":"checkin-program","arguments":{"programPath":"$SharedProgramPath","comment":"lfg_ext_shared_analysis"}}
+]
+"@
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 13_ext_shared_open_analyze had failures (exit $ec)" -ForegroundColor Yellow }
+
+# Phase D: svr-admin (read-only check - uses default server.conf in Ghidra install)
+$ec = Invoke-LfgSeqUnchecked "14_ext_svr_admin" @"
+[
+  {"name":"svr-admin","arguments":{"args":["-list"],"timeoutSeconds":10}}
+]
+"@
+# svr-admin uses the server-dir server.conf (default install); expected to fail in LFG (no default server running).
+# A non-zero exit is acceptable — the tool invoked successfully, it just found no default server.
+
+if ($extFail -gt 0) {
+    Write-Host "Extended tool coverage: $extFail step group(s) had failures. Check individual *.stdout.log files." -ForegroundColor Yellow
+} else {
+    Write-Host "Extended tool coverage: ALL step groups passed." -ForegroundColor Green
+}
 
 Write-Host "=== DONE. Evidence under $Evidence ===" -ForegroundColor Green
 

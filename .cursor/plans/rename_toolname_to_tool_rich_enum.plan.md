@@ -30,7 +30,7 @@ isProject: false
 ### New considerations
 
 - **executor.py** uses `_registry.get_tool_params(canonical_tool_name)` at **line 768** and `normalize_identifier(canonical_tool_name)` at **951, 953, 956** in validation; migrate to `Tool.from_string(...).params` and `tool.normalized` where a `Tool` is available.
-- **response_formatter** `_DISABLABLE_RECOMMENDATION_TOOLS` at **lines 91–99** uses `normalize_identifier(ToolName.XXX.value)`; replace with `Tool.XXX.normalized`. **499, 1749**: `action == ToolName.OPEN_PROJECT.value` → `Tool.OPEN_PROJECT.value`. **112**: `is_tool_advertised(token)` can stay or use `Tool.from_string(token).is_advertised` when a Tool is available.
+- **response_formatter** `_DISABLABLE_RECOMMENDATION_TOOLS` at **lines 91–99** uses `normalize_identifier(ToolName.XXX.value)`; replace with `Tool.XXX.normalized`. **499, 1749**: `action == ToolName.OPEN.value` → `Tool.OPEN.value`. **112**: `is_tool_advertised(token)` can stay or use `Tool.from_string(token).is_advertised` when a Tool is available.
 - **registry.py** — `_build_advertised_tools()` at **857–882**; `ADVERTISED_TOOLS` at **885**. Refactor to build from `Tool.advertised()` in one place.
 - **Type checkers** — Use `Tool` in all annotations (`frozenset[Tool]`, `dict[Tool, list[str]]`); prefer `Tool` over `Literal[Tool.X]` for parameters/returns unless a single-member literal is required.
 - **Mutable data** — Do not store or return shared mutable lists from enum; `.params` must return `list(TOOL_PARAMS.get(self, []))` (copy). See [PEP 435](https://peps.python.org/pep-0435/) and enum docs on member values.
@@ -43,7 +43,7 @@ isProject: false
 1. **Rename** `ToolName` → `Tool` across `src/agentdecompile_cli/` (and tests, docs).
 2. **Extend the enum** with properties, class methods, and (where useful) classvars so that:
   - Any logic that today uses `get_tool_params(tool)`, `is_tool_advertised(name)`, `normalize_identifier(tool.value)`, `to_snake_case(tool.value)`, or membership in `_DEFAULT_HIDDEN_TOOLS` / `DISABLED_GUI_ONLY_TOOLS` can be expressed via the enum (e.g. `tool.params`, `tool.is_advertised`, `tool.normalized`, `tool.snake_name`, `tool.is_hidden`, `tool.is_gui_only_disabled`).
-3. **Reduce repetition** by templating and abstracting: call sites use `Tool.OPEN_PROJECT.params`, `Tool.from_string(s)`, `tool.normalized`, etc., and module-level helpers become thin wrappers or are replaced.
+3. **Reduce repetition** by templating and abstracting: call sites use `Tool.OPEN.params`, `Tool.from_string(s)`, `tool.normalized`, etc., and module-level helpers become thin wrappers or are replaced.
 
 ### Type-safety and migration rules
 
@@ -90,7 +90,7 @@ isProject: false
 | [executor.py](src/agentdecompile_cli/executor.py)                                | 768                      | `_registry.get_tool_params(canonical_tool_name)` → `Tool.from_string(canonical_tool_name).params` when Tool available                                                            |
 | [executor.py](src/agentdecompile_cli/executor.py)                                | 951, 953, 956            | `normalize_identifier(canonical_tool_name)` in validation → `tool.normalized` where a Tool is available                                                                          |
 | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 91–99                    | `normalize_identifier(ToolName.XXX.value)` in _DISABLABLE_RECOMMENDATION_TOOLS → `Tool.XXX.normalized`                                                                           |
-| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 499, 1749                | `action == ToolName.OPEN_PROJECT.value` → `Tool.OPEN_PROJECT.value`                                                                                                              |
+| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 499, 1749                | `action == ToolName.OPEN.value` → `Tool.OPEN.value`                                                                                                              |
 | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 112                      | `is_tool_advertised(token)` — keep or use `Tool.from_string(token).is_advertised`                                                                                                |
 | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 117, 119, 129, 1841–1846 | `is_tool_advertised(tool_name/fallback)`; `resolve_tool_name_enum(name)`; `tool_enum in DISABLED_GUI_ONLY_TOOLS` → `Tool.from_string`, `.is_advertised`, `.is_gui_only_disabled` |
 | [cli.py](src/agentdecompile_cli/cli.py)                                          | 823, 1059                | `tool_registry.get_tool_params(resolved_name)`; `get_tool_params(tool_name)` — thin wrapper or `tool.params`                                                                     |
@@ -123,7 +123,7 @@ isProject: false
 
 Define in [registry.py](src/agentdecompile_cli/registry.py) (after `normalize_identifier` and `to_snake_case` exist; properties reference module-level names; some sets are built after the enum so use lazy/property access).
 
-### 2.1 Instance properties (on each member, e.g. `Tool.OPEN_PROJECT`)
+### 2.1 Instance properties (on each member, e.g. `Tool.OPEN`)
 
 
 | Property                | Type      | Meaning                                         | Replaces / abstracts                                                          |
@@ -195,7 +195,7 @@ Implementation notes:
 
 ## 4. Call-site replacements (reduce repetition)
 
-- **response_formatter.py**: Replace `normalize_identifier(ToolName.XXX.value)` for the “disablable recommendation” set with `Tool.XXX.normalized`. Replace `action == ToolName.OPEN_PROJECT.value` with `action == Tool.OPEN_PROJECT.value`.
+- **response_formatter.py**: Replace `normalize_identifier(ToolName.XXX.value)` for the “disablable recommendation” set with `Tool.XXX.normalized`. Replace `action == ToolName.OPEN.value` with `action == Tool.OPEN.value`.
 - **tool_providers.py**: Use `tool_enum = Tool.from_string(name)` and `tool_enum is not None and tool_enum.is_gui_only_disabled`. Use `tool_enum.snake_name` instead of `to_snake_case(resolved_name)` where we have the Tool.
 - **cli.py**: Where a Tool is available, use `tool.params` and `tool.snake_name`; otherwise keep wrapper calls.
 - **mcp_server/server.py**: Can use `Tool.from_string(canonical_name).params` when building schema, or keep `get_tool_params(canonical_name)` (thin wrapper).
@@ -217,7 +217,7 @@ Implementation notes:
 ### Research insights (section 5)
 
 - **Exhaustive migration:** Grep for `get_tool_params`, `is_tool_advertised`, `resolve_tool_name_enum`, `normalize_identifier(Tool`, `to_snake_case(.*tool`, and membership in `_DEFAULT_HIDDEN_TOOLS` / `DISABLED_GUI_ONLY_TOOLS` to find every call site; replace with enum API or thin wrapper as per plan.
-- **Comparison:** Prefer `tool == Tool.OPEN_PROJECT` and `tool in DISABLED_GUI_ONLY_TOOLS` over comparing to raw strings for clarity and type safety; StrEnum/str-Enum still allows `tool == "open"` but enum comparisons are clearer.
+- **Comparison:** Prefer `tool == Tool.OPEN` and `tool in DISABLED_GUI_ONLY_TOOLS` over comparing to raw strings for clarity and type safety; StrEnum/str-Enum still allows `tool == "open"` but enum comparisons are clearer.
 - **Tests / derived lists:** When tests or code build lists from tools (e.g. tools with params, curated commands), use `Tool` and properties: e.g. `[t.value for t in Tool if t.params]` or `{t for t in Tool if t in _SOME_SET}` instead of string-keyed derivations.
 
 ---
@@ -252,7 +252,7 @@ Implementation notes:
 ### Research insights (section 7)
 
 - **Executor and utils:** executor.py and utils.py use `resolve_tool_name`, `normalize_identifier`, `canonicalize_tool_name`, `match_tool_name`; executor gets params via `_registry.get_tool_params`. Include executor.py and utils.py in the call-site pass (section 4) for any places that can use `Tool.from_string` and enum properties.
-- **debug_info.py:** Imports `ToolName` and uses `ToolName.OPEN_PROJECT.value`, `ToolName.LIST_PROJECT_FILES.value`, etc.; update to `Tool` and `.value` (or `.wire_name`). Listed in section 0 table under MCP server.
+- **debug_info.py:** Imports `ToolName` and uses `ToolName.OPEN.value`, `ToolName.LIST_PROJECT_FILES.value`, etc.; update to `Tool` and `.value` (or `.wire_name`). Listed in section 0 table under MCP server.
 
 ---
 

@@ -9,6 +9,7 @@ DEFAULT_SYMBOL_PATTERNS / COMPILED_DEFAULT_SYMBOL_PATTERNS drive is_default_symb
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 import re
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
+
     Symbol = GhidraSymbol
 
 # Default symbol name patterns that Ghidra generates

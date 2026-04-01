@@ -69,10 +69,7 @@ class ConflictResolutionToolProvider(ToolProvider):
         session_id = get_current_mcp_session_id()
         pending = conflict_get(session_id, conflict_id)
         if pending is None:
-            return create_error_response(
-                "Unknown or expired conflictId. It may have been used already or the session may have changed. "
-                "Re-run the modifying tool to get a new conflictId if you still want to apply the change."
-            )
+            return create_error_response("Unknown or expired conflictId. It may have been used already or the session may have changed. Re-run the modifying tool to get a new conflictId if you still want to apply the change.")
 
         if resolution_norm == "skip":
             src_tool = pending.tool
@@ -83,9 +80,7 @@ class ConflictResolutionToolProvider(ToolProvider):
                 src_tool,
                 redact_session_id(session_id),
             )
-            return create_success_response(
-                {"resolution": "skip", "message": "Change discarded.", "conflictId": conflict_id}
-            )
+            return create_success_response({"resolution": "skip", "message": "Change discarded.", "conflictId": conflict_id})
 
         # overwrite: re-invoke the stored tool with force flag
         if self._manager is None:
@@ -112,13 +107,10 @@ class ConflictResolutionToolProvider(ToolProvider):
         )
         if result and isinstance(result[0], types.TextContent):
             import json as _json
+
             try:
                 data = _json.loads(result[0].text)
-                return create_success_response(
-                    {"resolution": "overwrite", "applied": True, "conflictId": conflict_id, "tool": pending.tool, "result": data}
-                )
+                return create_success_response({"resolution": "overwrite", "applied": True, "conflictId": conflict_id, "tool": pending.tool, "result": data})
             except Exception:
                 pass
-        return create_success_response(
-            {"resolution": "overwrite", "applied": True, "conflictId": conflict_id, "tool": pending.tool}
-        )
+        return create_success_response({"resolution": "overwrite", "applied": True, "conflictId": conflict_id, "tool": pending.tool})

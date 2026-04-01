@@ -10,6 +10,7 @@ Provides a single, consistent interface for function decompilation.
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,10 @@ if TYPE_CHECKING:
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
+    from ghidra.util.task import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        TaskMonitor as GhidraTaskMonitor,
+    )
+
     Symbol = GhidraSymbol
 
 
@@ -96,7 +101,7 @@ class DecompileTool:
         decompilers: dict[int, GhidraDecompInterface],
         thread_id: int = 0,
         timeout: int = 30,
-        monitor: Any | None = None,
+        monitor: GhidraTaskMonitor | None = None,
     ) -> list[str | None]:
         """Decompile a function for CLI interface.
 
@@ -154,7 +159,7 @@ class DecompileTool:
         func: GhidraFunction,
         decompiler: GhidraDecompInterface,
         timeout: int = 30,
-        monitor: Any | None = None,
+        monitor: GhidraTaskMonitor | None = None,
     ) -> dict[str, Any]:
         """Core decompilation logic with a specific decompiler instance."""
         logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._decompile_with_decompiler")

@@ -152,9 +152,7 @@ class AgentDecompileMcpProxyServer:
         self.app: FastAPI = FastAPI(
             title=self.config.name,
             version=self.config.version,
-            description=(
-                "AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."
-            ),
+            description=("AgentDecompile MCP proxy server — forwards MCP tool calls to a remote backend. MCP endpoint: `POST /mcp` (streamable-HTTP) or `POST /mcp/message` (SSE)."),
             docs_url="/docs",
             redoc_url="/redoc",
             openapi_url="/openapi.json",
@@ -306,9 +304,7 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP Streamable HTTP proxy endpoint",
-                description=(
-                    "Canonical MCP streamable-HTTP proxy endpoint. Use POST for JSON-RPC methods and forward all calls to the configured backend URL. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
-                ),
+                description=("Canonical MCP streamable-HTTP proxy endpoint. Use POST for JSON-RPC methods and forward all calls to the configured backend URL. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"proxy_mcp_streamable_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -319,9 +315,7 @@ class AgentDecompileMcpProxyServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility proxy endpoint",
-                description=(
-                    "Compatibility MCP proxy endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
-                ),
+                description=("Compatibility MCP proxy endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"proxy_mcp_message_{method.lower()}",
                 openapi_extra=_proxy_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,

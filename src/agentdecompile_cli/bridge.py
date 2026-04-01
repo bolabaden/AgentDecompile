@@ -328,7 +328,7 @@ class RawMcpHttpBackend:
         if idx >= 0:
             rest = set_cookie[idx + len(prefix) :]
             end = rest.find(";")
-            cookie_val = (rest[: end].strip() if end >= 0 else rest.strip()).strip('"')
+            cookie_val = (rest[:end].strip() if end >= 0 else rest.strip()).strip('"')
             if cookie_val:
                 self._save_cookie_to_file(cookie_val)
 
@@ -471,9 +471,7 @@ class RawMcpHttpBackend:
         ct = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" in ct:
             _txt = resp.text or ""
-            _had_data = any(
-                ln.strip().startswith("data:") for ln in _txt.splitlines()
-            )
+            _had_data = any(ln.strip().startswith("data:") for ln in _txt.splitlines())
             parsed = self._parse_sse_data(_txt)
             if parsed is not None:
                 return parsed
@@ -1158,9 +1156,7 @@ class AgentDecompileStdioBridge:
             or ""
         ).strip()
         if not server_host.strip():
-            sys.stderr.write(
-                "[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n"
-            )
+            sys.stderr.write("[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n")
             return  # No shared server configured – nothing to auto-open.
 
         server_port: str = (
@@ -1171,20 +1167,8 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or "13100"
         ).strip()
-        server_username: str = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or ""
-        ).strip()
-        server_password: str = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or ""
-        ).strip()
+        server_username: str = (os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or "").strip()
+        server_password: str = (os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or "").strip()
         repository: str = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
@@ -1193,9 +1177,7 @@ class AgentDecompileStdioBridge:
             or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
             or ""
         ).strip()
-        sys.stderr.write(
-            f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n"
-        )
+        sys.stderr.write(f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n")
 
         open_args: dict[str, Any] = {
             "server_host": server_host,

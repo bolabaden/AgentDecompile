@@ -24,11 +24,6 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_imports,
     collect_symbols,
 )
-from agentdecompile_cli.mcp_server.session_context import (
-    SESSION_CONTEXTS,
-    get_current_mcp_session_id,
-    is_shared_server_handle,
-)
 from agentdecompile_cli.mcp_server.tool_providers import (
     FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
@@ -41,6 +36,17 @@ from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
+
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DomainFile as GhidraDomainFile,
+        ProjectData as GhidraProjectData,
+    )
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Symbol as GhidraSymbol,
+        SymbolTable as GhidraSymbolTable,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -320,7 +326,7 @@ class SymbolToolProvider(ToolProvider):
 
         # Direct API
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         all_symbols = collect_symbols(program)
         results: list[dict[str, Any]] = []
         count: int = 0
@@ -382,34 +388,34 @@ class SymbolToolProvider(ToolProvider):
     async def _list_classes(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_classes")
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        program: GhidraProgram = self.program_info.program
+        st: GhidraSymbolTable = self._get_symbol_table(program)
+        max_results: int | None = self._get_int(args, "maxresults", "limit", default=100)
 
-        from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.model.symbol import SymbolType as GhidraSymbolType  # pyright: ignore[reportMissingModuleSource]
 
         classes: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
-            if sym.getSymbolType() == SymbolType.CLASS:
+            if sym.getSymbolType() == GhidraSymbolType.CLASS:
                 classes.append({"name": sym.getName(), "address": str(sym.getAddress()), "namespace": str(sym.getParentNamespace())})
-                if len(classes) >= max_results:
+                if max_results is not None and len(classes) >= max_results:
                     break
         return create_success_response({"mode": "classes", "results": classes, "count": len(classes)})
 
     async def _list_namespaces(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._list_namespaces")
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        program: GhidraProgram = self.program_info.program
+        st: GhidraSymbolTable = self._get_symbol_table(program)
+        max_results: int | None = self._get_int(args, "maxresults", "limit", default=100)
 
-        from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.model.symbol import SymbolType as GhidraSymbolType  # pyright: ignore[reportMissingModuleSource]
 
         namespaces: list[dict[str, Any]] = []
         for sym in st.getAllSymbols(True):
-            if sym.getSymbolType() == SymbolType.NAMESPACE:
+            if sym.getSymbolType() == GhidraSymbolType.NAMESPACE:
                 namespaces.append({"name": sym.getName(), "address": str(sym.getAddress())})
-                if len(namespaces) >= max_results:
+                if max_results is not None and len(namespaces) >= max_results:
                     break
         return create_success_response({"mode": "namespaces", "results": namespaces, "count": len(namespaces)})
 
@@ -427,7 +433,7 @@ class SymbolToolProvider(ToolProvider):
                 pass
 
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         imports = collect_imports(program)
         paginated, has_more = self._paginate_results(imports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(imports), mode="imports")
@@ -446,18 +452,18 @@ class SymbolToolProvider(ToolProvider):
                 pass
 
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         exports = [{"name": row.get("name", ""), "address": row.get("address", "")} for row in collect_exports(program)]
         paginated, has_more = self._paginate_results(exports, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(exports), mode="exports")
 
-    def _iter_domain_files_for_versioned_notify(self, program: Any, program_path: str | None) -> list[Any]:
+    def _iter_domain_files_for_versioned_notify(self, program: GhidraProgram, program_path: str | None) -> list[GhidraDomainFile]:
         """Unique DomainFiles for checkout metadata: open Program + path-resolved (match ProjectToolProvider._resolve_domain_file)."""
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._iter_domain_files_for_versioned_notify")
         seen: set[int] = set()
-        out: list[Any] = []
+        out: list[GhidraDomainFile] = []
 
-        def add(df: Any) -> None:
+        def add(df: GhidraDomainFile) -> None:
             if df is None:
                 return
             try:
@@ -480,7 +486,7 @@ class SymbolToolProvider(ToolProvider):
             if not path.startswith("/"):
                 path_candidates.append(f"/{path}")
 
-        pdf0: Any = None
+        pdf0: GhidraDomainFile | None = None
         try:
             pdf0 = program.getDomainFile()
             add(pdf0)
@@ -489,7 +495,7 @@ class SymbolToolProvider(ToolProvider):
 
         mgr = self._manager
 
-        def add_from_project_data(project_data: Any) -> None:
+        def add_from_project_data(project_data: GhidraProjectData) -> None:
             if project_data is None or not path_candidates:
                 return
             for cand in path_candidates:
@@ -518,7 +524,7 @@ class SymbolToolProvider(ToolProvider):
             add_from_project_data(mgr._resolve_project_data())
         return out
 
-    def _notify_versioned_checkout_after_program_edit(self, program: Any, program_path: str | None = None) -> None:
+    def _notify_versioned_checkout_after_program_edit(self, program: GhidraProgram, program_path: str | None = None) -> None:
         """Align shared checkout metadata with symbol/label edits (same hooks as versioned check-in path)."""
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._notify_versioned_checkout_after_program_edit")
         if program is None:
@@ -539,28 +545,22 @@ class SymbolToolProvider(ToolProvider):
                             par.fileChanged()
                         except Exception:
                             pass
-            gp = getattr(self._manager, "ghidra_project", None) if self._manager else None
-            # Shared/versioned: skip GhidraProject.save here. PyGhidra 12.x can persist the Program in a way that
-            # clears ``modifiedSinceCheckout`` on the server checkout handle; a later checkin-program (separate CLI
-            # request, e.g. LFG step 09) then fails with "not modified since checkout". Pre-checkin flush does save.
-            skip_gp_save = False
-            try:
-                sid = get_current_mcp_session_id()
-                handle = SESSION_CONTEXTS.get_or_create(sid).project_handle
-                skip_gp_save = bool(handle and is_shared_server_handle(handle))
-            except Exception:
-                skip_gp_save = False
-            if gp is not None and not skip_gp_save:
-                try:
-                    gp.save(program)
-                except Exception as exc:
-                    logger.debug("notify_versioned_checkout_after_program_edit gp.save: %s", exc)
+            # Skip GhidraProject.save here for ALL project types.
+            # Shared/versioned: PyGhidra 12.x can persist the Program in a way that clears
+            # ``modifiedSinceCheckout`` on the server checkout handle; a later checkin-program then fails
+            # with "not modified since checkout".
+            # Local: In Ghidra 12, gp.save ends the batch tx (marks it committed) but domainObject.save
+            # sees getCurrentTransaction()!=null (committed tx still tracked) and throws "Unable to lock".
+            # openPrograms is never cleaned up, leaving a stale entry that causes the next gp.save
+            # (in checkin-program) to throw "Attempted to end Transaction more than once".
+            # In both cases, deferring the save to checkin-program is correct: the batch tx stays open,
+            # and checkin-program's gp.save properly ends it and saves.
             _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
         except Exception as exc:
             logger.debug("notify_versioned_checkout_after_program_edit: %s", exc)
 
     @staticmethod
-    def _touch_listing_for_shared_checkin(program: Any) -> None:
+    def _touch_listing_for_shared_checkin(program: GhidraProgram) -> None:
         """Bookmark bump in the same transaction as symbol edits so VC sees a listing change."""
         try:
             mem = program.getMemory()
@@ -582,8 +582,8 @@ class SymbolToolProvider(ToolProvider):
         label = self._require_str(args, "labelname", "label", "name", name="labelName")
 
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
-        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+        program: GhidraProgram = self.program_info.program
+        from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingModuleSource]
 
         label_pp = (self._get_str(args, "programpath", "binary", "path") or "").strip() or None
 
@@ -592,13 +592,13 @@ class SymbolToolProvider(ToolProvider):
         label_list = self._get_list(args, "labelname", "labels")
         if addr_list and label_list and len(addr_list) > 1:
             results = []
-            st = self._get_symbol_table(program)
+            st: GhidraSymbolTable = self._get_symbol_table(program)
 
             def _create_labels_batch() -> None:
                 for a, l in zip(addr_list, label_list):  # noqa: E741
                     try:
                         addr = self._resolve_address(str(a), program=program)
-                        st.createLabel(addr, str(l), SourceType.USER_DEFINED)
+                        st.createLabel(addr, str(l), GhidraSourceType.USER_DEFINED)
                         results.append({"address": str(addr), "label": str(l), "success": True})
                     except Exception as e:
                         results.append({"address": str(a), "label": str(l), "success": False, "error": str(e)})
@@ -608,29 +608,20 @@ class SymbolToolProvider(ToolProvider):
             self._notify_versioned_checkout_after_program_edit(program, label_pp)
             return create_success_response({"mode": "create_label", "batch": True, "results": results})
 
-        addr: Any = self._resolve_address(addr_str, program=program)
-        st = self._get_symbol_table(program)
+        addr: GhidraAddress = self._resolve_address(addr_str, program=program)
+        st: GhidraSymbolTable = self._get_symbol_table(program)
 
         # Force-apply path: skip conflict check when re-invoked from resolve-modification-conflict
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
-            sym_at_addr: Any = st.getPrimarySymbol(addr)
+            sym_at_addr: GhidraSymbol | None = st.getPrimarySymbol(addr)
             if sym_at_addr is not None:
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
                 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                 conflict_id = str(uuid.uuid4())
                 existing_name = sym_at_addr.getName()
-                conflict_summary = (
-                    "Create label would conflict with existing symbol at address:\n\n"
-                    "```diff\n"
-                    f"- (existing) {existing_name}\n"
-                    f"+ {label}\n"
-                    "```"
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Create label would conflict with existing symbol at address:\n\n```diff\n- (existing) {existing_name}\n+ {label}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                 program_path_str = str(program_path) if program_path is not None else None
                 store_args = dict(args)
@@ -646,7 +637,7 @@ class SymbolToolProvider(ToolProvider):
                 return create_conflict_response(conflict_id, Tool.MANAGE_SYMBOLS.value, conflict_summary, next_step)
 
         def _create_label_single() -> None:
-            st.createLabel(addr, label, SourceType.USER_DEFINED)
+            st.createLabel(addr, label, GhidraSourceType.USER_DEFINED)
             self._touch_listing_for_shared_checkin(program)
 
         self._run_program_transaction(program, "create-label", _create_label_single)
@@ -656,8 +647,8 @@ class SymbolToolProvider(ToolProvider):
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._count")
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
-        st: Any = self._get_symbol_table(program)
+        program: GhidraProgram = self.program_info.program
+        st: GhidraSymbolTable = self._get_symbol_table(program)
         return create_success_response({"mode": "count", "totalSymbols": st.getNumSymbols()})
 
     async def _rename_data(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -666,12 +657,12 @@ class SymbolToolProvider(ToolProvider):
         new_name = self._require_str(args, "newname", "name", "labelname", name="newName")
 
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
-        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+        program: GhidraProgram = self.program_info.program
+        from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingModuleSource]
 
-        addr: Any = self._resolve_address(addr_str, program=program)
-        st: Any = self._get_symbol_table(program)
-        sym: Any = st.getPrimarySymbol(addr)
+        addr: GhidraAddress = self._resolve_address(addr_str, program=program)
+        st: GhidraSymbolTable = self._get_symbol_table(program)
+        sym: GhidraSymbol | None = st.getPrimarySymbol(addr)
         if sym is None:
             raise ValueError(f"No symbol at {addr_str}")
 
@@ -679,7 +670,7 @@ class SymbolToolProvider(ToolProvider):
         if args.get(FORCE_APPLY_CONFLICT_ID_KEY):
 
             def _rename_symbol() -> None:
-                sym.setName(new_name, SourceType.USER_DEFINED)
+                sym.setName(new_name, GhidraSourceType.USER_DEFINED)
 
             self._run_program_transaction(program, "rename-data", _rename_symbol)
             return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
@@ -688,7 +679,7 @@ class SymbolToolProvider(ToolProvider):
         if SymbolUtil.is_default_symbol_name(current_name):
             # Auto-generated name; no conflict, apply immediately
             def _rename_symbol() -> None:
-                sym.setName(new_name, SourceType.USER_DEFINED)
+                sym.setName(new_name, GhidraSourceType.USER_DEFINED)
 
             self._run_program_transaction(program, "rename-data", _rename_symbol)
             return create_success_response({"mode": "rename_data", "address": str(addr), "newName": new_name, "success": True})
@@ -699,10 +690,7 @@ class SymbolToolProvider(ToolProvider):
 
         conflict_id = str(uuid.uuid4())
         conflict_summary = f"Rename would overwrite existing custom symbol name:\n\n```diff\n- {current_name}\n+ {new_name}\n```"
-        next_step = (
-            f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-            'To discard, use `resolution` = "skip".'
-        )
+        next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
         program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
         program_path_str = str(program_path) if program_path is not None else None
         conflict_store_store(
@@ -718,16 +706,16 @@ class SymbolToolProvider(ToolProvider):
     async def _demangle(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._demangle")
         query: str = self._get_str(args, "query", "symbol", "name", "addressorsymbol")
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        max_results: int = self._get_int(args, "maxresults", "limit", default=100)  # pyright: ignore[reportAssignmentType]
 
         assert self.program_info is not None  # for type checker
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         results: list[dict[str, Any]] = []
 
         try:
-            from ghidra.app.util.demangler import DemanglerUtil  # pyright: ignore[reportMissingModuleSource]
+            from ghidra.app.util.demangler import DemanglerUtil as GhidraDemanglerUtil  # pyright: ignore[reportMissingModuleSource]
 
-            st: Any = self._get_symbol_table(program)
+            st: GhidraSymbolTable = self._get_symbol_table(program)
             for sym in st.getAllSymbols(True):
                 if len(results) >= max_results:
                     break
@@ -735,7 +723,7 @@ class SymbolToolProvider(ToolProvider):
                 if query and query.lower() not in name.lower():
                     continue
                 try:
-                    demangled = DemanglerUtil.demangle(program, name)
+                    demangled = GhidraDemanglerUtil.demangle(program, name)
                     if demangled:
                         results.append(
                             {

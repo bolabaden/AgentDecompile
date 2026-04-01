@@ -149,17 +149,8 @@ class DataToolProvider(ToolProvider):
                     from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                     conflict_id = str(uuid.uuid4())
-                    conflict_summary = (
-                        "Apply data type would overwrite existing data at address:\n\n"
-                        "```diff\n"
-                        f"- {existing_type}\n"
-                        f"+ {dt_name}\n"
-                        "```"
-                    )
-                    next_step = (
-                        f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                        'To discard, use `resolution` = "skip".'
-                    )
+                    conflict_summary = f"Apply data type would overwrite existing data at address:\n\n```diff\n- {existing_type}\n+ {dt_name}\n```"
+                    next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                     program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                     conflict_store_store(
                         get_current_mcp_session_id(),

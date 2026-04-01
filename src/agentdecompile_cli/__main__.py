@@ -12,6 +12,7 @@ Project path (when spawning local server): AGENT_DECOMPILE_PROJECT_PATH.
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 import argparse

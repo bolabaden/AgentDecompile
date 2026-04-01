@@ -509,14 +509,10 @@ def _strings_no_results_suggestions(query: str) -> list[str]:
         tokens = [t for t in re.split(r"\s+", q) if len(t) > 1]
         if len(tokens) > 1:
             partial = tokens[0]
-            steps.append(
-                f"Try a shorter or partial query: `search-strings query={partial}` (e.g. first word of \"{q}\")."
-            )
+            steps.append(f'Try a shorter or partial query: `search-strings query={partial}` (e.g. first word of "{q}").')
         elif len(q) > 6:
             # Single long word: suggest substring
-            steps.append(
-                f"Try a shorter substring: `search-strings query={q[:min(8, len(q))]}` to see if the string is split or abbreviated."
-            )
+            steps.append(f"Try a shorter substring: `search-strings query={q[: min(8, len(q))]}` to see if the string is split or abbreviated.")
     # Related terms for status/completion messages (patcher, installer, UI feedback)
     status_like = [
         ("complete", ["done", "success", "finished", "ok", "ready"]),
@@ -532,15 +528,9 @@ def _strings_no_results_suggestions(query: str) -> list[str]:
                 steps.append(f"Try a related term: `search-strings query={r}`.")
             break
     # Broader discovery
-    steps.append(
-        "Use `list-strings` to see what strings exist in the binary (they may be worded differently or encoded)."
-    )
-    steps.append(
-        "Use `search-code query=<your term>` to find the phrase in decompiled function names or code, in case it is built at runtime."
-    )
-    steps.append(
-        "If the binary is packed or obfuscated, strings may be decoded at runtime or stored in non-default encodings (e.g. UTF-16); consider running the program and tracing, or try `search-strings` with a regex pattern."
-    )
+    steps.append("Use `list-strings` to see what strings exist in the binary (they may be worded differently or encoded).")
+    steps.append("Use `search-code query=<your term>` to find the phrase in decompiled function names or code, in case it is built at runtime.")
+    steps.append("If the binary is packed or obfuscated, strings may be decoded at runtime or stored in non-default encodings (e.g. UTF-16); consider running the program and tracing, or try `search-strings` with a regex pattern.")
     return steps
 
 
@@ -557,20 +547,14 @@ def _next_steps_strings(data: dict[str, Any]) -> list[str]:
         addr = first.get("address", "")
         if addr:
             steps.append(f"Decompile containing function: `get-functions mode=decompile address={addr}`.")
-        steps.append(
-            "Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings."
-        )
+        steps.append("Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings.")
     else:
         # No results: context-aware suggestions when the user ran a search with a query
         if query:
             steps.extend(_strings_no_results_suggestions(query))
         else:
-            steps.append(
-                "Use `list-strings` to see what strings exist; use a smaller minLength if the binary has few or short strings."
-            )
-            steps.append(
-                "If you expected a specific phrase, try `search-strings query=<keyword>` or `search-code query=<keyword>` (code search finds names and decompiled text)."
-            )
+            steps.append("Use `list-strings` to see what strings exist; use a smaller minLength if the binary has few or short strings.")
+            steps.append("If you expected a specific phrase, try `search-strings query=<keyword>` or `search-code query=<keyword>` (code search finds names and decompiled text).")
     return steps
 
 
@@ -2145,10 +2129,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
         if params:
             lines.append("")
             lines.append(_md_heading(4, "Parameters"))
-            rows: list[list[str]] = [
-                [str(p.get("ordinal", i)), p.get("name", ""), _truncate(str(p.get("type", "")), 50)]
-                for i, p in enumerate(params)
-            ]
+            rows: list[list[str]] = [[str(p.get("ordinal", i)), p.get("name", ""), _truncate(str(p.get("type", "")), 50)] for i, p in enumerate(params)]
             lines.append(_md_table(["#", "Name", "Type"], rows))
         lines.append("")
 
@@ -2188,19 +2169,22 @@ def _render_get_function(data: dict[str, Any]) -> str:
 
     callers: list[dict[str, Any]] = data.get("callers") or []
     callees: list[dict[str, Any]] = data.get("callees") or []
-    if callers or callees:
-        lines.append(_md_heading(3, "Call graph"))
-        lines.append("")
-        if callers:
-            lines.append(_md_heading(4, f"Callers ({len(callers)})"))
-            rows = [[c.get("name", ""), c.get("address", "")] for c in callers]
-            lines.append(_md_table(["Name", "Address"], rows))
-            lines.append("")
-        if callees:
-            lines.append(_md_heading(4, f"Callees ({len(callees)})"))
-            rows = [[c.get("name", ""), c.get("address", "")] for c in callees]
-            lines.append(_md_table(["Name", "Address"], rows))
-        lines.append("")
+    lines.append(_md_heading(3, "Call graph"))
+    lines.append("")
+    lines.append(_md_heading(4, f"Callers ({len(callers)})"))
+    if callers:
+        rows = [[c.get("name", ""), c.get("address", "")] for c in callers]
+        lines.append(_md_table(["Name", "Address"], rows))
+    else:
+        lines.append("*None*")
+    lines.append("")
+    lines.append(_md_heading(4, f"Callees ({len(callees)})"))
+    if callees:
+        rows = [[c.get("name", ""), c.get("address", "")] for c in callees]
+        lines.append(_md_table(["Name", "Address"], rows))
+    else:
+        lines.append("*None*")
+    lines.append("")
 
     comments: dict[str, Any] = data.get("comments") or {}
     entry_comments: dict[str, str] = comments.get("entryPoint") or {}
@@ -2233,14 +2217,16 @@ def _render_get_function(data: dict[str, Any]) -> str:
 
     xrefs: list[dict[str, Any]] = data.get("crossReferences") or []
     outbound: list[dict[str, Any]] = data.get("outboundReferences") or []
+    lines.append(_md_heading(3, "Cross-references (inbound)"))
+    lines.append("")
     if xrefs:
-        lines.append(_md_heading(3, "Cross-references (inbound)"))
-        lines.append("")
         rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in xrefs[:25]]
         lines.append(_md_table(["From", "To", "Type"], rows))
         if len(xrefs) > 25:
             lines.append(f"*... and {len(xrefs) - 25} more*")
-        lines.append("")
+    else:
+        lines.append("*None*")
+    lines.append("")
     if outbound:
         lines.append(_md_heading(3, "Outbound references"))
         lines.append("")
@@ -2271,10 +2257,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append(_md_heading(3, "Stack frame"))
         lines.append("")
         lines.append(_md_bold_kv("Frame size", f"{stack.get('frameSize', 0)} bytes"))
-        rows = [
-            [v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "param" if v.get("isParameter") else ""]
-            for v in vars_list[:25]
-        ]
+        rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "param" if v.get("isParameter") else ""] for v in vars_list[:25]]
         lines.append(_md_table(["Name", "Offset", "Type", "Param"], rows))
         if len(vars_list) > 25:
             lines.append(f"*... and {len(vars_list) - 25} more*")

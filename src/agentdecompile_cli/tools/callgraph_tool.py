@@ -10,6 +10,7 @@ Provides a single, consistent interface for callgraph generation.
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 import base64
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
+
     Symbol = GhidraSymbol
 
 

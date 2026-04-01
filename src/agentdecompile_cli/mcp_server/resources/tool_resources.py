@@ -106,7 +106,7 @@ class ToolOutputResource(ResourceProvider):
         """Return one resource per qualifying tool at agentdecompile://<resource-name>."""
         logger.debug("diag.enter %s", "mcp_server/resources/tool_resources.py:ToolOutputResource.list_resources")
         resources: list[types.Resource] = []
-        
+
         # Direct tool names (session and program scoped)
         for tool_name in sorted(TOOLS_RESOURCE_SESSION_SCOPED | TOOLS_RESOURCE_PROGRAM_SCOPED):
             # Intuitive name based on what the tool does
@@ -156,7 +156,7 @@ class ToolOutputResource(ResourceProvider):
                 # Default: capitalize and replace hyphens
                 name = tool_name.replace("-", " ").title()
                 desc = f"Output of {tool_name}"
-            
+
             resources.append(
                 types.Resource(
                     uri=AnyUrl(url=f"{_RESOURCE_URI_PREFIX}{tool_name}"),
@@ -165,7 +165,7 @@ class ToolOutputResource(ResourceProvider):
                     mimeType="application/json",
                 )
             )
-        
+
         # Mapped intuitive names (bookmarks, comments, etc.)
         for resource_name, (tool_name, _args) in sorted(_RESOURCE_TO_TOOL_MAP.items()):
             if resource_name == "bookmarks":
@@ -189,7 +189,7 @@ class ToolOutputResource(ResourceProvider):
             else:
                 name = resource_name.replace("-", " ").title()
                 desc = f"List {resource_name.replace('-', ' ')}"
-            
+
             resources.append(
                 types.Resource(
                     uri=AnyUrl(url=f"{_RESOURCE_URI_PREFIX}{resource_name}"),
@@ -198,7 +198,7 @@ class ToolOutputResource(ResourceProvider):
                     mimeType="application/json",
                 )
             )
-        
+
         return resources
 
     async def read_resource(self, uri: str) -> str:
@@ -223,7 +223,7 @@ class ToolOutputResource(ResourceProvider):
             tool_name, tool_args = _RESOURCE_TO_TOOL_MAP[resource_name]
             # Mapped resources are always program-scoped (they list data per program)
             return await self._read_program_scoped(tool_name, extra_args=tool_args)
-        
+
         # Direct tool name
         tool_name = resource_name
         if tool_name in TOOLS_RESOURCE_SESSION_SCOPED:

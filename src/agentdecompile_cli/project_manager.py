@@ -126,6 +126,9 @@ class ProjectManager:
         # Try to open existing project or create new one
         if project_locator.getProjectDir().exists() and project_locator.getMarkerFile().exists():
             sys.stderr.write(f"Opening existing project: {project_name}\n")
+            from agentdecompile_cli.launcher import _patch_project_owner
+
+            _patch_project_owner(str(project_path), project_name)
             self.project = GhidraProject.openProject(
                 str(project_path),
                 project_name,

@@ -27,7 +27,15 @@ from agentdecompile_cli.mcp_utils.decompiler_util import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import DecompInterface  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompInterface as GhidraDecompInterface,
+        DecompileResults as GhidraDecompileResults,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        Program as GhidraProgram,
+    )
+    from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
     from agentdecompile_cli.launcher import ProgramInfo
     from agentdecompile_cli.tools.decompile_tool import DecompileTool
@@ -116,8 +124,8 @@ class DecompilerToolProvider(ToolProvider):
 
     async def _decompile_with_ghidra_api(
         self,
-        target_func: Any,
-        program: Any,
+        target_func: GhidraFunction,
+        program: GhidraProgram,
         timeout: int,
     ) -> list[types.TextContent]:
         """Decompile a function using Ghidra's DecompInterface."""
@@ -144,25 +152,25 @@ class DecompilerToolProvider(ToolProvider):
 
     def _setup_decompiler(
         self,
-        session_decomp: DecompInterface | None,  # noqa: F821
-        program: Any,
-    ) -> tuple[DecompInterface, bool]:  # noqa: F821
+        session_decomp: GhidraDecompInterface | None,
+        program: GhidraProgram,
+    ) -> tuple[GhidraDecompInterface, bool]:
         """Set up the decompiler interface, returning (decomp, owns_decomp). When owns_decomp is True, caller must dispose decomp."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._setup_decompiler")
         return resolve_decompiler_for_program(session_decomp, program)
 
     def _perform_decompilation(
         self,
-        decomp: Any,
-        target_func: Any,
+        decomp: GhidraDecompInterface,
+        target_func: GhidraFunction,
         timeout: int,
-        monitor: Any,
-        session_decomp: Any,
-        program: Any = None,
+        monitor: GhidraTaskMonitor,
+        session_decomp: GhidraDecompInterface | None,
+        program: GhidraProgram | None = None,
     ) -> dict[str, Any]:  # pyright: ignore[reportReturnType]
         """Perform the actual decompilation with retry logic."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._perform_decompilation")
-        dr: Any = decomp.decompileFunction(target_func, timeout, monitor)
+        dr: GhidraDecompileResults = decomp.decompileFunction(target_func, timeout, monitor)
 
         if dr and dr.decompileCompleted():
             return self._extract_successful_decompilation(dr, target_func)
@@ -177,8 +185,8 @@ class DecompilerToolProvider(ToolProvider):
 
     def _extract_successful_decompilation(
         self,
-        dr: Any,
-        target_func: Any,
+        dr: GhidraDecompileResults,
+        target_func: GhidraFunction,
     ) -> dict[str, Any]:
         """Extract results from a successful decompilation."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._extract_successful_decompilation")
@@ -201,11 +209,11 @@ class DecompilerToolProvider(ToolProvider):
 
     def _try_retry_decompilation(
         self,
-        target_func: Any,
+        target_func: GhidraFunction,
         timeout: int,
-        monitor: Any,
-        original_decomp: Any,
-        program: Any = None,
+        monitor: GhidraTaskMonitor,
+        original_decomp: GhidraDecompInterface,
+        program: GhidraProgram | None = None,
     ) -> dict[str, Any] | None:
         """Try decompilation again with a fresh DecompInterface."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._try_retry_decompilation")
@@ -233,10 +241,10 @@ class DecompilerToolProvider(ToolProvider):
 
     def _handle_decompilation_failure(
         self,
-        dr: Any,
-        decomp: Any,
-        target_func: Any,
-        program: Any | None = None,
+        dr: GhidraDecompileResults | None,
+        decomp: GhidraDecompInterface,
+        target_func: GhidraFunction,
+        program: GhidraProgram | None = None,
     ) -> None:
         """Raise with Ghidra decompiler diagnostics when decompilation does not complete."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._handle_decompilation_failure")
@@ -273,7 +281,7 @@ class DecompilerToolProvider(ToolProvider):
             detail = f"{detail} (program handle unavailable on DecompInterface)"
         raise RuntimeError(f"Decompilation failed for {name} @ {addr}: {detail}")
 
-    def _extract_error_message(self, dr: Any, decomp: Any) -> str:
+    def _extract_error_message(self, dr: GhidraDecompileResults | None, decomp: GhidraDecompInterface) -> str:
         """Extract error message from decompilation result."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._extract_error_message")
         err_msg = ""

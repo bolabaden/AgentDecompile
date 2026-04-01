@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp import types
 
@@ -28,13 +28,20 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 )
 from agentdecompile_cli.registry import Tool
 
+if TYPE_CHECKING:
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DataTypeManager as GhidraDataTypeManager,
+        Structure as GhidraStructure,
+    )
+    from ghidra.util.data import DataTypeParser as GhidraDataTypeParser  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+
 logger = logging.getLogger(__name__)
 
 
 class StructureToolProvider(ToolProvider):
     HANDLERS = {"managestructures": "_handle"}
 
-    def _find_structure(self, dtm: Any, name: str) -> Any:
+    def _find_structure(self, dtm: GhidraDataTypeManager, name: str) -> GhidraStructure | None:
         """Return a structure by exact name, or ``None`` when not found.
 
         **Performance**: O(n) where n = number of structures in the data type manager.
@@ -49,7 +56,7 @@ class StructureToolProvider(ToolProvider):
         return None
 
     @staticmethod
-    def _new_data_type_parser(dtm: Any) -> Any:
+    def _new_data_type_parser(dtm: GhidraDataTypeManager) -> GhidraDataTypeParser:
         """Create a ``DataTypeParser`` configured for broad type support."""
         logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._new_data_type_parser")
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
@@ -199,14 +206,8 @@ class StructureToolProvider(ToolProvider):
                 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                 conflict_id = str(uuid.uuid4())
-                conflict_summary = (
-                    "Create structure would overwrite existing structure with the same name:\n\n"
-                    f"Structure **{name}** already exists."
-                )
-                next_step = (
-                    f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                    'To discard, use `resolution` = "skip".'
-                )
+                conflict_summary = f"Create structure would overwrite existing structure with the same name:\n\nStructure **{name}** already exists."
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                 program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                 store_args = dict(args)
                 store_args["mode"] = "create"
@@ -412,17 +413,8 @@ class StructureToolProvider(ToolProvider):
                     from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                     conflict_id = str(uuid.uuid4())
-                    conflict_summary = (
-                        "Apply structure would overwrite existing data at address:\n\n"
-                        "```diff\n"
-                        f"- (existing) {existing_type}\n"
-                        f"+ {struct_name}\n"
-                        "```"
-                    )
-                    next_step = (
-                        f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                        'To discard, use `resolution` = "skip".'
-                    )
+                    conflict_summary = f"Apply structure would overwrite existing data at address:\n\n```diff\n- (existing) {existing_type}\n+ {struct_name}\n```"
+                    next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                     program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                     store_args = dict(args)
                     store_args["mode"] = "apply"

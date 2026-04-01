@@ -880,6 +880,7 @@ _add_builtin_param_aliases()
 _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     {
         Tool.DELETE_PROJECT_BINARY,
+        Tool.DECOMPILE_FUNCTION,
         Tool.GEN_CALLGRAPH,
         Tool.GET_FUNCTIONS,
         Tool.MANAGE_DATA_TYPES,
@@ -906,9 +907,7 @@ _AUTO_CHECKIN_ENV_VARS: tuple[str, ...] = (
 def _auto_checkin_enabled() -> bool:
     """True if AGENTDECOMPILE_AUTO_CHECKIN (or alias) is set; then checkin-program is hidden and run after setters."""
     logger.debug("diag.enter %s", "registry.py:_auto_checkin_enabled")
-    return any(
-        _is_truthy_env(os.getenv(var_name)) for var_name in _AUTO_CHECKIN_ENV_VARS
-    )
+    return any(_is_truthy_env(os.getenv(var_name)) for var_name in _AUTO_CHECKIN_ENV_VARS)
 
 
 def _is_truthy_env(value: str | None) -> bool:

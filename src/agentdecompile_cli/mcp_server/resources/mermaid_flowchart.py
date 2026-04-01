@@ -43,16 +43,16 @@ _LABEL_ESCAPE = str.maketrans({'"': "#quot;", "]": "]", "#": "#35;", "&": "&amp;
 
 # Deterministic border colors by bookmark type (hash → palette index). Accessible, distinct strokes.
 _BORDER_PALETTE = [
-    ("#00695c", "#004d40"),   # dark teal
-    ("#00838f", "#006064"),   # teal
-    ("#1976d2", "#0d47a1"),   # blue
-    ("#388e3c", "#1b5e20"),   # green
-    ("#455a64", "#263238"),   # blue grey
-    ("#5d4037", "#3e2723"),   # brown
-    ("#6a1b9a", "#4a148c"),   # deep purple
-    ("#7b1fa2", "#4a148c"),   # purple
-    ("#c62828", "#b71c1c"),   # red
-    ("#f57c00", "#e65100"),   # orange
+    ("#00695c", "#004d40"),  # dark teal
+    ("#00838f", "#006064"),  # teal
+    ("#1976d2", "#0d47a1"),  # blue
+    ("#388e3c", "#1b5e20"),  # green
+    ("#455a64", "#263238"),  # blue grey
+    ("#5d4037", "#3e2723"),  # brown
+    ("#6a1b9a", "#4a148c"),  # deep purple
+    ("#7b1fa2", "#4a148c"),  # purple
+    ("#c62828", "#b71c1c"),  # red
+    ("#f57c00", "#e65100"),  # orange
 ]
 
 
@@ -153,9 +153,7 @@ def _bookmarks_at_address(program: Any, addr: Any) -> list[tuple[str, str, str]]
     return out
 
 
-def _build_mermaid_for_program(
-    program: Any, program_label: str, program_id: str
-) -> tuple[list[str], list[str], dict[str, str], list[str]]:
+def _build_mermaid_for_program(program: Any, program_label: str, program_id: str) -> tuple[list[str], list[str], dict[str, str], list[str]]:
     """Build Mermaid lines for one program: node defs, edge lines, classDef lines, and entry node ids."""
     logger.debug("diag.enter %s", "mcp_server/resources/mermaid_flowchart.py:_build_mermaid_for_program")
     from agentdecompile_cli.mcp_server.providers._collectors import _get_function_list
@@ -293,9 +291,7 @@ class MermaidFlowchartResource(ResourceProvider):
                 prog_name = getattr(program, "getName", lambda: path_key)()
                 program_label = _escape_label(str(prog_name))
                 program_id = _sanitize_node_id(path_key, 40)
-                node_lines, edge_lines, class_defs, entry_node_ids = _build_mermaid_for_program(
-                    program, program_label, program_id
-                )
+                node_lines, edge_lines, class_defs, entry_node_ids = _build_mermaid_for_program(program, program_label, program_id)
                 if not node_lines:
                     continue
                 all_class_defs.update(class_defs)
