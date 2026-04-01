@@ -284,6 +284,103 @@ def _copy_locked_project_data(projects_dir: Path, source_name: str, dest_name: s
         return False
 
 
+# ---------------------------------------------------------------------------
+# Fallback-origin manifest helpers
+# ---------------------------------------------------------------------------
+
+_FALLBACK_ORIGINS_FILENAME = ".agdec_fallback_origins.json"
+
+
+def _fallback_origins_path(projects_dir: Path) -> Path:
+    return projects_dir / _FALLBACK_ORIGINS_FILENAME
+
+
+def _read_fallback_origins(projects_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read the fallback-origin manifest from *projects_dir*.
+
+    Returns the manifest dict (keyed by fallback project name) or ``{}`` when
+    the manifest file is missing or cannot be parsed.
+    """
+    manifest_path = _fallback_origins_path(projects_dir)
+    try:
+        content = manifest_path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if isinstance(data, dict):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _write_fallback_origins(projects_dir: Path, data: dict[str, Any]) -> None:
+    """Atomically write the fallback-origin manifest to *projects_dir*."""
+    manifest_path = _fallback_origins_path(projects_dir)
+    tmp_path = manifest_path.with_suffix(".json.tmp")
+    try:
+        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp_path.replace(manifest_path)
+    except Exception as exc:
+        logger.warning("Could not write fallback origins manifest: %s", exc)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _record_fallback_origin(projects_dir: Path, original_name: str, fallback_name: str) -> None:
+    """Record that *fallback_name* was created as a locked-project fallback for *original_name*.
+
+    Writes/updates ``<projects_dir>/.agdec_fallback_origins.json``.  The entry
+    stores the original project name, the UTC creation time, and
+    ``reintegrated: false`` so that reintegration tools can later discover and
+    merge the fallback's changes back into the original.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    data = _read_fallback_origins(projects_dir)
+    data[fallback_name] = {
+        "original_project": original_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "reintegrated": False,
+    }
+    _write_fallback_origins(projects_dir, data)
+    sys.stderr.write(
+        f"[_record_fallback_origin] Recorded fallback {fallback_name!r} -> original {original_name!r} "
+        f"in {_fallback_origins_path(projects_dir)}\n"
+    )
+
+
+def _startup_warn_pending_fallbacks(projects_dir: Path, current_project_name: str) -> None:
+    """Warn at startup if unintegrated fallback projects exist for *current_project_name*.
+
+    Called when the original (intended) project opens successfully.  Checks the
+    manifest for any entry whose ``original_project`` matches *current_project_name*,
+    ``reintegrated`` is ``False``, and whose ``.rep/`` directory still exists on
+    disk, then emits a WARNING so the user knows to run ``reintegrate-fallback-projects``.
+    """
+    data = _read_fallback_origins(projects_dir)
+    pending = [
+        name
+        for name, entry in data.items()
+        if entry.get("original_project") == current_project_name
+        and not entry.get("reintegrated", False)
+        and (projects_dir / f"{name}.rep").is_dir()
+    ]
+    if not pending:
+        return
+    names_str = ", ".join(repr(n) for n in pending)
+    sys.stderr.write(
+        f"[launcher.start] WARNING: {len(pending)} unintegrated fallback project(s) exist for "
+        f"{current_project_name!r}: {names_str}. "
+        "Run the 'reintegrate-fallback-projects' MCP tool to merge their changes back.\n"
+    )
+    logger.warning(
+        "Unintegrated fallback projects for %r: %s — run reintegrate-fallback-projects to merge.",
+        current_project_name,
+        names_str,
+    )
+
+
 def _iter_domain_items(
     folder: GhidraDomainFolder,
     content_type: str | None = None,
@@ -1767,6 +1864,8 @@ class AgentDecompileLauncher:
                     verbose_analysis=False,
                     no_symbols=False,
                 )
+                # Warn if unintegrated fallback projects exist from previous locked sessions.
+                _startup_warn_pending_fallbacks(projects_dir, project_name)
             except Exception as _lock_err:
                 _lock_err_name = type(_lock_err).__name__
                 _lock_err_str = str(_lock_err)
@@ -1839,6 +1938,9 @@ class AgentDecompileLauncher:
                         verbose_analysis=False,
                         no_symbols=False,
                     )
+                # Record the fallback → original mapping so reintegration tools
+                # can merge this session's changes back later.
+                _record_fallback_origin(projects_dir, _locked_project_name, project_name)
 
             # Create program info that will be populated when programs are loaded
             self.program_info = ProgramInfo(

@@ -132,6 +132,8 @@ class Tool(str, Enum):
     LIST_FUNCTIONS = "list-functions"
     LIST_IMPORTS = "list-imports"
     LIST_PROJECT_FILES = "list-project-files"
+    LIST_FALLBACK_PROJECTS = "list-fallback-projects"
+    REINTEGRATE_FALLBACK_PROJECTS = "reintegrate-fallback-projects"
     LIST_PROCESSORS = "list-processors"
     LIST_PROMPTS = "list-prompts"
     LIST_STRINGS = "list-strings"
@@ -361,6 +363,15 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.LIST_IMPORTS.value: _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
     Tool.LIST_PROCESSORS.value: _params("filter"),
     Tool.LIST_PROJECT_FILES.value: [],
+    Tool.LIST_FALLBACK_PROJECTS.value: _params("projectsDir", "originalProjectName"),
+    Tool.REINTEGRATE_FALLBACK_PROJECTS.value: _params(
+        "projectsDir",
+        "originalProjectName",
+        "fallbackProjectNames",
+        "mergeMode",
+        "deleteAfterMerge",
+        "dryRun",
+    ),
     Tool.LIST_STRINGS.value: _params("programPath", "filter", "maxResults", "offset"),
     Tool.MANAGE_BOOKMARKS.value: _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
     Tool.MANAGE_COMMENTS.value: _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),

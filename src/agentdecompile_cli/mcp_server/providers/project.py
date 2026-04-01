@@ -168,6 +168,8 @@ class ProjectToolProvider(ToolProvider):
         "openprogramincodebrowser": "_handle_gui_unsupported",
         "openallprogramsincodebrowser": "_handle_gui_unsupported",
         "svradmin": "_handle_svr_admin",
+        "listfallbackprojects": "_handle_list_fallback_projects",
+        "reintegratefallbackprojects": "_handle_reintegrate_fallback_projects",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -382,6 +384,76 @@ class ProjectToolProvider(ToolProvider):
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "Program path to verify (uses current if omitted)."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name=Tool.LIST_FALLBACK_PROJECTS.value,
+                description=(
+                    "List temporary fallback projects that were created when the original project was locked. "
+                    "Shows reintegration status, creation time, and program count for each fallback. "
+                    "Use reintegrate-fallback-projects to merge changes back into the original."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "projectsDir": {
+                            "type": "string",
+                            "description": "Override the projects directory (auto-derived from current project if omitted).",
+                        },
+                        "originalProjectName": {
+                            "type": "string",
+                            "description": "Filter by original project name (default: current project).",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name=Tool.REINTEGRATE_FALLBACK_PROJECTS.value,
+                description=(
+                    "Merge changes from fallback projects back into the original project. "
+                    "Use this after the original project unlocks to restore programs and analysis "
+                    "that were added or modified during the fallback session(s). "
+                    "Supports overwrite, skip, and new-only merge modes. Use dryRun=true to preview."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "projectsDir": {
+                            "type": "string",
+                            "description": "Override the projects directory (auto-derived from current project if omitted).",
+                        },
+                        "originalProjectName": {
+                            "type": "string",
+                            "description": "Original project name to merge into (default: current project).",
+                        },
+                        "fallbackProjectNames": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Specific fallback project names to reintegrate (default: all unintegrated fallbacks).",
+                        },
+                        "mergeMode": {
+                            "type": "string",
+                            "enum": ["overwrite_existing", "skip_existing", "new_only"],
+                            "default": "overwrite_existing",
+                            "description": (
+                                "overwrite_existing (default): copy all domain files, replacing existing程序 in the original; "
+                                "skip_existing: copy only files not already in the original; "
+                                "new_only: alias for skip_existing."
+                            ),
+                        },
+                        "deleteAfterMerge": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Delete the fallback project files after successful reintegration.",
+                        },
+                        "dryRun": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Simulate only — report what would be merged without changing anything.",
+                        },
                     },
                     "required": [],
                 },
@@ -719,6 +791,311 @@ class ProjectToolProvider(ToolProvider):
                 "stderr": result.stderr,
                 "success": result.returncode == 0,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # Fallback-project discovery and reintegration
+    # ------------------------------------------------------------------
+
+    def _derive_projects_dir(self, args: dict[str, Any]) -> Path | None:
+        """Return the projects directory from args or from the current ghidra project."""
+        override: str | None = self._get_str(args, "projectsdir", "projectsdirectory")
+        if override:
+            return Path(override)
+        ghidra_project = self._manager.ghidra_project if self._manager else None
+        if ghidra_project is None:
+            return None
+        try:
+            locator = ghidra_project.getProject().getProjectLocator()
+            proj_dir = Path(str(locator.getProjectDir()))
+            # projects_dir is the *parent* of <project_name>.rep
+            return proj_dir.parent
+        except Exception as exc:
+            logger.warning("Could not derive projects_dir from ghidra_project: %s", exc)
+            return None
+
+    async def _handle_list_fallback_projects(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """List fallback projects and their reintegration status."""
+        logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._handle_list_fallback_projects")
+        from agentdecompile_cli.launcher import (  # noqa: PLC0415
+            _iter_domain_items,
+            _patch_project_owner,
+            _read_fallback_origins,
+        )
+
+        projects_dir = self._derive_projects_dir(args)
+        if projects_dir is None:
+            raise ActionableError(
+                "Cannot determine projects directory. Provide projectsDir or open a local project first.",
+                context={"action": "list-fallback-projects"},
+                next_steps=["Pass projectsDir='/path/to/projects' as an argument."],
+            )
+
+        # Filter by original project name (default: current project name)
+        original_filter: str | None = self._get_str(args, "originalprojectname")
+        if original_filter is None:
+            ghidra_project = self._manager.ghidra_project if self._manager else None
+            if ghidra_project is not None:
+                try:
+                    original_filter = str(ghidra_project.getProject().getName())
+                except Exception:
+                    pass
+
+        data = _read_fallback_origins(projects_dir)
+        if not data:
+            return create_success_response(
+                {
+                    "action": "list-fallback-projects",
+                    "projectsDir": str(projects_dir),
+                    "fallbacks": [],
+                    "message": "No fallback project records found.",
+                }
+            )
+
+        rows: list[dict[str, Any]] = []
+        for fallback_name, entry in data.items():
+            orig = entry.get("original_project", "?")
+            if original_filter and orig != original_filter:
+                continue
+            rep_exists = (projects_dir / f"{fallback_name}.rep").is_dir()
+            reintegrated = entry.get("reintegrated", False)
+
+            # Count programs in fallback (best-effort: open project briefly)
+            program_count: int | str = "unknown"
+            if rep_exists and not reintegrated:
+                try:
+                    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # noqa: PLC0415
+
+                    _patch_project_owner(str(projects_dir), fallback_name)
+                    fb_proj = GhidraProject.openProject(str(projects_dir), fallback_name, False)
+                    try:
+                        program_count = sum(1 for _ in _iter_domain_items(fb_proj.getRootFolder()))
+                    finally:
+                        try:
+                            fb_proj.close()
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    program_count = f"error: {type(exc).__name__}"
+
+            rows.append(
+                {
+                    "fallbackName": fallback_name,
+                    "originalProject": orig,
+                    "createdAt": entry.get("created_at", ""),
+                    "reintegrated": reintegrated,
+                    "reintegratedAt": entry.get("reintegrated_at", ""),
+                    "filesOnDisk": rep_exists,
+                    "domainFileCount": program_count,
+                }
+            )
+
+        # Build a markdown table
+        lines: list[str] = [
+            "| Fallback Name | Original | Created | Reintegrated | Files on Disk | Domain Files |",
+            "|---|---|---|---|---|---|",
+        ]
+        for row in rows:
+            lines.append(
+                f"| `{row['fallbackName']}` | `{row['originalProject']}` | {row['createdAt']} "
+                f"| {'✓' if row['reintegrated'] else '✗'} {row.get('reintegratedAt', '')} "
+                f"| {'yes' if row['filesOnDisk'] else 'no'} | {row['domainFileCount']} |"
+            )
+
+        return create_success_response(
+            {
+                "action": "list-fallback-projects",
+                "projectsDir": str(projects_dir),
+                "originalFilter": original_filter,
+                "count": len(rows),
+                "fallbacks": rows,
+                "table": "\n".join(lines),
+            }
+        )
+
+    async def _handle_reintegrate_fallback_projects(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Merge fallback projects back into the original project."""
+        logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._handle_reintegrate_fallback_projects")
+        import shutil as _shutil  # noqa: PLC0415
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        from agentdecompile_cli.launcher import (  # noqa: PLC0415
+            _iter_domain_items,
+            _patch_project_owner,
+            _read_fallback_origins,
+            _write_fallback_origins,
+        )
+
+        projects_dir = self._derive_projects_dir(args)
+        if projects_dir is None:
+            raise ActionableError(
+                "Cannot determine projects directory. Provide projectsDir or open a local project first.",
+                context={"action": "reintegrate-fallback-projects"},
+                next_steps=["Pass projectsDir='/path/to/projects' as an argument."],
+            )
+
+        # Determine the original project (destination)
+        original_name: str | None = self._get_str(args, "originalprojectname")
+        ghidra_project = self._manager.ghidra_project if self._manager else None
+        if original_name is None:
+            if ghidra_project is not None:
+                try:
+                    original_name = str(ghidra_project.getProject().getName())
+                except Exception:
+                    pass
+        if not original_name:
+            raise ActionableError(
+                "Cannot determine original project name. Provide originalProjectName or open the original project first.",
+                context={"action": "reintegrate-fallback-projects"},
+                next_steps=["Pass originalProjectName='my_project' as an argument."],
+            )
+
+        merge_mode: str = (self._get_str(args, "mergemode") or "overwrite_existing").lower()
+        if merge_mode in ("new_only", "newonly"):
+            merge_mode = "skip_existing"
+        delete_after: bool = self._get_bool(args, "deleteaftermerge", default=False)
+        dry_run: bool = self._get_bool(args, "dryrun", default=False)
+        requested_fallbacks: list[str] = [
+            str(v) for v in (self._get_list(args, "fallbackprojectnames") or []) if v
+        ]
+
+        data = _read_fallback_origins(projects_dir)
+        candidates = [
+            (name, entry)
+            for name, entry in data.items()
+            if entry.get("original_project") == original_name
+            and not entry.get("reintegrated", False)
+            and (projects_dir / f"{name}.rep").is_dir()
+        ]
+        if requested_fallbacks:
+            candidates = [(n, e) for n, e in candidates if n in requested_fallbacks]
+        # Process oldest-first
+        candidates.sort(key=lambda x: x[1].get("created_at", ""))
+
+        if not candidates:
+            return create_success_response(
+                {
+                    "action": "reintegrate-fallback-projects",
+                    "originalProject": original_name,
+                    "message": "No unintegrated fallback projects found for this original project.",
+                    "dryRun": dry_run,
+                }
+            )
+
+        # Get the live original GhidraProject handle (must already be open)
+        if ghidra_project is None:
+            raise ActionableError(
+                f"Original project '{original_name}' is not open. Open it first, then reintegrate.",
+                context={"action": "reintegrate-fallback-projects", "originalProject": original_name},
+                next_steps=[f"Call open-project with path to {original_name}, then retry."],
+            )
+
+        summary: list[dict[str, Any]] = []
+        from ghidra.base.project import GhidraProject as _GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # noqa: PLC0415
+        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # noqa: PLC0415
+
+        for fallback_name, entry in candidates:
+            fb_summary: dict[str, Any] = {
+                "fallbackName": fallback_name,
+                "copied": 0,
+                "skipped": 0,
+                "failed": 0,
+                "errors": [],
+            }
+            try:
+                _patch_project_owner(str(projects_dir), fallback_name)
+                fb_proj = _GhidraProject.openProject(str(projects_dir), fallback_name, False)
+            except Exception as exc:
+                fb_summary["errors"].append(f"Failed to open fallback project: {exc}")
+                summary.append(fb_summary)
+                continue
+
+            try:
+                fb_root = fb_proj.getRootFolder()
+
+                for domain_file in _iter_domain_items(fb_root):
+                    file_path: str = str(domain_file.getPathname())
+                    file_name: str = str(domain_file.getName())
+                    parent_path: str = str(domain_file.getParent().getPathname())
+
+                    # Check existence in original
+                    already_exists = False
+                    try:
+                        orig_pd = ghidra_project.getProject().getProjectData()
+                        check_folder = orig_pd.getFolder(parent_path)
+                        if check_folder is not None:
+                            already_exists = check_folder.getFile(file_name) is not None
+                    except Exception:
+                        pass
+
+                    if already_exists and merge_mode == "skip_existing":
+                        fb_summary["skipped"] += 1
+                        continue
+
+                    if dry_run:
+                        action = "would overwrite" if already_exists else "would create"
+                        fb_summary["copied"] += 1
+                        fb_summary.setdefault("dry_run_actions", []).append(f"{action}: {file_path}")
+                        continue
+
+                    # Open domain object from fallback and saveAs into original
+                    try:
+                        domain_obj = domain_file.getDomainObject(None, True, False, TaskMonitor.DUMMY)
+                        try:
+                            ghidra_project.saveAs(domain_obj, parent_path, file_name, True)
+                            fb_summary["copied"] += 1
+                        finally:
+                            try:
+                                domain_obj.release(None)
+                            except Exception:
+                                pass
+                    except Exception as exc:
+                        fb_summary["failed"] += 1
+                        fb_summary["errors"].append(f"{file_path}: {type(exc).__name__}: {exc}")
+            finally:
+                try:
+                    fb_proj.close()
+                except Exception:
+                    pass
+
+            # Update manifest
+            if not dry_run:
+                data[fallback_name]["reintegrated"] = True
+                data[fallback_name]["reintegrated_at"] = datetime.now(timezone.utc).isoformat()
+                _write_fallback_origins(projects_dir, data)
+
+                if delete_after and fb_summary["failed"] == 0:
+                    try:
+                        rep_path = projects_dir / f"{fallback_name}.rep"
+                        gpr_path = projects_dir / f"{fallback_name}.gpr"
+                        if rep_path.is_dir():
+                            _shutil.rmtree(rep_path, ignore_errors=True)
+                        if gpr_path.exists():
+                            gpr_path.unlink(missing_ok=True)
+                        fb_summary["deleted"] = True
+                    except Exception as exc:
+                        fb_summary["deleteError"] = str(exc)
+
+            summary.append(fb_summary)
+
+        total_copied = sum(s["copied"] for s in summary)
+        total_skipped = sum(s["skipped"] for s in summary)
+        total_failed = sum(s["failed"] for s in summary)
+
+        return create_success_response(
+            {
+                "action": "reintegrate-fallback-projects",
+                "originalProject": original_name,
+                "projectsDir": str(projects_dir),
+                "mergeMode": merge_mode,
+                "dryRun": dry_run,
+                "deleteAfterMerge": delete_after,
+                "fallbacksProcessed": len(summary),
+                "totalCopied": total_copied,
+                "totalSkipped": total_skipped,
+                "totalFailed": total_failed,
+                "results": summary,
+            }
         )
 
     async def _handle_connect_shared_project(self, args: dict[str, Any]) -> list[types.TextContent]:

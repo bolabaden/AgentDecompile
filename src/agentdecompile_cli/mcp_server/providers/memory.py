@@ -152,21 +152,26 @@ class MemoryToolProvider(ToolProvider):
         length = min(length, 10000)
         addr = self._resolve_address(addr_str, program=program)
 
-        buf = bytearray(length)
+        import jpype  # noqa: PLC0415
+
+        # Must use a JPype Java primitive byte[] array — passing Python bytearray to getBytes gives a
+        # temporary Java copy that is never written back to the Python object, causing all-zero results.
+        buf = jpype.JByte[length]
+        actual = 0
         try:
             actual = memory.getBytes(addr, buf)
         except Exception:
             # Some Ghidra versions or address spaces don't support getBytes; fall back to byte-by-byte read
-            actual = 0
             for i in range(length):
                 try:
-                    buf[i] = memory.getByte(addr.add(i)) & 0xFF
+                    buf[i] = memory.getByte(addr.add(i))  # signed Java byte; mask only on output
                     actual = i + 1
                 except Exception:
                     break
 
-        hex_str = " ".join(f"{b:02x}" for b in buf[:actual])
-        ascii_str = "".join(chr(b) if 32 <= b < 127 else "." for b in buf[:actual])
+        # Java bytes are signed (-128..127); mask with 0xFF for unsigned hex/ASCII display
+        hex_str = " ".join(f"{b & 0xFF:02x}" for b in buf[:actual])
+        ascii_str = "".join(chr(b & 0xFF) if 32 <= (b & 0xFF) < 127 else "." for b in buf[:actual])
 
         return create_success_response(
             {
