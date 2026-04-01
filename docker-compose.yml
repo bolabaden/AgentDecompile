@@ -12,7 +12,6 @@ x-common-env: &common-env
   UMASK: ${UMASK:-002}
 
 x-common-build-args: &common-build-args
-  ALPINE_BASE_IMAGE: ${ALPINE_BASE_IMAGE:-docker.io/library/alpine:latest}
   GHIDRA_VERSION: ${GHIDRA_VERSION:-}
   PUID: ${PUID:-1001}
   PGID: ${PGID:-999}
@@ -49,16 +48,13 @@ services:
       - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
       - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
       - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
+      # Mount server.conf — configure -ip, port, auth, etc. per official Ghidra docs.
+      # Edit volumes/ghidra/server.conf to match your network setup.
+      - ${CONFIG_PATH:-./volumes}/ghidra/server.conf:/ghidra/server/server.conf
     environment:
       <<: *common-env
-      # RMI advertised address – set to the IP/hostname that clients use to reach
-      # this container.  Auto-detected from container interface if omitted.
-      # For external Ghidra GUI access from the Docker host, set to the host IP.
-      GHIDRA_IP: ${GHIDRA_IP:-}
-      # Ghidra server users (space-separated; admins by default).
-      # MODE: ghidra-server
+      MODE: ghidra-server
       #GHIDRA_USERS:  # Space-separated usernames (admins by default)
-    command: server
     labels:
       traefik.enable: true
       traefik.tcp.routers.ghidra.rule: HostSNI(`ghidra.$DOMAIN`) || HostSNI(`ghidra.$TS_HOSTNAME.$DOMAIN`)
@@ -146,7 +142,6 @@ services:
       # Ghidra server users (space-separated; admins by default).
       MODE: bsim-server
       #GHIDRA_USERS: # Space-separated usernames (admins by default)
-    command: server
     labels:
       traefik.enable: true
       traefik.tcp.routers.agentdecompile-bsim-server.rule: HostSNI(`agentdecompile-bsim-server.$DOMAIN`) || HostSNI(`agentdecompile-bsim-server.$TS_HOSTNAME.$DOMAIN`)
@@ -192,12 +187,11 @@ services:
       - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
       - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
       - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
+      # Mount server.conf for Ghidra server configuration.
+      - ${CONFIG_PATH:-./volumes}/ghidra/server.conf:/ghidra/server/server.conf
     environment:
       <<: *common-env
-      # Ghidra server users (space-separated; admins by default).
-      # MODE: ghidra-server
       #GHIDRA_USERS: # Space-separated usernames (admins by default)
-    command: server
     labels:
       traefik.enable: true
       traefik.tcp.routers.agentdecompile-aio.rule: HostSNI(`agentdecompile-aio.$DOMAIN`) || HostSNI(`agentdecompile-aio.$TS_HOSTNAME.$DOMAIN`)
