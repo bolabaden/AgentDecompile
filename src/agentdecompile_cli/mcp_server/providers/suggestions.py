@@ -64,9 +64,25 @@ class SuggestionToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/suggestions.py:SuggestionToolProvider._handle")
-        program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
-        suggestion_type_raw = self._require_str(args, "suggestiontype", "type", name="suggestion_type")
+        suggestion_type_raw = self._get_str(args, "suggestiontype", "type", default="")
 
+        if not suggestion_type_raw:
+            # Resource / no-args mode: return available suggestion types
+            return create_success_response(
+                {
+                    "availableSuggestionTypes": [
+                        "comment_type",
+                        "comment_text",
+                        "function_name",
+                        "function_tags",
+                        "variable_name",
+                        "data_type",
+                    ],
+                    "note": "Pass suggestionType and addressOrSymbol to request a suggestion for a specific function.",
+                }
+            )
+
+        program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
         suggestion_type = n(suggestion_type_raw)
         valid_suggestion_types: set[str] = {
             "commenttype",

@@ -671,9 +671,17 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `timeout` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `maxInstructions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `maxRefs` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCallers` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCallees` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `callerDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `calleeDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `callerBranching` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `calleeBranching` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRelatedCallers` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRelatedCallees` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
 **Overloads**:
-- `get-function(programPath, function, addressOrSymbol, functionIdentifier, timeout, maxInstructions, maxRefs)` canonical signature.
+- `get-function(programPath, function, addressOrSymbol, functionIdentifier, timeout, maxInstructions, maxRefs, maxCallers, maxCallees, callerDepth, calleeDepth, callerBranching, calleeBranching, maxRelatedCallers, maxRelatedCallees)` canonical signature.
 
 **Synonyms**: `get-function`
 

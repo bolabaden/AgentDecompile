@@ -49,7 +49,7 @@ class DecompileTool:
         logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool.__init__")
         self.program_info = program_info
         self.program = getattr(program_info, "program", None) if program_info else None
-        self.decompiler = decompiler if decompiler is not None else (getattr(program_info, "decompiler", None) if program_info else None)
+        self.decompiler = decompiler if decompiler is not None else (program_info.get_decompiler() if program_info and hasattr(program_info, "get_decompiler") else getattr(program_info, "decompiler", None) if program_info else None)
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:

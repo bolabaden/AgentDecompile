@@ -93,7 +93,7 @@ class GhidraTools:
         logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.__init__")
         self.program_info: ProgramInfo = program_info
         self.program: GhidraProgram = program_info.program
-        self.decompiler: GhidraDecompInterface = program_info.decompiler
+        self.decompiler: GhidraDecompInterface = program_info.get_decompiler()
 
     def _get_filename(self, func: GhidraFunction) -> str:
         logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._get_filename")
@@ -729,7 +729,7 @@ class GhidraTools:
         # Use JPype to handle byte arrays properly for PyGhidra
         # Create Java byte array - JPype's runtime magic confuses static type checkers
         buf = JByte[size]  # type: ignore[reportInvalidTypeArguments]
-        n = mem.getBytes(addr, JArray(JByte, size))
+        n = mem.getBytes(addr, buf)
 
         # Convert Java signed bytes (-128 to 127) to Python unsigned (0 to 255)
         if n > 0:

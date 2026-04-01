@@ -61,7 +61,7 @@ class VtableToolProvider(ToolProvider):
                         "limit": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of vtable results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of vtable results to return. Typical values are 100–500.",
                         },
                     },
                     "required": [],

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 from pydantic import AnyUrl
@@ -22,23 +22,60 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
+    SessionContext,
     get_current_mcp_session_id,
 )
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+        DecompInterface as GhidraDecompInterface,
+    )
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]
+        Address as GhidraAddress,
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+        Category as GhidraCategory,
+        DataType as GhidraDataType,
+        DataTypeManager as GhidraDataTypeManager,
+        StringDataInstance as GhidraStringDataInstance,  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+        Bookmark as GhidraBookmark,
+        BookmarkManager as GhidraBookmarkManager,
+        CodeUnit as GhidraCodeUnit,
+        CodeUnitIterator as GhidraCodeUnitIterator,
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.model.mem import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+        Memory as GhidraMemory,
+        MemoryBlock as GhidraMemoryBlock,
+    )
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
+        Symbol as GhidraSymbol,
+        SymbolTable as GhidraSymbolTable,
+    )
+
+    from agentdecompile_cli.mcp_utils.memory_util import MemoryUtil  # pyright: ignore[reportMissingModuleSource, reportMissingTypeStubs, reportMissingImports]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
 _URI = "ghidra://analysis-dump"
 
 
-def _collect_bookmarks_fast(program: Any) -> list[dict[str, Any]]:
+def _collect_bookmarks_fast(program: GhidraProgram) -> list[dict[str, Any]]:
     """Single-pass bookmark iteration. Keys a/t/c/m match keyLegend (address, type, category, comment)."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_bookmarks_fast")
     out: list[dict[str, Any]] = []
     try:
-        bm_mgr = program.getBookmarkManager()
+        bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
         it = bm_mgr.getBookmarksIterator() if hasattr(bm_mgr, "getBookmarksIterator") else None
         if it is None:
             return out
+        bm: GhidraBookmark
         for bm in iter_items(it):
             out.append(
                 {
@@ -53,13 +90,14 @@ def _collect_bookmarks_fast(program: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _collect_symbols_fast(program: Any) -> list[dict[str, Any]]:
+def _collect_symbols_fast(program: GhidraProgram) -> list[dict[str, Any]]:
     """Single-pass symbol/label iteration."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_symbols_fast")
     out: list[dict[str, Any]] = []
     try:
-        st = program.getSymbolTable()
+        st: GhidraSymbolTable = program.getSymbolTable()
         it = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
+        sym: GhidraSymbol
         for sym in iter_items(it):
             out.append(
                 {
@@ -75,19 +113,19 @@ def _collect_symbols_fast(program: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _collect_comments_fast(program: Any) -> list[dict[str, Any]]:
+def _collect_comments_fast(program: GhidraProgram) -> list[dict[str, Any]]:
     """Single-pass comment iteration over code units."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_comments_fast")
     out: list[dict[str, Any]] = []
     try:
-        listing = program.getListing()
-        mem = program.getMemory()
-        fm = program.getFunctionManager()
-        cu_iter = listing.getCodeUnits(mem, True)
+        listing: GhidraListing = program.getListing()
+        mem: GhidraMemory = program.getMemory()
+        fm: GhidraFunctionManager = program.getFunctionManager()
+        cu_iter: GhidraCodeUnitIterator = listing.getCodeUnits(mem, True)
         while cu_iter.hasNext():
-            cu = cu_iter.next()
-            addr = cu.getAddress()
-            container = fm.getFunctionContaining(addr)
+            cu: GhidraCodeUnit = cu_iter.next()
+            addr: GhidraAddress = cu.getAddress()
+            container: GhidraFunction = fm.getFunctionContaining(addr)
             fn_name = str(container.getName()) if container else ""
             fn_addr = str(container.getEntryPoint()) if container else ""
             for ctype_name, ctype_code in _COMMENT_TYPES:
@@ -108,14 +146,15 @@ def _collect_comments_fast(program: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _collect_functions_fast(program: Any) -> list[dict[str, Any]]:
+def _collect_functions_fast(program: GhidraProgram) -> list[dict[str, Any]]:
     """Single-pass function iteration, minimal fields."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_functions_fast")
     out: list[dict[str, Any]] = []
     try:
-        fm = program.getFunctionManager()
+        fm: GhidraFunctionManager = program.getFunctionManager()
+        func: GhidraFunction
         for func in fm.getFunctions(True):
-            body = func.getBody()
+            body: GhidraAddressSetView = func.getBody()
             naddr = body.getNumAddresses() if body else 0
             out.append(
                 {
@@ -134,16 +173,17 @@ def _collect_functions_fast(program: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _collect_data_types_fast(program: Any) -> list[dict[str, Any]]:
+def _collect_data_types_fast(program: GhidraProgram) -> list[dict[str, Any]]:
     """Single-pass data type names (path + name only). Recursively walks category tree."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_data_types_fast")
     out: list[dict[str, Any]] = []
     try:
-        dtm = program.getDataTypeManager()
-        root = dtm.getRootCategory()
+        dtm: GhidraDataTypeManager = program.getDataTypeManager()
+        root: GhidraCategory = dtm.getRootCategory()
 
-        def walk(cat: Any, path: str) -> None:
+        def walk(cat: GhidraCategory, path: str) -> None:
             # Each category: emit its data types, then recurse into subcategories
+            dt: GhidraDataType
             for dt in iter_items(cat.getDataTypes()):
                 out.append({"n": str(dt.getName()), "p": path or "/"})
             for sub in iter_items(cat.getCategories()):
@@ -157,14 +197,15 @@ def _collect_data_types_fast(program: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _collect_strings_fast(program: Any, limit: int = 50000) -> list[dict[str, Any]]:
+def _collect_strings_fast(program: GhidraProgram, limit: int = 50000) -> list[dict[str, Any]]:
     """Bounded string iteration; stops at limit to avoid huge dumps in string-heavy binaries."""
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_strings_fast")
     out: list[dict[str, Any]] = []
     try:
-        from ghidra.program.util import DefinedDataIterator  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.util import DefinedDataIterator as GhidraDefinedDataIterator  # pyright: ignore[reportMissingModuleSource]
 
-        for data in DefinedDataIterator.definedStrings(program):
+        data: GhidraStringDataInstance
+        for data in GhidraDefinedDataIterator.definedStrings(program):
             v = str(data.getValue() or "")
             if v:
                 out.append({"a": str(data.getAddress()), "v": v[:500]})
@@ -180,10 +221,10 @@ def _collect_programs_from_session(session_id: str) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/resources/analysis_dump.py:_collect_programs_from_session")
     out: list[dict[str, Any]] = []
     try:
-        session = SESSION_CONTEXTS.get_or_create(session_id)
+        session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
         for path_key in session.open_programs or {}:
             out.append({"path": path_key})
-        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
+        binaries: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
         if binaries:
             seen = {p["path"] for p in out}
             for item in binaries:
@@ -215,12 +256,19 @@ class AnalysisDumpResource(ResourceProvider):
         if str(uri) != _URI:
             raise NotImplementedError(f"Unknown resource: {uri}")
 
+        session_id = get_current_mcp_session_id()
+
+        # Auto-select a program if none is currently active — mirrors the call_tool() auto-select path.
+        if (self.program_info is None or getattr(self.program_info, "program", None) is None) and self.tool_provider_manager is not None:
+            auto_info = await self.tool_provider_manager._auto_select_program(session_id)
+            if auto_info is not None:
+                logger.info("analysis-dump auto-selected program via tool_provider_manager")
+
         # No program loaded: return programs list + empty categories + keyLegend so clients can parse future dumps
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
             logger.info("analysis-dump read: no program loaded, returning programs list only")
-            session_id = get_current_mcp_session_id()
-            programs = _collect_programs_from_session(session_id)
-            payload = {
+            programs: list[dict[str, Any]] = _collect_programs_from_session(session_id)
+            payload: dict[str, Any] = {
                 "keyLegend": {
                     "a": "address",
                     "n": "name",
@@ -249,17 +297,16 @@ class AnalysisDumpResource(ResourceProvider):
             }
             return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
-        program = self.program_info.program
-        session_id = get_current_mcp_session_id()
+        program: GhidraProgram = self.program_info.program
 
         # Single-pass per category to keep memory and time predictable on large projects
-        bookmarks = _collect_bookmarks_fast(program)
-        symbols = _collect_symbols_fast(program)
-        comments = _collect_comments_fast(program)
-        functions = _collect_functions_fast(program)
-        data_types = _collect_data_types_fast(program)
-        strings = _collect_strings_fast(program)
-        programs = _collect_programs_from_session(session_id)
+        bookmarks: list[dict[str, Any]] = _collect_bookmarks_fast(program)
+        symbols: list[dict[str, Any]] = _collect_symbols_fast(program)
+        comments: list[dict[str, Any]] = _collect_comments_fast(program)
+        functions: list[dict[str, Any]] = _collect_functions_fast(program)
+        data_types: list[dict[str, Any]] = _collect_data_types_fast(program)
+        strings: list[dict[str, Any]] = _collect_strings_fast(program)
+        programs: list[dict[str, Any]] = _collect_programs_from_session(session_id)
         logger.info(
             "analysis-dump read: bookmarks=%s symbols=%s comments=%s functions=%s dataTypes=%s strings=%s",
             len(bookmarks),
@@ -271,7 +318,23 @@ class AnalysisDumpResource(ResourceProvider):
         )
 
         payload = {
-            "keyLegend": {"a": "address", "n": "name", "t": "type/comment", "c": "category", "m": "comment", "y": "symbolType", "p": "path/params/parentNamespace", "s": "signature/source", "z": "size", "e": "isExternal", "k": "kind/isThunk", "r": "returnType", "v": "value", "f": "function", "fa": "functionAddress"},
+            "keyLegend": {
+                "a": "address",
+                "n": "name",
+                "t": "type/comment",
+                "c": "category",
+                "m": "comment",
+                "y": "symbolType",
+                "p": "path/params/parentNamespace",
+                "s": "signature/source",
+                "z": "size",
+                "e": "isExternal",
+                "k": "kind/isThunk",
+                "r": "returnType",
+                "v": "value",
+                "f": "function",
+                "fa": "functionAddress",
+            },
             "programs": programs,
             "bookmarks": bookmarks,
             "symbols": symbols,

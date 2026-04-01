@@ -148,6 +148,56 @@ def _get_opts(ctx: click.Context) -> dict[str, Any]:
     return {}
 
 
+# ---------------------------------------------------------------------------
+# Local mode helpers
+# ---------------------------------------------------------------------------
+
+# Module-level cache of the LocalToolBackend instance so it persists across
+# the lifetime of a single CLI invocation (one asyncio.run call).
+_local_backend_instance: Any | None = None
+
+
+def _is_local_mode(ctx: click.Context) -> bool:
+    """Return True when --local / AGENTDECOMPILE_LOCAL_MODE is set."""
+    logger.debug("diag.enter %s", "cli.py:_is_local_mode")
+    opts = _get_opts(ctx)
+    if opts.get("local_mode"):
+        return True
+    # Also check env directly so the flag works even when ctx.obj is not yet populated
+    return (os.environ.get("AGENTDECOMPILE_LOCAL_MODE", "").strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _get_local_backend(ctx: click.Context) -> Any:
+    """Return (creating if needed) the LocalToolBackend for this local-mode session.
+
+    The backend is cached at module level so the same initialised instance is
+    reused across multiple tool calls within a single ``asyncio.run()`` context.
+    """
+    logger.debug("diag.enter %s", "cli.py:_get_local_backend")
+    global _local_backend_instance
+    if _local_backend_instance is not None:
+        return _local_backend_instance
+
+    from agentdecompile_cli.local_backend import LocalToolBackend  # noqa: PLC0415
+
+    opts = _get_opts(ctx)
+    project_path: str | None = opts.get("local_project_path") or None
+    project_name: str = str(opts.get("local_project_name") or "agentdecompile")
+    verbose: bool = bool(opts.get("verbose", False))
+
+    # Default program path from -b / --binary used as initial binary to load
+    default_program = opts.get("cli_default_program_path")
+    input_paths = [default_program] if default_program else []
+
+    _local_backend_instance = LocalToolBackend(
+        project_path=project_path,
+        project_name=project_name,
+        input_paths=input_paths,
+        verbose=verbose,
+    )
+    return _local_backend_instance
+
+
 def _client(ctx: click.Context) -> Any:
     """Create an MCP HTTP client connected to the backend.
 
@@ -818,6 +868,23 @@ async def _execute_tool_call(
 ) -> Any:
     """Execute the actual tool call with error handling and recovery."""
     logger.debug("diag.enter %s", "cli.py:_execute_tool_call")
+
+    # --- Local mode: call ToolProviderManager in-process, no MCP transport ---
+    if _is_local_mode(ctx) and client_override is None:
+        backend = _get_local_backend(ctx)
+        try:
+            # initialize() is idempotent — no-op if already initialized.
+            # Do NOT use "async with backend" here because __aexit__ calls close(),
+            # which would destroy the Ghidra project between consecutive tool calls.
+            await backend.initialize()
+            return await backend.call_tool(call_tool_name, payload)
+        except (ImportError, EnvironmentError) as exc:
+            click.echo(f"Error (local mode): {exc}", err=True)
+            sys.exit(1)
+        except Exception as exc:
+            click.echo(f"Error calling tool '{call_tool_name}' (local mode): {exc}", err=True)
+            sys.exit(1)
+
     from agentdecompile_cli.bridge import ClientError, ServerNotRunningError  # noqa: PLC0415
 
     try:
@@ -1531,6 +1598,35 @@ def _ensure_dynamic_commands_registered() -> None:
     default=_DEFAULT_OUTPUT_FORMAT,
     help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
 )
+@click.option(
+    "--local",
+    "local_mode",
+    is_flag=True,
+    default=False,
+    envvar="AGENTDECOMPILE_LOCAL_MODE",
+    help=(
+        "Run locally using PyGhidra in-process — no MCP server required. "
+        "Requires GHIDRA_INSTALL_DIR to be set. "
+        "All tools execute directly against the local Ghidra project without any HTTP or stdio transport."
+    ),
+)
+@click.option(
+    "--local-project-path",
+    "local_project_path",
+    default=None,
+    envvar="AGENT_DECOMPILE_PROJECT_PATH",
+    help=(
+        "Project directory for local mode (--local). Defaults to ./agentdecompile_projects or "
+        "AGENT_DECOMPILE_PROJECT_PATH env var. Ignored unless --local is set."
+    ),
+)
+@click.option(
+    "--local-project-name",
+    "local_project_name",
+    default=None,
+    envvar="AGENT_DECOMPILE_PROJECT_NAME",
+    help="Ghidra project name for local mode (default: 'agentdecompile'). Ignored unless --local is set.",
+)
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
 def main(
@@ -1550,6 +1646,9 @@ def main(
     cli_default_program_path: str | None,
     cli_default_binary_name: str | None,
     format: str,
+    local_mode: bool,
+    local_project_path: str | None,
+    local_project_name: str | None,
 ) -> None:
     """AgentDecompile CLI – all tools from TOOLS_LIST.md (30+ tools)."""
     logger.debug("diag.enter %s", "cli.py:main")
@@ -1572,6 +1671,9 @@ def main(
         "cli_default_program_path": pp or existing_obj.get("cli_default_program_path"),
         "cli_default_binary_name": bn or existing_obj.get("cli_default_binary_name"),
         "format": existing_obj.get("format", format),
+        "local_mode": local_mode or existing_obj.get("local_mode", False),
+        "local_project_path": (local_project_path or "").strip() or existing_obj.get("local_project_path") or None,
+        "local_project_name": (local_project_name or "").strip() or existing_obj.get("local_project_name") or "agentdecompile",
     }
 
     # Ensure command surface includes canonical + snake_case tool commands.
@@ -4445,8 +4547,13 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
 
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
-        client = _client(ctx)
-        async with client:
+        _use_local = _is_local_mode(ctx)
+        # In local mode no HTTP client is needed; nullcontext is a no-op wrapper.
+        # client=None routes _call_raw → _execute_tool_call → LocalToolBackend.
+        from contextlib import nullcontext  # noqa: PLC0415
+        client = None if _use_local else _client(ctx)
+        _ctx_mgr = nullcontext() if _use_local else client
+        async with _ctx_mgr:
             step: dict[str, Any]
             for index, step in enumerate(parsed_steps, start=1):
                 name = step.get("name")
@@ -4548,6 +4655,19 @@ _register_output_format_option_on_all_commands(main)
 
 def cli_entry_point() -> None:
     """Entry point for the CLI (referenced by pyproject.toml scripts)."""
+    import atexit  # noqa: PLC0415
+
     logger.debug("diag.enter %s", "cli.py:cli_entry_point")
+
+    def _cleanup_local_backend() -> None:
+        global _local_backend_instance
+        if _local_backend_instance is not None:
+            try:
+                _local_backend_instance.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _local_backend_instance = None
+
+    atexit.register(_cleanup_local_backend)
     _ensure_dynamic_commands_registered()
     main()

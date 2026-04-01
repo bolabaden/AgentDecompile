@@ -181,8 +181,8 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
-    # Prefer decompile-function and get-current-program; get-functions is legacy and regression
-    # often reintroduces it in suggested next steps — do not suggest get-functions here.
+    # Prefer get-function and get-current-program; decompile-function is legacy and regression
+    # often reintroduces it in suggested next steps — do not suggest get-function here.
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_list_functions")
     total: int = data.get("total", data.get("count", 0))
     results: list[dict[str, Any]] = data.get("results", [])
@@ -191,7 +191,7 @@ def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         name: str = first.get("name", "")
         if name:
-            steps.append(f"Call `decompile-function` with `functionIdentifier={name}` to read the pseudocode of a specific function.")
+            steps.append(f"Call `get-function` with `functionIdentifier={name}` to read the pseudocode of a specific function.")
             steps.append(f"Call `get-call-graph` with `function={name}` and `mode=graph` for caller/callee metadata.")
     if total > len(results):
         steps.append(f"Use `offset` and `limit` with `list-functions` to paginate through all {total} functions.")
@@ -678,7 +678,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_decompile,
     ),
     "executescript": (
-        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. Use for custom analysis, batch operations, or anything not covered by dedicated tools. The namespace includes `currentProgram`, `flatApi`, decompiler access, and 30+ Ghidra helper methods.",
+        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. Use for custom analysis, batch operations, or anything not covered by dedicated tools. See [Ghidra API Javadoc](https://ghidra.re/ghidra_docs/api/index.html) and [FlatProgramAPI](https://ghidra.re/ghidra_docs/api/ghidra/program/flatapi/FlatProgramAPI.html) for available methods and classes.",
         _next_steps_execute_script,
     ),
     "listfunctions": (
@@ -1871,6 +1871,60 @@ def _render_import_export(data: dict[str, Any]) -> str:
     return _render_generic(data, "import-export")
 
 
+def _append_program_detail_lines(lines: list[str], detail: dict[str, Any]) -> None:
+    """Append markdown lines for a single program's enriched detail dict."""
+    fc = detail.get("functionCount")
+    if fc is not None:
+        lines.append(_md_bold_kv("Functions", fc))
+    lang = detail.get("languageId")
+    if lang:
+        lines.append(_md_bold_kv("Language", lang))
+    cs = detail.get("compilerSpec")
+    if cs:
+        lines.append(_md_bold_kv("Compiler Spec", cs))
+    ic = detail.get("instructionCount")
+    if ic is not None:
+        lines.append(_md_bold_kv("Instructions", ic))
+    bc = detail.get("bookmarkCount")
+    if bc is not None:
+        lines.append(_md_bold_kv("Bookmarks", bc))
+    bbt = detail.get("bookmarksByType")
+    if bbt:
+        parts = [f"{t}: {c}" for t, c in bbt.items()]
+        lines.append(_md_bold_kv("Bookmark Types", ", ".join(parts)))
+    tags = detail.get("functionTags")
+    if tags:
+        tag_strs = [f"{t['name']} ({t['useCount']})" for t in tags if isinstance(t, dict)]
+        if tag_strs:
+            lines.append(_md_bold_kv("Function Tags", ", ".join(tag_strs)))
+    meta = detail.get("metadata")
+    if isinstance(meta, dict):
+        for mk, mv in meta.items():
+            lines.append(_md_bold_kv(mk, mv))
+    ver = detail.get("versioning")
+    if isinstance(ver, dict):
+        lines.append("")
+        lines.append("**Versioning:**")
+        if ver.get("isVersioned"):
+            lines.append(_md_bold_kv("  Versioned", "Yes"))
+            lines.append(_md_bold_kv("  Version", f"{ver.get('currentVersion', '?')}/{ver.get('latestVersion', '?')}"))
+        else:
+            lines.append(_md_bold_kv("  Versioned", "No (local only)"))
+        if ver.get("isCheckedOut"):
+            lines.append(_md_bold_kv("  Checked Out", "Yes (exclusive)" if ver.get("isCheckedOutExclusive") else "Yes"))
+            co_user = ver.get("checkoutUser")
+            if co_user:
+                lines.append(_md_bold_kv("  Checkout User", co_user))
+            if ver.get("modifiedSinceCheckout"):
+                lines.append(_md_bold_kv("  Modified Since Checkout", "Yes"))
+        lm = ver.get("lastModified")
+        if lm:
+            lines.append(_md_bold_kv("  Last Modified", lm))
+        fs = ver.get("fileSize")
+        if fs is not None:
+            lines.append(_md_bold_kv("  File Size", f"{fs:,} bytes"))
+
+
 def _render_project(data: dict[str, Any]) -> str:
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_project")
     action = data.get("action", data.get("operation", ""))
@@ -1898,6 +1952,27 @@ def _render_project(data: dict[str, Any]) -> str:
                     lines.append(f"- `{p.get('name', '')}`")
                 else:
                     lines.append(f"- `{p}`")
+
+        # --- Enriched per-program details ---
+        program_details: list[dict[str, Any]] = data.get("programDetails", [])
+        if program_details:
+            lines.append("")
+            lines.append(_md_heading(3, "Program Details"))
+            for detail in program_details:
+                name = detail.get("name", detail.get("programPath", ""))
+                is_active = detail.get("isActive", False)
+                label = f"{name} (active)" if is_active else name
+                lines.append("")
+                lines.append(_md_heading(4, label))
+                _append_program_detail_lines(lines, detail)
+
+        # --- Shared-server checked-out program details ---
+        co_detail = data.get("checkedOutProgramDetails")
+        if isinstance(co_detail, dict) and co_detail:
+            lines.append("")
+            lines.append(_md_heading(3, "Checked-Out Program Details"))
+            _append_program_detail_lines(lines, co_detail)
+
         return "\n".join(lines)
 
     if loaded is True:
@@ -2095,15 +2170,18 @@ def _render_error(data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_get_function(data: dict[str, Any]) -> str:
-    """Render get-function (dissect) response as markdown. Avoids raw JSON when format=markdown."""
-    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_function")
+def _render_function_detail_block(data: dict[str, Any], *, heading_level: int = 2) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_detail_block")
     lines: list[str] = []
     name = data.get("name", "unknown")
     addr = data.get("address", "")
     sig = data.get("signature", "")
+    relationship = data.get("relationship")
 
-    lines.append(_md_heading(2, f"Function: `{name}`"))
+    title = f"Function: `{name}`"
+    if relationship:
+        title = f"{title} ({relationship})"
+    lines.append(_md_heading(heading_level, title))
     lines.append("")
     lines.append(_md_bold_kv("Address", _md_code_inline(addr)))
     lines.append(_md_bold_kv("Signature", _md_code_inline(sig)))
@@ -2111,11 +2189,9 @@ def _render_get_function(data: dict[str, Any]) -> str:
 
     meta: dict[str, Any] = data.get("metadata") or {}
     if meta:
-        lines.append(_md_heading(3, "Metadata"))
-        lines.append("")
         lines.append(_md_bold_kv("Size", f"{meta.get('size', 0)} bytes"))
         lines.append(_md_bold_kv("Return type", _md_code_inline(meta.get("returnType", ""))))
-        lines.append(_md_bold_kv("Calling convention", meta.get("callingConvention", "")))
+        lines.append(_md_bold_kv("Calling convention", meta.get("callingConvention", "") or "unknown"))
         flags: list[str] = []
         if meta.get("isExternal"):
             flags.append("External")
@@ -2136,7 +2212,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
     ns: dict[str, Any] = data.get("namespace") or {}
     if ns and (ns.get("path") or ns.get("segments")):
         path_str = ns.get("path", "::".join(ns.get("segments") or []))
-        if path_str and str(path_str).lower() != "global":
+        if path_str and str(path_str).strip("()").lower() not in ("global", ""):
             lines.append(_md_heading(3, "Namespace"))
             lines.append("")
             lines.append(_md_code_inline(str(path_str)))
@@ -2156,14 +2232,17 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append("")
         count = disasm.get("count", len(instructions))
         truncated = disasm.get("truncated", False)
-        lines.append(_md_bold_kv("Instructions", f"{count}" + (" (truncated)" if truncated else "")))
+        count_label = f"{count} shown (more exist)" if truncated else str(count)
+        lines.append(_md_bold_kv("Instructions", count_label))
         lines.append("")
         asm_lines_list: list[str] = []
         for instr in instructions:
             a = instr.get("address", "")
-            op = instr.get("operands", "")
             b = instr.get("bytes", "")
-            asm_lines_list.append(f"{a}  {b:<24s} {op}")
+            mnem = instr.get("mnemonic", "")
+            full_op = instr.get("operands", "")
+            ops_only = full_op[len(mnem):].lstrip() if full_op.startswith(mnem) else full_op
+            asm_lines_list.append(f"{a}  {b:<18s}  {mnem:<8} {ops_only}".rstrip())
         lines.append(_md_code_block("\n".join(asm_lines_list), "asm"))
         lines.append("")
 
@@ -2206,7 +2285,9 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append("")
 
     labels: list[dict[str, Any]] = data.get("labels") or []
-    if labels:
+    # Suppress if the only label is the function's own entry point (redundant with the header)
+    trivial = len(labels) == 1 and labels[0].get("name") == name and labels[0].get("address") == addr
+    if labels and not trivial:
         lines.append(_md_heading(3, "Labels"))
         lines.append("")
         rows = [[lb.get("name", ""), lb.get("address", ""), lb.get("type", "")] for lb in labels[:30]]
@@ -2217,6 +2298,7 @@ def _render_get_function(data: dict[str, Any]) -> str:
 
     xrefs: list[dict[str, Any]] = data.get("crossReferences") or []
     outbound: list[dict[str, Any]] = data.get("outboundReferences") or []
+    outbound_filtered = [x for x in outbound if not str(x.get("toAddress", "")).startswith("Stack[")]
     lines.append(_md_heading(3, "Cross-references (inbound)"))
     lines.append("")
     if xrefs:
@@ -2227,13 +2309,13 @@ def _render_get_function(data: dict[str, Any]) -> str:
     else:
         lines.append("*None*")
     lines.append("")
-    if outbound:
+    if outbound_filtered:
         lines.append(_md_heading(3, "Outbound references"))
         lines.append("")
-        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in outbound[:25]]
+        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in outbound_filtered[:15]]
         lines.append(_md_table(["From", "To", "Type"], rows))
-        if len(outbound) > 25:
-            lines.append(f"*... and {len(outbound) - 25} more*")
+        if len(outbound_filtered) > 15:
+            lines.append(f"*... and {len(outbound_filtered) - 15} more*")
         lines.append("")
 
     tags_list: list[Any] = data.get("tags") or []
@@ -2257,8 +2339,13 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append(_md_heading(3, "Stack frame"))
         lines.append("")
         lines.append(_md_bold_kv("Frame size", f"{stack.get('frameSize', 0)} bytes"))
-        rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "param" if v.get("isParameter") else ""] for v in vars_list[:25]]
-        lines.append(_md_table(["Name", "Offset", "Type", "Param"], rows))
+        has_params = any(v.get("isParameter") for v in vars_list[:25])
+        if has_params:
+            rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "✓" if v.get("isParameter") else ""] for v in vars_list[:25]]
+            lines.append(_md_table(["Name", "Offset", "Type", "Param"], rows))
+        else:
+            rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", "")] for v in vars_list[:25]]
+            lines.append(_md_table(["Name", "Offset", "Type"], rows))
         if len(vars_list) > 25:
             lines.append(f"*... and {len(vars_list) - 25} more*")
         lines.append("")
@@ -2271,6 +2358,79 @@ def _render_get_function(data: dict[str, Any]) -> str:
         lines.append(_md_bold_kv("Range", f"{mem.get('start', '')} – {mem.get('end', '')}"))
         lines.append(_md_bold_kv("Size", f"{mem.get('size', 0)} bytes"))
         lines.append(_md_bold_kv("Permissions", str(mem.get("permissions", ""))))
+
+    return "\n".join(lines)
+
+
+def _render_call_tree(nodes: list[dict[str, Any]], *, indent: int = 0) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_call_tree")
+    lines: list[str] = []
+    for node in nodes:
+        prefix = "  " * indent + "- "
+        lines.append(f"{prefix}`{node.get('name', '')}` ({node.get('address', '')})")
+        children = node.get("children") or []
+        if children:
+            lines.extend(_render_call_tree(children, indent=indent + 1))
+    return lines
+
+
+def _render_get_function(data: dict[str, Any]) -> str:
+    """Render get-function (dissect) response as markdown. Avoids raw JSON when format=markdown."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_function")
+    if data.get("found") is False:
+        return _render_generic(data, "get-function")
+
+    target: dict[str, Any] = data.get("targetFunction") or data
+    lines: list[str] = [_render_function_detail_block(target)]
+
+    call_graph_tree: dict[str, Any] = data.get("callGraphTree") or {}
+    caller_tree: list[dict[str, Any]] = call_graph_tree.get("callers") or []
+    callee_tree: list[dict[str, Any]] = call_graph_tree.get("callees") or []
+    if caller_tree or callee_tree:
+        lines.append("")
+        lines.append(_md_heading(2, "Expanded Call Graph"))
+        lines.append("")
+        lines.append(
+            _md_bold_kv(
+                "Traversal",
+                (
+                    f"callers depth {call_graph_tree.get('callerDepth', 0)} breadth {call_graph_tree.get('callerBranching', 0)}, "
+                    f"callees depth {call_graph_tree.get('calleeDepth', 0)} breadth {call_graph_tree.get('calleeBranching', 0)}"
+                ),
+            ),
+        )
+        lines.append(_md_bold_kv("Expanded caller details", call_graph_tree.get("expandedCallerCount", 0)))
+        lines.append(_md_bold_kv("Expanded callee details", call_graph_tree.get("expandedCalleeCount", 0)))
+        lines.append("")
+        lines.append(_md_heading(3, "Caller Tree"))
+        lines.append("")
+        if caller_tree:
+            lines.extend(_render_call_tree(caller_tree))
+        else:
+            lines.append("*None*")
+        lines.append("")
+        lines.append(_md_heading(3, "Callee Tree"))
+        lines.append("")
+        if callee_tree:
+            lines.extend(_render_call_tree(callee_tree))
+        else:
+            lines.append("*None*")
+
+    caller_details: list[dict[str, Any]] = data.get("callerDetails") or []
+    if caller_details:
+        lines.append("")
+        lines.append(_md_heading(2, f"Expanded Caller Details ({len(caller_details)})"))
+        for detail in caller_details:
+            lines.append("")
+            lines.append(_render_function_detail_block(detail, heading_level=3))
+
+    callee_details: list[dict[str, Any]] = data.get("calleeDetails") or []
+    if callee_details:
+        lines.append("")
+        lines.append(_md_heading(2, f"Expanded Callee Details ({len(callee_details)})"))
+        for detail in callee_details:
+            lines.append("")
+            lines.append(_render_function_detail_block(detail, heading_level=3))
 
     return "\n".join(lines)
 
@@ -2451,6 +2611,35 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     # (filtered so we don't recommend tools disabled via env)
     guidance: tuple[str, Callable[[dict[str, Any]], list[str]]] | None = TOOL_GUIDANCE.get(normalized_tool_name)
     lines: list[str] = [body]
+
+    # --- Render project context block if present ---
+    project_ctx: dict[str, Any] | None = data.get("projectContext") if isinstance(data, dict) else None
+    if project_ctx:
+        lines.append("")
+        lines.append(_md_heading(3, "Project Context"))
+        ctx_parts: list[str] = []
+        pname = project_ctx.get("projectName")
+        if pname:
+            ctx_parts.append(f"**{pname}**")
+        pmode = project_ctx.get("mode", "")
+        if pmode:
+            ctx_parts.append(pmode)
+        active = project_ctx.get("activeProgram")
+        if active:
+            ctx_parts.append(f"active: `{active}`")
+        pc = project_ctx.get("programCount")
+        if pc is not None:
+            ctx_parts.append(f"{pc} program{'s' if pc != 1 else ''}")
+        ppath = project_ctx.get("projectPath")
+        if ppath:
+            ctx_parts.append(f"`{ppath}`")
+        sh = project_ctx.get("serverHost")
+        if sh:
+            sp = project_ctx.get("serverPort", "")
+            repo = project_ctx.get("repository", "")
+            ctx_parts.append(f"shared: {sh}:{sp}/{repo}")
+        if ctx_parts:
+            lines.append(" | ".join(ctx_parts))
 
     if guidance:
         description, next_steps_fn = guidance

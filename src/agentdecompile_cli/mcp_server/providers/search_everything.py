@@ -141,7 +141,7 @@ class SearchEverythingToolProvider(ToolProvider):
                         },
                         "caseSensitive": {"type": "boolean", "default": False, "description": "Case-sensitive matching."},
                         "similarityThreshold": {"type": "number", "default": 0.7, "description": "Minimum fuzzy score (0-1)."},
-                        "limit": {"type": "integer", "default": 100, "description": "Total number of results to return across all scopes. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Total number of results to return across all scopes. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                         "perScopeLimit": {"type": "integer", "default": 300, "description": "Number of matches per individual scope (e.g. functions, strings, comments). Typical values are 200–500. Do not reduce this below 100 unless you have a specific reason."},
                         "maxFunctionsScan": {"type": "integer", "default": 500, "description": "Number of functions to scan in expensive scopes (e.g. decompiled-code search). Typical values are 500–5000. Do not set this below 200 unless the binary is tiny or the user requests a quick scan."},

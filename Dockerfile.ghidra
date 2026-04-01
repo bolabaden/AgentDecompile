@@ -1,75 +1,55 @@
-###############################################################
-# Dockerfile.ghidra
-#
-# Mirrors the official Ghidra docker/Dockerfile structure
-# (base → build → runtime) with two exceptions:
-#   1. Auto-downloads latest (or pinned) Ghidra release from GitHub
-#      instead of requiring a local release tree as build context.
-#   2. Supports all MODEs in a single container (no restriction).
-#
-# Build:
-#   docker build -f Dockerfile.ghidra -t ghidra .
-#   docker build -f Dockerfile.ghidra --build-arg GHIDRA_VERSION=12.0.4 -t ghidra .
-#
-# Run (ghidra-server):
-#   docker run --env MODE=ghidra-server -p 13100:13100 -p 13101:13101 -p 13102:13102 \
-#     -v /path/to/my/repositories:/ghidra/repositories \
-#     -v /path/to/my/server.conf:/ghidra/server/server.conf \
-#     ghidra
-###############################################################
-FROM alpine:3.20 AS base
+ARG ALPINE_BASE_IMAGE="docker.io/library/alpine:latest"
+FROM ${ALPINE_BASE_IMAGE} AS build
 
-LABEL org.opencontainers.image.title="ghidra" \
-	org.opencontainers.image.description="Docker image for Ghidra (auto-download)" \
-	org.opencontainers.image.source="https://github.com/bolabaden/agentdecompile" \
-	org.opencontainers.image.licenses="Apache 2.0"
+ARG GHIDRA_HOME="/ghidra"
+ENV GHIDRA_HOME=${GHIDRA_HOME}
+ARG GHIDRA_INSTALL_DIR="/ghidra"
+ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
+ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
+ENV JAVA_HOME=${JAVA_HOME}
+ARG LD_LIBRARY_PATH="${JAVA_HOME}/lib/:/${JAVA_HOME}/lib/server/"
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
 
-ARG PUID="1001"
-ARG PGID="1001"
-
-# Configure user, entrypoint, and env vars first (before making the image larger)
-# to keep image size as small as possible — matches official Ghidra Dockerfile.
-RUN addgroup -g ${PGID} -S ghidra && adduser -u ${PUID} -S ghidra -G ghidra
-ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-ENV LD_LIBRARY_PATH=/usr/lib/jvm/java-21-openjdk/lib/:/usr/lib/jvm/java-21-openjdk/lib/server/
-WORKDIR /ghidra
-
-# Dependencies used to both build and run ghidra — matches official list.
-RUN apk update \
-        && apk add openjdk21 python3 \
-        bash gcompat \
-        fontconfig msttcorefonts-installer \
-        linux-headers libressl-dev \
-        && update-ms-fonts
-
-# ---- build stage: download Ghidra + build BSim postgres + install PyGhidra ----
-FROM base AS build
-
-# Optional: pin Ghidra release (e.g. "12.0.4"); omit for latest.
 ARG GHIDRA_VERSION=""
+ENV GHIDRA_VERSION=${GHIDRA_VERSION}
+
 ARG GHIDRA_OWNER="NationalSecurityAgency"
+ENV GHIDRA_OWNER=${GHIDRA_OWNER}
 ARG GHIDRA_REPO="ghidra"
+ENV GHIDRA_REPO=${GHIDRA_REPO}
+ENV GHIDRA_GITHUB_API="https://api.github.com/repos/${GHIDRA_OWNER}/${GHIDRA_REPO}"
 
-# Build dependencies — matches official list + curl/jq/unzip for auto-download.
-RUN apk add gradle \
-		python3-dev py-pip \
-        alpine-sdk \
-        build-base \
-        gcc g++ make libc-dev zlib-dev musl-dev \
-        zip readline-dev \
-        curl jq unzip
+ARG GHIDRA_USER="ghidra"
+ENV GHIDRA_USER=${GHIDRA_USER}
+ARG GHIDRA_GROUP="ghidra"
+ENV GHIDRA_GROUP=${GHIDRA_GROUP}
+ARG PUID="1001"
+ENV PUID=${PUID}
+ARG PGID="1001"
+ENV PGID=${PGID}
 
-# Auto-download Ghidra release from GitHub (exception #1 vs official Dockerfile
-# which does COPY . . from a local release tree).
 RUN set -eux; \
-    GHIDRA_GITHUB_API="https://api.github.com/repos/${GHIDRA_OWNER}/${GHIDRA_REPO}"; \
+    apk update; \
+    apk add --no-cache \
+        shadow \
+        openjdk21 \
+        bash \
+        gcompat \
+        unzip \
+        curl \
+        jq \
+        python3 \
+        py3-pip \
+    ; \
+    addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
+
+RUN set -eux; \
     if [ -n "${GHIDRA_VERSION}" ]; then \
         API_URL="${GHIDRA_GITHUB_API}/releases/tags/Ghidra_${GHIDRA_VERSION}_build"; \
     else \
         API_URL="${GHIDRA_GITHUB_API}/releases/latest"; \
     fi; \
-    echo "Fetching Ghidra release from ${API_URL}"; \
     BODY="$(curl -sSL -H 'Accept: application/vnd.github+json' "${API_URL}")"; \
     DOWNLOAD_URL="$(echo "${BODY}" | jq -r '.assets[] | select(.name | test("\\.zip$")) | select(.name | test("PUBLIC")) | .browser_download_url' | head -n 1)"; \
     if [ -z "${DOWNLOAD_URL}" ] || [ "${DOWNLOAD_URL}" = "null" ]; then \
@@ -90,55 +70,68 @@ RUN set -eux; \
     if [ -z "${DOWNLOAD_URL}" ] || [ "${DOWNLOAD_URL}" = "null" ]; then \
         echo "Could not determine Ghidra download URL from ${API_URL}"; exit 1; \
     fi; \
-    echo "Downloading ${DOWNLOAD_URL}"; \
     curl -sSL -o /tmp/ghidra.zip "${DOWNLOAD_URL}"; \
     unzip -q -d /tmp/ghidra_extract /tmp/ghidra.zip; \
-    mv /tmp/ghidra_extract/ghidra_* /ghidra/; \
+    mv /tmp/ghidra_extract/ghidra_* ${GHIDRA_HOME}; \
     rm -f /tmp/ghidra.zip; \
-    rm -rf /tmp/ghidra_extract
+    rm -rf /tmp/ghidra_extract; \
+    mkdir -p ${GHIDRA_HOME}/repositories
 
-# Build BSim PostgreSQL + install PyGhidra into venv — matches official exactly.
-RUN /ghidra/Ghidra/Features/BSim/support/make-postgres.sh \
-        && python3 -m venv /ghidra/venv \
-        && /ghidra/venv/bin/python3 -m pip install --no-index -f /ghidra/Ghidra/Features/PyGhidra/pypkg/dist pyghidra \
-		&& mkdir -p /ghidra/repositories && mkdir -p /ghidra/bsim_datadir
-
-# Build native decompiler/sleigh on arm64 (x86_64 ships prebuilt in the release).
-RUN set -eux; \
-    ARCH="$(uname -m)"; \
-    OSDIR="linux_$(echo "${ARCH}" | sed 's/aarch64/arm_64/' | sed 's/x86_64/x86_64/')"; \
-    NATIVE_DIR="/ghidra/Ghidra/Features/Decompiler/os/${OSDIR}"; \
-    if [ -d "${NATIVE_DIR}" ] && [ -f "${NATIVE_DIR}/decompile" ]; then \
-        echo "Native decompiler already present at ${NATIVE_DIR} — skipping build (${ARCH})"; \
-    elif [ "${ARCH}" = "x86_64" ]; then \
-        echo "x86_64 prebuilt binaries expected — skipping native build"; \
-    else \
-        echo "Platform ${ARCH} (${OSDIR}): building native decompiler from source..."; \
-        cd /ghidra/Ghidra/Features/Decompiler/src/decompile/cpp; \
-        mkdir -p ghi_opt sla_opt; \
-        make OSDIR="${OSDIR}" ARCH_TYPE="" ghidra_opt sleigh_opt; \
-        mkdir -p "${NATIVE_DIR}"; \
-        cp ghidra_opt "${NATIVE_DIR}/decompile"; \
-        cp sleigh_opt "${NATIVE_DIR}/sleigh"; \
-        chmod +x "${NATIVE_DIR}/decompile" "${NATIVE_DIR}/sleigh"; \
-        echo "Native binaries installed to ${NATIVE_DIR}"; \
-        make clean; \
-    fi
-
-# Copy the entrypoint into the build tree so it gets COPY'd into runtime.
-COPY docker/entrypoint-ghidra.sh /ghidra/docker/entrypoint.sh
+COPY docker/ghidra-entrypoint.sh /ghidra/docker/entrypoint.sh
 RUN sed -i 's/\r$//' /ghidra/docker/entrypoint.sh && chmod +x /ghidra/docker/entrypoint.sh
 
+FROM ${ALPINE_BASE_IMAGE} AS runtime
 
-# ---- runtime stage: slim image with only what's needed to run ----
-FROM base AS runtime
+ARG JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
+ENV JAVA_HOME=${JAVA_HOME}
+ARG LD_LIBRARY_PATH="${JAVA_HOME}/lib/:${JAVA_HOME}/lib/server/"
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
+ARG GHIDRA_HOME="/ghidra"
+ENV GHIDRA_HOME=${GHIDRA_HOME}
+ARG GHIDRA_INSTALL_DIR="/ghidra"
+ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
 
-# Runtime dependencies — matches official list.
-RUN apk add openssl openssh-client \
-        xhost musl-locales musl-locales-lang
+ARG GHIDRA_USER="ghidra"
+ENV GHIDRA_USER=${GHIDRA_USER}
+ARG GHIDRA_GROUP="ghidra"
+ENV GHIDRA_GROUP=${GHIDRA_GROUP}
+ARG PUID="1001"
+ENV PUID=${PUID}
+ARG PGID="1001"
+ENV PGID=${PGID}
 
-USER ghidra
-WORKDIR /ghidra
-COPY --chown=ghidra:ghidra --from=build /ghidra /ghidra
+RUN set -eux; \
+    apk update; \
+    apk add --no-cache \
+        shadow \
+        openjdk21 \
+        bash \
+        gcompat \
+        python3 \
+        openssl \
+        openssh-client \
+    ; \
+    addgroup -g ${PGID} -S ${GHIDRA_GROUP}; \
+    adduser -u ${PUID} -S ${GHIDRA_USER} -G ${GHIDRA_GROUP}
 
-EXPOSE 13100 13101 13102 5432
+WORKDIR ${GHIDRA_HOME}
+COPY --from=build --chown=${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} ${GHIDRA_HOME}
+COPY --from=build /usr/lib/libssl.so.* /usr/lib/
+COPY --from=build /usr/lib/libcrypto.so.* /usr/lib/
+
+RUN mkdir -p /work /projects \
+    && chown -R ${GHIDRA_USER}:${GHIDRA_GROUP} /work /projects
+
+USER ${GHIDRA_USER}
+
+ARG GHIDRA_SERVER_PORT1="13100"
+ENV GHIDRA_SERVER_PORT1=${GHIDRA_SERVER_PORT1}
+EXPOSE ${GHIDRA_SERVER_PORT1}
+ARG GHIDRA_SERVER_PORT2="13101"
+ENV GHIDRA_SERVER_PORT2=${GHIDRA_SERVER_PORT2}
+EXPOSE ${GHIDRA_SERVER_PORT2}
+ARG GHIDRA_SERVER_PORT3="13102"
+ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
+EXPOSE ${GHIDRA_SERVER_PORT3}
+
+ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]

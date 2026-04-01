@@ -80,6 +80,34 @@ class ProgramInfo:
     code_collection: Collection | None = None
     strings_collection: Collection | None = None
 
+    def get_decompiler(self) -> GhidraDecompInterface | None:
+        """Return the decompiler, lazily initializing it on first access if needed.
+
+        When programs are eagerly opened at project-open time, the decompiler is
+        stored as None to save ~15-30 MB of JVM memory per unused program.  The
+        first call to ``get_decompiler()`` creates and caches the interface.
+        """
+        if self.decompiler is not None:
+            return self.decompiler
+        if self.program is None:
+            return None
+        try:
+            from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
+
+            self.decompiler = open_decompiler_for_program(self.program)
+            logger.info(
+                "lazy_decompiler_init program=%s",
+                self.name or "unknown",
+            )
+        except Exception as exc:
+            logger.warning(
+                "lazy_decompiler_init_failed program=%s exc_type=%s",
+                self.name or "unknown",
+                type(exc).__name__,
+            )
+            return None
+        return self.decompiler
+
     @property
     def analysis_complete(self) -> bool:
         """Check if Ghidra analysis is complete."""
