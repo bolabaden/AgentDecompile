@@ -22,41 +22,61 @@ GHIDRA_HOME="${GHIDRA_HOME:-/ghidra}"
 GHIDRA_IP="${GHIDRA_IP:-}"
 export GHIDRA_HOME
 
+# Resolve GHIDRA_IP: explicit env → container interface IP → hostname fallback.
+# Previous logic tried public-IP services (ipify, ifconfig.me) which is wrong for
+# Docker networking — we need the container's own IP that peers can reach.
 if [[ -z "${GHIDRA_IP}" ]]; then
-    GHIDRA_IP="$({
-        python3 - <<'PY'
-import socket
-import urllib.request
-
-for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
-    try:
-        with urllib.request.urlopen(url, timeout=2.5) as response:
-            value = response.read().decode().strip()
-            if value:
-                print(value)
-                break
-    except Exception:
-        pass
-else:
-    try:
-        print(socket.gethostbyname(socket.gethostname()))
-    except Exception:
-        pass
-PY
-    } | tr -d '\r')"
+    GHIDRA_IP="$(hostname -i 2>/dev/null | awk '{print $1}')" || true
+    if [[ -z "${GHIDRA_IP}" ]]; then
+        GHIDRA_IP="$(python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname()))' 2>/dev/null)" || true
+    fi
 fi
 
 mkdir -p "${GHIDRA_REPOS_DIR}"
 
 SERVER_CONF="${GHIDRA_HOME}/server/server.conf"
 if [[ -f "${SERVER_CONF}" ]]; then
-    if [[ -n "${GHIDRA_IP}" ]]; then
-        echo "GHIDRA_IP=${GHIDRA_IP} is set, but startup no longer rewrites wrapper.app.parameter.*; configure -ip directly in ${SERVER_CONF} if you need a non-default advertised address."
-    fi
-
     # Keep container-specific wrapper settings without changing Ghidra's auth or port arguments.
     set_conf_value "wrapper.logfile" "/tmp/wrapper.log" "${SERVER_CONF}"
     set_conf_value "wrapper.startup.timeout" "300" "${SERVER_CONF}"
+
+    # Inject -ip <address> into wrapper.app.parameter so the RMI registry advertises
+    # a reachable address.  Without this, RMI stubs contain the container's internal
+    # hostname (often a random container-id) which external clients cannot resolve.
+    if [[ -n "${GHIDRA_IP}" ]]; then
+        if ! grep -q '^wrapper\.app\.parameter\.[0-9]*=-ip$' "${SERVER_CONF}"; then
+            echo "Injecting -ip ${GHIDRA_IP} into ${SERVER_CONF}"
+
+            # Collect existing parameter values in order
+            mapfile -t EXISTING_PARAMS < <(
+                grep '^wrapper\.app\.parameter\.' "${SERVER_CONF}" \
+                    | sort -t. -k4 -n \
+                    | sed 's/^wrapper\.app\.parameter\.[0-9]*=//'
+            )
+
+            # Remove old parameter lines
+            sed -i '/^wrapper\.app\.parameter\./d' "${SERVER_CONF}"
+
+            # Rewrite: -ip <addr> first, then original parameters
+            IDX=1
+            echo "wrapper.app.parameter.${IDX}=-ip" >> "${SERVER_CONF}"
+            IDX=$((IDX + 1))
+            echo "wrapper.app.parameter.${IDX}=${GHIDRA_IP}" >> "${SERVER_CONF}"
+            IDX=$((IDX + 1))
+
+            for param in "${EXISTING_PARAMS[@]}"; do
+                echo "wrapper.app.parameter.${IDX}=${param}" >> "${SERVER_CONF}"
+                IDX=$((IDX + 1))
+            done
+        else
+            # -ip already present – update the value in the next numbered parameter
+            IP_NUM=$(grep '^wrapper\.app\.parameter\.[0-9]*=-ip$' "${SERVER_CONF}" \
+                         | head -1 | sed 's/wrapper\.app\.parameter\.\([0-9]*\)=.*/\1/')
+            NEXT=$((IP_NUM + 1))
+            sed -i "s|^wrapper\.app\.parameter\.${NEXT}=.*|wrapper.app.parameter.${NEXT}=${GHIDRA_IP}|" "${SERVER_CONF}"
+            echo "Updated existing -ip to ${GHIDRA_IP} in ${SERVER_CONF}"
+        fi
+    fi
 fi
 
 exec /ghidra/server/ghidraSvr console
