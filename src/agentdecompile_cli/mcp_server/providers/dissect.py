@@ -36,6 +36,7 @@ from mcp import types
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_function_comments,
     collect_function_tags,
+    make_task_monitor,
 )
 from agentdecompile_cli.mcp_server.constants import DEFAULT_TIMEOUT_SECONDS  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.tool_providers import (
@@ -113,6 +114,36 @@ class GetFunctionAioToolProvider(ToolProvider):
                             "type": "integer",
                             "description": "Cap on callees returned; omit for no limit.",
                         },
+                        "callerDepth": {
+                            "type": "integer",
+                            "default": 2,
+                            "description": "Depth of recursive caller expansion for full related-function details, default 2. Set to 0 to disable caller expansion.",
+                        },
+                        "calleeDepth": {
+                            "type": "integer",
+                            "default": 2,
+                            "description": "Depth of recursive callee expansion for full related-function details, default 2. Set to 0 to disable callee expansion.",
+                        },
+                        "callerBranching": {
+                            "type": "integer",
+                            "default": 3,
+                            "description": "Maximum callers to follow at each expansion step, default 3.",
+                        },
+                        "calleeBranching": {
+                            "type": "integer",
+                            "default": 3,
+                            "description": "Maximum callees to follow at each expansion step, default 3.",
+                        },
+                        "maxRelatedCallers": {
+                            "type": "integer",
+                            "default": 9,
+                            "description": "Maximum number of expanded caller detail blocks to include, default 9.",
+                        },
+                        "maxRelatedCallees": {
+                            "type": "integer",
+                            "default": 9,
+                            "description": "Maximum number of expanded callee detail blocks to include, default 9.",
+                        },
                     },
                     "required": [],
                 },
@@ -138,6 +169,12 @@ class GetFunctionAioToolProvider(ToolProvider):
         max_refs = self._get_int(args, "maxrefs", "maxreferences", default=200)
         max_callers = self._get_int(args, "maxcallers", default=None)
         max_callees = self._get_int(args, "maxcallees", default=None)
+        caller_depth = self._normalize_non_negative(self._get_int(args, "callerdepth", "relatedcallerdepth", default=2), default=2)
+        callee_depth = self._normalize_non_negative(self._get_int(args, "calleedepth", "relatedcalleedepth", default=2), default=2)
+        caller_branching = self._normalize_non_negative(self._get_int(args, "callerbranching", "relatedcallerbranching", default=3), default=3)
+        callee_branching = self._normalize_non_negative(self._get_int(args, "calleebranching", "relatedcalleebranching", default=3), default=3)
+        max_related_callers = self._normalize_non_negative(self._get_int(args, "maxrelatedcallers", "maxcallerdetails", default=9), default=9)
+        max_related_callees = self._normalize_non_negative(self._get_int(args, "maxrelatedcallees", "maxcalleedetails", default=9), default=9)
 
         program = getattr(self.program_info, "program", None)
         if program is None:
@@ -295,35 +332,72 @@ class GetFunctionAioToolProvider(ToolProvider):
 
             return create_success_response(diag)
 
-        entry = target.getEntryPoint()
-        body = target.getBody()
-
-        # --- Metadata (includes counts for convenience) ---
-        metadata = self._collect_metadata(target)
-        callers_list = self._collect_callers(target, max_callers)
-        callees_list = self._collect_callees(target, max_callees)
-        metadata["callerCount"] = len(callers_list)
-        metadata["calleeCount"] = len(callees_list)
+        target_details = self._collect_function_details(
+            target,
+            program,
+            timeout=timeout,
+            max_instructions=max_instructions,
+            max_refs=max_refs,
+            max_callers=max_callers,
+            max_callees=max_callees,
+        )
+        caller_tree, caller_funcs = self._collect_related_tree(
+            target,
+            direction="callers",
+            depth=caller_depth,
+            branching=caller_branching,
+            max_details=max_related_callers,
+        )
+        callee_tree, callee_funcs = self._collect_related_tree(
+            target,
+            direction="callees",
+            depth=callee_depth,
+            branching=callee_branching,
+            max_details=max_related_callees,
+        )
+        caller_details = [
+            self._collect_function_details(
+                func,
+                program,
+                timeout=timeout,
+                max_instructions=max_instructions,
+                max_refs=max_refs,
+                max_callers=max_callers,
+                max_callees=max_callees,
+                relationship="caller",
+            )
+            for func in caller_funcs
+        ]
+        callee_details = [
+            self._collect_function_details(
+                func,
+                program,
+                timeout=timeout,
+                max_instructions=max_instructions,
+                max_refs=max_refs,
+                max_callers=max_callers,
+                max_callees=max_callees,
+                relationship="callee",
+            )
+            for func in callee_funcs
+        ]
 
         result: dict[str, Any] = {
             "tool": Tool.GET_FUNCTION.value,
-            "name": target.getName(),
-            "address": str(entry),
-            "signature": str(target.getSignature()),
-            "metadata": metadata,
-            "namespace": self._collect_namespace(target),
-            "decompilation": self._decompile(target, program, timeout),
-            "disassembly": self._disassemble(target, program, max_instructions),
-            "comments": self._collect_all_comments(target, program, body),
-            "labels": self._collect_labels(program, body),
-            "callers": callers_list,
-            "callees": callees_list,
-            "crossReferences": self._collect_xrefs(program, entry, max_refs),
-            "outboundReferences": self._collect_outbound_refs(program, body, max_refs),
-            "tags": collect_function_tags(target),
-            "bookmarks": self._collect_bookmarks(program, body),
-            "stackFrame": self._collect_stack_frame(target),
-            "memoryBlock": self._collect_memory_block(program, entry) or {},
+            **target_details,
+            "targetFunction": target_details,
+            "callGraphTree": {
+                "callers": caller_tree,
+                "callees": callee_tree,
+                "callerDepth": caller_depth,
+                "calleeDepth": callee_depth,
+                "callerBranching": caller_branching,
+                "calleeBranching": callee_branching,
+                "expandedCallerCount": len(caller_details),
+                "expandedCalleeCount": len(callee_details),
+            },
+            "callerDetails": caller_details,
+            "calleeDetails": callee_details,
         }
         result["sectionsIncluded"] = [
             "metadata",
@@ -340,12 +414,134 @@ class GetFunctionAioToolProvider(ToolProvider):
             "bookmarks",
             "stackFrame",
             "memoryBlock",
+            "callGraphTree",
+            "callerDetails",
+            "calleeDetails",
         ]
         return create_success_response(result)
 
     # ------------------------------------------------------------------
     # Collectors (private)
     # ------------------------------------------------------------------
+
+    def _collect_function_details(
+        self,
+        func: GhidraFunction,
+        program: GhidraProgram,
+        *,
+        timeout: int | None,
+        max_instructions: int | None,
+        max_refs: int | None,
+        max_callers: int | None,
+        max_callees: int | None,
+        relationship: str | None = None,
+    ) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_function_details")
+        entry = func.getEntryPoint()
+        body = func.getBody()
+        metadata = self._collect_metadata(func)
+        callers_list = self._collect_callers(func, max_callers)
+        callees_list = self._collect_callees(func, max_callees)
+        metadata["callerCount"] = len(callers_list)
+        metadata["calleeCount"] = len(callees_list)
+
+        try:
+            _decompilation = self._decompile(func, program, timeout or DEFAULT_TIMEOUT_SECONDS)
+        except RuntimeError as _decompile_err:
+            _decompilation = f"[decompilation unavailable: {_decompile_err}]"
+
+        details: dict[str, Any] = {
+            "name": func.getName(),
+            "address": str(entry),
+            "signature": str(func.getSignature()),
+            "metadata": metadata,
+            "namespace": self._collect_namespace(func),
+            "decompilation": _decompilation,
+            "disassembly": self._disassemble(func, program, max_instructions),
+            "comments": self._collect_all_comments(func, program, body),
+            "labels": self._collect_labels(program, body),
+            "callers": callers_list,
+            "callees": callees_list,
+            "crossReferences": self._collect_xrefs(program, entry, max_refs),
+            "outboundReferences": self._collect_outbound_refs(program, body, max_refs),
+            "tags": collect_function_tags(func),
+            "bookmarks": self._collect_bookmarks(program, body),
+            "stackFrame": self._collect_stack_frame(func),
+            "memoryBlock": self._collect_memory_block(program, entry) or {},
+        }
+        if relationship and relationship.strip():
+            details["relationship"] = relationship
+        return details
+
+    @staticmethod
+    def _normalize_non_negative(value: int | None, *, default: int) -> int:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._normalize_non_negative")
+        if value is None:
+            return default
+        return max(0, int(value))
+
+    @staticmethod
+    def _summarize_function(func: GhidraFunction) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._summarize_function")
+        return {
+            "name": func.getName(),
+            "address": str(func.getEntryPoint()),
+            "signature": str(func.getSignature()),
+        }
+
+    def _iter_related_functions(self, func: GhidraFunction, direction: str) -> Any:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._iter_related_functions")
+        monitor = make_task_monitor()
+        if direction == "callers":
+            return func.getCallingFunctions(monitor)
+        return func.getCalledFunctions(monitor)
+
+    def _collect_related_tree(
+        self,
+        func: GhidraFunction,
+        *,
+        direction: str,
+        depth: int,
+        branching: int,
+        max_details: int,
+    ) -> tuple[list[dict[str, Any]], list[GhidraFunction]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_related_tree")
+        if depth <= 0 or branching <= 0 or max_details <= 0:
+            return [], []
+
+        ordered_funcs: list[GhidraFunction] = []
+        seen_addresses: set[str] = set()
+
+        def walk(current: GhidraFunction, remaining_depth: int, path: set[str]) -> list[dict[str, Any]]:
+            nodes: list[dict[str, Any]] = []
+            if remaining_depth <= 0 or len(ordered_funcs) >= max_details:
+                return nodes
+
+            for related in islice(self._iter_related_functions(current, direction), branching):
+                addr = str(related.getEntryPoint())
+                if addr in path:
+                    continue
+                if addr not in seen_addresses:
+                    if len(ordered_funcs) >= max_details:
+                        break
+                    seen_addresses.add(addr)
+                    ordered_funcs.append(related)
+
+                node = self._summarize_function(related)
+                child_path = set(path)
+                child_path.add(addr)
+                children = walk(related, remaining_depth - 1, child_path)
+                if children:
+                    node["children"] = children
+                nodes.append(node)
+
+                if len(ordered_funcs) >= max_details:
+                    break
+
+            return nodes
+
+        root_path = {str(func.getEntryPoint())}
+        return walk(func, depth, root_path), ordered_funcs
 
     @staticmethod
     def _collect_metadata(func: GhidraFunction) -> dict[str, Any]:
@@ -478,7 +674,7 @@ class GetFunctionAioToolProvider(ToolProvider):
                         "address": str(instr.getAddress()),
                         "mnemonic": str(instr.getMnemonicString()),
                         "operands": str(instr),
-                        "bytes": " ".join(f"{b:02x}" for b in instr.getBytes()),
+                        "bytes": " ".join(f"{b & 0xff:02x}" for b in instr.getBytes()),
                     },
                 )
         return {
@@ -535,7 +731,10 @@ class GetFunctionAioToolProvider(ToolProvider):
         labels: list[dict[str, Any]] = []
         if body is None:
             return labels
-        sym_iter = st.getSymbolIterator(body.getMinAddress(), True)
+        min_addr = body.getMinAddress()
+        if min_addr is None:
+            return labels
+        sym_iter = st.getSymbolIterator(min_addr, True)
         while sym_iter.hasNext():
             sym = sym_iter.next()
             addr = sym.getAddress()
@@ -556,12 +755,12 @@ class GetFunctionAioToolProvider(ToolProvider):
     @staticmethod
     def _collect_callers(func: GhidraFunction, max_callers: int | None = None) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callers")
-        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCallingFunctions(None), max_callers)]
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCallingFunctions(make_task_monitor()), max_callers)]
 
     @staticmethod
     def _collect_callees(func: GhidraFunction, max_callees: int | None = None) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_callees")
-        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCalledFunctions(None), max_callees)]
+        return [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in islice(func.getCalledFunctions(make_task_monitor()), max_callees)]
 
     @staticmethod
     def _collect_xrefs(program: GhidraProgram, entry: GhidraAddress, max_refs: int | None = None) -> list[dict[str, Any]]:
@@ -623,7 +822,10 @@ class GetFunctionAioToolProvider(ToolProvider):
         bookmarks: list[dict[str, Any]] = []
         if body is None:
             return bookmarks
-        it = bm_mgr.getBookmarksIterator(body.getMinAddress(), True)
+        min_addr = body.getMinAddress()
+        if min_addr is None:
+            return bookmarks
+        it = bm_mgr.getBookmarksIterator(min_addr, True)
         while it.hasNext():
             bm: GhidraBookmark = it.next()
             addr = bm.getAddress()

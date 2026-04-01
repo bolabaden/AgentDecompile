@@ -45,6 +45,12 @@ Pick **`RUN_ID`**. Shared labels/symbols: **`sh_<RUN_ID>_…`**; local Track B: 
 
 14. **Local `.gpr` Track B intact:** `open` (same local dir as step 3) → `search-symbols` `loc_<RUN_ID>_` — **L1–L3** still present (proves pre-pull local project unchanged).
 
+15. **CLI local headless — import + label (no MCP server):** Ensure no MCP server is running. Using `agentdecompile-cli --local --local-project-path <cli_headless_dir>` with `tool-seq` (no `--server-url`): `open` (fresh project dir) → `import-binary` (`enableVersionControl: false`) → `checkout-program` → `create-label cli_<RUN_ID>_L1` → `checkin-program`. CLI must complete exit 0 with no MCP server running (proves in-process PyGhidra dispatch works end-to-end).
+
+16. **CLI local headless persistence:** A fresh `agentdecompile-cli --local --local-project-path <same dir>` invocation (new OS process, new JVM, no MCP server) → `open` → `search-symbols cli_<RUN_ID>_` — label from step 15 must appear. Proves the `.gpr` file is flushed to disk by `checkin-program` and survives across two separate in-process CLI invocations.
+
+17. **CLI local headless read-only tool coverage:** A third `--local` session → `open` → `list-functions`, `decompile-function`, `inspect-memory`, `search-strings` — all return results with no MCP server.
+
 ---
 
-**Pass:** every `tool-seq` exits **0** and logs satisfy steps 5, 7, 11–12 (symbol counts + version numbers), and step 14.
+**Pass:** every `tool-seq` exits **0** and logs satisfy steps 5, 7, 11–12 (symbol counts + version numbers), step 14, and steps 15–16 (label found + exit 0 without any server).

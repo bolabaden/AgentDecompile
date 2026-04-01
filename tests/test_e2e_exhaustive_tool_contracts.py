@@ -424,6 +424,28 @@ class TestGetFunctions:
         assert "not found" in p.get("error", "").lower()
 
 
+class TestGetFunction:
+    """``get-function`` – expanded single-function context."""
+
+    def test_get_function_returns_target_and_expanded_sections(self, local_http_session: JsonRpcMcpSession):
+        payload = _j(local_http_session, "get-function", {"programPath": BINARY_NAME, "function": "entry"})
+
+        assert payload.get("name") == "entry"
+        assert payload.get("targetFunction", {}).get("name") == "entry"
+        assert isinstance(payload.get("callGraphTree", {}).get("callers", []), list)
+        assert isinstance(payload.get("callGraphTree", {}).get("callees", []), list)
+        assert isinstance(payload.get("callerDetails", []), list)
+        assert isinstance(payload.get("calleeDetails", []), list)
+        assert payload.get("callGraphTree", {}).get("calleeDepth") == 2
+
+    def test_get_function_markdown_includes_expanded_graph_sections(self, local_http_session: JsonRpcMcpSession):
+        text = _text(local_http_session, "get-function", {"programPath": BINARY_NAME, "function": "entry"})
+
+        assert "## Function: `entry`" in text
+        assert "## Expanded Call Graph" in text
+        assert "### Callee Tree" in text
+
+
 class TestDecompileFunction:
     """``decompile-function`` – get pseudocode."""
 

@@ -1192,7 +1192,21 @@ class ImportExportToolProvider(ToolProvider):
 
     async def _handle_import(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._handle_import")
-        file_path: str = self._require_str(args, "path", "filepath", "file", "binarypath", "binary", name="filePath")
+        file_path: str = self._get_str(args, "path", "filepath", "file", "binarypath", "binary", default="")
+
+        if not file_path:
+            # Resource / no-args mode: return open programs instead of trying to import
+            session_id = get_current_mcp_session_id()
+            snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id)
+            open_keys: list[str] = list(snapshot.get("openProgramKeys") or [])
+            project_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True) or []
+            return create_success_response(
+                {
+                    "openPrograms": open_keys,
+                    "projectBinaries": project_binaries,
+                    "note": "No path provided. Pass path= to import a binary file into the project.",
+                }
+            )
         prog_name: str = self._get_str(args, "programname", "name")
         language: str = self._get_str(args, "language", "lang", "processor")
         compiler: str = self._get_str(args, "compiler", "compilerspec", "compilerspecid")
@@ -1852,7 +1866,24 @@ class ImportExportToolProvider(ToolProvider):
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._handle_change_processor")
         self._require_program()
         assert self.program_info is not None
-        language: str = self._require_str(args, "language", "lang", "processor", "languageid", name="language")
+        language: str = self._get_str(args, "language", "lang", "processor", "languageid", default="")
+
+        if not language:
+            # Resource / no-args mode: return current processor info
+            program = self.program_info.program
+            try:
+                lang_id = str(program.getLanguage().getLanguageID())
+                compiler_id = str(program.getCompilerSpec().getCompilerSpecID())
+                return create_success_response(
+                    {
+                        "action": "get_processor",
+                        "language": lang_id,
+                        "compiler": compiler_id,
+                        "note": "Pass language (e.g. x86:LE:32:default) to change the processor.",
+                    }
+                )
+            except Exception as exc:
+                return create_success_response({"action": "get_processor", "success": False, "error": str(exc)})
         compiler = self._get_str(args, "compiler", "compilerspec", "compilerspecid")
 
         program: GhidraProgram | None = self.program_info.program

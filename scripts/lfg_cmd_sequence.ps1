@@ -1,7 +1,7 @@
-# Implements .cursor/commands/lfg.md steps 1–14:
+# Implements .cursor/commands/lfg.md steps 1–17:
 # Shared x3 ck → MCP restart → local x3 ck → MCP restart → shared persist → MCP restart → local persist →
 # MCP restart → shared 4th ck → MCP restart → pull + verify 4 revisions (same session) → push 5th + verify →
-# MCP restart → local Track B L1–L3 still present.
+# MCP restart → local Track B L1–L3 still present → CLI local headless (--local, no MCP server) import+label+persist.
 #
 # Ghidra: stock ghidraSvr.bat console blocks its host shell ("Use Ctrl-C..."). Auto-start spawns a dedicated
 # PowerShell window + patched bat (`start /B` + JVM logs under $Evidence). MCP defaults to a hidden detached
@@ -23,7 +23,9 @@ param(
     [bool]$AutoStartGhidraServer = $true,
     [bool]$StopStartedGhidraOnExit = $true,
     # Ghidra's ghidraSvr "console" blocks its host shell; never run it with -NoNewWindow in the driver terminal.
-    [bool]$StartMcpInNewWindow = $false
+    [bool]$StartMcpInNewWindow = $false,
+    # Set true on hosts that cannot start a second PyGhidra JVM; skips CLI --local headless phase (steps 15–17).
+    [bool]$SkipLocalHeadless = $false
 )
 
 # Continue: Python writes progress to stderr; Stop would treat that as terminating errors with 2>&1.
@@ -43,6 +45,10 @@ $ImportJson = ($ImportSource -replace "\\", "/")
 $McpWs = Join-Path $Evidence "mcp_workspace"
 New-Item -ItemType Directory -Force -Path $McpWs | Out-Null
 $McpWsJson = ($McpWs -replace "\\", "/")
+# Dedicated project dir for CLI --local headless phase (steps 15–17) — separate from $LocalDir (MCP local mode).
+$LocalCliDir = Join-Path $Evidence "local_cli_gpr_dir"
+New-Item -ItemType Directory -Force -Path $LocalCliDir | Out-Null
+$LocalCliDirJson = ($LocalCliDir -replace "\\", "/")
 
 # When attaching to an existing Ghidra Server only: optional env overrides (same vars as MCP shared open).
 if (-not $AutoStartGhidraServer) {
@@ -385,6 +391,37 @@ function Invoke-LfgSeqUnchecked {
     return $ec
 }
 
+function Invoke-LfgLocalSeq {
+    <#
+    Run a tool-seq via agentdecompile-cli --local (headless in-process PyGhidra) — no MCP server needed.
+    Throws on non-zero exit. Proves steps 15-17 from .cursor/commands/lfg.md.
+    #>
+    param([string]$Name, [string]$Json, [string]$ProjectPath)
+    $tmp = Join-Path $Evidence "$Name.steps.json"
+    [System.IO.File]::WriteAllText($tmp, $Json.Trim(), [System.Text.UTF8Encoding]::new($false))
+    $log = Join-Path $Evidence "$Name.stdout.log"
+    $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    $ec = $LASTEXITCODE
+    Set-Content -LiteralPath $log -Value ($out | Out-String) -Encoding utf8
+    if ($ec -ne 0) {
+        throw "CLI local tool-seq $Name failed exit $ec (see $log)"
+    }
+}
+
+function Invoke-LfgLocalSeqUnchecked {
+    <#
+    Run a tool-seq via agentdecompile-cli --local — returns the exit code without throwing.
+    #>
+    param([string]$Name, [string]$Json, [string]$ProjectPath)
+    $tmp = Join-Path $Evidence "$Name.steps.json"
+    [System.IO.File]::WriteAllText($tmp, $Json.Trim(), [System.Text.UTF8Encoding]::new($false))
+    $log = Join-Path $Evidence "$Name.stdout.log"
+    $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    $ec = $LASTEXITCODE
+    Set-Content -LiteralPath $log -Value ($out | Out-String) -Encoding utf8
+    return $ec
+}
+
 function Invoke-LfgCreateLabelWithOptionalResolve {
     param(
         [string]$LogBaseName,
@@ -580,6 +617,7 @@ $addr2 = "0x{0:X}" -f ($base + 0x880)
 $addr3 = "0x{0:X}" -f ($base + 0x1080)
 $addr4 = "0x{0:X}" -f ($base + 0x1880)
 $addrPush = "0x{0:X}" -f ($base + 0x2080)
+$addrCli  = "0x{0:X}" -f ($base + 0x2800)
 
 $assertShared = @"
 [
@@ -752,8 +790,8 @@ if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_memory_bytes had failures 
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_decompile_callgraph" @"
 [
-  {"name":"decompile-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry","limit":50}},
-  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry"}},
+  {"name":"decompile-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300","limit":50}},
+  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300"}},
   {"name":"get-call-graph","arguments":{"programPath":"/sort.exe","function":"0x140001300","mode":"graph"}}
 ]
 "@
@@ -793,7 +831,7 @@ $ec = Invoke-LfgSeqUnchecked "11_ext_manage_readonly" @"
   {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"list","maxResults":5}},
   {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"search","query":"sort","maxResults":5}},
   {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"list"}},
-  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry"}}
+  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_manage_readonly had failures (exit $ec)" -ForegroundColor Yellow }
@@ -869,6 +907,60 @@ if ($extFail -gt 0) {
     Write-Host "Extended tool coverage: $extFail step group(s) had failures. Check individual *.stdout.log files." -ForegroundColor Yellow
 } else {
     Write-Host "Extended tool coverage: ALL step groups passed." -ForegroundColor Green
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE E: CLI local headless mode — no MCP server required (steps 15–17 in lfg.md).
+# Verifies agentdecompile-cli --local runs tools in-process via PyGhidra with zero
+# network dependencies.  Pass -SkipLocalHeadless:$true to skip on resource-limited hosts.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if ($SkipLocalHeadless) {
+    Write-Host "SKIP: CLI local headless phase (-SkipLocalHeadless:`$true)." -ForegroundColor DarkGray
+} else {
+    # Stop any MCP server that is still running so these invocations truly prove no-server operation.
+    Stop-LfgMcp
+    $cliLocalFail = 0
+
+    # Step 15: import binary + create label — purely in-process, no network.
+    $cliStep15 = @"
+[
+  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
+  {`"name`":`"import-binary`",`"arguments`":{`"filePath`":`"$ImportJson`",`"programPath`":`"/sort.exe`",`"enableVersionControl`":false,`"analyzeAfterImport`":false}},
+  {`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}},
+  {`"name`":`"create-label`",`"arguments`":{`"programPath`":`"/sort.exe`",`"address`":`"$addrCli`",`"labelName`":`"cli_${RunId}_L1`"}},
+  {`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"cli_${RunId}_ck_1`"}}
+]
+"@
+    Invoke-LfgLocalSeq "15_cli_local_import_label" $cliStep15 $LocalCliDirJson
+
+    # Step 16: fresh process + new JVM, same .gpr dir — label must survive on disk.
+    $cliStep16 = @"
+[
+  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
+  {`"name`":`"search-symbols`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"cli_${RunId}_`"}}
+]
+"@
+    Invoke-LfgLocalSeq "16_cli_local_persist" $cliStep16 $LocalCliDirJson
+
+    # Step 17: read-only tool coverage under --local (unchecked — decompile may fail on stripped binaries).
+    $cliStep17 = @"
+[
+  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
+  {`"name`":`"list-functions`",`"arguments`":{`"programPath`":`"/sort.exe`",`"limit`":5}},
+  {`"name`":`"decompile-function`",`"arguments`":{`"programPath`":`"/sort.exe`",`"functionIdentifier`":`"entry`",`"limit`":30}},
+  {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"/sort.exe`",`"mode`":`"read`",`"address`":`"0x140001000`",`"length`":32}},
+  {`"name`":`"search-strings`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"sort`",`"limit`":5}}
+]
+"@
+    $ec = Invoke-LfgLocalSeqUnchecked "17_cli_local_readonly" $cliStep17 $LocalCliDirJson
+    if ($ec -ne 0) { $cliLocalFail++; Write-Host "WARN: 17_cli_local_readonly had failures (exit $ec)" -ForegroundColor Yellow }
+
+    if ($cliLocalFail -gt 0) {
+        Write-Host "CLI local headless: $cliLocalFail step group(s) had failures. Check 15_*/17_* log files." -ForegroundColor Yellow
+    } else {
+        Write-Host "CLI local headless: ALL steps passed (no MCP server required)." -ForegroundColor Green
+    }
 }
 
 Write-Host "=== DONE. Evidence under $Evidence ===" -ForegroundColor Green

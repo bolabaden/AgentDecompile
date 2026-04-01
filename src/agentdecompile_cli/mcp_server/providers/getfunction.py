@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 from mcp import types
 
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
-from agentdecompile_cli.mcp_server.providers._collectors import iter_items
+from agentdecompile_cli.mcp_server.providers._collectors import iter_items, make_task_monitor
 from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -611,8 +611,9 @@ class GetFunctionToolProvider(ToolProvider):
 
             for func in iter_items(fm.getFunctions(True)):
                 # Call graph sets used for similarity: more shared callers/callees => higher match score
-                callers = frozenset(c.getName() for c in func.getCallingFunctions(None))
-                callees = frozenset(c.getName() for c in func.getCalledFunctions(None))
+                _monitor = make_task_monitor()
+                callers = frozenset(c.getName() for c in func.getCallingFunctions(_monitor))
+                callees = frozenset(c.getName() for c in func.getCalledFunctions(_monitor))
                 addr_str = str(func.getEntryPoint())
                 feature = _FunctionMatchFeature(
                     function=func,  # pyright: ignore[reportCallIssue]
@@ -690,8 +691,8 @@ class GetFunctionToolProvider(ToolProvider):
     def _source_call_graph_sets(self, source_func: GhidraFunction) -> tuple[frozenset[str], frozenset[str]]:
         """Return (callers, callees) as frozensets of function names for cross-program call-graph scoring."""
         logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._source_call_graph_sets")
-        callers = frozenset(c.getName() for c in source_func.getCallingFunctions(None))
-        callees = frozenset(c.getName() for c in source_func.getCalledFunctions(None))
+        callers = frozenset(c.getName() for c in source_func.getCallingFunctions(make_task_monitor()))
+        callees = frozenset(c.getName() for c in source_func.getCalledFunctions(make_task_monitor()))
         return callers, callees
 
     def _call_graph_overlap(
@@ -964,6 +965,10 @@ class GetFunctionToolProvider(ToolProvider):
                             gf_payload["maxCallers"] = max_callers
                         if max_callees is not None:
                             gf_payload["maxCallees"] = max_callees
+                        gf_payload["callerDepth"] = 0
+                        gf_payload["calleeDepth"] = 0
+                        gf_payload["maxRelatedCallers"] = 0
+                        gf_payload["maxRelatedCallees"] = 0
                         gf_payload["maxInstructions"] = max_instructions
                         gf_resp: list[types.TextContent] | None = await manager.call_tool(
                             "get-function",
@@ -1187,7 +1192,7 @@ class GetFunctionToolProvider(ToolProvider):
             match_index, cache_hit = self._get_match_index(program, fm)
 
         if mode_n == "callers":
-            callers = list(islice(func.getCallingFunctions(None), max_results))
+            callers = list(islice(func.getCallingFunctions(make_task_monitor()), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -1198,7 +1203,7 @@ class GetFunctionToolProvider(ToolProvider):
             )
 
         if mode_n == "callees":
-            callees = list(islice(func.getCalledFunctions(None), max_results))
+            callees = list(islice(func.getCalledFunctions(make_task_monitor()), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -1246,7 +1251,7 @@ class GetFunctionToolProvider(ToolProvider):
             candidate_addrs.update(feature.address for feature in signature_candidates if feature.address != func_addr)
 
         scores: list[tuple[int, _FunctionMatchFeature]] = []
-        top_k = max(max_results, 1)
+        top_k = max(max_results or 0, 1)
         for addr in candidate_addrs:
             feature = match_index.by_identity.get(addr)
             if feature is None:

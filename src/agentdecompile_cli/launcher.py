@@ -202,6 +202,88 @@ def _patch_project_owner(project_dir: str, project_name: str) -> None:
         logger.warning("Could not patch project OWNER: %s", exc)
 
 
+def _copy_locked_project_data(projects_dir: Path, source_name: str, dest_name: str) -> bool:
+    """Copy a locked Ghidra project's data to a new destination project.
+
+    When a local project is locked by another JVM instance we cannot open it,
+    but we *can* copy its filesystem representation so the fallback project
+    starts with the same programs and analysis already present.
+
+    The copy is done at the filesystem level:
+    - ``<source_name>.gpr``  → ``<dest_name>.gpr``   (project marker file)
+    - ``<source_name>.rep/`` → ``<dest_name>.rep/``   (project database directory)
+
+    Lock artefacts (``*.lock``, ``*.lock~``) are excluded from the copy.
+    Individual file-level errors (e.g. exclusive OS file locks held by the
+    other JVM on Windows) are tolerated per-file so a partial copy is still
+    better than an empty project.
+
+    Args:
+        projects_dir: Directory that contains both the source and destination projects.
+        source_name: Name of the *locked* (source) project.
+        dest_name:   Name of the new (destination) project.
+
+    Returns:
+        ``True`` if the copy completed without fatal errors, ``False`` if the
+        source project does not exist or a top-level copy error occurred.
+        On failure any partial destination files are cleaned up.
+    """
+    import shutil
+
+    src_gpr = projects_dir / f"{source_name}.gpr"
+    src_rep = projects_dir / f"{source_name}.rep"
+    dst_gpr = projects_dir / f"{dest_name}.gpr"
+    dst_rep = projects_dir / f"{dest_name}.rep"
+
+    if not src_gpr.exists() and not src_rep.is_dir():
+        sys.stderr.write(
+            f"[_copy_locked_project_data] Source project {source_name!r} not found in {projects_dir!r}; "
+            "starting with empty fallback project.\n"
+        )
+        return False
+
+    def _ignore_locks(directory: str, contents: list[str]) -> list[str]:
+        return [f for f in contents if f.endswith(".lock") or f.endswith(".lock~")]
+
+    def _safe_copy2(src: str, dst: str, *, follow_symlinks: bool = True) -> str:
+        try:
+            shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
+        except (PermissionError, OSError) as exc:
+            logger.warning(
+                "copy_locked_project_skip_file src=%s reason=%s: %s",
+                src,
+                type(exc).__name__,
+                exc,
+            )
+        return dst
+
+    try:
+        if src_rep.is_dir():
+            shutil.copytree(src_rep, dst_rep, ignore=_ignore_locks, copy_function=_safe_copy2)
+            sys.stderr.write(f"[_copy_locked_project_data] Copied .rep dir: {src_rep} -> {dst_rep}\n")
+        if src_gpr.exists():
+            shutil.copy2(str(src_gpr), str(dst_gpr))
+            sys.stderr.write(f"[_copy_locked_project_data] Copied .gpr marker: {src_gpr} -> {dst_gpr}\n")
+        return True
+    except Exception as exc:
+        logger.warning(
+            "copy_locked_project_failed src=%r dest=%r reason=%s: %s",
+            source_name,
+            dest_name,
+            type(exc).__name__,
+            exc,
+        )
+        # Clean up any partial copy so the caller can create a fresh project
+        try:
+            if dst_rep.exists():
+                shutil.rmtree(dst_rep, ignore_errors=True)
+            if dst_gpr.exists():
+                dst_gpr.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
 def _iter_domain_items(
     folder: GhidraDomainFolder,
     content_type: str | None = None,
@@ -1691,24 +1773,72 @@ class AgentDecompileLauncher:
                 _is_lock = "LockException" in _lock_err_name or "LockException" in _lock_err_str
                 if not _is_lock or _project_is_explicit:
                     raise
-                # Default project is locked — create a fresh unique project
+                # Default project is locked — copy its data to a fresh unique project so
+                # previously imported/analyzed programs are preserved in the fallback.
+                _locked_project_name = project_name
                 fallback_name = f"agdec_{uuid.uuid4().hex[:12]}"
-                sys.stderr.write(f"[launcher.start] WARNING: Default project {project_name!r} is locked by another instance. Falling back to unique project: {fallback_name!r}\n")
+                sys.stderr.write(f"[launcher.start] WARNING: Default project {_locked_project_name!r} is locked by another instance. Falling back to unique project: {fallback_name!r}\n")
                 logger.warning(
                     "Default project %r locked — falling back to unique project %r: %s",
-                    project_name,
+                    _locked_project_name,
                     fallback_name,
                     _lock_err,
                 )
+                _copied = _copy_locked_project_data(projects_dir, _locked_project_name, fallback_name)
+                if _copied:
+                    sys.stderr.write(
+                        f"[launcher.start] Copied locked project {_locked_project_name!r} data to {fallback_name!r}; "
+                        "existing programs will be available in the fallback session.\n"
+                    )
+                    logger.info(
+                        "Copied locked project %r data to fallback %r.",
+                        _locked_project_name,
+                        fallback_name,
+                    )
+                else:
+                    sys.stderr.write(
+                        f"[launcher.start] Could not copy locked project data; fallback project {fallback_name!r} will start empty.\n"
+                    )
                 project_name = fallback_name
                 _log_config_block(projects_dir, project_name)
-                self.pyghidra_context = PyGhidraContext(
-                    project_name=project_name,
-                    project_path=str(projects_dir),
-                    force_analysis=False,
-                    verbose_analysis=False,
-                    no_symbols=False,
-                )
+                try:
+                    self.pyghidra_context = PyGhidraContext(
+                        project_name=project_name,
+                        project_path=str(projects_dir),
+                        force_analysis=False,
+                        verbose_analysis=False,
+                        no_symbols=False,
+                    )
+                except Exception as _fallback_err:
+                    # The copied project data may be corrupt or partially locked.
+                    # Clean it up and retry with a completely fresh empty project.
+                    import shutil as _shutil
+
+                    for _stale in (
+                        projects_dir / f"{project_name}.rep",
+                        projects_dir / f"{project_name}.gpr",
+                    ):
+                        if _stale.is_dir():
+                            _shutil.rmtree(_stale, ignore_errors=True)
+                        elif _stale.exists():
+                            _stale.unlink(missing_ok=True)
+                    sys.stderr.write(
+                        f"[launcher.start] Copied project {project_name!r} could not be opened "
+                        f"({type(_fallback_err).__name__}); retrying with a fresh empty project.\n"
+                    )
+                    logger.warning(
+                        "Fallback project %r failed to open (%s); recreating empty: %s",
+                        project_name,
+                        type(_fallback_err).__name__,
+                        _fallback_err,
+                    )
+                    self.pyghidra_context = PyGhidraContext(
+                        project_name=project_name,
+                        project_path=str(projects_dir),
+                        force_analysis=False,
+                        verbose_analysis=False,
+                        no_symbols=False,
+                    )
 
             # Create program info that will be populated when programs are loaded
             self.program_info = ProgramInfo(

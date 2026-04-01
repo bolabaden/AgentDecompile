@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from mcp import types
 
@@ -24,6 +24,16 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     n,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import Address as GhidraAddress
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Bookmark as GhidraBookmark,
+        BookmarkManager as GhidraBookmarkManager,
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +64,7 @@ class BookmarkToolProvider(ToolProvider):
                         "comment": {"type": "string", "description": "The actual text you want to save inside the bookmark."},
                         "bookmarks": {"type": "array", "description": "Allows creating or processing a batch of multiple bookmarks at once.", "items": {"type": "object"}},
                         "query": {"type": "string", "description": "If mode is 'search', the text to look for inside existing bookmarks."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of bookmarks to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of bookmarks to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination text start index."},
                         "removeAll": {"type": "boolean", "description": "A safety toggle needed when deleting all bookmarks.", "default": False},
                         "confirmRemoveAll": {"type": "boolean", "description": "Required to be true to proceed with clearing every single bookmark.", "default": False},
@@ -69,9 +79,9 @@ class BookmarkToolProvider(ToolProvider):
         """Route to the correct sub-handler based on mode (set/get/remove/categories/etc.)."""
         logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle")
         self._require_program()
-        mode = self._get_str(args, "mode", "action", "operation")
+        mode: str = self._get_str(args, "mode", "action", "operation")
         if not mode:
-            raise ValueError("mode is required")
+            mode = "list"  # default: list all bookmarks
 
         # Map normalized mode to handler; aliases (add→set, list→get) share the same handler
         return await self._dispatch_handler(
@@ -105,10 +115,10 @@ class BookmarkToolProvider(ToolProvider):
     async def _handle_set(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Create one bookmark or a batch; single bookmark uses addressOrSymbol + type/category/comment."""
         logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle_set")
-        bookmarks = self._get_list(args, "bookmarks")
+        bookmarks: list[dict[str, Any]] = self._get_list(args, "bookmarks")
         if bookmarks and isinstance(bookmarks[0], dict):
             # Batch: each element is a dict with addressOrSymbol, type, category, comment
-            results = []
+            results: list[dict[str, Any]] = []
             for bm in bookmarks:
                 results.append(await self._add_single(bm))
             return create_success_response(
@@ -128,26 +138,26 @@ class BookmarkToolProvider(ToolProvider):
 
         if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
             assert self.program_info is not None
-            program = self.program_info.program
-            address = self._resolve_address(addr_str)
+            program: GhidraProgram = self.program_info.program
+            address: GhidraAddress = self._resolve_address(addr_str)
             if address is not None:
-                bm_mgr = program.getBookmarkManager()
+                bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
 
-                def _def():
-                    return ""
-
+                bm: GhidraBookmark = None
                 for bm in bm_mgr.getBookmarks(address) or []:
-                    bm_t = getattr(bm, "getType", _def)()
-                    bm_c = getattr(bm, "getCategory", _def)()
+                    bm_t: str = bm.getType() if hasattr(bm, "getType") else ""
+                    bm_c: str = bm.getCategory() if hasattr(bm, "getCategory") else ""
                     if bm_t == bm_type and bm_c == category:
                         from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
                         from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
-                        conflict_id = str(uuid.uuid4())
-                        conflict_summary = f"Set bookmark would overwrite existing bookmark at (address, type, category):\n\nExisting bookmark **{bm_type}** / **{category}** at address."
-                        next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
-                        program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
-                        store_args = dict(args)
+                        conflict_id: str = str(uuid.uuid4())
+                        conflict_summary: str = (
+                            f"Set bookmark would overwrite existing bookmark at (address, type, category):\n\nExisting bookmark **{bm_type}** / **{category}** at address."
+                        )
+                        next_step: str = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                        program_path: str = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                        store_args: dict[str, Any] = dict(args)
                         store_args["mode"] = "set"
                         conflict_store_store(
                             get_current_mcp_session_id(),
@@ -159,7 +169,7 @@ class BookmarkToolProvider(ToolProvider):
                         )
                         return create_conflict_response(conflict_id, Tool.MANAGE_BOOKMARKS.value, conflict_summary, next_step)
 
-        result = await self._add_single(
+        result: dict[str, Any] = await self._add_single(
             {
                 "addressorsymbol": addr_str,
                 "type": bm_type,
@@ -173,21 +183,21 @@ class BookmarkToolProvider(ToolProvider):
         """Resolve address, then set a bookmark via BookmarkManager inside a program transaction."""
         logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._add_single")
         norm: dict[str, Any] = {n(k): v for k, v in bm.items()}
-        addr_str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
+        addr_str: str = self._get_str(norm, "addressOrSymbol", "address", "addr", "symbol")
         if not addr_str:
             raise ValueError("addressOrSymbol is required for bookmark")
-        address = self._resolve_address(addr_str)
+        address: GhidraAddress = self._resolve_address(addr_str)
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
 
         assert self.program_info is not None  # for type checker
-        program = self.program_info.program
-        bm_type = self._get_str(norm, "type") or "Note"
-        category = self._get_str(norm, "category") or "AgentDecompile"
-        comment = self._get_str(norm, "comment") or ""
+        program: GhidraProgram = self.program_info.program
+        bm_type: str = self._get_str(norm, "type") or "Note"
+        category: str = self._get_str(norm, "category") or "AgentDecompile"
+        comment: str = self._get_str(norm, "comment") or ""
 
         try:
-            bm_mgr = program.getBookmarkManager()
+            bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
 
             # Wrap in transaction so the change is undoable and persisted with the program
             def _set_bookmark() -> None:
@@ -218,14 +228,14 @@ class BookmarkToolProvider(ToolProvider):
         if self._get_bool(args, "removeAll"):
             self._require_explicit_remove_all_intent(args)
             return await self._remove_all(args)
-        addr_str = self._require_address_or_symbol(args)
+        addr_str: str = self._require_address_or_symbol(args)
 
-        address = self._resolve_address(addr_str)
+        address: GhidraAddress = self._resolve_address(addr_str)
         if address is None:
             raise ValueError(f"Cannot resolve: {addr_str}")
         try:
             assert self.program_info is not None  # for type checker
-            bm_mgr = self.program_info.program.getBookmarkManager()
+            bm_mgr: GhidraBookmarkManager = self.program_info.program.getBookmarkManager()
 
             def _remove_bookmarks() -> None:
                 for bm in list(bm_mgr.getBookmarks(address)):
@@ -247,12 +257,13 @@ class BookmarkToolProvider(ToolProvider):
         self._require_explicit_remove_all_intent(args)
         try:
             assert self.program_info is not None  # for type checker
-            bm_mgr = self.program_info.program.getBookmarkManager()
+            program: GhidraProgram = self.program_info.program
+            bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
 
             def _remove_all_bookmarks() -> None:
                 bm_mgr.removeAllBookmarks()
 
-            self._run_program_transaction(self.program_info.program, "remove-all-bookmarks", _remove_all_bookmarks)
+            self._run_program_transaction(program, "remove-all-bookmarks", _remove_all_bookmarks)
         except Exception:
             pass
         return create_success_response(
@@ -274,7 +285,13 @@ class BookmarkToolProvider(ToolProvider):
             assert self.program_info is not None  # for type checker
             all_bookmarks: list[dict[str, Any]] = collect_bookmarks(self.program_info.program)
             # Apply optional filters: type exact match, category exact match, search substring in comment
-            filtered: list[dict[str, Any]] = [row for row in all_bookmarks if (not bm_type or row.get("type") == bm_type) and (not category or row.get("category") == category) and (not search or search.lower() in str(row.get("comment", "")).lower())]
+            filtered: list[dict[str, Any]] = [
+                row
+                for row in all_bookmarks
+                if (not bm_type or row.get("type") == bm_type)
+                and (not category or row.get("category") == category)
+                and (not search or search.lower() in str(row.get("comment", "")).lower())
+            ]
             results: list[dict[str, Any]] = filtered[offset : offset + limit]
             matched_count: int = len(filtered)
 
@@ -292,9 +309,10 @@ class BookmarkToolProvider(ToolProvider):
         logger.debug("diag.enter %s", "mcp_server/providers/bookmarks.py:BookmarkToolProvider._handle_categories")
         try:
             assert self.program_info is not None  # for type checker
-            bm_mgr = self.program_info.program.getBookmarkManager()
-            cats = set()
-            cats.update(bm.getCategory() for bm in bm_mgr.getBookmarksIterator())
+            program: GhidraProgram = self.program_info.program
+            bm_mgr: GhidraBookmarkManager = program.getBookmarkManager()
+            cats: set[str] = set()
+            cats.update(cast("GhidraBookmark", bm).getCategory() for bm in bm_mgr.getBookmarksIterator())
             return create_success_response(
                 {
                     "categories": sorted(cats),

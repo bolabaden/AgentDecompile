@@ -313,7 +313,23 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
     Tool.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
     Tool.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
-    Tool.GET_FUNCTION.value: _params("programPath", "function", "addressOrSymbol", "functionIdentifier", "timeout", "maxInstructions", "maxRefs"),
+    Tool.GET_FUNCTION.value: _params(
+        "programPath",
+        "function",
+        "addressOrSymbol",
+        "functionIdentifier",
+        "timeout",
+        "maxInstructions",
+        "maxRefs",
+        "maxCallers",
+        "maxCallees",
+        "callerDepth",
+        "calleeDepth",
+        "callerBranching",
+        "calleeBranching",
+        "maxRelatedCallers",
+        "maxRelatedCallees",
+    ),
     Tool.REMOVE_PROGRAM_BINARY.value: _params("programPath", "confirm"),
     Tool.EXECUTE_SCRIPT.value: _params("code", "programPath", "timeout"),
     Tool.EXPORT.value: _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
@@ -466,7 +482,6 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
-    "open": Tool.OPEN.value,
     "open-project": Tool.OPEN.value,  # e.g. Open_Project / open_project → normalize_identifier → openproject
     "switch-project": Tool.OPEN.value,  # folded into open
     "download-shared-repository": Tool.SYNC_PROJECT.value,

@@ -51,17 +51,26 @@ from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImport
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
     Tool,
+    _auto_checkin_enabled,
     is_tool_advertised,
     normalize_identifier,
     resolve_tool_name,
     to_snake_case,
-    _auto_checkin_enabled,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from ghidra.program.model.address import Address  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Address as GhidraAddress,
+        AddressSet as GhidraAddressSet,
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
 
     from agentdecompile_cli.registry import Tool
 
@@ -107,6 +116,27 @@ _AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset(
         "matchfunction",
     }
 )
+
+# Tools that do NOT require an open program and should skip auto-select fallback.
+# Pre-normalized names (lowercase letters only, matching normalize_identifier output).
+_NO_AUTO_SELECT_TOOLS: frozenset[str] = frozenset(
+    {
+        "openproject",
+        "open",
+        "importbinary",
+        "listprojectfiles",
+        "getcurrentprogram",
+        "checkinprogram",
+        "checkoutprogram",
+        "checkoutstatus",
+        "svradmin",
+        "listprocessors",
+        "changeprocessor",
+    }
+)
+
+# Maximum number of programs to eagerly open when a project is opened.
+MAX_AUTO_OPEN_PROGRAMS: int = 50
 
 # ProcessPoolExecutor for auto match-function (child process, does not block main). Spawn context so child gets fresh interpreter (no JVM fork).
 _AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
@@ -774,6 +804,25 @@ class ToolProvider:
         try:
             result = await handler(norm_args)
             logger.debug("tool=%s completed", canonical_tool)
+
+            # --- Inject projectContext into successful JSON responses ---
+            try:
+                from agentdecompile_cli.mcp_server.program_metadata import inject_project_context
+                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id as _get_sid
+
+                sid = _get_sid()
+                if result and isinstance(result[0], types.TextContent):
+                    result[0] = types.TextContent(
+                        type="text",
+                        text=inject_project_context(
+                            result[0].text,
+                            sid,
+                            tool_name_normalized=norm_name,
+                        ),
+                    )
+            except Exception as inject_exc:
+                logger.debug("project_context_inject_skip: %s", inject_exc)
+
             return result
         except Exception as e:
             logger.error("tool=%s error=%s message=%s", canonical_tool, e.__class__.__name__, e)
@@ -1180,15 +1229,26 @@ class ToolProvider:
         """Ensure a program is loaded for this request; raise ActionableError with next_steps if not.
 
         program_info is set by the manager from SessionContext (active or programPath) before
-        dispatching to the handler; if still None here, the client must open a program first.
+        dispatching to the handler.  The manager also runs auto-select from project binaries
+        / domain files; if still None here, no programs exist in this session at all.
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_program")
         if self.program_info is None or getattr(self.program_info, "program", None) is None:
+            # Include available program info in error for debugging
+            session_id = get_current_mcp_session_id()
+            session = SESSION_CONTEXTS.get_or_create(session_id)
+            open_keys = list((session.open_programs or {}).keys())
+            binary_names = [str(b.get("name") or b.get("path") or "") for b in (session.project_binaries or [])[:10]]
             raise ActionableError(
-                "No program loaded",
-                context={"state": "no-active-program"},
+                "No program loaded (auto-select found no candidates in this session)",
+                context={
+                    "state": "no-active-program",
+                    "openProgramKeys": open_keys,
+                    "projectBinaries": binary_names,
+                },
                 next_steps=[
                     "Call `import-binary` with `path` for a local binary, or `open` for a `.gpr` project/shared server session.",
+                    "Pass `programPath` to target a specific program in the project.",
                     "Call `get-current-program` to confirm `loaded=true`.",
                 ],
             )
@@ -1251,7 +1311,7 @@ class ToolProvider:
                 pass
 
         # Parse address early so we can match by address equality (0x00401000 vs 00401000)
-        parsed_addr: Address | None = AddressUtil.parse_address(target_program, function_identifier)
+        parsed_addr: GhidraAddress | None = AddressUtil.parse_address(target_program, function_identifier)
 
         def _entry_matches(func: Any) -> bool:
             if func.getName() == function_identifier:
@@ -1292,7 +1352,7 @@ class ToolProvider:
 
         return None
 
-    def _resolve_address(self, address_or_symbol: str, program: Any | None = None) -> Any:
+    def _resolve_address(self, address_or_symbol: str, program: GhidraProgram | None = None) -> GhidraAddress | None:
         """Resolve an address/symbol string against the active program.
 
         Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses
@@ -1691,7 +1751,9 @@ class ToolProviderManager:
         if not host:
             return
         if not port_str or port_str == "0":
-            port_str = (os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENTDECOMPILE_GHIDRA_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")))).strip() or "13100"
+            port_str = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENTDECOMPILE_GHIDRA_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")))
+            ).strip() or "13100"
         if not username:
             username = (
                 os.getenv(
@@ -1707,7 +1769,9 @@ class ToolProviderManager:
                 )
             ).strip()
         if not repo:
-            repo = (os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")))).strip()
+            repo = (
+                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")))
+            ).strip()
 
         open_args: dict[str, Any] = {
             "shared": True,
@@ -1865,17 +1929,8 @@ class ToolProviderManager:
             )
             return None
 
-        decompiler = None
-        try:
-            from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
-
-            decompiler = open_decompiler_for_program(program)
-        except Exception as exc:
-            logger.warning(
-                "pyghidra_activate_program_decompiler_open_failed program_tail=%s exc_type=%s (continuing with decompiler=None; tools will open per-call)",
-                basename_hint(normalized),
-                type(exc).__name__,
-            )
+        # Decompiler is initialized lazily via ProgramInfo.get_decompiler() on first use;
+        # this avoids ~15-30 MB JVM overhead for programs that may never be decompiled.
 
         program_path = normalized
         try:
@@ -1888,7 +1943,7 @@ class ToolProviderManager:
             name=program.getName() if hasattr(program, "getName") else Path(program_path).name,
             program=program,
             flat_api=None,
-            decompiler=decompiler,
+            decompiler=None,
             metadata={},
             ghidra_analysis_complete=True,
             file_path=None,
@@ -2013,6 +2068,102 @@ class ToolProviderManager:
                 basename_hint(program_path),
             )
         return activated
+
+    async def _auto_select_program(
+        self,
+        session_id: str,
+    ) -> ProgramInfo | None:
+        """Auto-select and open a program when no active program exists and no programPath was provided.
+
+        Resolution order:
+          1. First open program already in the session.
+          2. First entry in session.project_binaries → _activate_requested_program.
+          3. Scan project_data root folder for domain files → open first one found.
+
+        Returns the opened ProgramInfo (now set as active) or None when no candidate exists.
+        """
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._auto_select_program")
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+
+        # 1. Already-open program in session (pick first with a live .program)
+        for key, info in (session.open_programs or {}).items():
+            if info is not None and getattr(info, "program", None) is not None:
+                SESSION_CONTEXTS.set_active_program_info(session_id, key, info)
+                self.set_program_info(info)
+                logger.info(
+                    "auto_select_program route=session_open session_id=%s program_tail=%s",
+                    redact_session_id(session_id),
+                    basename_hint(key),
+                )
+                return info
+
+        # 2. First project binary from session listing
+        for binary in session.project_binaries or []:
+            bp = str(binary.get("path") or binary.get("name") or "").strip()
+            if bp:
+                activated = await self._activate_requested_program(session_id, bp)
+                if activated is not None:
+                    logger.info(
+                        "auto_select_program route=project_binary session_id=%s program_tail=%s",
+                        redact_session_id(session_id),
+                        basename_hint(bp),
+                    )
+                    return activated
+
+        # 3. Scan project data for domain files
+        project_data = self._resolve_project_data()
+        if project_data is not None:
+            try:
+                root = project_data.getRootFolder()
+                domain_files = self._find_all_domain_files(root, max_results=1)
+                for df_name, _df in domain_files:
+                    activated = self._activate_local_program_by_path(session_id, df_name)
+                    if activated is not None:
+                        logger.info(
+                            "auto_select_program route=domain_file_scan session_id=%s program_tail=%s",
+                            redact_session_id(session_id),
+                            basename_hint(df_name),
+                        )
+                        return activated
+            except Exception as exc:
+                logger.debug(
+                    "auto_select_program domain_scan_failed session_id=%s exc_type=%s",
+                    redact_session_id(session_id),
+                    type(exc).__name__,
+                )
+
+        logger.debug(
+            "auto_select_program no_candidate session_id=%s binaries=%s open_programs=%s",
+            redact_session_id(session_id),
+            len(session.project_binaries or []),
+            len(session.open_programs or {}),
+        )
+        return None
+
+    def _find_all_domain_files(
+        self,
+        folder: Any,
+        max_results: int = MAX_AUTO_OPEN_PROGRAMS,
+    ) -> list[tuple[str, Any]]:
+        """Walk the project domain tree and return up to *max_results* (pathname, DomainFile) pairs."""
+        logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._find_all_domain_files")
+        results: list[tuple[str, Any]] = []
+        stack: list[Any] = [folder]
+        visited = 0
+        while stack and len(results) < max_results and visited < 5000:
+            current = stack.pop()
+            visited += 1
+            try:
+                for domain_file in current.getFiles() or []:
+                    pathname = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(domain_file.getName())
+                    results.append((pathname, domain_file))
+                    if len(results) >= max_results:
+                        break
+                for subfolder in current.getFolders() or []:
+                    stack.append(subfolder)
+            except Exception:
+                continue
+        return results
 
     def list_tools(self) -> list[types.Tool]:
         """Build the MCP tools/list response: merge all providers' tools, then return only ADVERTISED_TOOLS with normalized params and format option."""
@@ -2190,7 +2341,7 @@ class ToolProviderManager:
                 requested_program_key = value_s
                 break
 
-        requested_program_info = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
+        requested_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 
         # If client asked for a program by path but we don't have it open, try to open it (open/import)
         if requested_program_key and requested_program_info is None:
@@ -2198,6 +2349,18 @@ class ToolProviderManager:
 
         session_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id)
         effective_program_info: ProgramInfo | None = requested_program_info or session_program_info or self.program_info
+
+        # Auto-select: when no program is active and no programPath was requested, try to
+        # auto-select from project binaries / domain files so tools don't fail with "No program loaded".
+        # Skip for project-management tools that work without an open program.
+        if (
+            (effective_program_info is None or getattr(effective_program_info, "program", None) is None)
+            and norm_name not in _NO_AUTO_SELECT_TOOLS
+            and not requested_program_key
+        ):
+            auto_selected = await self._auto_select_program(session_id)
+            if auto_selected is not None:
+                effective_program_info = auto_selected
 
         # Client asked for a program we couldn't open: attach list-project-files result so they can see available paths
         if requested_program_key and effective_program_info is None:
@@ -2323,10 +2486,10 @@ class ToolProviderManager:
                             break
                     # Targets: header X-AgentDecompile-Auto-Match-Target-Paths or env AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS (comma list) or all other open programs in session
                     target_paths: list[str] = []
-                    _target_paths_raw = get_current_request_auto_match_target_paths()
+                    _target_paths_raw: str | None = get_current_request_auto_match_target_paths()
                     if _target_paths_raw is None:
                         _target_paths_raw = os.environ.get(_ENV_AUTO_MATCH_TARGET_PATHS, "")
-                    env_paths = (_target_paths_raw or "").strip()
+                    env_paths: str = (_target_paths_raw or "").strip()
                     if env_paths:
                         target_paths = [p.strip() for p in env_paths.split(",") if p.strip()]
                     else:
@@ -2359,7 +2522,13 @@ class ToolProviderManager:
                         )
 
         # Auto check-in: when AGENTDECOMPILE_AUTO_CHECKIN is set, run checkin-program after any modifying tool succeeds.
-        if not norm_args.get(n("__auto_checkin_invocation")) and _auto_checkin_enabled() and norm_name in _AUTO_CHECKIN_TRIGGER_TOOLS and result and isinstance(result[0], types.TextContent):
+        if (
+            not norm_args.get(n("__auto_checkin_invocation"))
+            and _auto_checkin_enabled()
+            and norm_name in _AUTO_CHECKIN_TRIGGER_TOOLS
+            and result
+            and isinstance(result[0], types.TextContent)
+        ):
             try:
                 parsed = _json.loads(result[0].text)
                 tool_success = parsed.get("success", True) is not False and parsed.get("modificationConflict") is not True and "error" not in (parsed.get("error") or "")
@@ -2375,7 +2544,7 @@ class ToolProviderManager:
                     logger.warning("Auto check-in after modify failed (best-effort): %s", auto_checkin_exc)
 
         # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
-        response_fmt = norm_args.get("responseFormat") or (norm_args.get("format") if norm_args.get("format") in ("markdown", "json") else "markdown")
+        response_fmt: str = norm_args.get("responseFormat") or (norm_args.get("format") if norm_args.get("format") in ("markdown", "json") else "markdown")
         if not norm_args.get("autoprereqinvocation") and response_fmt != "json" and result and isinstance(result[0], types.TextContent):
             try:
                 data = _json.loads(result[0].text)

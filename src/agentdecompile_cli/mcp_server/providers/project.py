@@ -244,7 +244,7 @@ class ProjectToolProvider(ToolProvider):
                         "maxResults": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of project file results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of project file results to return. Typical values are 100–500.",
                         },
                     },
                     "required": [],
@@ -335,7 +335,7 @@ class ProjectToolProvider(ToolProvider):
                         "maxResults": {
                             "type": "integer",
                             "default": 200,
-                            "description": "Number of results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of results to return. Typical values are 100–500.",
                         },
                         "maxDepth": {"type": "integer", "default": 16, "description": "Max depth."},
                         "analyzeAfterImport": {"type": "boolean", "default": True, "description": "Run analysis after import (optional, defaults to true)."},
@@ -1273,6 +1273,20 @@ class ProjectToolProvider(ToolProvider):
                     [b.get("path") for b in binaries[:10]],
                 )
 
+        # --- Collect details for the checked-out program (if any) ---
+        checked_out_program_details: dict[str, Any] | None = None
+        try:
+            if checked_out_program:
+                from agentdecompile_cli.mcp_server.program_metadata import collect_program_summary
+
+                session = SESSION_CONTEXTS.get_or_create(session_id)
+                co_info = (session.open_programs or {}).get(checked_out_program)
+                if co_info is not None:
+                    checked_out_program_details = collect_program_summary(co_info)
+                    checked_out_program_details["programPath"] = checked_out_program
+        except Exception as meta_exc:
+            logger.debug("shared_program_metadata_failed: %s", meta_exc)
+
         return create_success_response(
             {
                 "action": "connect-shared-project",
@@ -1289,6 +1303,7 @@ class ProjectToolProvider(ToolProvider):
                 "programCount": len(binaries),
                 "programs": binaries,
                 "checkedOutProgram": checked_out_program,
+                "checkedOutProgramDetails": checked_out_program_details,
                 "checkoutError": checkout_error,
                 "message": (
                     (f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")
@@ -1565,7 +1580,77 @@ class ProjectToolProvider(ToolProvider):
         requested_program = self._get_str(args, "programpath", "binary", "binaryname")
 
         target_path = requested_program or first_program_path
-        if target_path and not open_all:
+
+        # Eagerly open ALL programs in the project (up to MAX_AUTO_OPEN_PROGRAMS) so they
+        # are available to tools without requiring explicit open calls.  The requested/first
+        # program becomes the active one; others are stored in SESSION_CONTEXTS.open_programs.
+        from agentdecompile_cli.mcp_server.tool_providers import MAX_AUTO_OPEN_PROGRAMS
+
+        eager_opened: list[str] = []
+        if programs_list:
+            try:
+                project_data = ghidra_project.getProject().getProjectData()
+                for item in programs_list[:MAX_AUTO_OPEN_PROGRAMS]:
+                    item_path = item.get("path") or item.get("name") or ""
+                    if not item_path:
+                        continue
+                    try:
+                        domain_file = project_data.getFile(item_path)
+                        if domain_file is None:
+                            continue
+                        program = self._open_program_from_domain_file(domain_file)
+                        if program is None:
+                            continue
+
+                        is_primary = (item_path == target_path)
+
+                        if is_primary:
+                            # Primary program: set as active (with decompiler)
+                            self._set_active_program_info(program, item_path)
+                            opened_program = item_path
+                            if analyze:
+                                try:
+                                    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                                    flat_api = FlatProgramAPI(program)  # noqa: F841
+                                    from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+                                    GhidraProgramUtilities.setAnalyzedFlag(program, True)
+                                except Exception as analysis_exc:
+                                    logger.warning("Post-open analysis for .gpr program failed: %s", analysis_exc)
+                        else:
+                            # Secondary programs: store in session with decompiler=None (lazy init)
+                            from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
+
+                            secondary_info = _ProgramInfo(
+                                name=program.getName() if hasattr(program, "getName") else Path(item_path).name,
+                                program=program,
+                                flat_api=None,
+                                decompiler=None,
+                                metadata={},
+                                ghidra_analysis_complete=True,
+                                file_path=None,
+                                load_time=time.time(),
+                            )
+                            SESSION_CONTEXTS.set_active_program_info(session_id, item_path, secondary_info)
+                            # Restore active key to the primary program (set_active_program_info changes it)
+                            if opened_program:
+                                session = SESSION_CONTEXTS.get_or_create(session_id)
+                                session.active_program_key = opened_program
+
+                        eager_opened.append(item_path)
+                    except Exception as exc:
+                        logger.debug(
+                            "eager_open_program_skip path_tail=%s exc_type=%s",
+                            basename_hint(item_path),
+                            type(exc).__name__,
+                        )
+                        continue
+            except Exception as exc:
+                logger.warning("Failed to eagerly open programs from .gpr project: %s", exc)
+
+        # If we didn't open the primary target above (it wasn't in programs_list), try it directly
+        if opened_program is None and target_path and not open_all:
             try:
                 project_data = ghidra_project.getProject().getProjectData()
                 domain_file = project_data.getFile(target_path)
@@ -1588,6 +1673,31 @@ class ProjectToolProvider(ToolProvider):
             except Exception as exc:
                 logger.warning("Failed to auto-open program from .gpr project: %s", exc)
 
+        logger.info(
+            "gpr_eager_open_summary session_id=%s total_programs=%s eager_opened=%s active_tail=%s",
+            redact_session_id(session_id),
+            len(programs_list),
+            len(eager_opened),
+            basename_hint(opened_program) if opened_program else "—",
+        )
+
+        # --- Collect per-program details for eagerly-opened programs ---
+        program_details: list[dict[str, Any]] = []
+        try:
+            from agentdecompile_cli.mcp_server.program_metadata import collect_program_summary
+
+            session = SESSION_CONTEXTS.get_or_create(session_id)
+            for prog_key, prog_info in (session.open_programs or {}).items():
+                try:
+                    detail = collect_program_summary(prog_info)
+                    detail["programPath"] = prog_key
+                    detail["isActive"] = (prog_key == opened_program)
+                    program_details.append(detail)
+                except Exception as detail_exc:
+                    logger.debug("program_detail_skip path=%s exc=%s", basename_hint(prog_key), detail_exc)
+        except Exception as meta_exc:
+            logger.debug("program_metadata_collection_failed: %s", meta_exc)
+
         return create_success_response(
             {
                 "action": "open",
@@ -1600,7 +1710,14 @@ class ProjectToolProvider(ToolProvider):
                 "programCount": len(programs_list),
                 "programs": programs_list,
                 "openedProgram": opened_program,
-                "message": (f"Opened .gpr project '{project_name}' with {len(programs_list)} programs." + (f" Active program: {opened_program}" if opened_program else "")),
+                "eagerOpenedCount": len(eager_opened),
+                "eagerOpenedPrograms": eager_opened,
+                "programDetails": program_details,
+                "message": (
+                    f"Opened .gpr project '{project_name}' with {len(programs_list)} programs "
+                    f"({len(eager_opened)} pre-loaded)."
+                    + (f" Active program: {opened_program}" if opened_program else "")
+                ),
             },
         )
 

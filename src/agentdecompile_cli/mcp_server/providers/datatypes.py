@@ -45,7 +45,7 @@ class DataTypeToolProvider(ToolProvider):
                         "categoryPath": {"type": "string", "description": "Used when mode is 'list' to restrict search to a Ghidra folder category (e.g. '/MyTypes')."},
                         "dataTypeString": {"type": "string", "description": "The C-style text definition of the type you want to apply or parse (e.g., 'unsigned int', 'char *')."},
                         "addressOrSymbol": {"type": "string", "description": "If mode is 'apply', the address or symbol name where you want to stick this data type label."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of data type results to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of data type results to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],

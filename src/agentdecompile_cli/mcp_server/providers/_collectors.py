@@ -72,7 +72,7 @@ _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
 )
 
 
-def iter_items(source: Any):
+def iter_items(source: Any) -> Any:
     """Yield items from a Java iterator (hasNext/next) or Python iterable so providers can use one loop style."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:iter_items")
     if source is None:
@@ -113,17 +113,58 @@ def collect_function_tags(func: GhidraFunction) -> list[str]:
     return values
 
 
+def make_task_monitor() -> Any:
+    """Return a no-op TaskMonitor for Ghidra API calls that require a non-null monitor.
+
+    getCallingFunctions(None) and getCalledFunctions(None) return empty sets in
+    Ghidra < 12.0.3 because null was not supported until that release.  Always
+    passing a real (non-null) monitor fixes the behaviour across all versions.
+
+    Fallback chain (tried in order):
+    1. TaskMonitor.DUMMY          — Ghidra 12.x and most v11 builds
+    2. TaskMonitorAdapter.DUMMY_MONITOR — older Ghidra internal adapters (v11/jHidra)
+    3. ConsoleTaskMonitor()       — available in almost all released Ghidra versions
+    4. None                       — non-Ghidra environments (unit tests only)
+    """
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:make_task_monitor")
+    # 1. Preferred: TaskMonitor.DUMMY (Ghidra 12.x, most Ghidra 11.x builds)
+    try:
+        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        dummy = getattr(TaskMonitor, "DUMMY", None)
+        if dummy is not None:
+            return dummy
+    except Exception:
+        pass
+    # 2. Fallback: TaskMonitorAdapter.DUMMY_MONITOR (some older Ghidra/jHidra variants)
+    try:
+        from ghidra.util.task import TaskMonitorAdapter  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        dummy = getattr(TaskMonitorAdapter, "DUMMY_MONITOR", None)
+        if dummy is not None:
+            return dummy
+    except Exception:
+        pass
+    # 3. Fallback: construct a ConsoleTaskMonitor (available in virtually all versions)
+    try:
+        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        return ConsoleTaskMonitor()
+    except Exception:
+        pass
+    # 4. Last resort: None — only reached in non-Ghidra test environments
+    return None
+
+
 def collect_function_call_counts(func: GhidraFunction) -> dict[str, int]:
     """Return callerCount and calleeCount for a function (number of callers and called functions)."""
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_call_counts")
+    monitor = make_task_monitor()
     caller_count: int = 0
     callee_count: int = 0
     try:
-        caller_count = len(list(func.getCallingFunctions(None)))
+        caller_count = len(list(func.getCallingFunctions(monitor)))
     except Exception:
         caller_count = 0
     try:
-        callee_count = len(list(func.getCalledFunctions(None)))
+        callee_count = len(list(func.getCalledFunctions(monitor)))
     except Exception:
         callee_count = 0
     return {"callerCount": caller_count, "calleeCount": callee_count}

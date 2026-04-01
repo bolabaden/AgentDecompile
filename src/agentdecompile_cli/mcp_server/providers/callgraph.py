@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
         Program as GhidraProgram,
     )
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.providers._collectors import make_task_monitor
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -59,8 +61,8 @@ class CallGraphToolProvider(ToolProvider):
             "type": "object",
             "properties": {
                 "programPath": {"type": "string", "description": "The path to the program containing the function."},
-                "function": {"type": "string", "description": "The exact name or starting address of the function to trace. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk."},
-                "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function. Supports both thunk and IAT addresses; IAT is resolved to the thunk."},
+                "function": {"type": "string", "description": "The exact name or starting address of the function to trace. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk. Omit to get a whole-program overview (all functions with caller/callee counts, sorted by most-called)."},
+                "addressOrSymbol": {"type": "string", "description": "Alternative parameter for the function. Supports both thunk and IAT addresses; IAT is resolved to the thunk. Omit to get the whole-program overview."},
                 "functionIdentifier": {"type": "string", "description": "Another alternative parameter for the function to trace."},
                 "mode": {
                     "type": "string",
@@ -84,7 +86,7 @@ class CallGraphToolProvider(ToolProvider):
         return [
             types.Tool(
                 name=Tool.GET_CALL_GRAPH.value,
-                description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code.",
+                description="List or map out the relationships of who calls what function (callers/xrefs) and what functions are called from here (callees). Critical for tracking execution flow, finding the main path to a vulnerability, or figuring out how to reach hidden code. Call with no arguments to get a whole-program overview (all functions sorted by caller count, entry points flagged).",
                 inputSchema=schema,
             ),
         ]
@@ -94,8 +96,10 @@ class CallGraphToolProvider(ToolProvider):
         self._require_program()
         # function/addressOrSymbol: resolved via AddressUtil (0x=hex, else decimal) in CallGraphTool or _resolve_function
         func = self._get_address_or_symbol(args)
+
+        # No function specified → return whole-program call graph overview
         if not func:
-            raise ValueError("function or addressOrSymbol is required")
+            return await self._handle_overview(args)
 
         mode_explicit = self._get_str(args, "mode", "action", "operation")
         direction_raw = self._get_str(args, "direction", default="calling")
@@ -155,8 +159,8 @@ class CallGraphToolProvider(ToolProvider):
         # Fallback: use Ghidra API directly
         try:
             assert self.program_info is not None, "Program info is not available"
-            program = self.program_info.program
-            fm = self._get_function_manager(program)
+            program: GhidraProgram = self.program_info.program
+            fm: GhidraFunctionManager = self._get_function_manager(program)  # noqa: F841
 
             target_func: GhidraFunction = self._resolve_function(func, program=program)
 
@@ -195,9 +199,50 @@ class CallGraphToolProvider(ToolProvider):
                 },
             )
 
+    async def _handle_overview(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Whole-program call graph overview when no function is specified.
+
+        Returns all functions with their caller/callee counts, sorted by callerCount
+        descending (hotspots first).  Functions with 0 callers are flagged as entry
+        points (likely root functions or dead code).  Respects maxNodes.
+        """
+        logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_overview")
+        max_nodes = self._get_int(args, "maxnodes", default=250)
+        assert self.program_info is not None, "Program info is not available"
+        program = self.program_info.program
+        fm = program.getFunctionManager()
+
+        entries: list[dict[str, Any]] = []
+        _monitor = make_task_monitor()
+        for func in fm.getFunctions(True):
+            caller_count = func.getCallingFunctions(_monitor).size() if hasattr(func.getCallingFunctions(_monitor), "size") else len(list(func.getCallingFunctions(_monitor)))
+            callee_count = func.getCalledFunctions(_monitor).size() if hasattr(func.getCalledFunctions(_monitor), "size") else len(list(func.getCalledFunctions(_monitor)))
+            entries.append({
+                "name": str(func.getName()),
+                "address": str(func.getEntryPoint()),
+                "callerCount": int(caller_count),
+                "calleeCount": int(callee_count),
+                "isExternal": bool(func.isExternal()),
+                "isThunk": bool(func.isThunk()),
+                "isEntryPoint": int(caller_count) == 0,
+            })
+
+        entries.sort(key=lambda x: x["callerCount"], reverse=True)
+        truncated = len(entries) > max_nodes
+        entries = entries[:max_nodes]
+
+        return create_success_response({
+            "mode": "overview",
+            "totalFunctions": len(entries),
+            "truncated": truncated,
+            "maxNodes": max_nodes,
+            "functions": entries,
+            "note": "Sorted by callerCount descending. isEntryPoint=true means no callers found (likely root/entry/dead-code). Pass function= to get a specific function's call graph.",
+        })
+
     async def _handle_callers(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callers")
-        callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
+        callers = list(islice(target_func.getCallingFunctions(make_task_monitor()), max_nodes))
         caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
 
         mode = self._get_str(args, "mode", default="callers")
@@ -206,7 +251,7 @@ class CallGraphToolProvider(ToolProvider):
         if mode_n in ("commoncallers", "common_callers") and second:
             second_func = self._resolve_function(second, program=program)
             if second_func:
-                second_callers = {c.getName() for c in second_func.getCallingFunctions(None)}
+                second_callers = {c.getName() for c in second_func.getCallingFunctions(make_task_monitor())}
                 common = [c for c in caller_info if c["name"] in second_callers]
                 return create_success_response({"function": func, "secondFunction": second, "mode": mode, "commonCallers": common, "count": len(common)})
 
@@ -214,15 +259,15 @@ class CallGraphToolProvider(ToolProvider):
 
     async def _handle_callees(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callees")
-        callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
+        callees = list(islice(target_func.getCalledFunctions(make_task_monitor()), max_nodes))
         callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
         mode = self._get_str(args, "mode", default="callees")
         return create_success_response({"function": func, "mode": mode, "callees": callee_info, "count": len(callee_info)})
 
     async def _handle_graph(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_graph")
-        callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
-        callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
+        callers = list(islice(target_func.getCallingFunctions(make_task_monitor()), max_nodes))
+        callees = list(islice(target_func.getCalledFunctions(make_task_monitor()), max_nodes))
         return create_success_response(
             {
                 "function": func,

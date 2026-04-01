@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 from mcp import types
 
-from agentdecompile_cli.mcp_server.providers._collectors import collect_functions
+from agentdecompile_cli.mcp_server.providers._collectors import collect_functions, make_task_monitor
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -60,7 +60,7 @@ class FunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The path to the program containing the functions."},
                         "namePattern": {"type": "string", "description": "Optional regular expression used to filter down the function names (e.g., '^sub_' to find all default-named subs)."},
                         "includeExternals": {"type": "boolean", "default": True, "description": "Whether to include functions that are dynamically linked to external libraries (like kernel32.dll or libc)."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of functions to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of functions to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],
@@ -89,7 +89,7 @@ class FunctionToolProvider(ToolProvider):
                             "description": "Operation mode. What specific aspect of the function you want to see: 'info' provides generic traits (size, parameters), 'decompile' converts to C code, 'disassemble' provides raw instruction assembly strings, and 'calls' traces relationships. If omitted, returns all four views.",
                         },
                         "timeout": {"type": "integer", "default": 60, "description": "Seconds to wait for the decompiler before aborting. Typical values are 30–120. Do not lower this below 30 unless the user explicitly wants a fast-fail."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of results to return when falling back to list view. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of results to return when falling back to list view. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracker."},
                     },
                     "required": [],
@@ -324,8 +324,9 @@ class FunctionToolProvider(ToolProvider):
 
     async def _handle_calls(self, args: dict[str, Any], target_func: GhidraFunction, program: GhidraProgram, max_results: int, timeout: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_calls")
-        callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
-        callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
+        _monitor = make_task_monitor()
+        callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(_monitor)]
+        callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(_monitor)]
         result: dict[str, Any] = {
             "name": target_func.getName(),
             "address": str(target_func.getEntryPoint()),

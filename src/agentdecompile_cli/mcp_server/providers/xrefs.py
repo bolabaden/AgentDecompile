@@ -47,12 +47,12 @@ class CrossReferencesToolProvider(ToolProvider):
         return [
             types.Tool(
                 name=Tool.GET_REFERENCES.value,
-                description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address. For targets in the .rsrc section, also includes LoadStringA/LoadStringW call sites (resource strings are referenced indirectly).",
+                description="Find all locations in the code that point to (call/read) or are pointed to by (called/written) a specific memory address. For targets in the .rsrc section, also includes LoadStringA/LoadStringW call sites (resource strings are referenced indirectly). If no addressOrSymbol is given, returns the most-referenced functions in the program sorted by inbound reference count (a hot-spot index).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk for consistent results."},
+                        "addressOrSymbol": {"type": "string", "description": "The target hex address or symbol name. Supports both thunk addresses (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk for consistent results. Optional — omit to get a hot-spot index of the most-referenced functions."},
                         "target": {"type": "string", "description": "Alternative parameter for addressOrSymbol."},
                         "importName": {"type": "string", "description": "Import or external symbol name (e.g. RegOpenKeyExA). Alternative to addressOrSymbol when the target is an external."},
                         "mode": {
@@ -61,7 +61,7 @@ class CrossReferencesToolProvider(ToolProvider):
                             "enum": ["to", "from", "both", "function", "referencers_decomp", "import", "thunk"],
                             "default": "to",
                         },
-                        "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
@@ -69,15 +69,15 @@ class CrossReferencesToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=Tool.LIST_CROSS_REFERENCES.value,
-                description="Extract every interaction mapping to and from a specific target address simultaneously. For .rsrc targets, refs-to include LoadStringA/LoadStringW call sites.",
+                description="Extract every interaction mapping to and from a specific target address simultaneously. For .rsrc targets, refs-to include LoadStringA/LoadStringW call sites. If no addressOrSymbol is given, returns the most-referenced functions in the program sorted by inbound reference count (a hot-spot index).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "addressOrSymbol": {"type": "string", "description": "The target address or symbol. Supports both thunk addresses (e.g. 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk."},
+                        "addressOrSymbol": {"type": "string", "description": "The target address or symbol. Supports both thunk addresses (e.g. 0x004011fc) and IAT addresses (e.g. 0x48f1fc); IAT is resolved to the thunk. Optional — omit to get a hot-spot index of the most-referenced functions."},
                         "target": {"type": "string", "description": "Alternative parameter for address."},
                         "importName": {"type": "string", "description": "Import or external symbol name. Alternative to addressOrSymbol."},
-                        "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of cross-references to return. Typical values are 100\u2013500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": [],
@@ -95,17 +95,21 @@ class CrossReferencesToolProvider(ToolProvider):
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle")
         self._require_program()
-        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", "target", "symbol", "importname", name="addressOrSymbol")
+        addr_str = self._get_str(args, "addressorsymbol", "address", "addr", "target", "symbol", "importname", default="")
         mode = self._get_str(args, "mode", "direction", default="to")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
+        ref_mgr = program.getReferenceManager()
+        fm = self._get_function_manager(program)
+
+        if not addr_str:
+            return await self._handle_index(args, program=program, ref_mgr=ref_mgr, fm=fm, offset=offset, max_results=max_results)
+
         addr = self._resolve_address(addr_str, program=program)
         if addr is None:
             raise ValueError(f"Could not resolve address or symbol: {addr_str!r}. Check format (e.g. 0x401000) and that the program is loaded.")
-        ref_mgr = program.getReferenceManager()
-        fm = self._get_function_manager(program)
 
         return await self._dispatch_handler(
             args,
@@ -128,6 +132,39 @@ class CrossReferencesToolProvider(ToolProvider):
             fm=fm,
             offset=offset,
             max_results=max_results,
+        )
+
+    async def _handle_index(self, args: dict[str, Any], program: GhidraProgram, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
+        """Return a hot-spot index of the most-referenced functions when no address is given."""
+        logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_index")
+        entries: list[dict[str, Any]] = []
+        try:
+            for func in fm.getFunctions(True):
+                ep = func.getEntryPoint()
+                count_to = ref_mgr.getReferenceCountTo(ep)
+                count_from = ref_mgr.getReferenceCountFrom(ep)
+                entries.append(
+                    {
+                        "address": str(ep),
+                        "name": func.getName(),
+                        "referencesTo": count_to,
+                        "referencesFrom": count_from,
+                    }
+                )
+        except Exception as e:
+            logger.debug("_handle_index function iteration failed: %s", e)
+        entries.sort(key=lambda x: x["referencesTo"], reverse=True)
+        total = len(entries)
+        page = entries[offset : offset + max_results]
+        return create_success_response(
+            {
+                "mode": "index",
+                "entries": page,
+                "total": total,
+                "offset": offset,
+                "limit": max_results,
+                "note": "Hot-spot index: all functions sorted by inbound reference count. Pass addressOrSymbol to get xrefs for a specific address.",
+            }
         )
 
     def _is_address_in_rsrc(self, program: GhidraProgram, addr: GhidraAddress) -> bool:

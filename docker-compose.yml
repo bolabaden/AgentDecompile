@@ -12,6 +12,7 @@ x-common-env: &common-env
   UMASK: ${UMASK:-002}
 
 x-common-build-args: &common-build-args
+  ALPINE_BASE_IMAGE: ${ALPINE_BASE_IMAGE:-docker.io/library/alpine:latest}
   GHIDRA_VERSION: ${GHIDRA_VERSION:-}
   PUID: ${PUID:-1001}
   PGID: ${PGID:-999}
@@ -48,12 +49,17 @@ services:
       - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
       - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
       - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
-      # Mount server.conf — configure -ip, port, auth, etc. per official Ghidra docs.
-      # Edit volumes/ghidra/server.conf to match your network setup.
-      - ${CONFIG_PATH:-./volumes}/ghidra/server.conf:/ghidra/server/server.conf
+      # Server configuration (mount custom server.conf here; see docker/server.conf for default).
+      # Official Ghidra Docker README: --volume /path/to/my/configs/server.conf:/ghidra/server/server.conf
+      - ${GHIDRA_SERVER_CONF:-./docker/server.conf}:/ghidra/server/server.conf
     environment:
       <<: *common-env
+      # MODE drives the official Ghidra Docker entrypoint (gui/headless/ghidra-server/bsim/bsim-server/pyghidra).
       MODE: ghidra-server
+      # External IP/hostname for RMI stubs.  Required for clients outside the container network.
+      # If unset, entrypoint auto-detects via ipify.org; set explicitly for LAN-only or known hosts.
+      # Maps to java.rmi.server.hostname (equivalent to -ip flag in server.conf).
+      GHIDRA_IP: ${GHIDRA_IP:-}
       #GHIDRA_USERS:  # Space-separated usernames (admins by default)
     labels:
       traefik.enable: true
@@ -187,10 +193,11 @@ services:
       - ${CONFIG_PATH:-./volumes}/ghidra/repos:/ghidra/repositories
       - ${CONFIG_PATH:-./volumes}/ghidra/projects:/projects
       - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
-      # Mount server.conf for Ghidra server configuration.
-      - ${CONFIG_PATH:-./volumes}/ghidra/server.conf:/ghidra/server/server.conf
+      # Server configuration (same default as ghidra service).
+      - ${GHIDRA_SERVER_CONF:-./docker/server.conf}:/ghidra/server/server.conf
     environment:
       <<: *common-env
+      # AIO runs supervisord internally (ghidra-server + bsim-server + MCP). MODE is not used.
       #GHIDRA_USERS: # Space-separated usernames (admins by default)
     labels:
       traefik.enable: true

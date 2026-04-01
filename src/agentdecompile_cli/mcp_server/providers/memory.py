@@ -61,7 +61,7 @@ class MemoryToolProvider(ToolProvider):
                         },
                         "addressOrSymbol": {"type": "string", "description": "If mode is 'read' or 'data_at', you must supply the start address."},
                         "length": {"type": "integer", "default": 256, "description": "If mode is 'read', how many bytes to pull back."},
-                        "maxResults": {"type": "integer", "default": 100, "description": "Number of memory items to return. Typical values are 100–500. Do not set this below 50 unless the user explicitly asks for only a handful of results."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Number of memory items to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracking."},
                     },
                     "required": [],

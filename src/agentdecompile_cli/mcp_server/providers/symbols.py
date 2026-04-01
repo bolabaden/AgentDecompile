@@ -114,7 +114,7 @@ class SymbolToolProvider(ToolProvider):
                 "limit": {
                     "type": "integer",
                     "default": 100,
-                    "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                    "description": "Number of symbols to return. Typical values are 100\u2013500.",
                 },
                 "offset": {
                     "type": "integer",
@@ -146,7 +146,7 @@ class SymbolToolProvider(ToolProvider):
                         "limit": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of symbols to return. Typical values are 100\u2013500.",
                         },
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
@@ -165,7 +165,7 @@ class SymbolToolProvider(ToolProvider):
                         "limit": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of symbols to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of symbols to return. Typical values are 100\u2013500.",
                         },
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
@@ -182,7 +182,7 @@ class SymbolToolProvider(ToolProvider):
                         "limit": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of imports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of imports to return. Typical values are 100\u2013500.",
                         },
                     },
                     "required": [],
@@ -198,7 +198,7 @@ class SymbolToolProvider(ToolProvider):
                         "limit": {
                             "type": "integer",
                             "default": 100,
-                            "description": "Number of exports to return. Typical values are 100\u2013500. Do not set this below 50 unless the user explicitly asks for only a handful of results.",
+                            "description": "Number of exports to return. Typical values are 100\u2013500.",
                         },
                     },
                     "required": [],
