@@ -76,9 +76,7 @@ class ProgramListResource(ResourceProvider):
                 logger.info(f"ProgramListResource: found {len(programs)} programs from session context")
                 return result
 
-            ghidra_project = (
-                getattr(self.tool_provider_manager, "ghidra_project", None) if self.tool_provider_manager else None
-            )
+            ghidra_project = getattr(self.tool_provider_manager, "ghidra_project", None) if self.tool_provider_manager else None
             if ghidra_project is not None:
                 from agentdecompile_cli.mcp_server.domain_folder_listing import list_project_tree_from_ghidra
 

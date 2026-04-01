@@ -23,6 +23,7 @@ import socket
 import sys
 import tempfile
 import time
+import uuid
 
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -43,7 +44,7 @@ try:
     from ghidrecomp.utility import disable_headless_unsafe_analyzers  # type: ignore[attr-defined]
 except (ImportError, AttributeError):
 
-    def disable_headless_unsafe_analyzers(program: Any) -> None:
+    def disable_headless_unsafe_analyzers(program: GhidraProgram) -> None:
         """No-op when ghidrecomp does not export this (e.g. older or different build)."""
         pass
 
@@ -138,6 +139,69 @@ def _ensure_directory(path: Path | str) -> Path:
     return p
 
 
+def _patch_project_owner(project_dir: str, project_name: str) -> None:
+    """Rewrite the OWNER field in a Ghidra project's ``project.prp`` to match the current JVM user.
+
+    Ghidra records the creating user's ``System.getProperty("user.name")`` as
+    `OWNER` inside ``<project>.rep/project.prp``.  When the JVM user name differs
+    (e.g. different OS account, uv-cached build env, or renamed Windows profile),
+    ``GhidraProject.openProject()`` throws ``NotOwnerException``.
+
+    This helper reads the XML property file, compares the stored owner with the
+    current JVM ``user.name``, and rewrites it in-place when they differ, so the
+    subsequent ``openProject`` call succeeds for **any** local project regardless
+    of which user originally created it.
+
+    Args:
+        project_dir: Directory containing the ``.gpr`` marker and ``.rep`` folder.
+        project_name: Ghidra project name (stem of the ``.gpr`` file).
+    """
+    rep_dir = Path(project_dir) / f"{project_name}.rep"
+    prp_file = rep_dir / "project.prp"
+    if not prp_file.exists():
+        return  # nothing to patch
+
+    try:
+        from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+        jvm_user: str = str(JavaSystem.getProperty("user.name") or "")
+        # Ghidra strips spaces from user.name (see DefaultProjectData.getUserName)
+        jvm_user = jvm_user.replace(" ", "")
+    except Exception:
+        return  # JVM not yet available — caller will handle the exception
+
+    if not jvm_user:
+        return
+
+    try:
+        content = prp_file.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    # Quick XML attribute match: VALUE="<owner_name>" on the OWNER STATE line
+    import re
+
+    match = re.search(r'<STATE\s+NAME="OWNER"\s+TYPE="string"\s+VALUE="([^"]*)"', content)
+    if not match:
+        return
+
+    stored_owner = match.group(1)
+    if stored_owner == jvm_user:
+        return  # already matches
+
+    logger.info(
+        "Patching project OWNER in %s: %r -> %r (JVM user.name)",
+        prp_file,
+        stored_owner,
+        jvm_user,
+    )
+    new_content = content[: match.start(1)] + jvm_user + content[match.end(1) :]
+    try:
+        prp_file.write_text(new_content, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not patch project OWNER: %s", exc)
+
+
 def _iter_domain_items(
     folder: GhidraDomainFolder,
     content_type: str | None = None,
@@ -226,9 +290,7 @@ class PyGhidraContext:
         self._init_analysis_options(force_analysis, verbose_analysis, no_symbols, gdts, program_options)
         self._init_symbol_configuration(symbols_path, sym_file_path, gzfs_path)
         self._init_threading_and_executors(threaded, max_workers, wait_for_analysis)
-        sys.stderr.write(
-            f"[PyGhidraContext] Ready: {len(self.programs)} program(s) loaded, chromadb={'yes' if self.chroma_client else 'no'}, max_workers={self.max_workers}\n"
-        )
+        sys.stderr.write(f"[PyGhidraContext] Ready: {len(self.programs)} program(s) loaded, chromadb={'yes' if self.chroma_client else 'no'}, max_workers={self.max_workers}\n")
 
     def _init_basic_attributes(self, project_name: str, project_path: str | Path) -> None:
         """Initialize basic project attributes."""
@@ -348,7 +410,36 @@ class PyGhidraContext:
         if proj_dir_exists and marker_exists:
             logger.info(f"Opening existing project: {self.project_name}")
             sys.stderr.write(f"[_get_or_create_project] Opening existing LOCAL project: {self.project_name}\n")
-            return GhidraProject.openProject(project_dir_str, self.project_name, False)
+            _patch_project_owner(project_dir_str, self.project_name)
+            try:
+                return GhidraProject.openProject(project_dir_str, self.project_name, False)
+            except Exception as e:
+                # NotOwnerException occurs when a stale project lock exists from a
+                # previous process (e.g. crashed server, or uv-cached JVM user mismatch).
+                # Delete the project and recreate it so the server can start cleanly.
+                err_name = type(e).__name__
+                err_str = str(e)
+                is_not_owner = "NotOwnerException" in err_name or "NotOwnerException" in err_str
+                if not is_not_owner:
+                    raise
+                sys.stderr.write(f"[_get_or_create_project] NotOwnerException opening project {self.project_name!r} — deleting stale project and recreating.\n")
+                logger.warning(
+                    "NotOwnerException opening project %s — deleting and recreating: %s",
+                    self.project_name,
+                    e,
+                )
+                # Remove the .gpr marker and .rep directory
+                import shutil
+
+                marker_file = locator.getMarkerFile()
+                proj_dir_file = locator.getProjectDir()
+                marker_path = Path(str(marker_file))
+                proj_dir_path = Path(str(proj_dir_file))
+                if marker_path.exists():
+                    marker_path.unlink()
+                if proj_dir_path.exists():
+                    shutil.rmtree(proj_dir_path, ignore_errors=True)
+                # Fall through to createProject below
         logger.info(f"Creating new project: {self.project_name}")
         sys.stderr.write(f"[_get_or_create_project] Creating new LOCAL project: {self.project_name}\n")
         return GhidraProject.createProject(
@@ -1041,7 +1132,7 @@ class PyGhidraContext:
         else:
             raise ValueError(f"Invalid domain file or program: {df_or_prog}")
 
-        prog_info: GhidraProgramInfo | None = None if df is None else self.programs.get(df.pathname)
+        prog_info: ProgramInfo | None = None if df is None else self.programs.get(df.pathname)
         if prog_info is not None:
             # program already opened and initialized
             program = prog_info.program
@@ -1052,7 +1143,7 @@ class PyGhidraContext:
                 df_or_prog.getName(),
                 False,
             )
-            prog_info_candidate = self._init_program_info(program)
+            prog_info_candidate: ProgramInfo | None = self._init_program_info(program)
             if prog_info_candidate is not None:
                 self.programs[df_or_prog.getName() if df is None else df.pathname] = prog_info_candidate
             else:
@@ -1342,13 +1433,7 @@ def _has_shared_server_credentials() -> bool:
     directory because Ghidra's file-based locking prevents concurrent access.
     """
     logger.debug("diag.enter %s", "launcher.py:_has_shared_server_credentials")
-    host = (
-        os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip()
-        or os.getenv("AGENTDECOMPILE_SERVER_HOST", "").strip()
-    )
+    host = os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip() or os.getenv("AGENT_DECOMPILE_SERVER_HOST", "").strip() or os.getenv("AGENTDECOMPILE_SERVER_HOST", "").strip()
     result = bool(host)
     sys.stderr.write(f"[_has_shared_server_credentials] AGENT_DECOMPILE_GHIDRA_SERVER_HOST={host!r} -> result={result}\n")
     return result
@@ -1532,11 +1617,17 @@ class AgentDecompileLauncher:
                 os.environ["AGENT_DECOMPILE_PORT"] = str(selected_port)
 
             project_path_setting = os.getenv("AGENT_DECOMPILE_PROJECT_PATH") or os.getenv("AGENTDECOMPILE_PROJECT_PATH")
-            sys.stderr.write(
-                f"[launcher.start] project_directory={project_directory!r}, project_name={project_name!r}, project_path_setting={project_path_setting!r}, selected_host={selected_host!r}, selected_port={selected_port}\n"
-            )
+            sys.stderr.write(f"[launcher.start] project_directory={project_directory!r}, project_name={project_name!r}, project_path_setting={project_path_setting!r}, selected_host={selected_host!r}, selected_port={selected_port}\n")
+
+            # Track whether the project path/name were explicitly specified by the
+            # user (CLI arg or env var) vs. the built-in defaults.  When no
+            # explicit project is configured and the default project is already
+            # locked by another instance, we automatically fall back to a fresh
+            # uniquely-named project instead of crashing.
+            _project_is_explicit = False
 
             if project_path_setting:
+                _project_is_explicit = True
                 sys.stderr.write("[launcher.start] BRANCH: project_path_setting from env -> resolving...\n")
                 projects_dir, resolved_project_name, resolved_project_gpr = _resolve_project_path_setting(
                     project_path_setting,
@@ -1555,9 +1646,11 @@ class AgentDecompileLauncher:
                 _default_dirs = {"agentdecompile_projects", "./agentdecompile_projects"}
                 _is_default_dir = Path(project_directory).name in _default_dirs or str(Path(project_directory)).replace("\\", "/").endswith("agentdecompile_projects")
                 _has_shared = _has_shared_server_credentials()
-                sys.stderr.write(
-                    f"[launcher.start] BRANCH: project_directory={project_directory!r}, _is_default_dir={_is_default_dir}, _has_shared_server_credentials={_has_shared}, Path.name={Path(project_directory).name!r}\n"
-                )
+                # Consider the project explicit if the user customized the
+                # directory path OR the project name (via CLI or env var).
+                _env_project_name = (os.getenv("AGENT_DECOMPILE_PROJECT_NAME") or os.getenv("AGENTDECOMPILE_PROJECT_NAME") or "").strip()
+                _project_is_explicit = not _is_default_dir or bool(_env_project_name)
+                sys.stderr.write(f"[launcher.start] BRANCH: project_directory={project_directory!r}, _is_default_dir={_is_default_dir}, _has_shared_server_credentials={_has_shared}, Path.name={Path(project_directory).name!r}\n")
                 if _is_default_dir and _has_shared:
                     self.temp_project_dir = Path(tempfile.mkdtemp(prefix="agentdecompile_shared_"))
                     projects_dir = self.temp_project_dir
@@ -1580,14 +1673,42 @@ class AgentDecompileLauncher:
             # Log configuration once in a readable block (no password value)
             _log_config_block(projects_dir, project_name)
 
-            # Create PyGhidra context for proper Ghidra integration
-            self.pyghidra_context = PyGhidraContext(
-                project_name=project_name,
-                project_path=str(projects_dir),
-                force_analysis=False,
-                verbose_analysis=False,
-                no_symbols=False,
-            )
+            # Create PyGhidra context for proper Ghidra integration.
+            # If the project is locked by another instance and no explicit
+            # project was requested, fall back to a uniquely-named project so
+            # the server can start without user intervention.
+            try:
+                self.pyghidra_context = PyGhidraContext(
+                    project_name=project_name,
+                    project_path=str(projects_dir),
+                    force_analysis=False,
+                    verbose_analysis=False,
+                    no_symbols=False,
+                )
+            except Exception as _lock_err:
+                _lock_err_name = type(_lock_err).__name__
+                _lock_err_str = str(_lock_err)
+                _is_lock = "LockException" in _lock_err_name or "LockException" in _lock_err_str
+                if not _is_lock or _project_is_explicit:
+                    raise
+                # Default project is locked — create a fresh unique project
+                fallback_name = f"agdec_{uuid.uuid4().hex[:12]}"
+                sys.stderr.write(f"[launcher.start] WARNING: Default project {project_name!r} is locked by another instance. Falling back to unique project: {fallback_name!r}\n")
+                logger.warning(
+                    "Default project %r locked — falling back to unique project %r: %s",
+                    project_name,
+                    fallback_name,
+                    _lock_err,
+                )
+                project_name = fallback_name
+                _log_config_block(projects_dir, project_name)
+                self.pyghidra_context = PyGhidraContext(
+                    project_name=project_name,
+                    project_path=str(projects_dir),
+                    force_analysis=False,
+                    verbose_analysis=False,
+                    no_symbols=False,
+                )
 
             # Create program info that will be populated when programs are loaded
             self.program_info = ProgramInfo(
@@ -1629,8 +1750,45 @@ class AgentDecompileLauncher:
                     },
                 )
 
-            # Start the server
-            self.port = self.mcp_server.start()
+            # Start the server.  When the configured port is already in use
+            # (e.g. another agentdecompile-server instance on the same host),
+            # auto-recover by picking a random available port so that the stdio
+            # bridge still works. The user is warned clearly.
+            try:
+                self.port = self.mcp_server.start()
+            except RuntimeError as _port_err:
+                if "already in use" not in str(_port_err):
+                    raise
+                # Pick a random available port and retry once
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _tmp:
+                    _tmp.bind((selected_host, 0))
+                    fallback_port = int(_tmp.getsockname()[1])
+                sys.stderr.write(
+                    f"[launcher.start] WARNING: Port {server_config.port} on {selected_host} is already in use. "
+                    f"Auto-selecting random port {fallback_port} so the server can start.\n"
+                    f"  Tip: stop the other process or pass --port <N> to choose a specific port.\n"
+                )
+                logger.warning(
+                    "Port %s in use — falling back to random port %s: %s",
+                    server_config.port, fallback_port, _port_err,
+                )
+                server_config.port = fallback_port
+                os.environ["AGENT_DECOMPILE_PORT"] = str(fallback_port)
+                self.mcp_server = PythonMcpServer(server_config, auth_config=auth_config)
+                self.mcp_server.set_program_info(self.program_info)
+                if self.pyghidra_context is not None:
+                    self.mcp_server.set_ghidra_project(self.pyghidra_context.project)
+                    self.mcp_server.set_runtime_context(
+                        {
+                            "projectDirectory": str(projects_dir),
+                            "projectName": project_name,
+                            "projectPathGpr": str(Path(projects_dir) / f"{project_name}.gpr"),
+                            "serverHost": selected_host,
+                            "serverPort": fallback_port,
+                            "transportMode": "local-pyghidra",
+                        },
+                    )
+                self.port = self.mcp_server.start()
             sys.stderr.write(f"AgentDecompile ready on port {self.port}\n")
 
             return self.port

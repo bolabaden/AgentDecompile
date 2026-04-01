@@ -15,7 +15,20 @@ import json
 import logging
 import re
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompInterface as GhidraDecompInterface,
+    )
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+    )
 
 from mcp import types
 
@@ -291,7 +304,7 @@ class FunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_info(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+    async def _handle_info(self, args: dict[str, Any], target_func: GhidraFunction, program: GhidraProgram, max_results: int, timeout: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_info")
         result: dict[str, Any] = {
             "name": target_func.getName(),
@@ -309,7 +322,7 @@ class FunctionToolProvider(ToolProvider):
         }
         return create_success_response(result)
 
-    async def _handle_calls(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+    async def _handle_calls(self, args: dict[str, Any], target_func: GhidraFunction, program: GhidraProgram, max_results: int, timeout: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_calls")
         callers = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCallingFunctions(None)]
         callees = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in target_func.getCalledFunctions(None)]
@@ -325,7 +338,7 @@ class FunctionToolProvider(ToolProvider):
         }
         return create_success_response(result)
 
-    async def _handle_decompile(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+    async def _handle_decompile(self, args: dict[str, Any], target_func: GhidraFunction, program: GhidraProgram, max_results: int, timeout: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_decompile")
         result: dict[str, Any] = {
             "name": target_func.getName(),
@@ -334,7 +347,7 @@ class FunctionToolProvider(ToolProvider):
             "view": "decompile",
         }
         owns_decomp = False
-        decomp: Any = None
+        decomp: GhidraDecompInterface | None = None
         try:
             from agentdecompile_cli.mcp_utils.decompiler_util import (
                 get_decompiled_function_from_results,
@@ -421,13 +434,13 @@ class FunctionToolProvider(ToolProvider):
 
         return create_success_response(merge_decompile_dict_keys(result))
 
-    async def _handle_disassemble(self, args: dict[str, Any], target_func: Any, program: Any, max_results: int, timeout: int) -> list[types.TextContent]:
+    async def _handle_disassemble(self, args: dict[str, Any], target_func: GhidraFunction, program: GhidraProgram, max_results: int, timeout: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider._handle_disassemble")
         instructions: list[dict[str, Any]] = []
-        listing: Any = self._get_listing(program)
-        body: Any = target_func.getBody()
+        listing: GhidraListing = self._get_listing(program)
+        body: GhidraAddressSetView = target_func.getBody()
         if body:
-            instr_iter: Any = listing.getInstructions(body, True)
+            instr_iter = listing.getInstructions(body, True)
             while instr_iter.hasNext() and len(instructions) < max_results:
                 instr = instr_iter.next()
                 instructions.append(

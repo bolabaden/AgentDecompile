@@ -13,7 +13,7 @@ import difflib
 import logging
 import re
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -40,6 +40,9 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     n,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -517,7 +520,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         *,
         scope: str,
-        program: Any,
+        program: GhidraProgram,
         queries: list[str],
         mode: str,
         case_sensitive: bool,
@@ -637,7 +640,7 @@ class SearchEverythingToolProvider(ToolProvider):
 
         return best
 
-    def _search_functions(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_functions(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_functions")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
@@ -650,7 +653,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append(row)
         return results
 
-    def _search_function_signatures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_function_signatures(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_signatures")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
@@ -664,7 +667,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append(row)
         return results
 
-    def _search_function_parameters(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_function_parameters(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_parameters")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
@@ -694,7 +697,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 results.append(row)
         return results
 
-    def _search_tags(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_tags(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_tags")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
@@ -710,7 +713,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 results.append(row)
         return results
 
-    def _search_bookmarks(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_bookmarks(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_bookmarks")
         results: list[dict[str, Any]] = []
         for bm in collect_bookmarks(program, limit=per_scope_limit):
@@ -727,7 +730,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "bookmarks", "resultType": "bookmark", "address": str(bm.get("address", "")), "type": str(bm.get("type", "")), "category": str(bm.get("category", "")), "comment": str(bm.get("comment", "")), **best})
         return results
 
-    def _search_comments(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_comments(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_comments")
         results: list[dict[str, Any]] = []
         for comment in collect_comments(program, limit=per_scope_limit):
@@ -751,7 +754,7 @@ class SearchEverythingToolProvider(ToolProvider):
             )
         return results
 
-    def _search_constants(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_instructions_scan: int) -> list[dict[str, Any]]:
+    def _search_constants(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_instructions_scan: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_constants")
         constants, _instr_count = collect_constants(program, max_instructions=max_instructions_scan)
         results: list[dict[str, Any]] = []
@@ -769,7 +772,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "constants", "resultType": "constant", "value": int(item.get("value", 0)), "hex": str(item.get("hex", "")), "occurrences": int(item.get("occurrences", 0)), "samples": item.get("samples", []), **best})
         return results
 
-    def _search_decompilation(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, decompile_timeout: int) -> list[dict[str, Any]]:
+    def _search_decompilation(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, decompile_timeout: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_decompilation")
         results: list[dict[str, Any]] = []
         try:
@@ -809,7 +812,7 @@ class SearchEverythingToolProvider(ToolProvider):
             logger.warning("Decompilation scope failed: %s", e)
         return results
 
-    def _search_disassembly(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, max_instructions_scan: int) -> list[dict[str, Any]]:
+    def _search_disassembly(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, max_instructions_scan: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_disassembly")
         fm = self._get_function_manager(program)
         listing = self._get_listing(program)
@@ -836,7 +839,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 results.append({"scope": "disassembly", "resultType": "instruction", "function": str(func.getName()), "functionAddress": str(func.getEntryPoint()), "address": str(ins.getAddress()), "instruction": text, **match})
         return results
 
-    def _search_symbols(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_symbols(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_symbols")
         results: list[dict[str, Any]] = []
         for sym in collect_symbols(program, limit=per_scope_limit):
@@ -849,7 +852,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "symbols", "resultType": "symbol", "name": name, "address": str(sym.get("address", "")), "symbolType": str(sym.get("symbolType", "")), "namespace": str(sym.get("namespace", "")), "source": str(sym.get("source", "")), **match})
         return results
 
-    def _search_imports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_imports(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_imports")
         results: list[dict[str, Any]] = []
         for sym in collect_imports(program, limit=per_scope_limit):
@@ -862,7 +865,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "imports", "resultType": "import", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), "library": str(sym.get("library", "")), **match})
         return results
 
-    def _search_exports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_exports(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_exports")
         results: list[dict[str, Any]] = []
         for sym in collect_exports(program, limit=per_scope_limit):
@@ -875,7 +878,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "exports", "resultType": "export", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match})
         return results
 
-    def _search_namespaces(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_namespaces(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_namespaces")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
@@ -892,7 +895,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "namespaces", "resultType": "namespace", "name": name, "address": str(sym.get("address", "")), **match})
         return results
 
-    def _search_classes(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_classes(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_classes")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
@@ -909,7 +912,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "classes", "resultType": "class", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match})
         return results
 
-    def _search_strings(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_strings(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_strings")
         results: list[dict[str, Any]] = []
         for data in collect_strings(program, min_len=1, limit=per_scope_limit, ghidra_tools=self.ghidra_tools):
@@ -922,7 +925,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "strings", "resultType": "string", "address": str(data.get("address", "")), "value": value, "length": int(data.get("length", len(value))), "dataType": str(data.get("dataType", "")), **match})
         return results
 
-    def _search_data_types(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_data_types(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_types")
         results: list[dict[str, Any]] = []
         for dt in collect_data_types(program, limit=per_scope_limit):
@@ -939,7 +942,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "data_types", "resultType": "data_type", "name": str(dt.get("name", "")), "displayName": str(dt.get("displayName", "")), "categoryPath": str(dt.get("categoryPath", "")), "description": str(dt.get("description", "")), "length": int(dt.get("length", 0)), **best})
         return results
 
-    def _search_data_type_archives(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_data_type_archives(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_type_archives")
         results: list[dict[str, Any]] = []
         for archive in collect_data_type_archives(program, limit=per_scope_limit):
@@ -952,7 +955,7 @@ class SearchEverythingToolProvider(ToolProvider):
             results.append({"scope": "data_type_archives", "resultType": "data_type_archive", "name": name, "id": str(archive.get("id", "")), "type": str(archive.get("type", "")), "categoryCount": archive.get("categoryCount"), "dataTypeCount": archive.get("dataTypeCount"), **match})
         return results
 
-    def _search_structures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_structures(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structures")
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program, limit=per_scope_limit):
@@ -981,7 +984,7 @@ class SearchEverythingToolProvider(ToolProvider):
             )
         return results
 
-    def _search_structure_fields(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_structure_fields(self, program: GhidraProgram, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structure_fields")
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program):

@@ -1,0 +1,58 @@
+[
+  {
+    "name": "open",
+    "arguments": {
+      "path": "local_verify"
+    }
+  },
+  {
+    "name": "list-project-files",
+    "arguments": {}
+  },
+  {
+    "name": "import-binary",
+    "arguments": {
+      "filePath": "C:\\WINDOWS\\system32\\hostname.exe",
+      "programPath": "hostname.exe",
+      "enableVersionControl": false,
+      "analyzeAfterImport": true
+    }
+  },
+  {
+    "name": "list-project-files",
+    "arguments": {}
+  },
+  {
+    "name": "get-current-program",
+    "arguments": {}
+  },
+  {
+    "name": "list-functions",
+    "arguments": {
+      "limit": 3
+    }
+  },
+  {
+    "name": "list-exports",
+    "arguments": {}
+  },
+  {
+    "name": "list-imports",
+    "arguments": {
+      "limit": 5
+    }
+  },
+  {
+    "name": "decompile-function",
+    "arguments": {
+      "functionIdentifier": "entry"
+    }
+  },
+  {
+    "name": "get-call-graph",
+    "arguments": {
+      "function": "entry",
+      "mode": "graph"
+    }
+  }
+]

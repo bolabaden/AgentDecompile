@@ -52,8 +52,9 @@ if TYPE_CHECKING:
         DomainFile as GhidraDomainFile,
         DomainFolder as GhidraDomainFolder,
     )
-    from ghidra.framework.options import ToolOptions as GhidraToolOptions # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.options import ToolOptions as GhidraToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.options import OptionType as GhidraOptionType  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
         Program as GhidraProgram,
@@ -216,6 +217,9 @@ class PyGhidraContext:
         try:
             if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
                 logger.info(f"Opening existing project: {self.project_name}")
+                from agentdecompile_cli.launcher import _patch_project_owner
+
+                _patch_project_owner(project_dir_str, self.project_name)
                 return GhidraProject.openProject(project_dir_str, self.project_name, False)
             logger.info(f"Creating new project: {self.project_name}")
             return GhidraProject.createProject(
@@ -797,6 +801,7 @@ class PyGhidraContext:
             from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
                 Program as GhidraProgram,
             )
+
             for future in concurrent.futures.as_completed(futures):
                 result: GhidraDomainFile | GhidraProgram | None = future.result()
                 if result is None:
@@ -836,12 +841,12 @@ class PyGhidraContext:
     ):
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.analyze_program")
         from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.framework.model import DomainFile as GhidraDomainFile # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.model.listing import Program as GhidraProgram # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.util import GhidraProgramUtilities as GhidraProgramUtilities # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from java.io import File as JavaFile # pyright: ignore[reportMissingImports]
+        from ghidra.framework.model import DomainFile as GhidraDomainFile  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.util import GhidraProgramUtilities as GhidraProgramUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
 
         # Import symbol utilities from ghidrecomp (disable_headless_unsafe_analyzers may be missing in some builds)
         from ghidrecomp.utility import (
@@ -850,10 +855,12 @@ class PyGhidraContext:
             set_remote_pdbs,
             setup_symbol_server,
         )
+
         try:
             if not TYPE_CHECKING:
                 from ghidrecomp.utility import disable_headless_unsafe_analyzers
         except (ImportError, AttributeError):
+
             def disable_headless_unsafe_analyzers(program: GhidraProgram) -> None:
                 """No-op when ghidrecomp does not export this (e.g. older or different build)."""
 
@@ -984,10 +991,10 @@ class PyGhidraContext:
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.set_analysis_option")
-        from ghidra.program.model.listing import Program as GhidraProgram # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options: GhidraToolOptions = prog.getOptions(GhidraProgram.ANALYSIS_PROPERTIES)
-        option_type: Any = prog_options.getType(option_name)
+        option_type: GhidraOptionType = prog_options.getType(option_name)
 
         option_type_str: str = str(option_type)
         if option_type_str == "INT_TYPE":
@@ -1019,7 +1026,7 @@ class PyGhidraContext:
                 )
         elif option_type_str == "ENUM_TYPE":
             logger.debug("Setting type: ENUM")
-            from java.lang import Enum as JavaEnum # pyright: ignore[reportMissingImports]
+            from java.lang import Enum as JavaEnum  # pyright: ignore[reportMissingImports]
 
             enum_for_option = prog_options.getEnum(option_name, None)
             if enum_for_option is None:
@@ -1089,13 +1096,13 @@ class PyGhidraContext:
     ):
         """Apply GDT to program"""
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.apply_gdt")
-        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd as GhidraApplyFunctionDataTypesCmd # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.model.address import AddressSetView as GhidraAddressSetView # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.model.data import FileDataTypeManager as GhidraFileDataTypeManager # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.program.model.symbol import SourceType as GhidraSourceType # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-        from java.io import File as JavaFile # pyright: ignore[reportMissingImports]
-        from java.util import List as JavaList # pyright: ignore[reportMissingImports]
+        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd as GhidraApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.address import AddressSetView as GhidraAddressSetView  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.data import FileDataTypeManager as GhidraFileDataTypeManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
+        from java.util import List as JavaList  # pyright: ignore[reportMissingImports]
 
         gdt_path = Path(gdt_path)
 
@@ -1127,7 +1134,7 @@ class PyGhidraContext:
 
     def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface:
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.setup_decompiler")
-        from ghidra.app.decompiler import DecompInterface as GhidraDecompInterface, DecompileOptions as GhidraDecompileOptions # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.app.decompiler import DecompInterface as GhidraDecompInterface, DecompileOptions as GhidraDecompileOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options = GhidraDecompileOptions()
 

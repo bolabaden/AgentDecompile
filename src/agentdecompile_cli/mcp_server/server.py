@@ -587,7 +587,7 @@ class PythonMcpServer:
         Uses an outer ASGI middleware to intercept ``/mcp`` and ``/mcp/message`` *before*
         Starlette's router so that all HTTP methods (POST, GET, DELETE) arrive at
         the MCP session handler with ``path="/"`` as the SDK expects.
-        
+
         Every other path (``/docs``, ``/redoc``, ``/openapi.json``, ``/health``) falls
         through to FastAPI's normal router.
         """
@@ -753,9 +753,7 @@ class PythonMcpServer:
                 methods=[method],
                 tags=["mcp"],
                 summary="MCP message compatibility endpoint",
-                description=(
-                    "Compatibility MCP endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."
-                ),
+                description=("Compatibility MCP endpoint for clients that target /mcp/message. Prefer /mcp for new integrations. Runtime traffic is intercepted by the outer MCP middleware before FastAPI routing."),
                 operation_id=f"mcp_message_{method.lower()}",
                 openapi_extra=_mcp_post_openapi_extra() if method == "POST" else None,
                 include_in_schema=True,
@@ -831,10 +829,7 @@ class PythonMcpServer:
             response_start_sent: list[bool] = [False]
 
             # Secure cookie only over TLS or when SESSION_COOKIE_SECURE is set (e.g. behind TLS terminator).
-            cookie_secure: bool = (
-                request_scheme == "https"
-                or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
-            )
+            cookie_secure: bool = request_scheme == "https" or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
             async def send_wrapper(message: dict[str, Any]) -> None:
                 if message.get("type") == "http.response.start" and not response_start_sent[0]:
@@ -848,9 +843,7 @@ class PythonMcpServer:
                             break
                     # Prefer SDK-provided session ID (e.g. new UUID) so client can resend it; else echo request id
                     headers = [(k, v) for k, v in headers if k.lower() != key_lower]
-                    headers.append(
-                        (key_lower, (existing_sid if existing_sid else session_id_for_response.encode("latin1")))
-                    )
+                    headers.append((key_lower, (existing_sid if existing_sid else session_id_for_response.encode("latin1"))))
                     # Set-Cookie for session so clients (e.g. browser or CLI with cookie jar) can resend it.
                     if session_id_for_response != "default":
                         headers.append(_make_session_cookie_header(session_id_for_response, cookie_secure))

@@ -634,12 +634,8 @@ async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_
         return None  # proceed with match-function call
     # Bootstrap shared project for checkout/checkin/checkout-status when path looks like shared repo path
     if tool_name in ("checkout_program", "checkin_program", "checkout_status"):
-        program_path = (
-            payload.get("program_path") or payload.get("programPath") or payload.get("path") or ""
-        )
-        if isinstance(program_path, str) and program_path.strip() and (
-            program_path.startswith("/") or "/" in program_path
-        ):
+        program_path = payload.get("program_path") or payload.get("programPath") or payload.get("path") or ""
+        if isinstance(program_path, str) and program_path.strip() and (program_path.startswith("/") or "/" in program_path):
             open_payload = _build_shared_open_payload(ctx)
             if not open_payload:
                 return None
@@ -803,9 +799,7 @@ async def _call_raw(
     payload.setdefault("format", "markdown")
 
     call_tool_name, safe_payload = _resolve_tool_call_target(tool, payload)
-    prepared_payload, _ = _prepare_tool_payload_with_program_fallback(
-        ctx, call_tool_name, dict(safe_payload)
-    )
+    prepared_payload, _ = _prepare_tool_payload_with_program_fallback(ctx, call_tool_name, dict(safe_payload))
 
     if tool_registry.is_valid_tool(call_tool_name):
         dispatch_display = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
@@ -899,22 +893,16 @@ async def _migrate_metadata_then_checkin(ctx: click.Context, match_payload: dict
             if isinstance(target_paths, str):
                 target_paths = [target_paths]
             if isinstance(target_paths, list) and target_paths:
-                status_name, status_payload_base = _resolve_tool_call_target(
-                    Tool.CHECKOUT_STATUS.value, {"format": "markdown"}
-                )
+                status_name, status_payload_base = _resolve_tool_call_target(Tool.CHECKOUT_STATUS.value, {"format": "markdown"})
                 if tool_registry.is_valid_tool(status_name):
-                    status_name = to_snake_case(
-                        tool_registry.get_display_name(tool_registry.canonicalize_tool_name(status_name))
-                    )
+                    status_name = to_snake_case(tool_registry.get_display_name(tool_registry.canonicalize_tool_name(status_name)))
                 for tpath in target_paths:
                     if not isinstance(tpath, str) or not tpath.strip():
                         continue
                     status_payload = {**status_payload_base, "programPath": tpath.strip()}
                     status_payload = tool_registry.parse_arguments(status_payload, Tool.CHECKOUT_STATUS.value)
                     try:
-                        status_result = await _execute_tool_call(
-                            ctx, status_name, status_payload, client_override=client
-                        )
+                        status_result = await _execute_tool_call(ctx, status_name, status_payload, client_override=client)
                         click.echo(format_output(status_result, _fmt(ctx)))
                     except Exception:
                         pass
@@ -1526,10 +1514,7 @@ def _ensure_dynamic_commands_registered() -> None:
     "--binary",
     "cli_default_program_path",
     default=None,
-    help=(
-        "Default programPath for tools when JSON or flags omit it (before `tool` / `tool-seq` or any subcommand). "
-        "Environment: AGENTDECOMPILE_PROGRAM_PATH, AGENT_DECOMPILE_PROGRAM_PATH, AGENTDECOMPILE_PROGRAM."
-    ),
+    help=("Default programPath for tools when JSON or flags omit it (before `tool` / `tool-seq` or any subcommand). Environment: AGENTDECOMPILE_PROGRAM_PATH, AGENT_DECOMPILE_PROGRAM_PATH, AGENTDECOMPILE_PROGRAM."),
 )
 @click.option(
     "--binary-name",
@@ -4411,11 +4396,7 @@ def _load_tool_seq_steps_arg(steps: str) -> str:
 
 @main.command(
     "tool-seq",
-    help=(
-        'Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]. '
-        "Prefix the argument with @path to load steps from a UTF-8 file (recommended from PowerShell). "
-        "Steps also fail on markdown ## Error / ## Modification conflict in text content (even if isError is false)."
-    ),
+    help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]. Prefix the argument with @path to load steps from a UTF-8 file (recommended from PowerShell). Steps also fail on markdown ## Error / ## Modification conflict in text content (even if isError is false).'),
 )
 @click.argument("steps", required=True)
 @click.option(
@@ -4489,6 +4470,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                     # Ensure we have root/group opts (tool-seq runs as subcommand; ctx.obj may be unset)
                     if not opts and ctx.parent and isinstance(getattr(ctx.parent, "obj", None), dict):
                         opts = ctx.parent.obj or {}
+
                     # Fallback to env so credentials are sent even when opts not propagated
                     def _g(k: str, *alt: str) -> Any:
                         for key in (k, *alt):
@@ -4496,6 +4478,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                             if v is not None and str(v).strip() != "":
                                 return v
                         return None
+
                     if not prepared_arguments.get("serverUsername"):
                         v = _g("ghidra_server_username", "server_username") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME")
                         if v:

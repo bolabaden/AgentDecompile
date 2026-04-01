@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ghidra.framework.client import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        RepositoryAdapter as GhidraRepositoryAdapter,
+    )
+    from ghidra.framework.remote import RepositoryItem as GhidraRepositoryItem  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeSt
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +39,7 @@ def canonical_repository_item_path(folder_path: str, name: str) -> str:
 
 
 def list_repository_adapter_items(
-    repository_adapter: Any,
+    repository_adapter: GhidraRepositoryAdapter,
     *,
     log: logging.Logger | None = None,
     start_time: float | None = None,
@@ -63,7 +70,7 @@ def list_repository_adapter_items(
             _walk(next_path)
 
         try:
-            repo_items: list[Any] = repository_adapter.getItemList(folder_path) or []
+            repo_items: list[GhidraRepositoryItem] = repository_adapter.getItemList(folder_path) or []
         except Exception as exc:
             log.debug("getItemList(%r) failed: %s", folder_path, exc)
             repo_items = []

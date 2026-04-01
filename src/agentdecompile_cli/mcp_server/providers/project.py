@@ -36,6 +36,7 @@ from agentdecompile_cli.mcp_server.repository_adapter_listing import (
 )
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
+    SessionContext,
     get_current_mcp_session_id,
     is_shared_server_handle,
 )
@@ -50,40 +51,34 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
-    from abc import ABC, abstractmethod
-
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompInterface as GhidraDecompInterface,
+    )
     from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.client import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        RepositoryAdapter as GhidraRepositoryAdapter,
+    )
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         DomainFile as GhidraDomainFile,
         DomainFolder as GhidraDomainFolder,
+        DomainObject as GhidraDomainObject,
+        ProjectData as GhidraProjectData,
     )
-    from ghidra.framework.store import CheckoutType as GhidraCheckoutType  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.remote import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        RepositoryItem as GhidraRepositoryItem,
+    )
+    from ghidra.framework.store import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        CheckoutType as GhidraCheckoutType,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
+    from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+    from jpype import JArray
 
-    class ProjectData(ABC):
-        @abstractmethod
-        def getFile(self, filePath: str) -> ProjectData: ...
-        @abstractmethod
-        def getFolder(self, folderPath: str) -> ProjectData: ...
-        @abstractmethod
-        def getRootFolder(self) -> ProjectData: ...
-        @abstractmethod
-        def createFolder(self, folderPath: str) -> ProjectData: ...
-        @abstractmethod
-        def getPathname(self) -> str: ...
-
-    class RepoItem(ABC):
-        @abstractmethod
-        def getDomainFile(self): ...
-
-    class RepoAdapter(ABC):
-        @abstractmethod
-        def getItem(self, folderPath: str, itemName: str): ...
-        @abstractmethod
-        def getVersion(self): ...
-        @abstractmethod
-        def openDatabase(self, folderPath: str, itemName: str, version: int, monitor: Any) -> Any: ...
-        @abstractmethod
-        def checkout(self, folderPath: str, itemName: str, checkoutType: GhidraCheckoutType, programPath: str) -> Any: ...
+    from agentdecompile_cli.context import ProgramInfo
 
 
 logger = logging.getLogger(__name__)
@@ -129,7 +124,7 @@ def _shared_connection_context(
     return context
 
 
-def _shared_adapter_error(server_adapter: Any) -> tuple[str | None, str | None]:
+def _shared_adapter_error(server_adapter: GhidraRepositoryAdapter) -> tuple[str | None, str | None]:
     logger.debug("diag.enter %s", "mcp_server/providers/project.py:_shared_adapter_error")
     getter = getattr(server_adapter, "getLastConnectError", None)
     if getter is None:
@@ -485,7 +480,7 @@ class ProjectToolProvider(ToolProvider):
     def _ensure_shared_repository_exists(
         self,
         *,
-        server_adapter: Any,
+        server_adapter: GhidraRepositoryAdapter,
         repository_names: list[str],
         requested_repository: str | None,
         auth_provided: bool,
@@ -893,9 +888,7 @@ class ProjectToolProvider(ToolProvider):
                 adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (
-                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
-                        ),
+                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -915,10 +908,7 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     ) from exc
                 raise ActionableError(
-                    (
-                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Wrapper exception: {exc_text}."
-                        + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
-                    ),
+                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -942,9 +932,7 @@ class ProjectToolProvider(ToolProvider):
                 message = adapter_error or "unknown authentication/connection failure"
                 if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                     raise ActionableError(
-                        (
-                            f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."
-                        ),
+                        (f"Authentication failed for {server_username}@{server_host}:{server_port} while connecting to the repository server. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
                         context=_shared_connection_context(
                             stage="server-adapter-connect",
                             server_host=server_host,
@@ -963,9 +951,7 @@ class ProjectToolProvider(ToolProvider):
                         ],
                     )
                 raise ActionableError(
-                    (
-                        f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Adapter reported {adapter_error_type or 'unknown'}: {message}."
-                    ),
+                    (f"Repository connection failed for {server_host}:{server_port} during repository-server connect. Adapter reported {adapter_error_type or 'unknown'}: {message}."),
                     context=_shared_connection_context(
                         stage="server-adapter-connect",
                         server_host=server_host,
@@ -986,17 +972,13 @@ class ProjectToolProvider(ToolProvider):
         try:
             logger.info("[connect-shared-project] Listing repository names...")
             repository_names_raw = server_adapter.getRepositoryNames() or []
-            logger.info(
-                "[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else []
-            )
+            logger.info("[connect-shared-project] Found %d repository name(s): %s", len(list(repository_names_raw)), list(repository_names_raw) if repository_names_raw else [])
         except Exception as exc:
             exc_text = str(exc)
             adapter_error_type, adapter_error = _shared_adapter_error(server_adapter)
             if auth_provided and _shared_auth_failed(adapter_error_type, adapter_error):
                 raise ActionableError(
-                    (
-                        f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."
-                    ),
+                    (f"Authentication failed for {server_username}@{server_host}:{server_port} after the repository server connection opened. Wrapper exception: {exc_text}. Adapter reported {adapter_error_type or 'unknown'}: {adapter_error or 'no additional detail'}."),
                     context=_shared_connection_context(
                         stage="repository-list",
                         server_host=server_host,
@@ -1015,10 +997,7 @@ class ProjectToolProvider(ToolProvider):
                     ],
                 ) from exc
             raise ActionableError(
-                (
-                    f"Repository server connection failed for {server_host}:{server_port} while listing repositories. Wrapper exception: {exc_text}."
-                    + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")
-                ),
+                (f"Repository server connection failed for {server_host}:{server_port} while listing repositories. Wrapper exception: {exc_text}." + (f" Adapter reported {adapter_error_type}: {adapter_error}." if adapter_error else "")),
                 context=_shared_connection_context(
                     stage="repository-list",
                     server_host=server_host,
@@ -1103,7 +1082,7 @@ class ProjectToolProvider(ToolProvider):
             logger.info("[connect-shared-project] No path specified, using first repo=%r", repository_name)
 
         logger.info("[connect-shared-project] Opening repository %r ...", repository_name)
-        repository_adapter: Any = server_adapter.getRepository(repository_name)
+        repository_adapter: GhidraRepositoryAdapter = server_adapter.getRepository(repository_name)
         if repository_adapter is None:
             raise ActionableError(
                 f"Failed to get repository handle for '{repository_name}'",
@@ -1256,6 +1235,9 @@ class ProjectToolProvider(ToolProvider):
                 project_name = "shared"
                 locator = ProjectLocator(str(shared_project_dir), project_name)
                 if locator.getMarkerFile().exists():
+                    from agentdecompile_cli.launcher import _patch_project_owner
+
+                    _patch_project_owner(str(shared_project_dir), project_name)
                     ghidra_project = GhidraProject.openProject(str(shared_project_dir), project_name, False)
                 else:
                     ghidra_project = GhidraProject.createProject(str(shared_project_dir), project_name, False)
@@ -1309,12 +1291,7 @@ class ProjectToolProvider(ToolProvider):
                 "checkedOutProgram": checked_out_program,
                 "checkoutError": checkout_error,
                 "message": (
-                    (
-                        f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
-                        if repository_created
-                        else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items."
-                    )
-                    + (f" Checked out: {checked_out_program}" if checked_out_program else "")
+                    (f"Created and connected to shared repository '{repository_name}' and discovered {len(binaries)} items." if repository_created else f"Connected to shared repository '{repository_name}' and discovered {len(binaries)} items.") + (f" Checked out: {checked_out_program}" if checked_out_program else "")
                 ),
             },
         )
@@ -1348,9 +1325,7 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(
-                            recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value
-                        ),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1364,9 +1339,9 @@ class ProjectToolProvider(ToolProvider):
             normalized_project_path = self._normalize_repo_path(path)
             path_name = normalized_project_path.strip("/").split("/")[-1] or normalized_project_path.strip("/")
             project_data = self._get_active_project_data()
-            root_folder: Any = None
+            root_folder: GhidraDomainFolder | None = None
             if project_data is None:
-                ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
                 if ghidra_project is not None:
                     try:
                         root_folder = ghidra_project.getRootFolder()
@@ -1374,7 +1349,7 @@ class ProjectToolProvider(ToolProvider):
                             project_data = root_folder.getProjectData()
                     except Exception:
                         pass
-            domain_file: Any = None
+            domain_file: GhidraDomainFile | None = None
             if project_data is not None:
                 try:
                     domain_file = project_data.getFile(normalized_project_path)
@@ -1405,7 +1380,7 @@ class ProjectToolProvider(ToolProvider):
                     except Exception:
                         pass
             if domain_file is None and root_folder is None:
-                ghidra_project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
                 if ghidra_project is not None and path_name and self._manager is not None:
                     try:
                         root_folder = ghidra_project.getRootFolder()
@@ -1445,9 +1420,7 @@ class ProjectToolProvider(ToolProvider):
                     [
                         "Verify the path exists in the backend filesystem.",
                         "Retry with an absolute path visible to the backend runtime.",
-                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(
-                            recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value
-                        ),
+                        "Call `{}` with `mode=list` on the parent directory to verify available files.".format(recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value) or Tool.LIST_PROJECT_FILES.value),
                         "Retry with an absolute path that exists in the backend filesystem.",
                     ],
                 ),
@@ -1504,7 +1477,7 @@ class ProjectToolProvider(ToolProvider):
         try:
             from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-            ghidra_project: Any = GhidraProject.createProject(str(project_dir), project_name, False)
+            ghidra_project: GhidraProject = GhidraProject.createProject(str(project_dir), project_name, False)
         except Exception as exc:
             raise ActionableError(
                 f"Failed to create .gpr project '{gpr_path}': {exc}",
@@ -1526,7 +1499,10 @@ class ProjectToolProvider(ToolProvider):
         try:
             from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-            ghidra_project: Any = GhidraProject.openProject(str(project_dir), project_name, False)
+            from agentdecompile_cli.launcher import _patch_project_owner
+
+            _patch_project_owner(str(project_dir), project_name)
+            ghidra_project: GhidraProject = GhidraProject.openProject(str(project_dir), project_name, False)
         except Exception as exc:
             raise ActionableError(
                 f"Failed to open .gpr project '{gpr_path}': {exc}",
@@ -1544,7 +1520,7 @@ class ProjectToolProvider(ToolProvider):
         gpr_path: Path,
         project_dir: Path,
         project_name: str,
-        ghidra_project: Any,
+        ghidra_project: GhidraProject,
         args: dict[str, Any],
     ) -> list[types.TextContent]:
         """Set manager/session state and build success response for an open/create .gpr project."""
@@ -1603,7 +1579,7 @@ class ProjectToolProvider(ToolProvider):
                             try:
                                 from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-                                flat_api = FlatProgramAPI(program)
+                                flat_api = FlatProgramAPI(program)  # noqa: F841
                                 from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                                 GhidraProgramUtilities.setAnalyzedFlag(program, True)
@@ -1636,7 +1612,8 @@ class ProjectToolProvider(ToolProvider):
         # explicit filesystem directory listing (see fs_path below); mixing the two keys
         # caused clients that send path=/ to hit OS listing or wrong folder resolution.
         folder: str = self._get_str(args, "folder", default="/")
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100)
+        res = self._get_int(args, "maxresults", "limit", default=100)
+        max_results: int = 100 if res is None else res
         session_id: str = get_current_mcp_session_id()
         project_handle_for_list = SESSION_CONTEXTS.get_project_handle(session_id)
         is_shared_mode: bool = is_shared_server_handle(project_handle_for_list)
@@ -1726,7 +1703,7 @@ class ProjectToolProvider(ToolProvider):
             # No program loaded and no session binaries: list from the open Ghidra project
             # on disk (local). Try every known domain root — some builds only expose files
             # under getProject().getProjectData().getRootFolder(), not ghidra_project.getRootFolder().
-            ghidra_project_noload: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            ghidra_project_noload: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
             if ghidra_project_noload is not None:
                 try:
                     normalized_folder_noload = self._normalize_repo_path(folder)
@@ -1753,7 +1730,7 @@ class ProjectToolProvider(ToolProvider):
             return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
 
         try:
-            project_data: Any = self._get_active_project_data()
+            project_data: GhidraProjectData | None = self._get_active_project_data()
             if project_data is None:
                 raise ValueError("No project data available")
 
@@ -1853,32 +1830,19 @@ class ProjectToolProvider(ToolProvider):
             "path": requested_program,
         }
 
-        server_host: str | None = (
-            self._get_str(args, "serverhost", "ghidraserverhost")
-            or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
-        )
+        server_host: str | None = self._get_str(args, "serverhost", "ghidraserverhost") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", os.getenv("AGENT_DECOMPILE_SERVER_HOST", os.getenv("AGENTDECOMPILE_SERVER_HOST", ""))).strip()
         if server_host:
             open_args["serverhost"] = server_host
             open_args["serverport"] = self._get_int(
                 args,
                 "serverport",
                 "ghidraserverport",
-                default=int(
-                    os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))) or "13100"
-                ),
+                default=int(os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENT_DECOMPILE_SERVER_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100"))) or "13100"),
             )
-            open_args["serverusername"] = (
-                self._get_str(args, "serverusername", "ghidraserverusername")
-                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
-            )
-            open_args["serverpassword"] = (
-                self._get_str(args, "serverpassword", "ghidraserverpassword")
-                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
-            )
+            open_args["serverusername"] = self._get_str(args, "serverusername", "ghidraserverusername") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", os.getenv("AGENT_DECOMPILE_SERVER_USERNAME", os.getenv("AGENTDECOMPILE_SERVER_USERNAME", ""))).strip()
+            open_args["serverpassword"] = self._get_str(args, "serverpassword", "ghidraserverpassword") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", os.getenv("AGENT_DECOMPILE_SERVER_PASSWORD", os.getenv("AGENTDECOMPILE_SERVER_PASSWORD", ""))).strip()
             repository_name: str | None = (
-                self._get_str(args, "repositoryname", "ghidraserverrepository")
-                or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip()
-                or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
+                self._get_str(args, "repositoryname", "ghidraserverrepository") or os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")).strip() or os.getenv("AGENT_DECOMPILE_REPOSITORY", os.getenv("AGENTDECOMPILE_REPOSITORY", "")).strip()
             )
             if repository_name:
                 open_args["repositoryname"] = repository_name
@@ -1926,7 +1890,6 @@ class ProjectToolProvider(ToolProvider):
             args,
             operation,
             {
-                "open": "_handle_open",
                 "open": "_handle_open",
                 "changeprocessor": "_handle_change_processor",
                 "import": "_handle_import",
@@ -2131,6 +2094,7 @@ class ProjectToolProvider(ToolProvider):
         if hasattr(domain_file, "checkout"):
             from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
+            assert domain_file is not None, "domain_file should not be None here since we check and raise above"
             domain_file.checkout(exclusive, TaskMonitor.DUMMY)
         return create_success_response(
             {
@@ -2150,6 +2114,7 @@ class ProjectToolProvider(ToolProvider):
         keep = self._get_bool(args, "keep", default=False)
         force = self._get_bool(args, "force", default=False)
         if hasattr(domain_file, "undoCheckout"):
+            assert domain_file is not None, "domain_file should not be None here since we check and raise above"
             domain_file.undoCheckout(keep, force)
         return create_success_response(
             {
@@ -2187,13 +2152,13 @@ class ProjectToolProvider(ToolProvider):
         df_path: str | None = None
         if has_program:
             try:
-                assert self.program_info is not None
+                assert self.program_info is not None, "program_info should not be None here since has_program is True"
                 df: GhidraDomainFile | None = self.program_info.program.getDomainFile()
                 has_df = df is not None
                 df_path = str(df.getPathname()) if df else None
             except Exception:
                 pass
-        pd: ProjectData | None = self._get_active_project_data()
+        pd: GhidraProjectData | None = self._get_active_project_data()
         raise ActionableError(
             "No project-backed domain file found for the requested programPath",
             context={
@@ -2223,7 +2188,8 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_list_files(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._handle_list_files")
         file_path: str | None = self._get_str(args, "filepath", "file", "path", "programpath")
-        max_results: int = self._get_int(args, "maxresults", default=200)
+        res = self._get_int(args, "maxresults", default=200)
+        max_results = 200 if res is None else res
         base_path = Path(file_path).expanduser().resolve() if file_path else Path.cwd()
         if not base_path.exists():
             manage_files_tool = recommend_tool(Tool.MANAGE_FILES.value, Tool.LIST_PROJECT_FILES.value)
@@ -2317,6 +2283,7 @@ class ProjectToolProvider(ToolProvider):
         if domain_file is None:
             self._raise_domain_file_error("rename", program_path)
 
+        assert domain_file is not None, "domain_file should not be None here since we check and raise above"
         old_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(program_path)
         try:
             if hasattr(domain_file, "setName"):
@@ -2355,6 +2322,7 @@ class ProjectToolProvider(ToolProvider):
         if domain_file is None:
             self._raise_domain_file_error("delete", program_path)
 
+        assert domain_file is not None, "domain_file should not be None here since we check and raise above"
         target_path: str = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else str(program_path)
         try:
             deleted = bool(domain_file.delete()) if hasattr(domain_file, "delete") else False
@@ -2398,7 +2366,7 @@ class ProjectToolProvider(ToolProvider):
         if domain_file is None:
             self._raise_domain_file_error("move", program_path)
 
-        project_data = self._get_active_project_data()
+        project_data: GhidraProjectData | None = self._get_active_project_data()
         if project_data is None:
             raise ActionableError(
                 "No active project context available for move",
@@ -2410,8 +2378,10 @@ class ProjectToolProvider(ToolProvider):
             )
 
         destination_folder_hint: str = self._get_str(args, "destinationfolder")
-        normalized_destination = self._normalize_repo_path(destination)
-        current_name = str(domain_file.getName()) if hasattr(domain_file, "getName") else Path(str(program_path)).name
+        normalized_destination: str = self._normalize_repo_path(destination)
+
+        assert domain_file is not None, "domain_file should not be None here since we check and raise above"
+        current_name: str = str(domain_file.getName()) if hasattr(domain_file, "getName") else Path(str(program_path)).name
         if destination_folder_hint:
             destination_folder_path = self._normalize_repo_path(destination_folder_hint)
             new_name = current_name
@@ -2431,7 +2401,7 @@ class ProjectToolProvider(ToolProvider):
             else:
                 raise RuntimeError("Domain file move API unavailable")
 
-            current_after_move = str(domain_file.getName()) if hasattr(domain_file, "getName") else current_name
+            current_after_move: str = str(domain_file.getName()) if hasattr(domain_file, "getName") else current_name
             if new_name and new_name != current_after_move:
                 if hasattr(domain_file, "setName"):
                     domain_file.setName(new_name)
@@ -2524,7 +2494,7 @@ class ProjectToolProvider(ToolProvider):
     async def _switch_to_shared(self, args: dict[str, Any]) -> list[types.TextContent]:
         """(Re)connect to the shared Ghidra server and store session handle."""
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._switch_to_shared")
-        resolved = self._resolve_server_credentials(args)
+        resolved: dict[str, Any] = self._resolve_server_credentials(args)
         return await self._handle_connect_shared_project(resolved)
 
     async def _switch_to_local(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -2555,7 +2525,7 @@ class ProjectToolProvider(ToolProvider):
     async def _switch_download(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Connect to shared server, pull all files to local project, then go-local."""
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._switch_download")
-        resolved = self._resolve_server_credentials(args)
+        resolved: dict[str, Any] = self._resolve_server_credentials(args)
 
         if not resolved.get("serverhost"):
             return create_success_response(
@@ -2572,10 +2542,10 @@ class ProjectToolProvider(ToolProvider):
             )
 
         # Step 1: connect to shared server (populates session handle + repo adapter)
-        connect_result = await self._handle_connect_shared_project(resolved)
+        connect_result: list[types.TextContent] = await self._handle_connect_shared_project(resolved)
         session_id, handle, repository_adapter, repository_name = self._get_shared_session_context()
 
-        connect_success = bool(handle and is_shared_server_handle(handle))
+        connect_success: bool = bool(handle and is_shared_server_handle(handle))
         if not connect_success:
             return create_success_response(
                 {
@@ -2592,7 +2562,7 @@ class ProjectToolProvider(ToolProvider):
             )
 
         # Step 2: pull all files from shared to local
-        sync_result = await self._sync_shared_repository(resolved, default_mode="pull")
+        sync_result: list[types.TextContent] = await self._sync_shared_repository(resolved, default_mode="pull")
 
         # Step 3: clear the shared-server handle so the session is now local
         SESSION_CONTEXTS.set_project_handle(session_id, None)
@@ -2617,9 +2587,7 @@ class ProjectToolProvider(ToolProvider):
                 "repository": repository_name,
                 "serverHost": resolved.get("serverhost", ""),
                 "localMode": True,
-                "note": (
-                    "Shared project pulled to local. Session is now operating in local mode. Call switch-project(mode='shared') at any time to reconnect to the shared server."
-                ),
+                "note": ("Shared project pulled to local. Session is now operating in local mode. Call switch-project(mode='shared') at any time to reconnect to the shared server."),
                 "syncSummary": {
                     "requested": sync_data.get("requested", 0),
                     "transferred": sync_data.get("transferred", 0),
@@ -2629,7 +2597,7 @@ class ProjectToolProvider(ToolProvider):
             },
         )
 
-    def _resolve_domain_file(self, program_path: str | None) -> Any:
+    def _resolve_domain_file(self, program_path: str | None) -> GhidraDomainFile | None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._resolve_domain_file")
         if not program_path:
             if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
@@ -2654,7 +2622,7 @@ class ProjectToolProvider(ToolProvider):
                     logger.debug("_resolve_domain_file: active DF path='%s' != requested='%s'", current_path, normalized)
 
             # Try project_data.getFile() from active program
-            project_data: ProjectData | None = self._get_active_project_data()
+            project_data: GhidraProjectData | None = self._get_active_project_data()
             logger.debug("_resolve_domain_file: project_data=%s", type(project_data).__name__ if project_data else None)
             if project_data is not None:
                 df = project_data.getFile(normalized)
@@ -2667,9 +2635,9 @@ class ProjectToolProvider(ToolProvider):
                         return df
 
             # Fallback: try from session context project handle (shared-server mode)
-            session_id = get_current_mcp_session_id()
-            session = SESSION_CONTEXTS.get_or_create(session_id)
-            handle = session.project_handle if isinstance(session.project_handle, dict) else None
+            session_id: str = get_current_mcp_session_id()
+            session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
+            handle: dict[str, Any] | None = session.project_handle if isinstance(session.project_handle, dict) else None
             if handle and project_data is None:
                 # No project data found through normal paths; try to get it from
                 # the active program's domain file or root project
@@ -2712,7 +2680,8 @@ class ProjectToolProvider(ToolProvider):
             raise ValueError(f"Import path not found: {source}")
 
         recursive: bool = self._get_bool(args, "recursive", default=source.is_dir())
-        max_depth: int = self._get_int(args, "maxdepth", default=16)
+        res = self._get_int(args, "maxdepth", default=16)
+        max_depth: int = 16 if res is None else res
         analyze: bool = self._get_bool(args, "analyzeafterimport", default=True)
 
         discovered: list[Path] = []
@@ -2734,8 +2703,8 @@ class ProjectToolProvider(ToolProvider):
         errors: list[dict[str, Any]] = []
         imported_session_binaries: list[dict[str, Any]] = []
 
-        project_handle: Any = None
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        project_handle: dict | None = None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             project_handle = ghidra_project
             try:
@@ -2746,12 +2715,12 @@ class ProjectToolProvider(ToolProvider):
 
         for entry in discovered:
             try:
-                from java.io import File  # pyright: ignore[reportMissingImports]
+                from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
 
                 if project_handle is None:
                     raise RuntimeError("No active Ghidra project context available for import")
 
-                program: Any = project_handle.importProgram(File(str(entry)))
+                program: GhidraProgram = project_handle.importProgram(JavaFile(str(entry)))
                 if program is None:
                     raise RuntimeError("import_binary returned None")
 
@@ -2836,7 +2805,7 @@ class ProjectToolProvider(ToolProvider):
         output: Path = Path(out_path).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         payload: dict[str, Any] = {
             "name": program.getName(),
             "path": str(program.getDomainFile().getPathname()) if program.getDomainFile() else None,
@@ -2894,7 +2863,7 @@ class ProjectToolProvider(ToolProvider):
             return self._normalize_repo_path(f"/{relative}")
         return self._normalize_repo_path(f"{destination}/{relative}")
 
-    def _get_active_project_data(self) -> ProjectData | None:
+    def _get_active_project_data(self) -> GhidraProjectData | None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._get_active_project_data")
         logger.info("shared-sync getting active project data start")
         ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
@@ -2913,7 +2882,8 @@ class ProjectToolProvider(ToolProvider):
 
         if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
             try:
-                domain_file = self.program_info.program.getDomainFile()
+                prog: GhidraProgram = self.program_info.program
+                domain_file: GhidraProjectData = prog.getDomainFile()
                 if domain_file is not None:
                     project_data = domain_file.getProjectData()
                     logger.info("shared-sync got project data from program_info domain_file")
@@ -2973,9 +2943,9 @@ class ProjectToolProvider(ToolProvider):
             logger.debug("GhidraProject.openProgram(folder,name,boolean) failed: %s", exc)
             return None
 
-    def _open_program_from_domain_file(self, domain_file: Any) -> Any:
+    def _open_program_from_domain_file(self, domain_file: GhidraDomainFile) -> GhidraProgram | None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._open_program_from_domain_file")
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             opened_program = self._ghidra_project_open_program_compat(ghidra_project, domain_file)
             if opened_program is not None:
@@ -2985,7 +2955,7 @@ class ProjectToolProvider(ToolProvider):
 
         return self._get_domain_object_compat(domain_file, GhidraTaskMonitor.DUMMY)
 
-    def _get_domain_object_compat(self, holder: GhidraDomainFile, monitor: GhidraTaskMonitor) -> Any:
+    def _get_domain_object_compat(self, holder: GhidraDomainFile, monitor: GhidraTaskMonitor) -> GhidraDomainObject | None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._get_domain_object_compat")
         consumers: list[Any] = [self]
         try:
@@ -3057,21 +3027,21 @@ class ProjectToolProvider(ToolProvider):
         else:
             self.set_program_info(program_info)
 
-    def _ensure_project_folder(self, project_data: ProjectData, folder_path: str):
+    def _ensure_project_folder(self, project_data: GhidraProjectData, folder_path: str):
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._ensure_project_folder")
         normalized: str = self._normalize_repo_path(folder_path)
         if normalized == "/":
             return project_data.getRootFolder()
 
-        folder: Any = project_data.getFolder(normalized)
+        folder: GhidraProjectData | None = project_data.getFolder(normalized)
         if folder is not None:
             return folder
 
-        current: GhidraDomainFolder = project_data.getRootFolder()
+        current: GhidraProjectData = project_data.getRootFolder()
         for component in normalized.strip("/").split("/"):
             if not component:
                 continue
-            child: Any = current.getFolder(component)
+            child: GhidraProjectData | None = current.getFolder(component)
             if child is None:
                 child = current.createFolder(component)
             current = child
@@ -3109,7 +3079,7 @@ class ProjectToolProvider(ToolProvider):
         session_id: str = get_current_mcp_session_id()
         session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
-        repository_adapter: Any = handle.get("repository_adapter") if handle else None
+        repository_adapter: GhidraRepositoryAdapter | None = handle.get("repository_adapter") if handle else None
         repository_name: str | None = handle.get("repository_name") if handle else None
         _sid_hint = (session_id[:12] + "…") if session_id and len(session_id) > 12 else (session_id or "—")
         logger.info(
@@ -3124,12 +3094,13 @@ class ProjectToolProvider(ToolProvider):
 
     @staticmethod
     def _end_open_transaction_on_program_pull(program: GhidraProgram) -> None:
-        if program is None or not hasattr(program, "getCurrentTransaction"):
+        if program is None or not (hasattr(program, "getCurrentTransactionInfo") or hasattr(program, "getCurrentTransaction")):
             return
         try:
-            tx = program.getCurrentTransaction()
+            tx = program.getCurrentTransactionInfo() if hasattr(program, "getCurrentTransactionInfo") else program.getCurrentTransaction()
             if tx is not None and hasattr(program, "endTransaction"):
-                program.endTransaction(tx, True)
+                tx_id = int(tx.getID()) if hasattr(tx, "getID") else int(tx)
+                program.endTransaction(tx_id, True)
         except Exception as exc:
             logger.debug("Could not end open transaction before sync pull delete: %s", exc)
 
@@ -3145,11 +3116,12 @@ class ProjectToolProvider(ToolProvider):
             for obj in consumers:
                 if obj is None:
                     continue
-                if hasattr(obj, "getCurrentTransaction") and hasattr(obj, "endTransaction"):
+                if (hasattr(obj, "getCurrentTransactionInfo") or hasattr(obj, "getCurrentTransaction")) and hasattr(obj, "endTransaction"):
                     try:
-                        tx = obj.getCurrentTransaction()
+                        tx = obj.getCurrentTransactionInfo() if hasattr(obj, "getCurrentTransactionInfo") else obj.getCurrentTransaction()
                         if tx is not None:
-                            obj.endTransaction(tx, True)
+                            tx_id = int(tx.getID()) if hasattr(tx, "getID") else int(tx)
+                            obj.endTransaction(tx_id, True)
                     except Exception as inner_exc:
                         logger.debug("Could not end transaction on domain consumer: %s", inner_exc)
         except Exception as exc:
@@ -3185,7 +3157,7 @@ class ProjectToolProvider(ToolProvider):
         bb = Path(pb.replace("\\", "/")).name.lower() if pb else ""
         return bool(ba) and ba == bb
 
-    def _invoke_import_export_end_transactions_on_domain_file(self, domain_file: Any) -> None:
+    def _invoke_import_export_end_transactions_on_domain_file(self, domain_file: GhidraDomainFile) -> None:
         """Drain nested Program transactions on DomainFile consumers (sync push save() needs no active tx)."""
         mgr = self._manager
         if mgr is None or domain_file is None:
@@ -3199,7 +3171,7 @@ class ProjectToolProvider(ToolProvider):
         except Exception as exc:
             logger.debug("import_export domain-file transaction drain: %s", exc)
 
-    def _drain_all_domain_file_handles_for_sync_push(self, source_file: Any, session_id: str) -> None:
+    def _drain_all_domain_file_handles_for_sync_push(self, source_file: GhidraDomainFile, session_id: str) -> None:
         """Call ``_end_open_transactions_on_domain_file_consumers`` on every DomainFile identity that aliases ``source_file``.
 
         ``project_data.getFile()`` and ``Program.getDomainFile()`` can be distinct Java objects for the same binary;
@@ -3222,9 +3194,9 @@ class ProjectToolProvider(ToolProvider):
         if consumer_fn is None:
             return
         seen: set[int] = set()
-        frames: list[Any] = []
+        frames: list[GhidraDomainFile] = []
 
-        def add_frame(df: Any) -> None:
+        def add_frame(df: GhidraDomainFile) -> None:
             if df is None:
                 return
             i = id(df)
@@ -3267,17 +3239,18 @@ class ProjectToolProvider(ToolProvider):
                 logger.debug("sync-project push: domain consumer drain id=%s: %s", id(df), exc)
 
     @staticmethod
-    def _end_all_transactions_on_program_for_sync_push(program: Any, *, max_rounds: int = 64) -> None:
+    def _end_all_transactions_on_program_for_sync_push(program: GhidraProgram, *, max_rounds: int = 64) -> None:
         """Drain nested Ghidra transactions until none remain (tool tx inside GhidraProject batch tx, etc.)."""
-        if program is None or not hasattr(program, "getCurrentTransaction"):
+        if program is None or not (hasattr(program, "getCurrentTransactionInfo") or hasattr(program, "getCurrentTransaction")):
             return
         for _ in range(max_rounds):
             try:
-                tx = program.getCurrentTransaction()
+                tx = program.getCurrentTransactionInfo() if hasattr(program, "getCurrentTransactionInfo") else program.getCurrentTransaction()
                 if tx is None:
                     break
                 if hasattr(program, "endTransaction"):
-                    program.endTransaction(tx, True)
+                    tx_id = int(tx.getID()) if hasattr(tx, "getID") else int(tx)
+                    program.endTransaction(tx_id, True)
             except Exception:
                 break
 
@@ -3323,22 +3296,19 @@ class ProjectToolProvider(ToolProvider):
         mgr = self._manager
         if mgr is None or domain_file is None:
             return
-        ghidra_project: Any = getattr(mgr, "ghidra_project", None)
+        ghidra_project: GhidraProject | None = getattr(mgr, "ghidra_project", None)
         seen_prog: set[int] = set()
         for provider in getattr(mgr, "providers", None) or []:
-            pi = getattr(provider, "program_info", None)
+            pi: ProgramInfo | None = getattr(provider, "program_info", None)
             if pi is None:
                 continue
-            prog = getattr(pi, "program", None)
+            prog: GhidraProgram | None = getattr(pi, "program", None)
             if prog is None:
                 continue
-            pid = id(prog)
+            pid: int = id(prog)
             if pid in seen_prog:
                 continue
-            try:
-                df = prog.getDomainFile()
-            except Exception:
-                df = None
+            df: GhidraDomainFile | None = prog.getDomainFile()
             if not self._domain_files_same_pull(df, domain_file):
                 continue
             seen_prog.add(pid)
@@ -3348,7 +3318,7 @@ class ProjectToolProvider(ToolProvider):
         """Release any remaining Ghidra DomainObject consumers (Programs) still attached to the file."""
         if domain_file is None or not hasattr(domain_file, "getConsumers"):
             return
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         try:
             consumers = domain_file.getConsumers()
         except Exception:
@@ -3385,7 +3355,7 @@ class ProjectToolProvider(ToolProvider):
         from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
         from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-        monitor = TaskMonitor.DUMMY
+        monitor: TaskMonitor = TaskMonitor.DUMMY
         try:
             if hasattr(domain_file, "canCheckin") and domain_file.canCheckin() and hasattr(domain_file, "checkin"):
                 handler = DefaultCheckinHandler("AgentDecompile sync-project pull force (pre-delete)", False, False)
@@ -3406,13 +3376,13 @@ class ProjectToolProvider(ToolProvider):
         want = (exe_name or "").strip().lower()
         if not want:
             return
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         seen: set[int] = set()
         session_id = get_current_mcp_session_id()
         session = SESSION_CONTEXTS.get_or_create(session_id)
         keys_to_pop: list[str] = []
         for key, info in list((session.open_programs or {}).items()):
-            prog = getattr(info, "program", None)
+            prog: GhidraProgram | None = getattr(info, "program", None)
             if prog is None:
                 continue
             try:
@@ -3436,10 +3406,10 @@ class ProjectToolProvider(ToolProvider):
         mgr = self._manager
         if mgr is not None:
             for provider in mgr.providers:
-                pi = getattr(provider, "program_info", None)
+                pi: ProgramInfo | None = getattr(provider, "program_info", None)
                 if pi is None:
                     continue
-                prog = getattr(pi, "program", None)
+                prog: GhidraProgram | None = getattr(pi, "program", None)
                 if prog is None:
                     continue
                 try:
@@ -3472,7 +3442,7 @@ class ProjectToolProvider(ToolProvider):
         tail = Path(pn).name if pn else ""
         if tail:
             self._remove_shared_session_item(session_id, tail)
-        no_slash = pn.lstrip("/")
+        no_slash: str = pn.lstrip("/")
         if no_slash and no_slash != tail:
             self._remove_shared_session_item(session_id, no_slash)
         try:
@@ -3486,9 +3456,9 @@ class ProjectToolProvider(ToolProvider):
     def _pull_shared_repository_to_local(
         self,
         args: dict[str, Any],
-        repository_adapter: Any,
+        repository_adapter: GhidraRepositoryAdapter,
         repository_name: str | None,
-        project_data: Any,
+        project_data: GhidraProjectData,
     ) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._pull_shared_repository_to_local")
         start_time = time.time()
@@ -3499,7 +3469,8 @@ class ProjectToolProvider(ToolProvider):
             self._get_str(args, "newpath", "destinationpath", "destinationfolder", default="/"),
         )
         recursive: bool = self._get_bool(args, "recursive", default=True)
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
+        res = self._get_int(args, "maxresults", "limit", default=100000)
+        max_results: int = 100000 if res is None or res <= 0 else res
         force: bool = self._get_bool(args, "force", default=False)
         dry_run: bool = self._get_bool(args, "dryrun", default=False)
         logger.info(
@@ -3513,7 +3484,7 @@ class ProjectToolProvider(ToolProvider):
             dry_run,
         )
 
-        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         session_id: str = get_current_mcp_session_id()
         items: list[dict[str, Any]] = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
@@ -3535,7 +3506,7 @@ class ProjectToolProvider(ToolProvider):
             candidates = candidates[:max_results]
             logger.info("shared-sync pull candidates after max_results clamp=%s", len(candidates))
 
-        monitor: Any = TaskMonitor.DUMMY
+        monitor: GhidraTaskMonitor = GhidraTaskMonitor.DUMMY
         transferred: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -3560,7 +3531,7 @@ class ProjectToolProvider(ToolProvider):
                 )
 
             target_path: str = self._map_repo_path_to_local(repo_path, source_folder, destination_folder)
-            existing: Any = project_data.getFile(target_path)
+            existing: GhidraDomainFile | None = project_data.getFile(target_path)
             if existing is not None and not force:
                 logger.debug("shared-sync pull skip already exists source=%s target=%s", repo_path, target_path)
                 skipped.append({"sourcePath": repo_path, "targetPath": target_path, "reason": "already-exists"})
@@ -3594,9 +3565,9 @@ class ProjectToolProvider(ToolProvider):
                     self._release_java_consumers_on_domain_file_pull(existing)
                     existing.delete()
 
-                parent_folder: Any = self._ensure_project_folder(project_data, target_parent_path)
-                remote_domain_obj: Any = None
-                repo_item: Any = None
+                parent_folder: GhidraDomainFolder | GhidraProjectData = self._ensure_project_folder(project_data, target_parent_path)
+                remote_domain_obj: GhidraDomainObject | None = None
+                repo_item: GhidraRepositoryItem | None = None
 
                 # Strategy 1: Open via project_data DomainFile (works when files are
                 # already visible through the shared-server project connection).
@@ -3635,8 +3606,8 @@ class ProjectToolProvider(ToolProvider):
                     logger.info("shared-sync pull strategy=programdb_fallback source=%s", repo_path)
                     try:
                         from db import DBHandle  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-                        from ghidra.framework.data import OpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-                        from ghidra.program.database import ProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        from ghidra.framework.data import OpenMode as GhidraOpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                        from ghidra.program.database import ProgramDB as GhidraProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
                         from java.lang import Object as JavaObject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
                         repo_item = repository_adapter.getItem(adapter_folder, item_name) if repo_item is None else repo_item
@@ -3645,9 +3616,9 @@ class ProjectToolProvider(ToolProvider):
                             managed_db = repository_adapter.openDatabase(adapter_folder, item_name, version, 0)
                             db_handle = DBHandle(managed_db)
                             try:
-                                remote_domain_obj = ProgramDB(db_handle, OpenMode.UPDATE, monitor, JavaObject())
+                                remote_domain_obj = GhidraProgramDB(db_handle, GhidraOpenMode.UPDATE, monitor, JavaObject())
                             except Exception:
-                                remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, JavaObject())
+                                remote_domain_obj = GhidraProgramDB(db_handle, GhidraOpenMode.IMMUTABLE, monitor, JavaObject())
                     except Exception:
                         logger.info("shared-sync pull strategy=programdb_fallback failed source=%s", repo_path, exc_info=True)
 
@@ -3710,14 +3681,15 @@ class ProjectToolProvider(ToolProvider):
             "dryRun": dry_run,
         }
 
-    def _push_local_project_to_shared(self, args: dict[str, Any], repository_name: str | None, project_data: Any) -> dict[str, Any]:
+    def _push_local_project_to_shared(self, args: dict[str, Any], repository_name: str | None, project_data: GhidraProject) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._push_local_project_to_shared")
         start_time = time.time()
         source_folder: str = self._normalize_repo_path(
             self._get_str(args, "path", "sourcepath", "folder", default="/"),
         )
         recursive: bool = self._get_bool(args, "recursive", default=True)
-        max_results: int = self._get_int(args, "maxresults", "limit", default=100000)
+        res = self._get_int(args, "maxresults", "limit", default=100000)
+        max_results: int = 0 if res is None else res
         dry_run: bool = self._get_bool(args, "dryrun", default=False)
         logger.info(
             "shared-sync push start repository=%s source_folder=%s recursive=%s max_results=%s dry_run=%s",
@@ -3728,7 +3700,7 @@ class ProjectToolProvider(ToolProvider):
             dry_run,
         )
 
-        root: Any = project_data.getRootFolder()
+        root: GhidraDomainFolder = project_data.getRootFolder()
         local_items: list[dict[str, Any]] = [item for item in self._list_domain_files(root, max_results * 5 if max_results > 0 else 100000) if item.get("type") != "Folder"]
         logger.info("shared-sync push discovered local items=%s", len(local_items))
 
@@ -3762,7 +3734,7 @@ class ProjectToolProvider(ToolProvider):
                         prog = getattr(info, "program", None) or getattr(info, "current_program", None)
                         if prog is None:
                             continue
-                        tx = prog.getCurrentTransaction() if hasattr(prog, "getCurrentTransaction") else None
+                        tx = (prog.getCurrentTransactionInfo() if hasattr(prog, "getCurrentTransactionInfo") else prog.getCurrentTransaction()) if (hasattr(prog, "getCurrentTransactionInfo") or hasattr(prog, "getCurrentTransaction")) else None
                         if tx is not None:
                             has_tx = True
                             break
@@ -3770,10 +3742,11 @@ class ProjectToolProvider(ToolProvider):
                         for pr in getattr(mgr, "providers", None) or []:
                             opi = getattr(pr, "program_info", None)
                             prog = getattr(opi, "program", None) if opi is not None else None
-                            if prog is None or not hasattr(prog, "getCurrentTransaction"):
+                            if prog is None or not (hasattr(prog, "getCurrentTransactionInfo") or hasattr(prog, "getCurrentTransaction")):
                                 continue
                             try:
-                                if prog.getCurrentTransaction() is not None:
+                                _ctx = prog.getCurrentTransactionInfo() if hasattr(prog, "getCurrentTransactionInfo") else prog.getCurrentTransaction()
+                                if _ctx is not None:
                                     has_tx = True
                                     break
                             except Exception:
@@ -3829,7 +3802,7 @@ class ProjectToolProvider(ToolProvider):
                 continue
 
             try:
-                source_file: Any = project_data.getFile(source_path)
+                source_file: GhidraDomainFile | None = project_data.getFile(source_path)
                 if source_file is None and source_path.startswith("/"):
                     source_file = project_data.getFile(source_path.lstrip("/"))
                 if source_file is None and not source_path.startswith("/"):
@@ -3855,7 +3828,7 @@ class ProjectToolProvider(ToolProvider):
                                     iep = pr
                                     break
 
-                        def _flush_open_program_for_push(prog: Any) -> None:
+                        def _flush_open_program_for_push(prog: GhidraProgram) -> None:
                             if prog is None or iep is None:
                                 return
                             try:
@@ -3870,6 +3843,8 @@ class ProjectToolProvider(ToolProvider):
 
                         for _path_key, info in (session.open_programs or {}).items():
                             prog = getattr(info, "program", None) or getattr(info, "current_program", None)
+                            if prog is None:
+                                continue
                             _flush_open_program_for_push(prog)
                         if self.program_info is not None:
                             _flush_open_program_for_push(getattr(self.program_info, "program", None))
@@ -3915,7 +3890,18 @@ class ProjectToolProvider(ToolProvider):
 
                     self._drain_all_domain_file_handles_for_sync_push(source_file, session_id)
 
-                    source_file.save(TaskMonitor.DUMMY)
+                    try:
+                        source_file.save(TaskMonitor.DUMMY)
+                    except Exception as save_exc:
+                        save_msg = str(save_exc).lower()
+                        if "domainobj not open" in save_msg or "cannot save" in save_msg:
+                            logger.info(
+                                "shared-sync push save skipped (domain object already closed/committed) source=%s: %s",
+                                source_path,
+                                save_exc,
+                            )
+                        else:
+                            raise
                 else:
                     logger.info("shared-sync push skip save-not-supported source=%s", source_path)
                     skipped.append({"sourcePath": source_path, "reason": "save-not-supported"})
@@ -3991,9 +3977,7 @@ class ProjectToolProvider(ToolProvider):
                     **push_result,
                     "direction": "local-save",
                     "success": success,
-                    "note": "No shared server session. Performed local project save."
-                    if success
-                    else "Local save completed with errors; annotations may still be in the current program.",
+                    "note": "No shared server session. Performed local project save." if success else "Local save completed with errors; annotations may still be in the current program.",
                 }
                 if not success and "error" not in payload:
                     first = errors[0] if errors else {}
@@ -4013,9 +3997,7 @@ class ProjectToolProvider(ToolProvider):
                     "mode": "bidirectional",
                     "direction": "local-save-only",
                     "success": success,
-                    "note": "No shared server session. Only local save was performed (pull requires a shared server connection)."
-                    if success
-                    else "Local save completed with errors.",
+                    "note": "No shared server session. Only local save was performed (pull requires a shared server connection)." if success else "Local save completed with errors.",
                 }
                 if not success and "error" not in payload:
                     first = errors[0] if errors else {}
@@ -4062,7 +4044,7 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
-        project_data: Any = self._get_active_project_data()
+        project_data: GhidraProjectData | None = self._get_active_project_data()
         logger.info("shared-sync project_data resolved has_project_data=%s", project_data is not None)
         if project_data is None:
             logger.warning("shared-sync aborted: local project_data unavailable repository=%s", repository_name)
@@ -4078,7 +4060,7 @@ class ProjectToolProvider(ToolProvider):
                         "repository": repository_name,
                     },
                     "nextSteps": [
-                        "Call `open` with a local project (`.gpr`) or `import-binary` after shared `open` so a transient local Ghidra project has ProjectData.",
+                        "Call `open` with a local project (`.gpr`) or `import-binary` after shared `open` so a transient local Ghidra project has GhidraProjectData.",
                         "Run `open` + `import-binary` + `sync-project` in one `tool-seq` (same MCP session). Restarting agentdecompile-server clears in-memory session — re-`open` before sync if you restarted.",
                         "If using the CLI proxy, ensure `mcp-session-id` is forwarded so the session that ran `open` is the same one that runs `sync-project`.",
                     ],
@@ -4187,7 +4169,7 @@ class ProjectToolProvider(ToolProvider):
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._download_shared_repository_to_local")
         return await self._sync_shared_repository(args, default_mode="pull")
 
-    def _get_domain_file_with_path_variants(self, project_data: Any, program_path: str, item_name: str) -> Any | None:
+    def _get_domain_file_with_path_variants(self, project_data: GhidraProjectData | None, program_path: str, item_name: str) -> GhidraDomainFile | None:
         """Resolve ``DomainFile`` via ``project_data.getFile`` using the same path variants as checkout/checkin."""
         if project_data is None:
             return None
@@ -4215,7 +4197,7 @@ class ProjectToolProvider(ToolProvider):
                 continue
         return None
 
-    def _find_domain_file_shared_item_in_tree(self, project_data: Any, item_name: str) -> GhidraDomainFile | None:
+    def _find_domain_file_shared_item_in_tree(self, project_data: GhidraProjectData | None, item_name: str) -> GhidraDomainFile | None:
         """Walk project tree for ``item_name``; prefer the **checked-out** copy, then any versioned file."""
         if project_data is None or not item_name:
             return None
@@ -4233,6 +4215,8 @@ class ProjectToolProvider(ToolProvider):
             folder = stack.pop()
             try:
                 for df in folder.getFiles() or []:
+                    if df is None:
+                        continue
                     try:
                         if str(df.getName() or "").casefold() == want:
                             matches.append(df)
@@ -4259,7 +4243,7 @@ class ProjectToolProvider(ToolProvider):
 
     def _resolve_shared_checkout_domain_file(
         self,
-        project_data: Any,
+        project_data: GhidraProjectData | None,
         program_path: str,
         item_name: str,
     ) -> GhidraDomainFile | None:
@@ -4287,14 +4271,14 @@ class ProjectToolProvider(ToolProvider):
                 return
         except Exception:
             return
-        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports]
+        from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         try:
-            domain_file.save(TaskMonitor.DUMMY)
+            domain_file.save(GhidraTaskMonitor.DUMMY)
         except Exception as save_exc:
             logger.debug("pre-addToVersionControl save failed for %s: %s", program_path, save_exc)
         try:
-            domain_file.addToVersionControl("Shared repository checkout", False, TaskMonitor.DUMMY)
+            domain_file.addToVersionControl("Shared repository checkout", False, GhidraTaskMonitor.DUMMY)
             if bool(domain_file.isVersioned()):
                 logger.info("Registered version control for checked-out file %s", program_path)
         except Exception as vc_exc:
@@ -4302,7 +4286,7 @@ class ProjectToolProvider(ToolProvider):
 
     async def _checkout_shared_program(
         self,
-        repository_adapter: RepoAdapter,
+        repository_adapter: GhidraRepositoryAdapter,
         program_path: str,
         session_id: str,
         *,
@@ -4321,12 +4305,12 @@ class ProjectToolProvider(ToolProvider):
         import time
 
         from db import DBHandle  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-        from ghidra.framework.data import OpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-        from ghidra.program.database import ProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.framework.data import OpenMode as GhidraOpenMode  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.program.database import ProgramDB as GhidraProgramDB  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
         from java.lang import Object as JavaObject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-        monitor = TaskMonitor.DUMMY
+        monitor = GhidraTaskMonitor.DUMMY
 
         # Split program_path into folder + name
         parts: list[str] = program_path.rsplit("/", 1)
@@ -4339,7 +4323,7 @@ class ProjectToolProvider(ToolProvider):
 
         # Get the repository item (try exact name, then match from getItemList for case-insensitive match).
         # RepositoryAdapter may use '' instead of '/' for the repository root.
-        repo_item: Any = None
+        repo_item: GhidraRepositoryItem | None = None
         repo_folder_path = folder_path
         for fp in repository_adapter_folder_candidates(folder_path):
             try:
@@ -4352,8 +4336,10 @@ class ProjectToolProvider(ToolProvider):
                 continue
         if repo_item is None:
             for fp in repository_adapter_folder_candidates(folder_path):
+                if fp is None:
+                    continue
                 try:
-                    repo_items = repository_adapter.getItemList(fp) or []
+                    repo_items: JArray[GhidraRepositoryItem] | list[GhidraRepositoryItem] = repository_adapter.getItemList(fp) or []
                 except Exception:
                     continue
                 for ri in repo_items:
@@ -4386,10 +4372,11 @@ class ProjectToolProvider(ToolProvider):
                         break
             if matched_session_key is not None:
                 program_info = session_ctx.open_programs[matched_session_key]
+                assert program_info is not None, "session_ctx.open_programs should not have None values"
                 domain_file_local = program_info.domain_file if hasattr(program_info, "domain_file") else None
                 if domain_file_local is not None:
                     logger.info("File '%s' already open in session, checking checkout status", program_path)
-                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
                     # If not checked out, checkout it
                     if not domain_file_local.isCheckedOut():
@@ -4406,7 +4393,7 @@ class ProjectToolProvider(ToolProvider):
                     return matched_session_key
 
             # If not in session, check local transient project
-            ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
             if ghidra_project is not None:
                 try:
                     project_data = ghidra_project.getProject().getProjectData()
@@ -4420,12 +4407,12 @@ class ProjectToolProvider(ToolProvider):
                                 break
 
                         if domain_file_local is not None:
-                            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingImports]
+                            from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
                             # If not versioned, try to add to version control first
                             if not domain_file_local.isVersioned():
                                 try:
-                                    domain_file_local.addToVersionControl("Initial import", False, TaskMonitor.DUMMY)
+                                    domain_file_local.addToVersionControl("Initial import", False, GhidraTaskMonitor.DUMMY)
                                     logger.info("Added '%s' to version control in local project", program_path)
                                 except Exception as vc_exc:
                                     logger.warning("Failed to add '%s' to version control: %s", program_path, vc_exc)
@@ -4433,13 +4420,13 @@ class ProjectToolProvider(ToolProvider):
                             # Checkout the file (works for both versioned and non-versioned files)
                             if not domain_file_local.isCheckedOut():
                                 try:
-                                    domain_file_local.checkout(exclusive, TaskMonitor.DUMMY)
+                                    domain_file_local.checkout(exclusive, GhidraTaskMonitor.DUMMY)
                                     logger.info("Checked out '%s' from local project", program_path)
                                 except Exception as co_exc:
                                     logger.warning("Failed to checkout '%s' from local project: %s", program_path, co_exc)
 
                             # Open the program from the GhidraDomainFile
-                            program = self._ghidra_project_open_program_compat(ghidra_project, domain_file_local)
+                            program: GhidraProgram | None = self._ghidra_project_open_program_compat(ghidra_project, domain_file_local)
                             if program is not None:
                                 from agentdecompile_cli.launcher import ProgramInfo
                                 from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
@@ -4495,19 +4482,19 @@ class ProjectToolProvider(ToolProvider):
             raise ValueError(f"Program '{program_path}' not found in repository folder '{folder_path}'")
         adapter_folder_path = repo_folder_path
 
-        # Prefer opening via ProjectData/GhidraDomainFile so the resulting Program has
+        # Prefer opening via GhidraProjectData/GhidraDomainFile so the resulting Program has
         # standard project-backed behavior (including stable decompiler support).
         # Keep a ProgramDB fallback for environments where GhidraDomainFile checkout is
         # unavailable.
-        program: Any = None
-        domain_object_consumer: Any | None = None  # ProgramDB / low-level open consumer for Program.release()
+        program = None
+        domain_object_consumer: GhidraDomainFile | None = None  # ProgramDB / low-level open consumer for Program.release()
 
         # Open / checkout the file via the project data
         # We need to use the project's GhidraDomainFile which can be retrieved
         # from the project data after connecting.
 
         # Use the manager's GhidraProject (set from launcher) to get project data.
-        project_data: ProjectData | None = None
+        project_data: GhidraProjectData | None = None
         ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             try:
@@ -4525,7 +4512,7 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        checkout_link_domain_file: Any | None = None
+        checkout_link_domain_file: GhidraDomainFile | None = None
 
         if project_data is not None:
             # Prefer RepositoryAdapter.checkout() so the file is versioned and supports checkin.
@@ -4534,11 +4521,7 @@ class ProjectToolProvider(ToolProvider):
             # non-None so we must still run RepositoryAdapter.checkout (skip only when already checked out).
             # Also re-run adapter checkout when a stale local GhidraDomainFile exists but is not versioned —
             # otherwise checkin-program takes the non-versioned branch and only saves locally (no server).
-            needs_adapter_checkout: bool = (
-                domain_file is None
-                or (domain_file is not None and hasattr(domain_file, "isCheckedOut") and not domain_file.isCheckedOut())
-                or (domain_file is not None and hasattr(domain_file, "isVersioned") and not domain_file.isVersioned())
-            )
+            needs_adapter_checkout: bool = domain_file is None or (domain_file is not None and hasattr(domain_file, "isCheckedOut") and not domain_file.isCheckedOut()) or (domain_file is not None and hasattr(domain_file, "isVersioned") and not domain_file.isVersioned())
             # Exclusive checkout: always re-invoke RepositoryAdapter.checkout when the adapter supports it.
             # After sync-project pull, the local GhidraDomainFile can still report checked out while the open
             # Program is not wired to the server checkout metadata, so checkin-program fails with
@@ -4602,7 +4585,7 @@ class ProjectToolProvider(ToolProvider):
                                 parent_folder = child
 
                     # Multi-strategy to get a domain object from the repo item:
-                    remote_domain_obj: Any = None
+                    remote_domain_obj: GhidraDomainObject | None = None
                     consumer = JavaObject()
 
                     # Strategy 1: RepositoryItem.getDomainObject (some Ghidra versions)
@@ -4619,9 +4602,9 @@ class ProjectToolProvider(ToolProvider):
                             managed_db = repository_adapter.openDatabase(adapter_folder_path, item_name, version, 0)
                             db_handle = DBHandle(managed_db)
                             try:
-                                remote_domain_obj = ProgramDB(db_handle, OpenMode.UPDATE, monitor, consumer)
+                                remote_domain_obj = GhidraProgramDB(db_handle, GhidraOpenMode.UPDATE, monitor, consumer)
                             except Exception:
-                                remote_domain_obj = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, consumer)
+                                remote_domain_obj = GhidraProgramDB(db_handle, GhidraOpenMode.IMMUTABLE, monitor, consumer)
                         except Exception as e2:
                             logger.debug("ProgramDB strategy for createFile failed: %s", e2)
 
@@ -4716,9 +4699,9 @@ class ProjectToolProvider(ToolProvider):
                 db_handle = DBHandle(managed_db)
                 pdb_consumer = JavaObject()
                 try:
-                    program = ProgramDB(db_handle, OpenMode.UPDATE, monitor, pdb_consumer)
+                    program = GhidraProgramDB(db_handle, GhidraOpenMode.UPDATE, monitor, pdb_consumer)
                 except Exception:
-                    program = ProgramDB(db_handle, OpenMode.IMMUTABLE, monitor, pdb_consumer)
+                    program = GhidraProgramDB(db_handle, GhidraOpenMode.IMMUTABLE, monitor, pdb_consumer)
                 domain_object_consumer = pdb_consumer
                 logger.info("Opened shared program '%s' via ProgramDB fallback", program_path)
             except Exception as exc:
@@ -4779,12 +4762,12 @@ class ProjectToolProvider(ToolProvider):
                 logger.warning("Versioned GhidraDomainFile reopen failed for %s: %s", program_path, reopen_exc)
 
         # Build ProgramInfo
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+        from ghidra.app.decompiler import DecompInterface as GhidraDecompInterface, DecompileOptions as GhidraDecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         from agentdecompile_cli.launcher import ProgramInfo
 
-        decompiler = DecompInterface()
-        decomp_options = DecompileOptions()
+        decompiler = GhidraDecompInterface()
+        decomp_options = GhidraDecompileOptions()
         decomp_options.grabFromProgram(program)
         decompiler.setOptions(decomp_options)
         decompiler.openProgram(program)
@@ -4800,7 +4783,7 @@ class ProjectToolProvider(ToolProvider):
             load_time=time.time(),
         )
 
-        link_domain_file: Any | None = None
+        link_domain_file: GhidraDomainFile | None = None
         try:
             link_domain_file = program.getDomainFile()
         except Exception:
@@ -4822,7 +4805,7 @@ class ProjectToolProvider(ToolProvider):
         logger.info("Checked out program '%s' from shared repository", program_path)
         return program_path
 
-    def _list_repository_items(self, repository_adapter: Any) -> list[dict[str, Any]]:
+    def _list_repository_items(self, repository_adapter: GhidraRepositoryAdapter) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._list_repository_items")
         logger.info("shared-sync repository listing start")
         start_time = time.time()
@@ -4835,7 +4818,7 @@ class ProjectToolProvider(ToolProvider):
         stale_keys: list[str] = []
         for key, info in list(session_ctx.open_programs.items()):
             key_l = str(key).strip().lower().lstrip("/")
-            info_program = getattr(info, "program", None)
+            info_program: GhidraProgram | None = getattr(info, "program", None)
             info_name_l = ""
             info_path_l = ""
             if info_program is not None:
@@ -4850,14 +4833,14 @@ class ProjectToolProvider(ToolProvider):
             if requested_l in {key_l, info_name_l, info_path_l}:
                 stale_keys.append(key)
 
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
 
         for key in stale_keys:
-            info = session_ctx.open_programs.get(key)
+            info: ProgramInfo | None = session_ctx.open_programs.get(key)
             if info is None:
                 continue
             info_program = getattr(info, "program", None)
-            decompiler = getattr(info, "decompiler", None)
+            decompiler: GhidraDecompInterface | None = getattr(info, "decompiler", None)
             if decompiler is not None:
                 try:
                     decompiler.closeProgram()
@@ -4916,8 +4899,8 @@ class ProjectToolProvider(ToolProvider):
         if not handle or not is_shared_server_handle(handle) or repository_adapter is None:
             return None
 
-        requested = self._normalize_repo_path(program_path)
-        requested_l = requested.strip().lower().lstrip("/")
+        requested: str = self._normalize_repo_path(program_path)
+        requested_l: str = requested.strip().lower().lstrip("/")
         items = SESSION_CONTEXTS.get_project_binaries(session_id) or self._list_repository_items(repository_adapter)
 
         matched_path: str | None = None
@@ -4951,10 +4934,10 @@ class ProjectToolProvider(ToolProvider):
                     "success": False,
                     "error": f"Program '{program_path}' was not found in shared repository '{repository_name}'",
                 }
-            version = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
+            version: int = int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else -1
             self._remove_shared_session_item(session_id, matched_path)
             repository_adapter.deleteItem(adapter_folder, item_name, version)
-            refreshed_items = self._list_repository_items(repository_adapter)
+            refreshed_items: list[dict[str, GhidraRepositoryItem]] = self._list_repository_items(repository_adapter)
             SESSION_CONTEXTS.set_project_binaries(session_id, refreshed_items)
             return {
                 "success": True,
@@ -4992,18 +4975,18 @@ class ProjectToolProvider(ToolProvider):
                 },
             )
 
-        shared_result = self._remove_shared_repository_item(program_path)
+        shared_result: dict[str, Any] | None = self._remove_shared_repository_item(program_path)
         if shared_result is not None:
             return create_success_response(shared_result)
 
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
 
-        program: Any = self.program_info.program
+        program: GhidraProgram = self.program_info.program
         if program is None:
             return create_success_response({"success": False, "error": "No active program"})
 
-        domain_file: Any = program.getDomainFile()
+        domain_file: GhidraDomainFile | None = program.getDomainFile()
         if domain_file is None:
             return create_success_response({"success": False, "error": "No domain file associated with current program"})
 
@@ -5018,7 +5001,7 @@ class ProjectToolProvider(ToolProvider):
         if program_path not in (program.getName(), str(domain_file.getPathname()), domain_file.getName()):
             return create_success_response({"success": False, "error": f"Requested program '{program_path}' does not match active program"})
 
-        ghidra_project: Any = getattr(self._manager, "ghidra_project", None) if self._manager else None
+        ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
         if ghidra_project is not None:
             try:
                 ghidra_project.close(program)
@@ -5046,7 +5029,7 @@ class ProjectToolProvider(ToolProvider):
             # Some local/headless flows keep binaries in session catalog only.
             # If GhidraDomainFile deletion reports false, prune session state directly.
             session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id)
-            filtered_binaries = []
+            filtered_binaries: list[dict[str, Any]] = []
             removed_from_session = False
             for item in session_binaries:
                 item_path = str(item.get("path") or "").strip().lower().lstrip("/")
@@ -5092,9 +5075,9 @@ class ProjectToolProvider(ToolProvider):
         if self.program_info is None:
             return create_success_response({"success": False, "error": "No program loaded"})
 
-        program: Any = self.program_info.program
-        fm: Any = self._get_function_manager(program)
-        first: Any = None
+        program: GhidraProgram = self.program_info.program
+        fm: GhidraFunctionManager = self._get_function_manager(program)
+        first: GhidraFunction | None = None
         for func in fm.getFunctions(True):
             first = func
             break
@@ -5114,16 +5097,49 @@ class ProjectToolProvider(ToolProvider):
     async def _handle_get_current_program(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Return metadata for the currently active program."""
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._handle_get_current_program")
-        await self._ensure_program_loaded_for_stateless_request(args)
+
+        load_error: str | None = None
+        try:
+            await self._ensure_program_loaded_for_stateless_request(args)
+        except Exception as e:
+            load_error = str(e)
 
         if self.program_info is None:
-            return create_success_response({"loaded": False, "note": "No program currently loaded"})
+            # Collect available programs for diagnostics
+            available: list[str] = []
+            try:
+                session_id: str = get_current_mcp_session_id()
+                session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+                available = [str(b.get("path") or b.get("name") or "") for b in session_binaries if b.get("path") or b.get("name")]
+            except Exception:
+                pass
 
-        program: Any = self.program_info.program
+            if not available:
+                # Fall back to walking the ghidra project domain files
+                try:
+                    ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
+                    if ghidra_project is not None:
+                        root_folder: GhidraDomainFolder = ghidra_project.getRootFolder()
+                        domain_files: list[dict[str, GhidraDomainFile]] = self._list_domain_files(root_folder, 50)
+                        available = [str(f.get("path") or f.get("name") or "") for f in domain_files if f.get("path") or f.get("name")]
+                except Exception:
+                    pass
+
+            payload: dict[str, Any] = {
+                "loaded": False,
+                "note": load_error or "No program currently loaded",
+                "availablePrograms": available,
+                "availableCount": len(available),
+            }
+            if load_error:
+                payload["hint"] = "Pass programPath=<path> to auto-load, or call open with one of the availablePrograms paths above."
+            return create_success_response(payload)
+
+        program: GhidraProgram = self.program_info.program
         name: str = str(program.getName()) if hasattr(program, "getName") else "unknown"
         path: str = ""
         try:
-            df = program.getDomainFile()
+            df: GhidraDomainFile | None = program.getDomainFile()
             if df is not None:
                 path = str(df.getPathname())
         except Exception:
@@ -5166,6 +5182,6 @@ class ProjectToolProvider(ToolProvider):
             },
         )
 
-    def _list_domain_files(self, root_folder: Any, max_results: int) -> list[dict[str, Any]]:
+    def _list_domain_files(self, root_folder: GhidraDomainFolder, max_results: int) -> list[dict[str, GhidraDomainFile]]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._list_domain_files")
         return walk_domain_folder_tree(root_folder, max_results)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -21,6 +21,14 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.model.symbol import ReferenceManager as GhidraReferenceManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +130,7 @@ class CrossReferencesToolProvider(ToolProvider):
             max_results=max_results,
         )
 
-    def _is_address_in_rsrc(self, program: Any, addr: Any) -> bool:
+    def _is_address_in_rsrc(self, program: GhidraProgram, addr: GhidraAddress) -> bool:
         """True if the address lies in a memory block that looks like the PE .rsrc section."""
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._is_address_in_rsrc")
         try:
@@ -134,9 +142,7 @@ class CrossReferencesToolProvider(ToolProvider):
         except Exception:
             return False
 
-    def _get_loadstring_indirect_refs(
-        self, program: Any, ref_mgr: Any, fm: Any, seen_from: set[str], max_results: int
-    ) -> list[dict[str, Any]]:
+    def _get_loadstring_indirect_refs(self, program: GhidraProgram, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, seen_from: set[str], max_results: int) -> list[dict[str, Any]]:
         """Collect call sites of LoadStringA/LoadStringW for .rsrc string referencers (indirect refs)."""
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._get_loadstring_indirect_refs")
         indirect: list[dict[str, Any]] = []
@@ -180,7 +186,7 @@ class CrossReferencesToolProvider(ToolProvider):
             logger.debug("LoadString indirect refs failed: %s", e)
         return indirect
 
-    async def _handle_to(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_to(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         # Use ref_mgr with already-resolved addr so raw addresses (e.g. 0x004a2a62) and
         # symbol names both work; avoid ghidra_tools.list_cross_references(addr_str)
         # which looks up by symbol name only and fails for addresses with no symbol.
@@ -209,7 +215,7 @@ class CrossReferencesToolProvider(ToolProvider):
             refs_to.extend(indirect)
         return create_success_response({"mode": "to", "target": str(addr), "references": refs_to, "count": len(refs_to)})
 
-    async def _handle_from(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_from(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_from")
         refs_from: list[dict[str, Any]] = []
         for ref in ref_mgr.getReferencesFrom(addr):
@@ -224,7 +230,7 @@ class CrossReferencesToolProvider(ToolProvider):
             )
         return create_success_response({"mode": "from", "target": str(addr), "references": refs_from, "count": len(refs_from)})
 
-    async def _handle_both(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_both(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         # Use ref_mgr with already-resolved addr (see _handle_to).
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_both")
         refs_to: list[dict[str, Any]] = []
@@ -262,7 +268,7 @@ class CrossReferencesToolProvider(ToolProvider):
 
         return create_success_response({"mode": "both", "target": str(addr), "referencesTo": refs_to, "referencesFrom": refs_from})
 
-    async def _handle_function(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_function(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_function")
         func = fm.getFunctionContaining(addr)
         if func is None:
@@ -291,7 +297,7 @@ class CrossReferencesToolProvider(ToolProvider):
                     cur = cur.next()
         return create_success_response({"mode": "function", "function": func.getName(), "references": refs, "count": len(refs)})
 
-    async def _handle_referencers_decomp(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_referencers_decomp(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_referencers_decomp")
         results = []
         try:
@@ -372,7 +378,7 @@ class CrossReferencesToolProvider(ToolProvider):
             pass
         return create_success_response({"mode": "referencers_decomp", "target": str(addr), "referencers": results, "count": len(results)})
 
-    async def _handle_import(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_import(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_import")
         refs = []
         st = self._get_symbol_table(program)
@@ -392,7 +398,7 @@ class CrossReferencesToolProvider(ToolProvider):
                 break
         return create_success_response({"mode": "import", "references": refs, "count": len(refs)})
 
-    async def _handle_thunk(self, args: dict[str, Any], program: Any, addr: Any, addr_str: str, ref_mgr: Any, fm: Any, offset: int, max_results: int) -> list[types.TextContent]:
+    async def _handle_thunk(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, addr_str: str, ref_mgr: GhidraReferenceManager, fm: GhidraFunctionManager, offset: int, max_results: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/xrefs.py:CrossReferencesToolProvider._handle_thunk")
         func = fm.getFunctionAt(addr)
         if func is None:

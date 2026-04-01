@@ -11,6 +11,7 @@ via AddressUtil.format_address for consistency.
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
+
     Symbol = GhidraSymbol
 
 
@@ -121,9 +123,7 @@ class AddressUtil:
 
         # If input looks like a numeric address (0x-prefix or decimal digits), try parsing first.
         # Ghidra's symbol APIs can throw when given "0x48b17c" (e.g. int() in base 10).
-        if input_str.lower().startswith("0x") or (
-            input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))
-        ):
+        if input_str.lower().startswith("0x") or (input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))):
             addr = AddressUtil.parse_address(program, input_str)
             if addr is not None:
                 return addr

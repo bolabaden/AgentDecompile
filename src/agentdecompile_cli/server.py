@@ -495,7 +495,7 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
             parser.error("Cannot use --project-name with a .gpr file")
         sys.stderr.write(f"[project-paths] .gpr mode: dir='{project_path.parent}', name='{project_path.stem}'\n")
         return str(project_path.parent), project_path.stem, project_path
-    
+
     # For directory mode: check environment variable if project_name is the default
     # This allows AGENT_DECOMPILE_PROJECT_NAME to override the default "my_project"
     resolved_project_name: str = args.project_name
@@ -505,7 +505,7 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
         if env_project_name:
             resolved_project_name = env_project_name
             sys.stderr.write(f"[project-paths] Using project name from env: {resolved_project_name!r}\n")
-    
+
     sys.stderr.write(f"[project-paths] directory mode: dir='{project_path}', name='{resolved_project_name}'\n")
     return str(project_path), resolved_project_name, None
 

@@ -95,16 +95,18 @@ _AUTO_MATCH_TRIGGER_MODES: dict[str, frozenset[str]] = {
 }
 
 # Tools that modify project data; when AGENTDECOMPILE_AUTO_CHECKIN is set, checkin-program runs after these succeed.
-_AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset({
-    "managesymbols",
-    "managefunction",
-    "managecomments",
-    "managestructures",
-    "applydatatype",
-    "managebookmarks",
-    "managefunctiontags",
-    "matchfunction",
-})
+_AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset(
+    {
+        "managesymbols",
+        "managefunction",
+        "managecomments",
+        "managestructures",
+        "applydatatype",
+        "managebookmarks",
+        "managefunctiontags",
+        "matchfunction",
+    }
+)
 
 # ProcessPoolExecutor for auto match-function (child process, does not block main). Spawn context so child gets fresh interpreter (no JVM fork).
 _AUTO_MATCH_EXECUTOR: ProcessPoolExecutor | None = None
@@ -1640,7 +1642,7 @@ class ToolProviderManager:
             except Exception as e:
                 logger.warning("_on_program_info_changed callback failed: %s", e)
 
-    def _get_project_provider(self) -> Any | None:
+    def _get_project_provider(self) -> ToolProvider | None:
         """Return the provider that handles open and shared checkout (ProjectToolProvider)."""
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._get_project_provider")
         for provider in self.providers:
@@ -1689,9 +1691,7 @@ class ToolProviderManager:
         if not host:
             return
         if not port_str or port_str == "0":
-            port_str = (
-                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENTDECOMPILE_GHIDRA_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")))
-            ).strip() or "13100"
+            port_str = (os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", os.getenv("AGENTDECOMPILE_GHIDRA_PORT", os.getenv("AGENTDECOMPILE_SERVER_PORT", "13100")))).strip() or "13100"
         if not username:
             username = (
                 os.getenv(
@@ -1707,9 +1707,7 @@ class ToolProviderManager:
                 )
             ).strip()
         if not repo:
-            repo = (
-                os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")))
-            ).strip()
+            repo = (os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")))).strip()
 
         open_args: dict[str, Any] = {
             "shared": True,
@@ -1925,8 +1923,8 @@ class ToolProviderManager:
             requested_program_key,
         )
         session = SESSION_CONTEXTS.get_or_create(session_id)
-        handle = session.project_handle if isinstance(session.project_handle, dict) else None
-        project_provider = self._get_project_provider()
+        handle: dict[str, Any] | None = session.project_handle if isinstance(session.project_handle, dict) else None
+        project_provider: ToolProvider | None = self._get_project_provider()
 
         if project_provider is not None and handle and is_shared_server_handle(handle):
             repository_adapter = handle.get("repository_adapter")
@@ -2068,9 +2066,7 @@ class ToolProviderManager:
 
             # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema
             required_norm: frozenset[str] = frozenset(n(str(item)) for item in required)
-            _optional_program_norm: frozenset[str] = frozenset(
-                n(x) for x in ("programPath", "program_path", "binaryName", "binary_name")
-            )
+            _optional_program_norm: frozenset[str] = frozenset(n(x) for x in ("programPath", "program_path", "binaryName", "binary_name"))
             advertised_required: list[str] = []
             for param in canonical_params:
                 normalized_param = n(param)
@@ -2363,20 +2359,10 @@ class ToolProviderManager:
                         )
 
         # Auto check-in: when AGENTDECOMPILE_AUTO_CHECKIN is set, run checkin-program after any modifying tool succeeds.
-        if (
-            not norm_args.get(n("__auto_checkin_invocation"))
-            and _auto_checkin_enabled()
-            and norm_name in _AUTO_CHECKIN_TRIGGER_TOOLS
-            and result
-            and isinstance(result[0], types.TextContent)
-        ):
+        if not norm_args.get(n("__auto_checkin_invocation")) and _auto_checkin_enabled() and norm_name in _AUTO_CHECKIN_TRIGGER_TOOLS and result and isinstance(result[0], types.TextContent):
             try:
                 parsed = _json.loads(result[0].text)
-                tool_success = (
-                    parsed.get("success", True) is not False
-                    and parsed.get("modificationConflict") is not True
-                    and "error" not in (parsed.get("error") or "")
-                )
+                tool_success = parsed.get("success", True) is not False and parsed.get("modificationConflict") is not True and "error" not in (parsed.get("error") or "")
             except Exception:
                 tool_success = False
             if tool_success:

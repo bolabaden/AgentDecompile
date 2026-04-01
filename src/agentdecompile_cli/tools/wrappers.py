@@ -38,7 +38,7 @@ from jpype import JByte
 from jpype.types import JArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from agentdecompile_cli.context import ProgramInfo
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
@@ -48,15 +48,18 @@ if TYPE_CHECKING:
         AddressFactory as GhidraAddressFactory,
     )
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Data as GhidraData,
         Function as GhidraFunction,
         FunctionManager as GhidraFunctionManager,
         Program as GhidraProgram,
     )
     from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Reference as GhidraReference,
         ReferenceManager as GhidraReferenceManager,
         Symbol as GhidraSymbol,
         SymbolTable as GhidraSymbolTable,
     )
+
     Symbol = GhidraSymbol
 
 
@@ -323,7 +326,7 @@ class GhidraTools:
     def get_all_strings(self) -> list[StringInfo]:
         """Gets all defined strings for a binary"""
         logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools.get_all_strings")
-        data_iterator: Any = None
+        data_iterator: Iterable[GhidraData] | None = None
         last_error: Exception | None = None
         try:
             from ghidra.program.util import DefinedStringIterator  # pyright: ignore[reportMissingModuleSource]
@@ -421,7 +424,7 @@ class GhidraTools:
             imports.append(ImportInfo(name=symbol.getName(), library=str(symbol.getParentNamespace())))
         return imports[offset : limit + offset]
 
-    def _refs_to_cross_reference_infos(self, references: Any) -> list[CrossReferenceInfo]:
+    def _refs_to_cross_reference_infos(self, references: Iterable[GhidraReference]) -> list[CrossReferenceInfo]:
         """Build CrossReferenceInfo list from a reference iterator; deduplicates by from_address."""
         logger.debug("diag.enter %s", "tools/wrappers.py:GhidraTools._refs_to_cross_reference_infos")
         seen: set[str] = set()

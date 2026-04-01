@@ -10,7 +10,16 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Address as GhidraAddress,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        Program as GhidraProgram,
+    )
 
 from mcp import types
 
@@ -29,7 +38,7 @@ class DataFlowToolProvider(ToolProvider):
     @staticmethod
     def _empty_response(
         direction: str,
-        addr: Any,
+        addr: GhidraAddress,
         *,
         func_name: str | None = None,
         note: str | None = None,
@@ -133,19 +142,19 @@ class DataFlowToolProvider(ToolProvider):
             timeout_s=timeout_s,
         )
 
-    async def _handle_backward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_backward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_backward")
         return await self._analyze_data_flow("backward", program, addr, func, max_ops, timeout_s)
 
-    async def _handle_forward(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_forward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_forward")
         return await self._analyze_data_flow("forward", program, addr, func, max_ops, timeout_s)
 
-    async def _handle_variable_accesses(self, args: dict[str, Any], program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_variable_accesses(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_variable_accesses")
         return await self._analyze_data_flow("variable_accesses", program, addr, func, max_ops, timeout_s)
 
-    async def _analyze_data_flow(self, direction: str, program: Any, addr: Any, func: Any, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _analyze_data_flow(self, direction: str, program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._analyze_data_flow")
         decomp = None
         try:

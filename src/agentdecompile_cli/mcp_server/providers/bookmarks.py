@@ -132,9 +132,11 @@ class BookmarkToolProvider(ToolProvider):
             address = self._resolve_address(addr_str)
             if address is not None:
                 bm_mgr = program.getBookmarkManager()
+
                 def _def():
                     return ""
-                for bm in (bm_mgr.getBookmarks(address) or []):
+
+                for bm in bm_mgr.getBookmarks(address) or []:
                     bm_t = getattr(bm, "getType", _def)()
                     bm_c = getattr(bm, "getCategory", _def)()
                     if bm_t == bm_type and bm_c == category:
@@ -142,14 +144,8 @@ class BookmarkToolProvider(ToolProvider):
                         from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                         conflict_id = str(uuid.uuid4())
-                        conflict_summary = (
-                            "Set bookmark would overwrite existing bookmark at (address, type, category):\n\n"
-                            f"Existing bookmark **{bm_type}** / **{category}** at address."
-                        )
-                        next_step = (
-                            f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". '
-                            'To discard, use `resolution` = "skip".'
-                        )
+                        conflict_summary = f"Set bookmark would overwrite existing bookmark at (address, type, category):\n\nExisting bookmark **{bm_type}** / **{category}** at address."
+                        next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
                         program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
                         store_args = dict(args)
                         store_args["mode"] = "set"

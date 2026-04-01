@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -21,6 +21,14 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        FunctionManager as GhidraFunctionManager,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.model.mem import Memory as GhidraMemory  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +98,10 @@ class VtableToolProvider(ToolProvider):
     async def _handle_containing(
         self,
         args: dict[str, Any],
-        program: Any,
-        listing: Any,
-        memory: Any,
-        fm: Any,
+        program: GhidraProgram,
+        listing: GhidraListing,
+        memory: GhidraMemory,
+        fm: GhidraFunctionManager,
         addr_str: str,
         max_entries: int,
         offset: int,
@@ -120,10 +128,10 @@ class VtableToolProvider(ToolProvider):
     async def _handle_analyze(
         self,
         args: dict[str, Any],
-        program: Any,
-        listing: Any,
-        memory: Any,
-        fm: Any,
+        program: GhidraProgram,
+        listing: GhidraListing,
+        memory: GhidraMemory,
+        fm: GhidraFunctionManager,
         addr_str: str,
         max_entries: int,
         offset: int,
@@ -174,10 +182,10 @@ class VtableToolProvider(ToolProvider):
     async def _handle_callers(
         self,
         args: dict[str, Any],
-        program: Any,
-        listing: Any,
-        memory: Any,
-        fm: Any,
+        program: GhidraProgram,
+        listing: GhidraListing,
+        memory: GhidraMemory,
+        fm: GhidraFunctionManager,
         addr_str: str,
         max_entries: int,
         offset: int,

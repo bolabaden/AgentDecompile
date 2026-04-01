@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompInterface as GhidraDecompInterface,
+        DecompiledFunction as GhidraDecompiledFunction,
+        DecompileResults as GhidraDecompileResults,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Program as GhidraProgram,
+    )
 
 logger = logging.getLogger(__name__)
 
 
-def programs_same_decompiler_context(bound: Any, program: Any) -> bool:
+def programs_same_decompiler_context(bound: GhidraProgram | None, program: GhidraProgram | None) -> bool:
     """True when ``bound`` is the same Ghidra program as ``program`` for DecompInterface reuse."""
     logger.debug("diag.enter %s", "mcp_utils/decompiler_util.py:programs_same_decompiler_context")
     if bound is None or program is None:
@@ -30,7 +40,7 @@ def programs_same_decompiler_context(bound: Any, program: Any) -> bool:
     return False
 
 
-def resolve_decompiler_for_program(session_decomp: Any | None, program: Any) -> tuple[Any, bool]:
+def resolve_decompiler_for_program(session_decomp: GhidraDecompInterface | None, program: GhidraProgram) -> tuple[GhidraDecompInterface, bool]:
     """Return ``(DecompInterface, owns_dispose)``.
 
     Reuses ``session_decomp`` only when it is already opened on ``program``.
@@ -56,7 +66,7 @@ def resolve_decompiler_for_program(session_decomp: Any | None, program: Any) -> 
     return decomp, True
 
 
-def get_decompiled_function_from_results(decompile_results: Any) -> Any:
+def get_decompiled_function_from_results(decompile_results: GhidraDecompileResults | None) -> GhidraDecompiledFunction | None:
     """Return Ghidra ``DecompiledFunction`` from ``DecompileResults`` (JPype/PyGhidra-safe).
 
     Prefer ``getDecompiledFunction()``; fall back to ``decompiledFunction`` when the
@@ -98,7 +108,7 @@ def merge_decompile_dict_keys(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def open_decompiler_for_program(program: Any) -> Any:
+def open_decompiler_for_program(program: GhidraProgram) -> GhidraDecompInterface:
     """Create a DecompInterface opened on ``program`` with options from the program (matches launcher/setup_decompiler)."""
     from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource]
 

@@ -20,10 +20,36 @@ MCP session and no access to the main process's ProgramInfo objects.
 from __future__ import annotations
 
 import logging
+
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any, Iterator, TypeVar, cast
 
 from agentdecompile_cli.app_logger import basename_hint
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DomainFile as GhidraDomainFile,
+        ProjectData as GhidraProjectData,
+    )
+    from ghidra.framework.remote import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        RepositoryItem as GhidraRepositoryItem,
+    )
+    from ghidra.framework.store import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        CheckoutType as GhidraCheckoutType,
+    )
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Bookmark as GhidraBookmark,
+        BookmarkManager as GhidraBookmarkManager,
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        FunctionTag as GhidraFunctionTag,
+        Listing as GhidraListing,
+        Program as GhidraProgram,  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +59,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _run_program_transaction(program: Any, label: str, operation: Any) -> Any:
+T = TypeVar("T")
+
+
+def _run_program_transaction(program: GhidraProgram, label: str, operation: Callable[[], T]) -> T:
     """Run an operation inside a Ghidra transaction; commit on success, rollback on exception."""
     logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_run_program_transaction")
-    tx: Any = program.startTransaction(label)
+    tx: int = program.startTransaction(label)
     try:
-        result: Any = operation()
+        result: T = operation()
         program.endTransaction(tx, True)
         return result
     except Exception:
@@ -46,14 +75,15 @@ def _run_program_transaction(program: Any, label: str, operation: Any) -> Any:
         raise
 
 
-def _resolve_function(program: Any, function_identifier: str) -> Any | None:
+def _resolve_function(program: GhidraProgram, function_identifier: str) -> GhidraFunction | None:
     """Resolve function by exact name, entry point string, or symbol/address via AddressUtil."""
     logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_resolve_function")
     if not function_identifier or not program:
         return None
-    fm: Any = program.getFunctionManager()
+    fm: GhidraFunctionManager = program.getFunctionManager()
     if fm is None:
         return None
+    func: GhidraFunction
     for func in fm.getFunctions(True):
         if func.getName() == function_identifier or str(func.getEntryPoint()) == function_identifier:
             return func
@@ -68,15 +98,16 @@ def _resolve_function(program: Any, function_identifier: str) -> Any | None:
     return None
 
 
-def _build_by_signature(program: Any) -> dict[tuple[int, str], list[Any]]:
+def _build_by_signature(program: GhidraProgram) -> dict[tuple[int, str], list[GhidraFunction]]:
     """Build index (param_count, return_type) → list of functions for fast signature-based matching."""
     logger.debug("diag.enter %s", "mcp_server/auto_match_worker.py:_build_by_signature")
-    fm: Any = program.getFunctionManager()
+    fm: GhidraFunctionManager = program.getFunctionManager()
     if fm is None:
         return {}
-    by_sig: dict[tuple[int, str], list[Any]] = defaultdict(list)
+    by_sig: dict[tuple[int, str], list[GhidraFunction]] = defaultdict(list)
+    func: GhidraFunction
     for func in fm.getFunctions(True):
-        key = (func.getParameterCount(), str(func.getReturnType()))
+        key: tuple[int, str] = (func.getParameterCount(), str(func.getReturnType()))
         by_sig[key].append(func)
     return dict(by_sig)
 
@@ -125,26 +156,29 @@ def run_auto_match_subprocess(
     try:
         from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
 
-        ghidra_project = GhidraProject.openProject(project_dir, project_name, False)
+        from agentdecompile_cli.launcher import _patch_project_owner
+
+        _patch_project_owner(project_dir, project_name)
+        ghidra_project: GhidraProject = GhidraProject.openProject(project_dir, project_name, False)
     except Exception as e:
         result["error"] = f"Failed to open project: {e}"
         logger.warning("auto_match open project failed: %s", result["error"])
         return result
 
     try:
-        project_data = ghidra_project.getProject().getProjectData()
+        project_data: GhidraProjectData = ghidra_project.getProject().getProjectData()
         if project_data is None:
             result["error"] = "No project data"
             return result
 
         # Resolve source program by path (e.g. /folder/binary.exe)
-        domain_file = project_data.getFile(source_program_path)
+        domain_file: GhidraDomainFile = project_data.getFile(source_program_path)
         if domain_file is None:
             result["error"] = f"Source program not found: {source_program_path}"
             return result
 
         try:
-            source_program: Any = ghidra_project.openProgram(domain_file)  # pyright: ignore[reportCallIssue]
+            source_program: GhidraProgram = ghidra_project.openProgram(domain_file)  # pyright: ignore[reportCallIssue]
         except Exception:
             source_program = ghidra_project.openProgram(domain_file, programName=source_program_path, readOnly=False)
         if source_program is None:
@@ -157,14 +191,14 @@ def run_auto_match_subprocess(
         )
 
         try:
-            source_func = _resolve_function(source_program, function_identifier)
+            source_func: GhidraFunction | None = _resolve_function(source_program, function_identifier)
             if source_func is None:
                 result["error"] = f"Function not found: {function_identifier}"
                 return result
 
-            source_name = source_func.getName()
-            source_sig = str(source_func.getSignature())
-            sig_key = (source_func.getParameterCount(), str(source_func.getReturnType()))
+            source_name: str = source_func.getName()
+            source_sig: str = str(source_func.getSignature())
+            sig_key: tuple[int, str] = (source_func.getParameterCount(), str(source_func.getReturnType()))
             results_per_target: list[dict[str, Any]] = []
 
             for target_index, target_path in enumerate(target_program_paths, start=1):
@@ -172,12 +206,12 @@ def run_auto_match_subprocess(
                 if not target_path:
                     continue
                 try:
-                    tgt_df = project_data.getFile(target_path)
+                    tgt_df: GhidraDomainFile | None = project_data.getFile(target_path)
                     if tgt_df is None:
                         results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": "Program not found"})
                         continue
                     try:
-                        target_program: Any = ghidra_project.openProgram(tgt_df)  # pyright: ignore[reportCallIssue]
+                        target_program: GhidraProgram = ghidra_project.openProgram(tgt_df)  # pyright: ignore[reportCallIssue]
                     except Exception:
                         # Some Ghidra API versions require programName and readOnly
                         target_program = ghidra_project.openProgram(tgt_df, programName=target_path, readOnly=False)
@@ -200,10 +234,10 @@ def run_auto_match_subprocess(
                     continue
 
                 try:
-                    by_sig = _build_by_signature(target_program)
-                    candidates = by_sig.get(sig_key, [])
+                    by_sig: dict[tuple[int, str], list[GhidraFunction]] = _build_by_signature(target_program)
+                    candidates: list[GhidraFunction] = by_sig.get(sig_key, [])
                     # Score: 1.0 if name matches, 0.7 if signature only (same param_count + return_type)
-                    best_func: Any | None = None
+                    best_func: GhidraFunction | None = None
                     best_score: float = 0.0
                     for func in candidates:
                         score = 1.0 if func.getName() == source_name else 0.7
@@ -217,7 +251,7 @@ def run_auto_match_subprocess(
                         target_program.close()
                         continue
 
-                    target_func = best_func
+                    target_func: GhidraFunction = best_func
                     # Build result entry for this target; we'll append to propagated[] as we apply each kind of propagation
                     entry: dict[str, Any] = {
                         "targetProgramPath": target_path,
@@ -225,8 +259,8 @@ def run_auto_match_subprocess(
                         "propagated": [],
                     }
 
-                    domain_file_tgt = target_program.getDomainFile()
-                    is_versioned = domain_file_tgt.isVersioned() if domain_file_tgt else False
+                    domain_file_tgt: GhidraDomainFile | None = target_program.getDomainFile()
+                    is_versioned: bool = domain_file_tgt.isVersioned() if domain_file_tgt else False
                     we_did_checkout: bool = False
                     did_propagate: bool = False  # True if we wrote any changes (used to decide whether to checkin)
 
@@ -269,9 +303,9 @@ def run_auto_match_subprocess(
                                 pass  # setSignature not supported on all Ghidra versions or target may be read-only
 
                     if propagate_tags:
-                        source_tags = [t.getName() for t in source_func.getTags()]
-                        existing = {t.getName() for t in target_func.getTags()}
-                        to_add = [t for t in source_tags if t not in existing]
+                        source_tags: list[str] = [t.getName() for t in cast("Iterator[GhidraFunctionTag]", source_func.getTags())]
+                        existing: set[str] = {t.getName() for t in cast("Iterator[GhidraFunctionTag]", target_func.getTags())}
+                        to_add: list[str] = [t for t in source_tags if t not in existing]
                         if to_add:
                             # Add only tags the target doesn't already have
                             def _add_tags() -> None:
@@ -284,23 +318,25 @@ def run_auto_match_subprocess(
 
                     if propagate_comments:
                         try:
-                            from ghidra.program.model.listing import CodeUnit  # pyright: ignore[reportMissingModuleSource]
+                            from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+                                CodeUnit as GhidraCodeUnit,
+                            )
 
-                            source_listing = source_program.getListing()
-                            target_listing = target_program.getListing()
-                            source_entry = source_func.getEntryPoint()
-                            target_entry_addr = target_func.getEntryPoint()
+                            source_listing: GhidraListing = source_program.getListing()
+                            target_listing: GhidraListing = target_program.getListing()
+                            source_entry: GhidraAddress = source_func.getEntryPoint()
+                            target_entry_addr: GhidraAddress = target_func.getEntryPoint()
                             for ctype in (
-                                CodeUnit.PLATE_COMMENT,
-                                CodeUnit.PRE_COMMENT,
-                                CodeUnit.POST_COMMENT,
-                                CodeUnit.EOL_COMMENT,
-                                CodeUnit.REPEATABLE_COMMENT,
+                                GhidraCodeUnit.PLATE_COMMENT,
+                                GhidraCodeUnit.PRE_COMMENT,
+                                GhidraCodeUnit.POST_COMMENT,
+                                GhidraCodeUnit.EOL_COMMENT,
+                                GhidraCodeUnit.REPEATABLE_COMMENT,
                             ):
                                 try:
                                     comment = source_listing.getComment(ctype, source_entry)
                                     if comment and str(comment).strip():
-                                        _comment = comment  # Capture for closure; _set_comment runs in transaction later
+                                        _comment: str = comment  # Capture for closure; _set_comment runs in transaction later
 
                                         def _set_comment() -> None:
                                             target_listing.setComment(target_entry_addr, ctype, _comment)
@@ -315,13 +351,14 @@ def run_auto_match_subprocess(
 
                     if propagate_bookmarks:
                         try:
-                            source_bm_mgr = source_program.getBookmarkManager()
-                            target_bm_mgr = target_program.getBookmarkManager()
-                            source_entry_addr = source_func.getEntryPoint()
-                            target_entry_addr = target_func.getEntryPoint()
+                            source_bm_mgr: GhidraBookmarkManager = source_program.getBookmarkManager()
+                            target_bm_mgr: GhidraBookmarkManager = target_program.getBookmarkManager()
+                            source_entry_addr: GhidraAddress = source_func.getEntryPoint()
+                            target_entry_addr: GhidraAddress = target_func.getEntryPoint()
                             # Collect bookmarks at source function entry; fallback to iterator if getBookmarks(addr) not available
-                            source_bms = list(source_bm_mgr.getBookmarks(source_entry_addr)) if hasattr(source_bm_mgr, "getBookmarks") else []
+                            source_bms: list[GhidraBookmark] = list(source_bm_mgr.getBookmarks(source_entry_addr)) if hasattr(source_bm_mgr, "getBookmarks") else []
                             if not source_bms and hasattr(source_bm_mgr, "getBookmarksIterator"):
+                                bm: GhidraBookmark
                                 for bm in source_bm_mgr.getBookmarksIterator():
                                     if bm.getAddress().equals(source_entry_addr):
                                         source_bms.append(bm)
@@ -341,13 +378,13 @@ def run_auto_match_subprocess(
                     # If we modified the target (or checked it out), checkin so changes are committed to the repo
                     if is_versioned and domain_file_tgt is not None and (we_did_checkout or did_propagate):
                         try:
-                            from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
-                            from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+                            from ghidra.framework.data import DefaultCheckinHandler as GhidraDefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                            from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
                             # keepCheckedOut=true when we only propagated (didn't checkout ourselves) so caller can keep editing
                             keep_out = not we_did_checkout and did_propagate
-                            handler = DefaultCheckinHandler("Auto match-function propagation", keep_out, False)
-                            domain_file_tgt.checkin(handler, TaskMonitor.DUMMY)
+                            handler = GhidraDefaultCheckinHandler("Auto match-function propagation", keep_out, False)
+                            domain_file_tgt.checkin(handler, GhidraTaskMonitor.DUMMY)
                         except Exception as e:
                             logger.debug("Checkin after propagation failed: %s", e)
 

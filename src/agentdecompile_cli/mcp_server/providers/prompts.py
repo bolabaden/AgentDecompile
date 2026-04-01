@@ -7,6 +7,7 @@ available reverse-engineering workflow prompts (names and descriptions).
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 from typing import Any
@@ -51,9 +52,6 @@ class PromptToolProvider(ToolProvider):
                 "description": p.description or "",
             }
             if p.arguments:
-                entry["arguments"] = [
-                    {"name": a.name, "description": a.description, "required": a.required}
-                    for a in p.arguments
-                ]
+                entry["arguments"] = [{"name": a.name, "description": a.description, "required": a.required} for a in p.arguments]
             payload.append(entry)
         return create_success_response({"prompts": payload})

@@ -10,7 +10,13 @@ from __future__ import annotations
 import logging
 
 from itertools import islice
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        Program as GhidraProgram,
+    )
 
 from mcp import types
 
@@ -152,7 +158,7 @@ class CallGraphToolProvider(ToolProvider):
             program = self.program_info.program
             fm = self._get_function_manager(program)
 
-            target_func: Any = self._resolve_function(func, program=program)
+            target_func: GhidraFunction = self._resolve_function(func, program=program)
 
             if target_func is None:
                 raise ValueError(f"Function not found: {func}")
@@ -189,7 +195,7 @@ class CallGraphToolProvider(ToolProvider):
                 },
             )
 
-    async def _handle_callers(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+    async def _handle_callers(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callers")
         callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
         caller_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callers]
@@ -206,14 +212,14 @@ class CallGraphToolProvider(ToolProvider):
 
         return create_success_response({"function": func, "mode": mode, "callers": caller_info, "count": len(caller_info)})
 
-    async def _handle_callees(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+    async def _handle_callees(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_callees")
         callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
         callee_info = [{"name": c.getName(), "address": str(c.getEntryPoint())} for c in callees]
         mode = self._get_str(args, "mode", default="callees")
         return create_success_response({"function": func, "mode": mode, "callees": callee_info, "count": len(callee_info)})
 
-    async def _handle_graph(self, args: dict[str, Any], program: Any, target_func: Any, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
+    async def _handle_graph(self, args: dict[str, Any], program: GhidraProgram, target_func: GhidraFunction, func: str, second: str | None, max_nodes: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/callgraph.py:CallGraphToolProvider._handle_graph")
         callers = list(islice(target_func.getCallingFunctions(None), max_nodes))
         callees = list(islice(target_func.getCalledFunctions(None), max_nodes))
