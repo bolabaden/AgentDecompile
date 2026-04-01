@@ -1256,7 +1256,7 @@ class PyGhidraContext:
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
         logger.debug("diag.enter %s", "launcher.py:PyGhidraContext.set_analysis_option")
-        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         prog_options: GhidraOptions = prog.getOptions(GhidraProgram.ANALYSIS_PROPERTIES)
         option_type: str = prog_options.getType(option_name)
@@ -1322,11 +1322,11 @@ class PyGhidraContext:
     ):
         """Configures symbol servers and attempts to load PDBs for programs."""
         logger.debug("diag.enter %s", "launcher.py:PyGhidraContext.configure_symbols")
-        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource] # pyright: ignore[reportMissingModuleSource]
-            PdbAnalyzer as GhidraPdbAnalyzer,
-            PdbUniversalAnalyzer as GhidraPdbUniversalAnalyzer,
+        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportAttributeAccessIssue]
+            PdbAnalyzer as GhidraPdbAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
+            PdbUniversalAnalyzer as GhidraPdbUniversalAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
         )
-        from ghidra.app.util.pdb import PdbProgramAttributes as GhidraPdbProgramAttributes  # pyright: ignore[reportMissingImports]
+        from ghidra.app.util.pdb import PdbProgramAttributes as GhidraPdbProgramAttributes  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         logger.info("Configuring symbol search paths...")
         # This is a simplification. A real implementation would need to configure the symbol server

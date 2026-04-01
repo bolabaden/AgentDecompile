@@ -51,6 +51,10 @@ services:
       - ${CONFIG_PATH:-./volumes}/ghidra/work:/work
     environment:
       <<: *common-env
+      # RMI advertised address – set to the IP/hostname that clients use to reach
+      # this container.  Auto-detected from container interface if omitted.
+      # For external Ghidra GUI access from the Docker host, set to the host IP.
+      GHIDRA_IP: ${GHIDRA_IP:-}
       # Ghidra server users (space-separated; admins by default).
       # MODE: ghidra-server
       #GHIDRA_USERS:  # Space-separated usernames (admins by default)
