@@ -254,14 +254,38 @@ function Invoke-LfgGhidraSvrAdmin {
 function Stop-LfgGhidra {
     param([int]$Port)
     if (-not $script:LfgStartedGhidra) { return }
+    # Kill by TCP port if anything is still bound.
     try {
-        $conns = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
-        foreach ($x in $conns) {
-            Stop-Process -Id $x.OwningProcess -Force -ErrorAction SilentlyContinue
+        Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
         }
     } catch {}
+    # Also kill by patched bat name / launcher ps1 name so orphans from a crashed run are cleaned up.
+    if ($script:LfgGhidraLauncherPs1) {
+        $launcherName = [System.IO.Path]::GetFileName($script:LfgGhidraLauncherPs1)
+        Get-Process -Name "powershell*" -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+                if ($cmd -and $cmd -match [regex]::Escape($launcherName)) {
+                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                }
+            } catch {}
+        }
+    }
+    # Kill any java process that loaded the YAJSW wrapper.jar from our patched bat's serverDir.
+    if ($script:LfgGhidraPatchedBat) {
+        $svrDir = [System.IO.Path]::GetDirectoryName($script:LfgGhidraPatchedBat)
+        Get-Process -Name "java" -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+                if ($cmd -and $cmd -match [regex]::Escape($svrDir)) {
+                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                }
+            } catch {}
+        }
+    }
     $script:LfgStartedGhidra = $false
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
 }
 
 function Ensure-LfgGhidraServerUp {
@@ -293,8 +317,18 @@ function Ensure-LfgGhidraServerUp {
 }
 
 function Stop-LfgMcp {
+    # Kill by TCP port.
     Get-NetTCPConnection -LocalPort $McpPort -ErrorAction SilentlyContinue | ForEach-Object {
         Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+    # Also kill by process name: any python/uv process with agentdecompile_cli.server in cmdline.
+    Get-Process -Name "python*","python" -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+            if ($cmd -and $cmd -match 'agentdecompile_cli.*server') {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
     }
     # Allow TIME_WAIT / JVM teardown so the next bind + PyGhidra init does not race the LFG health probe.
     Start-Sleep -Seconds 5
@@ -538,7 +572,25 @@ if (-not $AutoStartGhidraServer) {
     $dstConfFull = [System.IO.Path]::GetFullPath($dstConf)
     if (-not (Test-Path -LiteralPath $srcConf)) { throw "Missing Ghidra server.conf: $srcConf" }
     $confText = [System.IO.File]::ReadAllText($srcConf)
-    $confText = [regex]::Replace($confText, '(?m)^wrapper\.app\.parameter\.3=-p\d+', "wrapper.app.parameter.3=-p$GhidraPort")
+    # Ghidra requires: GhidraServer [-flags] <repository_path>  (positional LAST).
+    # Patch -p<port> so it appears BEFORE the repository_path positional argument.
+    #
+    # Case 1: some installs already have a -p flag at some parameter.N — replace port only.
+    $portParamPat = '(?m)^(wrapper\.app\.parameter\.\d+=-p)\d+'
+    if ($confText -match $portParamPat) {
+        $confText = [regex]::Replace($confText, $portParamPat, "`${1}$GhidraPort")
+    } else {
+        # Case 2: Ghidra 12 default conf has only param.1=-a0, param.2=${ghidra.repositories.dir} with no -p.
+        # The repos dir MUST stay as the last (positional) argument, so insert -p as param.2 and push
+        # repos dir to param.3.
+        $repoPat = '(?m)^wrapper\.app\.parameter\.2=(\$\{ghidra\.repositories\.dir\}|\.\/repositories|\S+repositories\S*)'
+        if ($confText -match $repoPat) {
+            $repoVal = $Matches[1]
+            $confText = $confText -replace [regex]::Escape("wrapper.app.parameter.2=$repoVal"), "wrapper.app.parameter.2=-p$GhidraPort`nwrapper.app.parameter.3=$repoVal"
+        } else {
+            throw "Cannot patch server.conf to insert Ghidra port (-p): no existing -p flag and could not locate parameter.2 repos line. File: $srcConf"
+        }
+    }
     $confText = [regex]::Replace($confText, '(?m)^ghidra\.repositories\.dir=.*', "ghidra.repositories.dir=$reposForward")
     [System.IO.File]::WriteAllText($dstConfFull, $confText, [System.Text.UTF8Encoding]::new($false))
 
@@ -556,8 +608,19 @@ if (-not $AutoStartGhidraServer) {
         WrapperConfPath = $dstConfFull
     }
     $ghOk = $false
+    $ghStderrPath = Join-Path $Evidence "ghidra_server.stderr.log"
+    $ghStdoutPath = Join-Path $Evidence "ghidra_server.stdout.log"
     for ($i = 0; $i -lt 120; $i++) {
         if (Test-LfgTcpOpen $GhidraHost $GhidraPort) { $ghOk = $true; break }
+        # Early-exit detection: if Ghidra already printed "Invalid usage!" or "Shutting down", stop waiting.
+        $ghLog = (Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Out-String) + (Get-Content $ghStderrPath -ErrorAction SilentlyContinue | Out-String)
+        if ($ghLog -match 'Invalid usage!|Shutting down Wrapper|error starting wrapper') {
+            # Print the last 20 lines so the problem is immediately visible.
+            Write-Host "" -ForegroundColor Red
+            Write-Host "=== Ghidra server exited with an error (early-exit detected) ===" -ForegroundColor Red
+            Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Select-Object -Last 20 | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
+            throw "Ghidra server failed to start (see ghidra_server.stdout.log under $Evidence)"
+        }
         if ($i -gt 0 -and ($i % 15) -eq 0) {
             Write-Host "  still waiting for Ghidra on ${GhidraHost}:${GhidraPort} (attempt $i/120)..." -ForegroundColor DarkYellow
         }

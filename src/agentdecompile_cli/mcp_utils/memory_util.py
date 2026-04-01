@@ -9,7 +9,6 @@ point when the provider cannot assume getBytes/getByte always succeeds.
 from __future__ import annotations
 
 import logging
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,6 +19,9 @@ if TYPE_CHECKING:
     )
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Program as GhidraProgram,
+    )
+    from ghidra.program.model.mem import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Memory as GhidraMemory,
     )
     from ghidra.program.model.mem import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         MemoryBlock as GhidraMemoryBlock,
@@ -53,22 +55,22 @@ class MemoryUtil:
             return None
 
         try:
-            memory = program.getMemory()
+            memory: GhidraMemory = program.getMemory()
             if not memory.contains(address):
                 return None
 
-            # Ghidra getBytes expects a Java byte[]; create one via jpype, then convert result to Python bytes
-            import jpype
+            # Ghidra getBytes expects a primitive Java byte[]; use jpype.JByte (not JClass("java.lang.Byte")
+            # which is the *boxed* wrapper type and would create java.lang.Byte[] instead of byte[]).
+            import jpype  # type: ignore[note, import-untyped]  # pyright: ignore[reportMissingImports]
 
-            JByte = jpype.JClass("java.lang.Byte")
-            buf = JByte[length]  # type: ignore
+            buf = jpype.JByte[length]  # pyright: ignore[reportInvalidTypeArguments]
 
-            n = memory.getBytes(address, buf)
+            n = memory.getBytes(address, buf)  # pyright: ignore[reportArgumentType]
             if n <= 0:
                 return b""
 
             # Convert Java signed bytes to Python bytes
-            return bytes(b & 0xFF for b in buf[:n])
+            return bytes(b & 0xFF for b in buf[:n])  # pyright: ignore[reportGeneralTypeIssues, reportInvalidTypeArguments]
         except Exception as e:
             logger.debug("Failed to read memory at %s: %s", address, e)
             return None
@@ -88,7 +90,7 @@ class MemoryUtil:
         if not data:
             return ""
 
-        lines = []
+        lines: list[str] = []
         for i in range(0, len(data), bytes_per_line):
             chunk = data[i : i + bytes_per_line]
             hex_part = " ".join(f"{b:02x}" for b in chunk)
@@ -127,7 +129,7 @@ class MemoryUtil:
         memory = program.getMemory()
         for block in memory.getBlocks():
             if block.getName() == block_name:
-                return block
+                return block  # type: ignore[no-any-return]
 
         return None
 
@@ -170,15 +172,15 @@ class MemoryUtil:
         if program is None or start_address is None or total_length <= 0 or chunk_size <= 0:
             return
 
-        current_address = start_address
-        remaining = total_length
+        current_address: GhidraAddress = start_address
+        remaining: int = total_length
 
         while remaining > 0:
             # Calculate how much to read in this chunk
-            to_read = min(chunk_size, remaining)
+            to_read: int = min(chunk_size, remaining)
 
             # Read the chunk
-            chunk = MemoryUtil.read_memory_bytes(program, current_address, to_read)
+            chunk: bytes | None = MemoryUtil.read_memory_bytes(program, current_address, to_read)
             if chunk is None:
                 logger.warning("Failed to read memory chunk at %s", current_address)
                 break
