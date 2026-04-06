@@ -4,11 +4,10 @@
 This helper stays local-only (no remote backend required) and focuses on:
 - import surface validity
 - provider manager initialization and tool/resource advertisement shape
-- normalization behavior for flexible tool/argument names
 
 Examples:
   python helper_scripts/integration_test.py
-  python helper_scripts/integration_test.py --checks imports,normalization --json
+  python helper_scripts/integration_test.py --checks imports,server-components --json
   python helper_scripts/integration_test.py --strict
 """
 
@@ -109,9 +108,9 @@ def check_protocol_shape() -> CheckResult:
         tools = ToolProviderManager().list_tools()
         bad: list[str] = []
         for tool in tools:
-            tname = getattr(tool, "name", "")
-            tdesc = getattr(tool, "description", "")
-            tschema = getattr(tool, "inputSchema", None)
+            tname = tool.name
+            tdesc = tool.description
+            tschema = tool.inputSchema
             if not isinstance(tname, str) or not tname.strip():
                 bad.append(f"name:{tool}")
             if not isinstance(tdesc, str):
@@ -125,34 +124,11 @@ def check_protocol_shape() -> CheckResult:
         return _fail(name, started, exc)
 
 
-def check_normalization() -> CheckResult:
-    started = time.perf_counter()
-    name = "normalization"
-    try:
-        from agentdecompile_cli.registry import normalize_identifier
-
-        pairs: list[tuple[str, str]] = [
-            ("manage-symbols", "managesymbols"),
-            ("Manage_Symbols", "managesymbols"),
-            ("@@manage symbols@@", "managesymbols"),
-            ("programPath", "programpath"),
-            ("program_path", "programpath"),
-        ]
-        for raw, expected in pairs:
-            got = normalize_identifier(raw)
-            if got != expected:
-                raise ValueError(f"normalize_identifier({raw!r}) => {got!r}, expected {expected!r}")
-        return _ok(name, started, f"validated={len(pairs)}")
-    except Exception as exc:
-        return _fail(name, started, exc)
-
-
 def run_selected_checks(checks: list[str]) -> list[CheckResult]:
     registry: dict[str, Callable[[], CheckResult]] = {
         "imports": check_imports,
         "server-components": check_server_components,
         "protocol-shape": check_protocol_shape,
-        "normalization": check_normalization,
     }
     results: list[CheckResult] = []
     for check in checks:
@@ -164,8 +140,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local integration smoke checks for AgentDecompile")
     parser.add_argument(
         "--checks",
-        default="imports,server-components,protocol-shape,normalization",
-        help="Comma-separated checks to run. Allowed: imports,server-components,protocol-shape,normalization",
+        default="imports,server-components,protocol-shape",
+        help="Comma-separated checks to run. Allowed: imports,server-components,protocol-shape",
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON summary")
     parser.add_argument(
@@ -191,7 +167,7 @@ def _print_human(results: list[CheckResult]) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     requested = [token.strip() for token in args.checks.split(",") if token.strip()]
-    allowed = {"imports", "server-components", "protocol-shape", "normalization"}
+    allowed = {"imports", "server-components", "protocol-shape"}
     unknown = [item for item in requested if item not in allowed]
     if unknown:
         print(f"Unknown checks: {', '.join(unknown)}", file=sys.stderr)

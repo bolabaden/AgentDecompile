@@ -46,7 +46,16 @@ from agentdecompile_cli.mcp_server.session_context import (
 )
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
-from agentdecompile_cli.registry import ADVERTISED_TOOLS, TOOLS, TOOL_ALIASES, Tool, get_tool_params
+from agentdecompile_cli.registry import (
+    ADVERTISED_TOOLS,
+    TOOLS,
+    TOOL_ALIASES,
+    Tool,
+    get_active_tool_surface_profile,
+    get_tool_metadata,
+    get_tool_params,
+    get_tool_profiles,
+)
 
 if TYPE_CHECKING:
     from contextvars import Token
@@ -90,20 +99,37 @@ def _build_tool_reference_payload() -> dict[str, Any]:
     canonical_tools: list[dict[str, Any]] = []
     for canonical_name in sorted(TOOLS):
         params = [str(param) for param in get_tool_params(canonical_name)]
+        metadata = get_tool_metadata(canonical_name)
         canonical_tools.append(
             {
                 "name": canonical_name,
                 "advertised": canonical_name in ADVERTISED_TOOLS,
                 "parameters": params,
                 "aliases": alias_index.get(canonical_name, []),
+                "profiles": get_tool_profiles(canonical_name),
+                "metadata": {
+                    "context_rich": bool(metadata.context_rich) if metadata is not None else False,
+                    "single_purpose": bool(metadata.single_purpose) if metadata is not None else False,
+                    "writes_state": bool(metadata.writes_state) if metadata is not None else False,
+                    "legacy": bool(metadata.legacy) if metadata is not None else False,
+                    "replacement": list(metadata.replacement) if metadata is not None else [],
+                },
             },
         )
+
+    profile_counts = {
+        "curated": sum("curated" in item["profiles"] for item in canonical_tools),
+        "full": sum("full" in item["profiles"] for item in canonical_tools),
+        "legacy": sum("legacy" in item["profiles"] for item in canonical_tools),
+    }
 
     return {
         "summary": {
             "canonical_tool_count": len(TOOLS),
             "advertised_tool_count": len(ADVERTISED_TOOLS),
             "alias_count": sum(len(item["aliases"]) for item in canonical_tools),
+            "active_tool_surface_profile": get_active_tool_surface_profile(),
+            "profile_counts": profile_counts,
         },
         "transport": {
             "canonical_endpoint": "/mcp",
@@ -158,6 +184,8 @@ def _build_tool_reference_payload() -> dict[str, Any]:
                 "AGENT_DECOMPILE_PROJECT_NAME",
             ],
             "tool_advertisement": [
+                "AGENTDECOMPILE_TOOL_SURFACE",
+                "AGENT_DECOMPILE_TOOL_SURFACE",
                 "AGENTDECOMPILE_ENABLE_TOOLS",
                 "AGENTDECOMPILE_DISABLE_TOOLS",
                 "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",

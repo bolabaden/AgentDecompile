@@ -65,15 +65,6 @@ async def test_execute_current_program_none_without_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_normalized_argument_names() -> None:
-    provider = ScriptToolProvider()
-    result = await provider.call_tool("execute-script", {"Code": "99", "Timeout": 5})
-    data = _decode_result(result)
-    assert data["success"] is True
-    assert data.get("result") == "99"
-
-
-@pytest.mark.asyncio
 async def test_execute_requires_code_argument() -> None:
     provider = ScriptToolProvider()
     result = await provider.call_tool("execute-script", {"timeout": 5})

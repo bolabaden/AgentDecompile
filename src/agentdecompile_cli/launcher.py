@@ -39,6 +39,9 @@ except Exception:
 
 from agentdecompile_cli.app_logger import basename_hint
 from agentdecompile_cli.executor import get_client, normalize_backend_url, run_async
+from agentdecompile_cli.project_manager import ProjectManager
+from agentdecompile_cli.registry import Tool
+from agentdecompile_cli.tools.wrappers import GhidraTools
 
 try:
     from ghidrecomp.utility import disable_headless_unsafe_analyzers  # type: ignore[attr-defined]
@@ -49,28 +52,26 @@ except (ImportError, AttributeError):
         pass
 
 
-from agentdecompile_cli.project_manager import ProjectManager
-from agentdecompile_cli.registry import Tool
-from agentdecompile_cli.tools.wrappers import GhidraTools
-
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DecompInterface as GhidraDecompInterface,
     )
-    from ghidra.app.util.xml import ProgramInfo as GhidraProgramInfo  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.app.util.xml import ProgramInfo as GhidraProgramInfo  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DomainFile as GhidraDomainFile,
         DomainFolder as GhidraDomainFolder,
     )
-    from ghidra.framework.options import Options as GhidraOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.options import Options as GhidraOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         Function as GhidraFunction,
         Program as GhidraProgram,
     )
+    from mcp.client.session import ClientSession
+    from mcp.types import TextContent
 
-    from agentdecompile_cli.mcp_server import PythonMcpServer  # noqa: F401
-    from agentdecompile_cli.models import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from agentdecompile_cli.mcp_server import PythonMcpServer
+    from agentdecompile_cli.models import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DecompiledFunction,
     )
 
@@ -1971,6 +1972,7 @@ class AgentDecompileLauncher:
             # Pass the GhidraProject so providers can checkout from shared repos
             if self.pyghidra_context is not None:
                 self.mcp_server.set_ghidra_project(self.pyghidra_context.project)
+                self.mcp_server.tool_providers.pyghidra_context_ref = self.pyghidra_context
                 self.mcp_server.set_runtime_context(
                     {
                         "projectDirectory": str(projects_dir),
@@ -2010,6 +2012,7 @@ class AgentDecompileLauncher:
                 self.mcp_server.set_program_info(self.program_info)
                 if self.pyghidra_context is not None:
                     self.mcp_server.set_ghidra_project(self.pyghidra_context.project)
+                    self.mcp_server.tool_providers.pyghidra_context_ref = self.pyghidra_context
                     self.mcp_server.set_runtime_context(
                         {
                             "projectDirectory": str(projects_dir),
@@ -2182,13 +2185,13 @@ def init_agentdecompile_context(
     )
 
     async def _list_and_exit() -> None:
-        client = get_client(host="127.0.0.1", port=started_port)
+        client: ClientSession = get_client(host="127.0.0.1", port=started_port)
         async with client:
             try:
                 result = await client.read_resource("ghidra://programs")
-                contents = getattr(result, "contents", None) or []
+                contents: list[Any] = result.contents if isinstance(result, TextContent) else []
                 for c in contents:
-                    text = getattr(c, "text", None)
+                    text = c.text if isinstance(c, TextContent) else None
                     if text:
                         data = json.loads(text) if isinstance(text, str) else text
                         programs = data if isinstance(data, list) else (data.get("programs") if isinstance(data, dict) else [])

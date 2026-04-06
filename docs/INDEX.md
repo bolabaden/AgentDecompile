@@ -70,7 +70,7 @@ When docs and prose disagree, use the code and tests:
 - `src/agentdecompile_cli/registry.py` for canonical tool names, aliases, and parameters.
 - `src/agentdecompile_cli/cli.py` for convenience commands and CLI help text.
 - `src/agentdecompile_cli/server.py` and `src/agentdecompile_cli/__main__.py` for server and stdio runtime options.
-- `helper_scripts/reorder_tools_list_canonical.py` (canonical section order vs `registry.TOOLS`), `helper_scripts/generate_tools_list.py`, `tests/test_tools_list_generation_sync.py`, and `tests/test_unified_provider_advertisement.py` (`TestToolsListParity`) for tool-doc parity.
+- `helper_scripts/reorder_tools_list_canonical.py` (canonical section order vs `registry.TOOLS`) and `helper_scripts/generate_tools_list.py` (run and confirm `MATCH_EXACT True`) for keeping `TOOLS_LIST.md` aligned with the registry.
 
 ## Quick navigation
 

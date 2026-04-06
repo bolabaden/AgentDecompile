@@ -259,13 +259,13 @@ class AnalysisDumpResource(ResourceProvider):
         session_id = get_current_mcp_session_id()
 
         # Auto-select a program if none is currently active — mirrors the call_tool() auto-select path.
-        if (self.program_info is None or getattr(self.program_info, "program", None) is None) and self.tool_provider_manager is not None:
+        if (self.program_info is None or self.program_info.program is None) and self.tool_provider_manager is not None:
             auto_info = await self.tool_provider_manager._auto_select_program(session_id)
             if auto_info is not None:
                 logger.info("analysis-dump auto-selected program via tool_provider_manager")
 
         # No program loaded: return programs list + empty categories + keyLegend so clients can parse future dumps
-        if self.program_info is None or getattr(self.program_info, "program", None) is None:
+        if self.program_info is None or self.program_info.program is None:
             logger.info("analysis-dump read: no program loaded, returning programs list only")
             programs: list[dict[str, Any]] = _collect_programs_from_session(session_id)
             payload: dict[str, Any] = {

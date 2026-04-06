@@ -29,7 +29,7 @@ import time
 
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from mcp import types  # pyright: ignore[reportMissingImports]
 
@@ -69,7 +69,10 @@ if TYPE_CHECKING:
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         Function as GhidraFunction,
         FunctionManager as GhidraFunctionManager,
+        Listing as GhidraListing,
+        Memory as GhidraMemory,
         Program as GhidraProgram,
+        SymbolTable as GhidraSymbolTable,
     )
 
     from agentdecompile_cli.registry import Tool
@@ -334,6 +337,9 @@ _SELECTOR_PARAM_ALIASES = frozenset(
         "verb",
     },
 )
+
+
+T = TypeVar("T")
 
 
 def _infer_param_schema(param_name: str) -> dict[str, Any]:
@@ -1233,7 +1239,7 @@ class ToolProvider:
         / domain files; if still None here, no programs exist in this session at all.
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._require_program")
-        if self.program_info is None or getattr(self.program_info, "program", None) is None:
+        if self.program_info is None or self.program_info.program is None:
             # Include available program info in error for debugging
             session_id = get_current_mcp_session_id()
             session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -1286,11 +1292,16 @@ class ToolProvider:
         if not function_identifier:
             return None
 
-        target_program = program or getattr(self.program_info, "program", None)
-        if target_program is None or not hasattr(target_program, "getFunctionManager"):
+        if self.program_info is None:
+            return None
+        target_program: GhidraProgram | None = program or self.program_info.program
+        if target_program is None:
             return None
 
-        fm = target_program.getFunctionManager()
+        fm: GhidraFunctionManager | None = target_program.getFunctionManager()
+        if fm is None:
+            return None
+
         # Lazy import to avoid circular dependency with providers/__init__.py
         from agentdecompile_cli.mcp_server.providers._collectors import iter_items  # pyright: ignore[reportMissingImports]
         from agentdecompile_cli.mcp_utils.address_util import AddressUtil  # pyright: ignore[reportMissingImports]
@@ -1304,7 +1315,7 @@ class ToolProvider:
             try:
                 addr = AddressUtil.resolve_address_or_symbol(target_program, function_identifier)
                 if addr is not None:
-                    f = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
+                    f: GhidraFunction | None = fm.getFunctionContaining(addr) or fm.getFunctionAt(addr)
                     if f is not None:
                         return f
             except Exception:
@@ -1313,7 +1324,7 @@ class ToolProvider:
         # Parse address early so we can match by address equality (0x00401000 vs 00401000)
         parsed_addr: GhidraAddress | None = AddressUtil.parse_address(target_program, function_identifier)
 
-        def _entry_matches(func: Any) -> bool:
+        def _entry_matches(func: GhidraFunction) -> bool:
             if func.getName() == function_identifier:
                 return True
             if str(func.getEntryPoint()) == function_identifier:
@@ -1360,7 +1371,9 @@ class ToolProvider:
         list-cross-references and get-call-graph use the same logical target.
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._resolve_address")
-        target_program = program or getattr(self.program_info, "program", None)
+        if self.program_info is None:
+            raise ValueError("No program loaded in program_info")
+        target_program: GhidraProgram | None = program or self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
 
@@ -1368,7 +1381,7 @@ class ToolProvider:
 
         return AddressUtil.resolve_address_or_symbol_prefer_thunk(target_program, address_or_symbol)
 
-    def _get_function_manager(self, program: Any | None = None) -> Any:
+    def _get_function_manager(self, program: GhidraProgram | None = None) -> GhidraFunctionManager | None:
         """Get function manager from program, with safe access and caching.
 
         Consolidates 20+ repeated patterns of:
@@ -1377,54 +1390,62 @@ class ToolProvider:
         Eliminates boilerplate and ensures consistent error handling.
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_function_manager")
-        target_program = program or getattr(self.program_info, "program", None)
+        if self.program_info is None:
+            raise ValueError("No program loaded in program_info")
+        target_program: GhidraProgram | None = program or self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
         return target_program.getFunctionManager()
 
-    def _get_listing(self, program: Any | None = None) -> Any:
+    def _get_listing(self, program: GhidraProgram | None = None) -> GhidraListing | None:
         """Get program listing (instructions/data units) with safe access.
 
         Consolidates 15+ repeated patterns of:
             listing = program.getListing()
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_listing")
-        target_program = program or getattr(self.program_info, "program", None)
+        if self.program_info is None:
+            raise ValueError("No program loaded in program_info")
+        target_program: GhidraProgram | None = program or self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
         return target_program.getListing()
 
-    def _get_memory(self, program: Any | None = None) -> Any:
+    def _get_memory(self, program: GhidraProgram | None = None) -> GhidraMemory | None:
         """Get program memory interface with safe access.
 
         Consolidates repeated memory access patterns:
             memory = program.getMemory()
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_memory")
-        target_program = program or getattr(self.program_info, "program", None)
+        if self.program_info is None:
+            raise ValueError("No program loaded in program_info")
+        target_program: GhidraProgram | None = program or self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
         return target_program.getMemory()
 
-    def _get_symbol_table(self, program: Any | None = None) -> Any:
+    def _get_symbol_table(self, program: GhidraProgram | None = None) -> GhidraSymbolTable | None:
         """Get symbol table from program with safe access.
 
         Consolidates patterns like:
             st = program.getSymbolTable()
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._get_symbol_table")
-        target_program = program or getattr(self.program_info, "program", None)
+        if self.program_info is None:
+            raise ValueError("No program loaded in program_info")
+        target_program: GhidraProgram | None = program or self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
         return target_program.getSymbolTable()
 
     @staticmethod
-    def _run_program_transaction(program: Any, label: str, operation: Callable[[], Any]) -> Any:
+    def _run_program_transaction(program: GhidraProgram, label: str, operation: Callable[[], T]) -> T:
         """Run an operation inside a Ghidra transaction with consistent commit/rollback."""
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._run_program_transaction")
-        tx = program.startTransaction(label)
+        tx: int = program.startTransaction(label)
         try:
-            result = operation()
+            result: T = operation()
             program.endTransaction(tx, True)
             return result
         except Exception as exc:
@@ -1607,6 +1628,12 @@ class ToolProviderManager:
         self._tool_map: dict[str, ToolProvider] = {}  # normalized tool name → provider; filled by _register()
         self.program_info: ProgramInfo | None = None
         self.ghidra_project: Any | None = None  # GhidraProject from PyGhidraContext
+        # Stable subdir under %TEMP%/agentdecompile_shared/ for shared checkout (avoid PID reuse lock collisions).
+        self.shared_server_workspace_subdir: str | None = None
+        # True after connect-shared successfully bound GhidraProject to shared checkout tree (skip rebind on repeat open).
+        self.shared_checkout_project_bound: bool = False
+        # Set by launcher so connect-shared can replace context.project when swapping the active Ghidra project.
+        self.pyghidra_context_ref: Any = None
         self._on_program_info_changed: Callable[[ProgramInfo], None] | None = None
 
     def set_ghidra_project(self, project: Any) -> None:
@@ -1795,6 +1822,15 @@ class ToolProviderManager:
 
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        repo_norm = (repo or "").replace("\\", "/").strip().strip("/").lower()
+        req_norm = (requested_program_key or "").replace("\\", "/").strip().strip("/").lower()
+        if repo_norm and req_norm == repo_norm:
+            logger.debug(
+                "shared_env_bootstrap: skip checkout — requested key matches repository name %r",
+                requested_program_key,
+            )
+            return
+
         if handle and is_shared_server_handle(handle):
             repository_adapter = handle.get("repository_adapter")
             if repository_adapter is not None:
@@ -1972,12 +2008,33 @@ class ToolProviderManager:
             )
             return existing
 
+        # Shared repository name is not a program path (prevents local_domain_file + checkout noise).
+        rk = (requested_program_key or "").replace("\\", "/").strip().strip("/").lower()
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle_early = session.project_handle if isinstance(session.project_handle, dict) else None
+        rn = ""
+        if handle_early and is_shared_server_handle(handle_early):
+            rn = str((handle_early.get("repository_name") or "")).replace("\\", "/").strip().strip("/").lower()
+        if rn and rk == rn:
+            logger.debug("activate_requested_program noop_repository_name_key %r", requested_program_key)
+            return None
+        env_repo = (
+            os.getenv("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "")
+            or os.getenv("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "")
+            or os.getenv("AGENTDECOMPILE_GHIDRA_REPOSITORY", "")
+            or os.getenv("AGENT_DECOMPILE_REPOSITORY", "")
+            or os.getenv("AGENTDECOMPILE_REPOSITORY", "")
+        )
+        env_rn = env_repo.replace("\\", "/").strip().strip("/").lower()
+        if env_rn and rk == env_rn:
+            logger.debug("activate_requested_program noop_env_repository_name_key %r", requested_program_key)
+            return None
+
         logger.debug(
             "activating program: session_id=%s program=%s",
             redact_session_id(session_id),
             requested_program_key,
         )
-        session = SESSION_CONTEXTS.get_or_create(session_id)
         handle: dict[str, Any] | None = session.project_handle if isinstance(session.project_handle, dict) else None
         project_provider: ToolProvider | None = self._get_project_provider()
 
@@ -2087,7 +2144,7 @@ class ToolProviderManager:
 
         # 1. Already-open program in session (pick first with a live .program)
         for key, info in (session.open_programs or {}).items():
-            if info is not None and getattr(info, "program", None) is not None:
+            if info is not None and info.program is not None:
                 SESSION_CONTEXTS.set_active_program_info(session_id, key, info)
                 self.set_program_info(info)
                 logger.info(

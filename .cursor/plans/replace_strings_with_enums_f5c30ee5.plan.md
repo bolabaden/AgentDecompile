@@ -137,7 +137,7 @@ if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
 ### Testing and verification (concrete steps)
 
 - **Type check:** `uv run pyright src/agentdecompile_cli` (or project’s configured command).  
-- **Unit tests:** `uv run pytest tests/ -v -k "registry or normalization or tool"` (or run full `uv run pytest tests/ -v`).  
+- **Unit tests:** `uv run pytest -m unit -v` (or full `uv run pytest tests/ -v`).  
 - **MCP tool discovery (post-rollout):** Use [.cursor/skills/mcp-debugging/](.cursor/skills/mcp-debugging/) references (e.g. MCP Inspector or mcptools) to confirm advertised tool list and names are unchanged on the wire; ensures no accidental renames or missing tools.
 
 ### 4. Optional: _TOOL_PARAMS_STR in registry
@@ -210,7 +210,7 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 
 **Line-level refs (Phase B):** See [rename_toolname_to_tool_rich_enum.plan.md](.cursor/plans/rename_toolname_to_tool_rich_enum.plan.md) “Line-level references (fourth pass)” table for registry (857–882, 885), executor (768, 951–956), response_formatter (91–99, 499, 1749, 112), tool_providers, cli, server.
 
-**Tests (Phase A vs Phase B):** Phase A: test_tool_name_and_argument_normalization, test_unified_provider_advertisement, test_legacy_tools_advertisement, test_normalization_combinatorial, test_cli_helpers assert on ToolName, TOOLS, ADVERTISED_TOOLS, DISABLED_GUI_ONLY_TOOLS, get_tool_params. Phase B: same tests updated to Tool and .params / Tool.from_string; add/update tests for Tool.from_string (canonical, aliases, unknown→None), tool.params, tool.normalized, tool.is_advertised, tool.is_gui_only_disabled.
+**Tests (Phase A vs Phase B):** Phase A: `test_cli_helpers` and targeted provider/E2E tests assert on `ToolName`, `TOOLS`, `ADVERTISED_TOOLS`, `DISABLED_GUI_ONLY_TOOLS`, `get_tool_params` where relevant. Phase B: same areas updated to `Tool` and `.params` / `Tool.from_string`; add focused tests for `Tool.from_string` (canonical, aliases, unknown→None), `tool.params`, `tool.normalized`, `tool.is_advertised`, `tool.is_gui_only_disabled` if not covered by E2E.
 
 **References (Phase B):** [Python enum](https://docs.python.org/3/library/enum.html), [PEP 435](https://peps.python.org/pep-0435/) (mutable member values: return copies from `.params`), [PEP 613](https://peps.python.org/pep-0613/) (type alias deprecation).
 

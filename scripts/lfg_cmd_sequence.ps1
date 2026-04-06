@@ -3,9 +3,9 @@
 # MCP restart → shared 4th ck → MCP restart → pull + verify 4 revisions (same session) → push 5th + verify →
 # MCP restart → local Track B L1–L3 still present → CLI local headless (--local, no MCP server) import+label+persist.
 #
-# Ghidra: stock ghidraSvr.bat console blocks its host shell ("Use Ctrl-C..."). Auto-start spawns a dedicated
-# PowerShell window + patched bat (`start /B` + JVM logs under $Evidence). MCP defaults to a hidden detached
-# process (no -NoNewWindow); pass -StartMcpInNewWindow for a visible MCP terminal with Tee-Object logs.
+# Ghidra: stock ghidraSvr.bat console blocks its host shell ("Use Ctrl-C..."). Auto-start uses a patched bat
+# (`start /B` + JVM logs under $Evidence) launched headlessly (no console window). MCP defaults to a hidden
+# detached process; pass -StartMcpInNewWindow for a visible MCP terminal with Tee-Object logs.
 # Requires: Ghidra install (GHIDRA_INSTALL_DIR), repo root .venv or uv.
 param(
     [string]$RunId = "lfgcmd$(Get-Date -Format 'HHmmss')",
@@ -22,7 +22,7 @@ param(
     [string]$GhidraHome = "",
     [bool]$AutoStartGhidraServer = $true,
     [bool]$StopStartedGhidraOnExit = $true,
-    # Ghidra's ghidraSvr "console" blocks its host shell; never run it with -NoNewWindow in the driver terminal.
+    # Ghidra's ghidraSvr "console" blocks its host shell; the script spawns it headlessly, not in the driver TTY.
     [bool]$StartMcpInNewWindow = $false,
     # Set true on hosts that cannot start a second PyGhidra JVM; skips CLI --local headless phase (steps 15–17).
     [bool]$SkipLocalHeadless = $false
@@ -88,6 +88,32 @@ function Test-LfgMcpPortBindAvailable {
     }
 }
 
+function Stop-LfgMcpPortProcesses {
+    <#
+    Frees the chosen MCP listen port before this run and during teardown: stops whatever is listening
+    and any python/uv run that is clearly agentdecompile_cli.server bound to this --port (avoids stale
+    servers from a prior LFG or Cursor leaving 8099 busy while env still points at it).
+    #>
+    param([int]$Port)
+    try {
+        foreach ($c in @(Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue)) {
+            try {
+                Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+            } catch {}
+        }
+    } catch {}
+    $portPat = "--port\s+$Port(\s|$)"
+    Get-Process -Name "python*", "python" -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+            if ($cmd -and $cmd -match 'agentdecompile_cli\.server' -and $cmd -match $portPat) {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+    Start-Sleep -Seconds 2
+}
+
 # Cursor / another agentdecompile-server often holds 8099; LFG must not fail startup — pick a free port.
 # Do not rely on Get-NetTCPConnection (varies by OS permissions); bind-probe matches what the MCP server needs.
 if (-not (Test-LfgMcpPortBindAvailable -Port $McpPort)) {
@@ -99,11 +125,22 @@ if (-not (Test-LfgMcpPortBindAvailable -Port $McpPort)) {
 # Always derive ServerUrl from McpPort (handles explicit -McpPort and auto-selected ports).
 $ServerUrl = "http://127.0.0.1:$McpPort"
 
-# Launcher reads AGENT_DECOMPILE_PORT from the environment; inherited 8099 would override --port if unset.
+# Launcher reads AGENT_DECOMPILE_PORT from the environment; clear inherited values then pin to this run.
+Remove-Item Env:\AGENT_DECOMPILE_PORT -ErrorAction SilentlyContinue
 $env:AGENT_DECOMPILE_PORT = "$McpPort"
+Stop-LfgMcpPortProcesses -Port $McpPort
 
 $ghidraRoot = if ($GhidraHome -and $GhidraHome.Trim()) { $GhidraHome.Trim() } elseif ($env:GHIDRA_INSTALL_DIR) { $env:GHIDRA_INSTALL_DIR.Trim() } else { "" }
-if (-not $ghidraRoot) { throw "Set GHIDRA_INSTALL_DIR or pass -GhidraHome to the Ghidra_*_PUBLIC root" }
+if (-not $ghidraRoot) {
+    $cand = @(Get-ChildItem -LiteralPath "C:\ghidra12" -Directory -Filter "ghidra_*_PUBLIC" -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($cand.Count -gt 0) {
+        $ghidraRoot = $cand[-1].FullName
+        Write-Host "LFG: GHIDRA_INSTALL_DIR unset; auto-selected $ghidraRoot (C:\ghidra12\ghidra_*_PUBLIC)." -ForegroundColor Yellow
+    }
+}
+if (-not $ghidraRoot) {
+    throw "Set GHIDRA_INSTALL_DIR, pass -GhidraHome, or install Ghidra under C:\ghidra12\ghidra_*_PUBLIC"
+}
 $env:GHIDRA_INSTALL_DIR = $ghidraRoot
 
 $py = Join-Path $RepoRoot ".venv/Scripts/python.exe"
@@ -112,7 +149,7 @@ if (-not (Test-Path $py)) { $py = "python" }
 $script:McpInvocation = 0
 $script:LfgStartedGhidra = $false
 $script:LfgGhidraPatchedBat = $null
-$script:LfgGhidraLauncherPs1 = $null
+$script:LfgGhidraCmdPid = $null
 $script:LfgIsolatedGhidraRepos = $null
 # When AutoStartGhidraServer: context to re-launch the same isolated server if the console window exited early.
 $script:LfgGhidraRelaunchContext = $null
@@ -192,11 +229,10 @@ function New-LfgPatchedGhidraSvrBat {
     [System.IO.File]::WriteAllText($DestPatchBat, $raw2, [System.Text.UTF8Encoding]::new($false))
 }
 
-function Invoke-LfgGhidraConsoleSeparateTerminal {
+function Invoke-LfgGhidraServerHeadless {
     <#
-    ghidraSvr.bat console prints "Use Ctrl-C ..." and blocks its host shell. Never attach that to the driver
-    terminal (-NoNewWindow). Spawn a dedicated PowerShell window so the driver returns immediately and you
-    can watch that window (JVM still uses start /B + evidence-dir logs from the patched bat).
+    ghidraSvr.bat console must not attach to the driver TTY. Patched bat uses start /B for the JVM and logs
+    to evidence files. Spawn cmd.exe with CreateNoWindow so no extra terminal window appears.
     #>
     param(
         [string]$GhidraRoot,
@@ -213,21 +249,17 @@ function Invoke-LfgGhidraConsoleSeparateTerminal {
     $patched = Join-Path $serverDir "ghidraSvr_lfg_no_extra_window.agentdecompile.bat"
     New-LfgPatchedGhidraSvrBat -SourceGhidraSvrBat $srcBat -DestPatchBat $patched -OutLog $outLog -ErrLog $errLog -WrapperConfPath $WrapperConfPath
     $script:LfgGhidraPatchedBat = $patched
-    $launcher = Join-Path $EvidenceDir "launch_ghidra_lfg_console.ps1"
-    $script:LfgGhidraLauncherPs1 = $launcher
-    @"
-# LFG: dedicated Ghidra Server console (do not close until the driver finishes, or use Ctrl+C here).
-Write-Host "LFG Ghidra Server — TCP base port $ListenPort — JVM logs: $outLog / $errLog" -ForegroundColor Cyan
-Set-Location -LiteralPath '$($serverDir.Replace("'", "''"))'
-& '$($patched.Replace("'", "''"))' console
-"@ | Set-Content -LiteralPath $launcher -Encoding utf8
 
-    # New window: parent script never blocks on "Use Ctrl-C to terminate".
-    Start-Process -FilePath "powershell.exe" -WorkingDirectory $serverDir `
-        -ArgumentList @(
-        '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-        '-File', $launcher
-    ) | Out-Null
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cmd.exe"
+    $psi.Arguments = "/c call `"$patched`" console"
+    $psi.WorkingDirectory = $serverDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $script:LfgGhidraCmdPid = $proc.Id
+    Write-Host "LFG Ghidra Server (headless) — TCP base port $ListenPort — logs: $outLog | $errLog" -ForegroundColor Cyan
 }
 
 function Invoke-LfgGhidraSvrAdmin {
@@ -260,17 +292,9 @@ function Stop-LfgGhidra {
             Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
         }
     } catch {}
-    # Also kill by patched bat name / launcher ps1 name so orphans from a crashed run are cleaned up.
-    if ($script:LfgGhidraLauncherPs1) {
-        $launcherName = [System.IO.Path]::GetFileName($script:LfgGhidraLauncherPs1)
-        Get-Process -Name "powershell*" -ErrorAction SilentlyContinue | ForEach-Object {
-            try {
-                $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
-                if ($cmd -and $cmd -match [regex]::Escape($launcherName)) {
-                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-                }
-            } catch {}
-        }
+    if ($script:LfgGhidraCmdPid) {
+        Get-Process -Id $script:LfgGhidraCmdPid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        $script:LfgGhidraCmdPid = $null
     }
     # Kill any java process that loaded the YAJSW wrapper.jar from our patched bat's serverDir.
     if ($script:LfgGhidraPatchedBat) {
@@ -300,7 +324,7 @@ function Ensure-LfgGhidraServerUp {
         throw "Ghidra Server not reachable at ${HostName}:${Port} (no LFG relaunch context; start the server or use -AutoStartGhidraServer:`$true)."
     }
     Write-Host "Ghidra not listening on ${HostName}:${Port}; re-launching isolated LFG server (same repos dir)..." -ForegroundColor Yellow
-    Invoke-LfgGhidraConsoleSeparateTerminal -GhidraRoot $ctx.GhidraRoot -EvidenceDir $ctx.EvidenceDir -ListenPort $ctx.ListenPort -WrapperConfPath $ctx.WrapperConfPath
+    Invoke-LfgGhidraServerHeadless -GhidraRoot $ctx.GhidraRoot -EvidenceDir $ctx.EvidenceDir -ListenPort $ctx.ListenPort -WrapperConfPath $ctx.WrapperConfPath
     $ghOk = $false
     for ($i = 0; $i -lt 120; $i++) {
         if (Test-LfgTcpOpen $HostName $Port) { $ghOk = $true; break }
@@ -317,21 +341,10 @@ function Ensure-LfgGhidraServerUp {
 }
 
 function Stop-LfgMcp {
-    # Kill by TCP port.
-    Get-NetTCPConnection -LocalPort $McpPort -ErrorAction SilentlyContinue | ForEach-Object {
-        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-    }
-    # Also kill by process name: any python/uv process with agentdecompile_cli.server in cmdline.
-    Get-Process -Name "python*","python" -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
-            if ($cmd -and $cmd -match 'agentdecompile_cli.*server') {
-                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-            }
-        } catch {}
-    }
-    # Allow TIME_WAIT / JVM teardown so the next bind + PyGhidra init does not race the LFG health probe.
-    Start-Sleep -Seconds 5
+    # Same port-scoped cleanup as startup (listeners + this-run MCP python only).
+    Stop-LfgMcpPortProcesses -Port $McpPort
+    # Extra cooldown so the next bind + PyGhidra init does not race the LFG health probe.
+    Start-Sleep -Seconds 3
 }
 
 function Start-LfgMcp {
@@ -341,6 +354,12 @@ function Start-LfgMcp {
     if (-not $env:GHIDRA_INSTALL_DIR) {
         throw "Set GHIDRA_INSTALL_DIR to your Ghidra install"
     }
+    # MCP shared Ghidra env (bootstrap skips checkout when requested key == repository name).
+    $env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = $GhidraHost
+    $env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "$GhidraPort"
+    $env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = $Repo
+    $env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = $GhidraUser
+    $env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = $GhidraPasswordPlain
     $script:McpInvocation++
     $n = $script:McpInvocation
     $mcpOut = Join-Path $Evidence "mcp_server_${n}.stdout.log"
@@ -350,6 +369,11 @@ function Start-LfgMcp {
         @"
 Write-Host "LFG MCP #$n — http://127.0.0.1:$McpPort/health — tee log: $($mcpOut.Replace("'", "''"))" -ForegroundColor Cyan
 Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
+`$env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = '$($GhidraHost.Replace("'", "''"))'
+`$env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = '$GhidraPort'
+`$env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = '$($Repo.Replace("'", "''"))'
+`$env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = '$($GhidraUser.Replace("'", "''"))'
+`$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = '$($GhidraPasswordPlain.Replace("'","''"))'
 & '$($py.Replace("'", "''"))' -m agentdecompile_cli.server -t streamable-http --host 127.0.0.1 --port $McpPort --project-path '$($ProjectPath.Replace("'", "''"))' 2>&1 | Tee-Object -FilePath '$($mcpOut.Replace("'", "''"))' -Append
 "@ | Set-Content -LiteralPath $mcpLauncher -Encoding utf8
         Start-Process -FilePath "powershell.exe" -WorkingDirectory $RepoRoot `
@@ -434,7 +458,17 @@ function Invoke-LfgLocalSeq {
     $tmp = Join-Path $Evidence "$Name.steps.json"
     [System.IO.File]::WriteAllText($tmp, $Json.Trim(), [System.Text.UTF8Encoding]::new($false))
     $log = Join-Path $Evidence "$Name.stdout.log"
-    $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    $prevUnbuf = $env:PYTHONUNBUFFERED
+    $env:PYTHONUNBUFFERED = "1"
+    try {
+        $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    } finally {
+        if ($null -eq $prevUnbuf -or $prevUnbuf -eq "") {
+            Remove-Item Env:\PYTHONUNBUFFERED -ErrorAction SilentlyContinue
+        } else {
+            $env:PYTHONUNBUFFERED = $prevUnbuf
+        }
+    }
     $ec = $LASTEXITCODE
     Set-Content -LiteralPath $log -Value ($out | Out-String) -Encoding utf8
     if ($ec -ne 0) {
@@ -450,7 +484,17 @@ function Invoke-LfgLocalSeqUnchecked {
     $tmp = Join-Path $Evidence "$Name.steps.json"
     [System.IO.File]::WriteAllText($tmp, $Json.Trim(), [System.Text.UTF8Encoding]::new($false))
     $log = Join-Path $Evidence "$Name.stdout.log"
-    $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    $prevUnbuf = $env:PYTHONUNBUFFERED
+    $env:PYTHONUNBUFFERED = "1"
+    try {
+        $out = & $py -m agentdecompile_cli.cli --local --local-project-path $ProjectPath -f json tool-seq "@$tmp" 2>&1
+    } finally {
+        if ($null -eq $prevUnbuf -or $prevUnbuf -eq "") {
+            Remove-Item Env:\PYTHONUNBUFFERED -ErrorAction SilentlyContinue
+        } else {
+            $env:PYTHONUNBUFFERED = $prevUnbuf
+        }
+    }
     $ec = $LASTEXITCODE
     Set-Content -LiteralPath $log -Value ($out | Out-String) -Encoding utf8
     return $ec
@@ -599,7 +643,7 @@ if (-not $AutoStartGhidraServer) {
     Write-Host "  $Evidence\ghidra_server.stderr.log" -ForegroundColor DarkGray
     $env:GHIDRA_HOME = $ghidraRoot
     Write-Host "  Ghidra may open a console window; JVM logs are tee'd as above." -ForegroundColor DarkGray
-    Invoke-LfgGhidraConsoleSeparateTerminal -GhidraRoot $ghidraRoot -EvidenceDir $Evidence -ListenPort $GhidraPort -WrapperConfPath $dstConfFull
+    Invoke-LfgGhidraServerHeadless -GhidraRoot $ghidraRoot -EvidenceDir $Evidence -ListenPort $GhidraPort -WrapperConfPath $dstConfFull
     $script:LfgStartedGhidra = $true
     $script:LfgGhidraRelaunchContext = @{
         GhidraRoot      = $ghidraRoot
@@ -640,7 +684,7 @@ if (-not $AutoStartGhidraServer) {
     for ($uPoll = 0; $uPoll -lt 30; $uPoll++) {
         $listOut = & cmd.exe /c "call `"$(Join-Path $ghidraRoot 'support\launch.bat')`" fg jre svrAdmin 128M `"-DUserAdmin.invocation=svrAdmin`" ghidra.server.ServerAdmin `"$dstConfFull`" -list" 2>&1
         $listText = ($listOut | Out-String)
-        if ($listText -match "\b$GhidraUser\b") {
+        if ($listText -match [regex]::new('\b' + [regex]::Escape($GhidraUser) + '\b', 'IgnoreCase')) {
             $userConfirmed = $true
             Write-Host "svrAdmin -list confirms user '$GhidraUser' exists (poll $uPoll)." -ForegroundColor Green
             break
@@ -651,11 +695,11 @@ if (-not $AutoStartGhidraServer) {
         Start-Sleep -Seconds 2
     }
     if (-not $userConfirmed) {
-        Write-Host "WARNING: svrAdmin -list did not confirm user '$GhidraUser' after 60s. Proceeding anyway." -ForegroundColor Red
+        Write-Host "WARNING: svrAdmin -list did not confirm user '$GhidraUser' after 60s. Proceeding with ghidra/changeme (same as svrAdmin -add default when the user exists)." -ForegroundColor Red
     }
     $GhidraPassword = 'changeme'
     $GhidraPasswordPlain = 'changeme'
-    Write-Host "LFG dedicated Ghidra credentials: $GhidraUser / changeme (Ghidra default for svrAdmin -add)." -ForegroundColor DarkCyan
+    Write-Host "LFG Ghidra MCP credentials: $GhidraUser / changeme (use -GhidraUser/-GhidraPassword if your server differs)." -ForegroundColor DarkCyan
 }
 
 $openShared = @"
@@ -681,6 +725,8 @@ $addr3 = "0x{0:X}" -f ($base + 0x1080)
 $addr4 = "0x{0:X}" -f ($base + 0x1880)
 $addrPush = "0x{0:X}" -f ($base + 0x2080)
 $addrCli  = "0x{0:X}" -f ($base + 0x2800)
+# Valid .text read for inspect-memory on PE64 sort.exe (avoid guard/invalid pages)
+$addrInspect = "0x{0:X}" -f $base
 
 $assertShared = @"
 [
@@ -726,6 +772,32 @@ $assertLocalAgain = @"
 ]
 "@
 
+function Assert-LfgLogContainsAll {
+    param(
+        [Parameter(Mandatory)][string]$RelativeLogName,
+        [Parameter(Mandatory)][string[]]$Substrings,
+        [string]$Message = "LFG assertion failed"
+    )
+    $lp = Join-Path $Evidence $RelativeLogName
+    if (-not (Test-Path -LiteralPath $lp)) { throw "$Message : missing log $lp" }
+    $raw = [System.IO.File]::ReadAllText($lp)
+    foreach ($s in $Substrings) {
+        if ($raw -notlike "*${s}*") { throw "$Message : expected substring not found in ${RelativeLogName}: $s" }
+    }
+}
+
+function Assert-LfgLogMatch {
+    param(
+        [Parameter(Mandatory)][string]$RelativeLogName,
+        [Parameter(Mandatory)][string]$Pattern,
+        [string]$Message = "LFG assertion failed"
+    )
+    $lp = Join-Path $Evidence $RelativeLogName
+    if (-not (Test-Path -LiteralPath $lp)) { throw "$Message : missing log $lp" }
+    $raw = [System.IO.File]::ReadAllText($lp)
+    if ($raw -notmatch $Pattern) { throw "$Message : pattern not found in ${RelativeLogName}: $Pattern" }
+}
+
 try {
 
 # Steps 1–2: shared three check-ins
@@ -750,6 +822,16 @@ Invoke-LfgSeq "02_shared_ck2_checkin" "[{`"name`":`"checkin-program`",`"argument
 Invoke-LfgSeq "02_shared_ck3_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"exclusive`":true}}]"
 Invoke-LfgCreateLabelWithOptionalResolve "02_shared_ck3_label" $SharedProgramPath $addr3 "sh_${RunId}_L3"
 Invoke-LfgSeq "02_shared_ck3_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"comment`":`"sh_${RunId}_ck_3`"}}]"
+# Bisect LFG step 5: if this fails, labels/search are wrong before any MCP restart (not cross-process persistence).
+Invoke-LfgSeq "02d_shared_search_same_mcp" @"
+[
+  {"name":"checkout-program","arguments":{"programPath":"$SharedProgramPath","exclusive":true}},
+  {"name":"search-symbols","arguments":{"programPath":"$SharedProgramPath","query":"sh_${RunId}_"}}
+]
+"@
+Assert-LfgLogContainsAll "02d_shared_search_same_mcp.stdout.log" @(
+    "sh_${RunId}_L1", "sh_${RunId}_L2", "sh_${RunId}_L3"
+) -Message "02d: after third shared check-in, search-symbols must list sh_* L1-L3 (same MCP session)"
 
 # Steps 3–4: local three check-ins
 Start-LfgMcp -ProjectPath $McpWsJson
@@ -771,11 +853,17 @@ Clear-LfgCliState
 # Local-only steps 3–4 do not touch the Ghidra server; the dedicated console/JVM may have exited — re-arm before shared open.
 Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
 Invoke-LfgSeq "05_assert_shared_after_mcp" $assertShared
+Assert-LfgLogContainsAll "05_assert_shared_after_mcp.stdout.log" @(
+    "sh_${RunId}_L1", "sh_${RunId}_L2", "sh_${RunId}_L3"
+) -Message "Step 5 shared persistence: search-symbols must list sh_* L1-L3"
 
 # Steps 7–8: local persistence after MCP restart
 Start-LfgMcp -ProjectPath $McpWsJson
 Clear-LfgCliState
 Invoke-LfgSeq "06_assert_local_after_mcp" $assertLocal
+Assert-LfgLogContainsAll "06_assert_local_after_mcp.stdout.log" @(
+    "loc_${RunId}_L1", "loc_${RunId}_L2", "loc_${RunId}_L3"
+) -Message "Step 7 local persistence: search-symbols must list loc_* L1-L3"
 
 # Steps 9–10: fourth shared check-in
 Start-LfgMcp -ProjectPath $McpWsJson
@@ -800,6 +888,11 @@ Start-LfgMcp -ProjectPath $McpWsJson
 Clear-LfgCliState
 Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
 Invoke-LfgSeq "08_pull_verify_four_ck" $pullVerifyFour
+Assert-LfgLogContainsAll "08_pull_verify_four_ck.stdout.log" @(
+    "sh_${RunId}_L1", "sh_${RunId}_L2", "sh_${RunId}_L3", "sh_${RunId}_L4"
+) -Message "Step 11: after pull, search-symbols must list sh_* L1-L4"
+Assert-LfgLogMatch "08_pull_verify_four_ck.stdout.log" '"latest_version"\s*:\s*4' -Message "Step 11: checkout-status latest_version must be 4 (four shared check-ins)"
+
 # sync-project pull replaces versioned files on disk; continuing in the same PyGhidra JVM can leave
 # checkout/check-in metadata inconsistent (checkin-program: "not modified since checkout" after real edits).
 # Re-start MCP and re-open the shared project so step 09 uses a fresh Ghidra session.
@@ -808,11 +901,25 @@ Clear-LfgCliState
 Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
 Invoke-LfgSeq "09_open_shared_after_pull" $openShared
 Invoke-LfgPushFifthVerifySequence -SharedPath $SharedProgramPath -RunIdPart $RunId -AddrPushPart $addrPush
+$pushVerifyLogRel = if (Test-Path -LiteralPath (Join-Path $Evidence "09_push_sync_verify.stdout.log")) {
+    "09_push_sync_verify.stdout.log"
+} elseif (Test-Path -LiteralPath (Join-Path $Evidence "09_push_retry_sync_verify.stdout.log")) {
+    "09_push_retry_sync_verify.stdout.log"
+} else {
+    throw "Step 12: expected 09_push_sync_verify or 09_push_retry_sync_verify stdout log under $Evidence"
+}
+Assert-LfgLogContainsAll $pushVerifyLogRel @(
+    "loc_${RunId}_PUSH"
+) -Message "Step 12: push flow must surface loc_*_PUSH via search-symbols"
+Assert-LfgLogMatch $pushVerifyLogRel '"latest_version"\s*:\s*5' -Message "Step 12: checkout-status latest_version must be 5 after fifth check-in"
 
 # Steps 13–14: local .gpr Track B still has L1–L3
 Start-LfgMcp -ProjectPath $McpWsJson
 Clear-LfgCliState
 Invoke-LfgSeq "10_assert_local_persistence" $assertLocalAgain
+Assert-LfgLogContainsAll "10_assert_local_persistence.stdout.log" @(
+    "loc_${RunId}_L1", "loc_${RunId}_L2", "loc_${RunId}_L3"
+) -Message "Step 14: local Track B must still list loc_* L1-L3"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXTENDED TOOL COVERAGE — exercise every safe tool against the local binary.
@@ -826,8 +933,7 @@ Clear-LfgCliState
 $extFail = 0
 Invoke-LfgSeq "11_ext_open_analyze" @"
 [
-  {"name":"open","arguments":{"path":"$LocalDirJson"}},
-  {"name":"analyze-program","arguments":{"programPath":"/sort.exe","force":true}}
+  {"name":"open","arguments":{"path":"$LocalDirJson"}}
 ]
 "@
 
@@ -948,7 +1054,7 @@ $ec = Invoke-LfgSeqUnchecked "13_ext_shared_open_analyze" @"
 [
   {"name":"open","arguments":{"shared":true,"path":"$Repo","serverHost":"$GhidraHost","serverPort":$GhidraPort,"serverUsername":"$GhidraUser","serverPassword":"$GhidraPasswordPlain"}},
   {"name":"checkout-program","arguments":{"programPath":"$SharedProgramPath","exclusive":true}},
-  {"name":"analyze-program","arguments":{"programPath":"$SharedProgramPath","force":true}},
+  {"name":"analyze-program","arguments":{"programPath":"$SharedProgramPath","force":false}},
   {"name":"list-functions","arguments":{"programPath":"$SharedProgramPath","limit":5}},
   {"name":"list-imports","arguments":{"programPath":"$SharedProgramPath","limit":5}},
   {"name":"decompile-function","arguments":{"programPath":"$SharedProgramPath","functionIdentifier":"entry","limit":30}},
@@ -983,36 +1089,51 @@ if ($SkipLocalHeadless) {
 } else {
     # Stop any MCP server that is still running so these invocations truly prove no-server operation.
     Stop-LfgMcp
+    # Extra cooldown: Windows can retain Ghidra file locks / JVM handles briefly after MCP exit.
+    Start-Sleep -Seconds 8
     $cliLocalFail = 0
 
-    # Step 15: import binary + create label — purely in-process, no network.
+    # Clean the CLI project dir to avoid stale lock files from any prior interrupted run.
+    # (Ghidra's JVM shutdown can take 20+ min on Windows; an interrupted run leaves .lock behind.)
+    if (Test-Path $LocalCliDir) {
+        Remove-Item -Path "$LocalCliDir\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Cleaned local_cli_gpr_dir for fresh Phase E run." -ForegroundColor DarkGray
+    }
+
+    # Step 15: --local-project-path opens the fresh project dir (equivalent to lfg.md "open" for headless).
+    # checkout-program / checkin-program are no-ops / save for non-versioned locals but prove the same tool-seq shape as shared.
     $cliStep15 = @"
 [
-  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
   {`"name`":`"import-binary`",`"arguments`":{`"filePath`":`"$ImportJson`",`"programPath`":`"/sort.exe`",`"enableVersionControl`":false,`"analyzeAfterImport`":false}},
-  {`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}},
+  {`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":true}},
   {`"name`":`"create-label`",`"arguments`":{`"programPath`":`"/sort.exe`",`"address`":`"$addrCli`",`"labelName`":`"cli_${RunId}_L1`"}},
-  {`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"cli_${RunId}_ck_1`"}}
+  {`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"cli_${RunId}_ck_headless`"}}
 ]
 "@
     Invoke-LfgLocalSeq "15_cli_local_import_label" $cliStep15 $LocalCliDirJson
 
-    # Step 16: fresh process + new JVM, same .gpr dir — label must survive on disk.
+    # Step 16: fresh process + new JVM, same .gpr dir - label must survive on disk.
+    # --local-project-path re-opens the project in the new JVM; call 'open /sort.exe' to
+    # activate the program within the already-open project (does NOT re-lock the .gpr).
     $cliStep16 = @"
 [
-  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
+  {`"name`":`"open`",`"arguments`":{`"path`":`"/sort.exe`"}},
   {`"name`":`"search-symbols`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"cli_${RunId}_`"}}
 ]
 "@
     Invoke-LfgLocalSeq "16_cli_local_persist" $cliStep16 $LocalCliDirJson
+    Assert-LfgLogContainsAll "16_cli_local_persist.stdout.log" @(
+        "cli_${RunId}_L1"
+    ) -Message "Step 16: CLI headless persistence - search-symbols must find cli_*_L1"
 
-    # Step 17: read-only tool coverage under --local (unchecked — decompile may fail on stripped binaries).
+    # Step 17: read-only tool coverage under --local (unchecked; decompile may fail on stripped binaries).
+    # Same pattern: --local-project-path opens the project; open '/sort.exe' activates the program.
     $cliStep17 = @"
 [
-  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalCliDirJson`"}},
+  {`"name`":`"open`",`"arguments`":{`"path`":`"/sort.exe`"}},
   {`"name`":`"list-functions`",`"arguments`":{`"programPath`":`"/sort.exe`",`"limit`":5}},
   {`"name`":`"decompile-function`",`"arguments`":{`"programPath`":`"/sort.exe`",`"functionIdentifier`":`"entry`",`"limit`":30}},
-  {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"/sort.exe`",`"mode`":`"read`",`"address`":`"0x140001000`",`"length`":32}},
+  {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"/sort.exe`",`"mode`":`"read`",`"address`":`"$addrInspect`",`"length`":32}},
   {`"name`":`"search-strings`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"sort`",`"limit`":5}}
 ]
 "@
@@ -1029,6 +1150,7 @@ if ($SkipLocalHeadless) {
 Write-Host "=== DONE. Evidence under $Evidence ===" -ForegroundColor Green
 
 } finally {
+    Remove-Item -LiteralPath (Join-Path $Evidence "launch_ghidra_lfg_console.ps1") -Force -ErrorAction SilentlyContinue
     if ($script:LfgGhidraPatchedBat -and (Test-Path -LiteralPath $script:LfgGhidraPatchedBat)) {
         Remove-Item -LiteralPath $script:LfgGhidraPatchedBat -Force -ErrorAction SilentlyContinue
     }

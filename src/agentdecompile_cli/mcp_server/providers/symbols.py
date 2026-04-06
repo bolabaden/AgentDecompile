@@ -23,6 +23,7 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_exports,
     collect_imports,
     collect_symbols,
+    iter_items,
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     FORCE_APPLY_CONFLICT_ID_KEY,
@@ -315,26 +316,95 @@ class SymbolToolProvider(ToolProvider):
         query: str = self._get_str(args, "query", "namepattern", "pattern", "search", "name")
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
-        # Try GhidraTools
+        def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                if isinstance(r, dict):
+                    out.append(dict(r))
+                elif hasattr(r, "model_dump"):
+                    out.append(r.model_dump())
+                else:
+                    out.append(
+                        {
+                            "name": str(getattr(r, "name", "")),
+                            "address": str(getattr(r, "address", "")),
+                            "type": str(getattr(r, "type", "")),
+                            "namespace": str(getattr(r, "namespace", "") or ""),
+                            "source": str(getattr(r, "source", "") or ""),
+                        },
+                    )
+            return out
+
+        # Prefer GhidraTools when it returns matches. On empty (common for some shared-server /
+        # iterator edge cases), fall through to a full symbol-table scan — same substring semantics
+        # as GhidraTools.search_symbols_by_name (documented: case-insensitive substring).
         if self.ghidra_tools:
             try:
-                results: list[dict[str, Any]] = self.ghidra_tools.search_symbols_by_name(query)
-                paginated, has_more = self._paginate_results(results, offset, max_results)
-                return self._create_paginated_response(paginated, offset, max_results, total=len(results), query=query)
+                gt_rows = self.ghidra_tools.search_symbols_by_name(query)
+                gt_dicts = _rows_to_dicts(list(gt_rows))
+                if gt_dicts:
+                    paginated, _has_more = self._paginate_results(gt_dicts, offset, max_results)
+                    return self._create_paginated_response(
+                        paginated,
+                        offset,
+                        max_results,
+                        total=len(gt_dicts),
+                        query=query,
+                    )
             except Exception:
-                pass
+                logger.debug("search-symbols GhidraTools path failed; using symbol table scan", exc_info=True)
 
-        # Direct API
+        # Direct API: iterate all symbols (includes labels) with substring match
         assert self.program_info is not None  # for type checker
         program: GhidraProgram = self.program_info.program
+        qnorm = query.strip().lower() if query else ""
+
+        # Ghidra native query iterator (substring/pattern); works when bulk getAllSymbols iterators are empty (JPype/shared).
+        st: GhidraSymbolTable = program.getSymbolTable()
+        if qnorm:
+            sym_it = None
+            # Ghidra's getSymbolIterator(String, caseSensitive) matches the query with wildcard rules where '_'
+            # is often a single-character wildcard; LFG / agent queries like sh_<runId>_ then return the wrong
+            # set or nothing while substring search over the full table would find user labels.
+            if "_" not in query:
+                try:
+                    sym_it = st.getSymbolIterator(query, False)
+                except Exception:
+                    sym_it = None
+                    logger.debug("search-symbols getSymbolIterator(query) failed", exc_info=True)
+            if sym_it is not None:
+                by_query: list[dict[str, Any]] = []
+                for sym in iter_items(sym_it):
+                    name = str(sym.getName())
+                    if qnorm not in name.lower():
+                        continue
+                    by_query.append(
+                        {
+                            "name": name,
+                            "address": str(sym.getAddress()),
+                            "type": str(sym.getSymbolType()),
+                            "namespace": str(sym.getParentNamespace()),
+                            "source": str(sym.getSource()),
+                        },
+                    )
+                if by_query:
+                    paginated, _has_more = self._paginate_results(by_query, offset, max_results)
+                    return self._create_paginated_response(
+                        paginated,
+                        offset,
+                        max_results,
+                        total=len(by_query),
+                        query=query,
+                        mode="search",
+                    )
+
         all_symbols = collect_symbols(program)
         results: list[dict[str, Any]] = []
         count: int = 0
 
-        pat = re.compile(query, re.IGNORECASE) if query else None
         for sym in all_symbols:
             name = str(sym.get("name", ""))
-            if pat and not pat.search(name):
+            if qnorm and qnorm not in name.lower():
                 continue
             if count < offset:
                 count += 1
@@ -352,6 +422,69 @@ class SymbolToolProvider(ToolProvider):
                 },
             )
             count += 1
+
+        # Shared-server / JPype: getAllSymbols can return many entries yet omit user labels; collect_symbols
+        # then skips getDefinedSymbols because the primary list was non-empty. Scan defined symbols for
+        # substring matches when the filtered set is empty (LFG step 5/7/11 search-symbols).
+        if qnorm and len(results) == 0 and hasattr(st, "getDefinedSymbols"):
+            try:
+                defined_rows: list[dict[str, Any]] = []
+                for sym in iter_items(st.getDefinedSymbols()):
+                    name = str(sym.getName(True))
+                    if qnorm not in name.lower():
+                        continue
+                    defined_rows.append(
+                        {
+                            "name": name,
+                            "address": str(sym.getAddress()),
+                            "type": str(sym.getSymbolType()),
+                            "namespace": str(sym.getParentNamespace()),
+                            "source": str(sym.getSource()),
+                        },
+                    )
+                if defined_rows:
+                    paginated, _has_more = self._paginate_results(defined_rows, offset, max_results)
+                    return self._create_paginated_response(
+                        paginated,
+                        offset,
+                        max_results,
+                        total=len(defined_rows),
+                        query=query,
+                        mode="search",
+                    )
+            except Exception:
+                logger.debug("search-symbols getDefinedSymbols substring fallback failed", exc_info=True)
+
+        if qnorm and len(results) == 0 and hasattr(st, "getSymbolIterator"):
+            try:
+                label_rows: list[dict[str, Any]] = []
+                # No-arg iterator: Ghidra API — "Get all label symbols" (memory labels; matches createLabel).
+                bare_it = st.getSymbolIterator()
+                for sym in iter_items(bare_it):
+                    name = str(sym.getName(True))
+                    if qnorm not in name.lower():
+                        continue
+                    label_rows.append(
+                        {
+                            "name": name,
+                            "address": str(sym.getAddress()),
+                            "type": str(sym.getSymbolType()),
+                            "namespace": str(sym.getParentNamespace()),
+                            "source": str(sym.getSource()),
+                        },
+                    )
+                if label_rows:
+                    paginated, _has_more = self._paginate_results(label_rows, offset, max_results)
+                    return self._create_paginated_response(
+                        paginated,
+                        offset,
+                        max_results,
+                        total=len(label_rows),
+                        query=query,
+                        mode="search",
+                    )
+            except Exception:
+                logger.debug("search-symbols getSymbolIterator() label fallback failed", exc_info=True)
 
         return create_success_response(
             {
@@ -533,6 +666,28 @@ class SymbolToolProvider(ToolProvider):
             from agentdecompile_cli.mcp_server.providers.import_export import (
                 ImportExportToolProvider as _ImportExport,
             )
+            from agentdecompile_cli.mcp_server.session_context import (
+                SESSION_CONTEXTS,
+                get_current_mcp_session_id,
+                is_shared_server_handle,
+            )
+
+            sid = get_current_mcp_session_id()
+            sess = SESSION_CONTEXTS.get_or_create(sid)
+            handle = sess.project_handle if isinstance(sess.project_handle, dict) else None
+            shared_server = bool(handle and is_shared_server_handle(handle))
+            # Shared Ghidra Server: symbol/label edits must reach the versioned DomainFile backing store
+            # before checkin-program runs; otherwise checkin sees "not modified" and follow-up reopen uploads
+            # revisions without user labels (LFG shared persistence / search-symbols empty).
+            # Do not gate on DomainFile.isVersioned(): PyGhidra sometimes reports false even for server checkouts.
+            if shared_server and self._manager is not None:
+                iep = None
+                for pr in getattr(self._manager, "providers", None) or []:
+                    if hasattr(pr, "_persist_open_program_for_versioned_checkin"):
+                        iep = pr
+                        break
+                if iep is not None:
+                    iep._persist_open_program_for_versioned_checkin(program)
 
             _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
             for df in self._iter_domain_files_for_versioned_notify(program, program_path):
@@ -545,16 +700,7 @@ class SymbolToolProvider(ToolProvider):
                             par.fileChanged()
                         except Exception:
                             pass
-            # Skip GhidraProject.save here for ALL project types.
-            # Shared/versioned: PyGhidra 12.x can persist the Program in a way that clears
-            # ``modifiedSinceCheckout`` on the server checkout handle; a later checkin-program then fails
-            # with "not modified since checkout".
-            # Local: In Ghidra 12, gp.save ends the batch tx (marks it committed) but domainObject.save
-            # sees getCurrentTransaction()!=null (committed tx still tracked) and throws "Unable to lock".
-            # openPrograms is never cleaned up, leaving a stale entry that causes the next gp.save
-            # (in checkin-program) to throw "Attempted to end Transaction more than once".
-            # In both cases, deferring the save to checkin-program is correct: the batch tx stays open,
-            # and checkin-program's gp.save properly ends it and saves.
+            # Local-only: avoid GhidraProject.save here — see checkin-program / import_export batch-tx notes.
             _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
         except Exception as exc:
             logger.debug("notify_versioned_checkout_after_program_edit: %s", exc)

@@ -152,9 +152,9 @@ Current generated summary:
 - The canonical tool list in `src/agentdecompile_cli/registry.py` documents all supported tool names; many additional names are legacy compatibility forwards and synonyms.
 - Policy: prefer adding or updating the default advertised tool name and its schema first, then document any legacy aliases as forwards in `TOOLS_LIST.md` when needed for compatibility.
 - Legacy names remain callable for backwards compatibility. To re-advertise the full legacy surface during testing or compatibility modes, set either `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` in your environment.
-- When submitting changes that add or remove tool names, update `TOOLS_LIST.md` and run the doc sync scripts, then the tools-doc parity tests:
-  - **`helper_scripts/reorder_tools_list_canonical.py`** — reorders the **Canonical Tool Docs** section and TOC to match `registry.TOOLS` (`Tool` enum order); drops headings not in `TOOLS`; inserts stubs for new tools. Run this after changing the enum or when parity tests report doc/schema order drift.
-  - **`helper_scripts/generate_tools_list.py`** — refreshes **Overloads** blocks (and related merges); must report `MATCH_EXACT True` against the current `TOOLS_LIST.md` (see `tests/test_tools_list_generation_sync.py`).
+- When submitting changes that add or remove tool names, update `TOOLS_LIST.md` and run the doc sync scripts, then verify generator output:
+  - **`helper_scripts/reorder_tools_list_canonical.py`** — reorders the **Canonical Tool Docs** section and TOC to match `registry.TOOLS` (`Tool` enum order); drops headings not in `TOOLS`; inserts stubs for new tools. Run this after changing the enum or when docs drift from the registry order.
+  - **`helper_scripts/generate_tools_list.py`** — refreshes **Overloads** blocks (and related merges); stdout must report `MATCH_EXACT True` against the current `TOOLS_LIST.md`.
 
 
 ## Testing
@@ -163,7 +163,6 @@ Run focused tests first, then broader suites.
 
 ```bash
 uv run pytest -m unit -v
-uv run pytest tests/test_tools_list_generation_sync.py tests/test_unified_provider_advertisement.py::TestToolsListParity -v
 uv run pytest tests/ -v --timeout=120
 ```
 

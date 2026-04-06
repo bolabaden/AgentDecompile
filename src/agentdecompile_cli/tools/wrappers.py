@@ -15,7 +15,7 @@ import logging
 import re
 import sys
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from ghidrecomp.callgraph import _unwrap_mermaid, gen_mermaid_url, get_called, get_calling
 from agentdecompile_cli.models import (
@@ -35,10 +35,9 @@ from agentdecompile_cli.models import (
     SymbolInfo,
 )
 from jpype import JByte
-from jpype.types import JArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
     from agentdecompile_cli.context import ProgramInfo
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
@@ -64,6 +63,29 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _iter_java_or_python(source: Any) -> Any:
+    """Yield from a Java iterator (hasNext/next) or a Python iterable (keeps wrappers import-cycle free)."""
+    if source is None:
+        return
+    if hasattr(source, "hasNext") and hasattr(source, "next"):
+        n_seen = 0
+        while source.hasNext():
+            yield source.next()
+            n_seen += 1
+        if n_seen == 0:
+            try:
+                while True:
+                    item = source.next()
+                    if item is None:
+                        break
+                    yield item
+            except Exception:
+                logger.debug("_iter_java_or_python: null-drain failed", exc_info=True)
+        return
+    for item in source:
+        yield item
 
 
 def handle_exceptions(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -161,19 +183,17 @@ class GhidraTools:
         *,
         exact: bool = True,
         partial: bool = False,
-        dynamic: bool = False,
     ) -> list[Symbol]:
         """Resolve symbols by name or address.
 
         Returns a single flat list of unique Symbol objects.
-        Search modes (exact, partial, dynamic) are optional and only applied if enabled.
+        Name search uses the full symbol table including dynamic symbols (see get_all_symbols).
 
         Args:
         ----
             name_or_address: The symbol name or address to search for.
             exact: If True, include symbols that exactly match the name_or_address.
             partial: If True, include symbols that partially match the name_or_address.
-            dynamic: If True, include symbols from dynamic namespaces (e.g., imports).
 
         Returns:
         -------
@@ -204,8 +224,13 @@ class GhidraTools:
         name_lc: str = name_or_address.lower()
         matches: set[Symbol] = set()
 
-        # Base symbol set (externals only once)
-        base_symbols: list[Symbol] = self.get_all_symbols(include_externals=True)
+        # One full scan including dynamic symbols (matches collect_symbols / search-symbols fallback).
+        # GhidraTools.search_symbols_by_name and find_symbols rely on this; omitting dynamics or
+        # iterating getAllSymbols() without iter_items can yield empty sets on JPype/shared-server.
+        base_symbols: list[Symbol] = self.get_all_symbols(
+            include_externals=True,
+            include_dynamic=True,
+        )
 
         # Exact match
         if exact:
@@ -214,11 +239,6 @@ class GhidraTools:
         # Partial match
         if partial:
             matches.update(s for s in base_symbols if name_lc in s.getName(True).lower())
-
-        # Dynamic match (requires second scan)
-        if dynamic:
-            dyn_symbols = self.get_all_symbols(include_externals=True, include_dynamic=True)
-            matches.update(s for s in dyn_symbols if name_lc in s.getName(True).lower())
 
         return list(matches)
 
@@ -312,13 +332,18 @@ class GhidraTools:
         symbols: set[GhidraSymbol] = set()
 
         st: GhidraSymbolTable = self.program.getSymbolTable()
-        all_symbols: list[GhidraSymbol] = st.getAllSymbols(include_dynamic)
 
-        for sym in all_symbols:
-            sym: GhidraSymbol
-            if not include_externals and sym.isExternal():
-                continue
-            symbols.add(sym)
+        def _consume(include_dyn: bool) -> None:
+            for sym in _iter_java_or_python(st.getAllSymbols(include_dyn)):
+                sym: GhidraSymbol
+                if not include_externals and sym.isExternal():
+                    continue
+                symbols.add(sym)
+
+        _consume(include_dynamic)
+        # Some JPype/shared paths return no elements for getAllSymbols(false); widen once.
+        if not symbols and not include_dynamic:
+            _consume(True)
 
         return list(symbols)
 

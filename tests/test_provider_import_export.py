@@ -6,6 +6,7 @@ import pytest
 
 from agentdecompile_cli.mcp_server.providers import import_export as import_export_module
 from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
+from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
 from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS
 from tests.helpers import parse_single_text_content_json
 
@@ -57,12 +58,30 @@ async def test_repair_shared_working_copy_for_checkin_reuses_shared_checkout_flo
         checkout_calls.append((adapter, program_path, session_id_arg, exclusive))
         return program_path
 
-    project_provider = SimpleNamespace(
-        _checkout_shared_program=_fake_checkout_shared_program,
-        _ensure_shared_domain_file_registered_for_version_control=(
-            lambda domain_file, program_path: ensure_calls.append((domain_file, program_path))
-        ),
-    )
+    class StubProjectProvider(ProjectToolProvider):
+        """Minimal subclass so isinstance(..., ProjectToolProvider) passes in repair flow."""
+
+        def __init__(self) -> None:
+            super().__init__(None)
+
+        async def _checkout_shared_program(  # type: ignore[override]
+            self,
+            adapter: object,
+            program_path: str,
+            session_id_arg: str,
+            *,
+            exclusive: bool = False,
+        ) -> str:
+            return await _fake_checkout_shared_program(adapter, program_path, session_id_arg, exclusive=exclusive)
+
+        def _ensure_shared_domain_file_registered_for_version_control(  # type: ignore[override]
+            self,
+            domain_file: object,
+            program_path: str,
+        ) -> None:
+            ensure_calls.append((domain_file, program_path))
+
+    project_provider = StubProjectProvider()
     provider._manager = SimpleNamespace(_get_project_provider=lambda: project_provider)
 
     monkeypatch.setattr(import_export_module, "get_current_mcp_session_id", lambda: session_id)

@@ -48,7 +48,7 @@ class StaticAnalysisResultsResource(ResourceProvider):
         logger.info(f"  program_info.program: '{self.program_info.program if self.program_info else 'N/A'}'")
 
         # Check if program is loaded using correct attribute name
-        has_program: bool = self.program_info is not None and getattr(self.program_info, "program", None) is not None
+        has_program: bool = self.program_info is not None and self.program_info.program is not None
         logger.info("  has_program: '%s'", str(has_program))
 
         if not has_program:

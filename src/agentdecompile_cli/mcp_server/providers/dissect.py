@@ -176,7 +176,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         max_related_callers = self._normalize_non_negative(self._get_int(args, "maxrelatedcallers", "maxcallerdetails", default=9), default=9)
         max_related_callees = self._normalize_non_negative(self._get_int(args, "maxrelatedcallees", "maxcalleedetails", default=9), default=9)
 
-        program = getattr(self.program_info, "program", None)
+        program = self.program_info.program
         if program is None:
             raise ValueError("No program loaded")
 

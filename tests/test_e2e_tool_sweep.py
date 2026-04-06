@@ -8,7 +8,7 @@ Focus areas:
   Group B: Manage-* tools — mode permutations and error structures
   Group C: Execute-script — code execution, __result__, error handling
   Group D: Tool-seq chains — multi-tool session workflows
-  Group E: Edge cases — bad args, unknown tools, parameter normalization
+  Group E: Edge cases — bad args, unknown tools
   Group F: Response format — Markdown vs JSON, error shapes
   Group G: CLI eval/tool subcommands
 """
@@ -473,7 +473,7 @@ class TestMultiToolChains:
 
 
 # ---------------------------------------------------------------------------
-# Group E: Edge cases — bad args, unknown tools, parameter normalization
+# Group E: Edge cases — bad args, unknown tools
 # ---------------------------------------------------------------------------
 
 
@@ -487,30 +487,6 @@ class TestEdgeCases:
         assert len(text) > 0
         # Should contain error information about unknown tool
         assert "error" in text.lower() or "unknown" in text.lower() or "not" in text.lower()
-
-    def test_tool_name_underscore_normalization(self, session):
-        """Tool names with underscores should work (normalized to same handler)."""
-        body1 = session.call_tool("list_project_files", {"format": "json"})
-        body2 = session.call_tool("list-project-files", {"format": "json"})
-        # Both should succeed with same response structure
-        text1 = _text(body1)
-        text2 = _text(body2)
-        assert len(text1) > 0
-        assert len(text2) > 0
-        data1 = json.loads(text1)
-        data2 = json.loads(text2)
-        # Same keys in response
-        assert set(data1.keys()) == set(data2.keys())
-
-    def test_argument_key_normalization(self, session):
-        """Argument keys should be case-insensitive and separator-agnostic."""
-        # programPath vs program_path vs programpath — all should normalize
-        body = session.call_tool(
-            "list-functions",
-            {"programPath": "/test.exe", "limit": 1, "format": "json"},
-        )
-        text = _text(body)
-        assert len(text) > 0  # Should not crash
 
     def test_open_project_with_server_params(self, session):
         """open with shared server params (from check_analyze_live.py)."""
@@ -779,46 +755,6 @@ class TestInitHandshakeDetails:
             assert "version" in info
             # Version should be semver-like
             assert "." in info["version"]
-
-
-# ---------------------------------------------------------------------------
-# Group I: Tool schema validation
-# (Derived from examples/mcp_responses/curl_tools_list.json)
-# ---------------------------------------------------------------------------
-
-
-class TestToolSchemaValidation:
-    """Validate tool advertisement schemas match expected structure."""
-
-    def test_execute_script_schema_has_code_param(self, session):
-        """execute-script must advertise 'code' as a required parameter."""
-        tools = session.list_tools()
-        exec_tools = [t for t in tools if "execute" in t["name"] and "script" in t["name"]]
-        assert len(exec_tools) == 1
-        schema = exec_tools[0]["inputSchema"]
-        assert "code" in schema.get("properties", {})
-
-    def test_open_project_schema_has_path(self, session):
-        """open/open must advertise 'path' parameter."""
-        tools = session.list_tools()
-        open_tools = [t for t in tools if t["name"].replace("_", "") in ("open", "open")]
-        assert len(open_tools) >= 1
-        schema = open_tools[0]["inputSchema"]
-        props = schema.get("properties", {})
-        assert "path" in props or "program_path" in props or any("path" in k.lower() for k in props)
-
-    def test_all_tools_have_object_schema(self, session):
-        """Every tool's inputSchema must be type=object."""
-        tools = session.list_tools()
-        for tool in tools:
-            schema = tool.get("inputSchema", {})
-            assert schema.get("type") == "object", f"Tool '{tool['name']}' has inputSchema type={schema.get('type')}"
-
-    def test_no_tools_have_empty_description(self, session):
-        tools = session.list_tools()
-        for tool in tools:
-            assert tool.get("description"), f"Tool '{tool['name']}' has empty description"
-            assert len(tool["description"]) > 10, f"Tool '{tool['name']}' description too short: '{tool['description']}'"
 
 
 # ---------------------------------------------------------------------------

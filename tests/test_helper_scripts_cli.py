@@ -25,12 +25,12 @@ class TestHelperScriptsCLI:
         assert "--json" in proc.stdout
 
     def test_integration_test_json_single_check(self) -> None:
-        proc = _run_helper("integration_test.py", "--checks", "normalization", "--json")
+        proc = _run_helper("integration_test.py", "--checks", "imports", "--json")
         assert proc.returncode == 0, proc.stderr
         payload = json.loads(proc.stdout)
         assert payload["failed"] == 0
         assert payload["passed"] == 1
-        assert payload["results"][0]["name"] == "normalization"
+        assert payload["results"][0]["name"] == "imports"
 
     def test_integration_test_rejects_unknown_check(self) -> None:
         proc = _run_helper("integration_test.py", "--checks", "nope")

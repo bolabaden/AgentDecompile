@@ -71,7 +71,7 @@ isProject: false
 | **CLI / bridge / server**       | cli.py, bridge.py, server.py, launcher.py, executor.py, utils.py                                                                                                                                                                                                                                                              |
 | **MCP server**                  | mcp_server/server.py, proxy_server.py, tool_providers.py, response_formatter.py, mcp_server/resources/debug_info.py                                                                                                                                                                                                           |
 | **Providers (import ToolName)** | mcp_server/providers/*.py (bookmarks, callgraph, comments, constants, data, dataflow, datatypes, decompiler, dissect, functions, getfunction, import_export, memory, project, script, search_everything, strings, structures, symbols, vtable, xrefs)                                                                         |
-| **Tests**                       | test_cli_helpers.py, test_tool_name_and_argument_normalization.py, test_normalization_combinatorial.py, test_unified_provider_advertisement.py, test_suggestion_provider_normalization.py, test_python_tool_registry_parity.py, test_tools_list_parameter_support.py, test_sdk_imports.py, test_legacy_tools_advertisement.py |
+| **Tests**                       | `test_cli_helpers.py`, `test_sdk_imports.py`, provider tests (`test_provider_*.py`), E2E / exhaustive contracts (`test_e2e_*.py`) — dedicated normalization/advertisement-only modules were removed; extend remaining tests if enum behavior needs coverage |
 
 
 ### Risks and ordering

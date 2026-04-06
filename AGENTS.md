@@ -84,7 +84,7 @@ CLI reuses the same server session across invocations when the same `--server-ur
 | Test (unit only) | `uv run pytest -m unit -v` |
 | Build | `uv build` |
 
-Pre-existing lint violations (36 errors) exist in the codebase; they are not caused by the development environment. Unit tests have 1 pre-existing failure in `test_unified_provider_advertisement.py`; Docker-dependent e2e tests require a running Docker environment to pass.
+Pre-existing lint violations (36 errors) exist in the codebase; they are not caused by the development environment. Docker-dependent e2e tests require a running Docker environment to pass.
 
 ## Naming Conventions
 
@@ -118,21 +118,28 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Use the MCP server tools (e.g. user-agdec-http) for agentdecompile workflows rather than the CLI when both are available.
 - Default to markdown (not JSON) for tool output; scale output detail by result count (few results = full detail, many = trimmed).
 - Prefer supporting Ghidra server auth via headers or CLI args when possible, not only via process environment.
+- When removing or renaming tests, update related docs (for example `CONTRIBUTING.md`, `tests/README.md`, `.cursor/plans`), helper scripts, and in-repo references so nothing still points at deleted modules.
+- Prefer tests that exercise real `tools/call` handlers and response payloads over tests that only assert `tools/list` advertisement shape.
 
 ## Learned Workspace Facts
 
 - When editing KOTOR or video-derived docs (e.g. docs/from_video), use correct terms: KOTOR (not Cotor), PyGhidra (Ghidra v12 Python wrapper), swkotor.exe (not sodtor.exe), CSWMinigame (not miniame).
-- open-project: analyzeAfterImport is optional and defaults to true.
-- Load Ghidra path from environment (e.g. GHIDRA_INSTALL_DIR); use a top-level .env at repo root; do not hardcode install paths.
+- open-project: `analyzeAfterImport` is optional and defaults to true.
+- Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
-- For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use.
+- For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use. Keep server-side session state on the same logical key as the client-persisted id so it does not split across `default` and `sdk-session:…` buckets.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
 - Before domain_file.save() or shared versioned checkin-program while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction". For shared check-in, the DomainFile used must match the open program being edited—repo-style programPath strings and Program.getDomainFile() pathnames may differ only by basename on Windows; mismatched resolution yields "File has not been modified since checkout" despite successful mutations.
 - get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
-- When Ghidra exposes multiple overloads for the same operation (e.g. Listing.getComment(int, Address) vs getComment(CommentType, Address)), support both with try/fallback for compatibility across backends.
+- When Ghidra exposes multiple overloads for the same operation (e.g. `Listing.getComment` variants), support both with try/fallback for compatibility across backends.
 - Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
 - Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ (e.g. KOTOR 1 vs KOTOR 2).
+- Strict proof sequence `/lfg` is defined in `.cursor/commands/lfg.md` (shared Ghidra Server, MCP restarts, `tool-seq`). For automation, avoid unmodified stock `ghidraSvr.bat console` (separate JVM window and poor terminal logging); use the driver’s patched background start or a dedicated Ghidra window per that doc.
+- Setting `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` (or the legacy alias) on the MCP server process can make shared-session bootstrap treat the repository name as a program key; LFG scripting avoids exporting repository into MCP env, and program activation skips treating the repo name as a program when it matches the open shared handle’s repository.
+- ContextStream Claude Code hooks should be launched via `scripts/contextstream_claude_hook.ps1` (or a stable copy under `~/.claude/scripts`), resolving the global `@contextstream/mcp-server` install instead of stale `npx` cache paths to `index.js`.
+- For JPype buffers passed to Ghidra `Memory.getBytes`, allocate with `jpype.JArray(jpype.JByte)(length)`; Pyright may need `cast(Any, ...)` around the constructor when stubs disagree.
+- `ProgramInfo` (`context.py`) declares optional `domain_object_consumer` and `domain_file` for shared/versioned program lifecycle; use those typed fields instead of `setattr`.
 
 ## Modification conflicts (two-step flow)
 

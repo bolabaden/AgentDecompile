@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp import types
 
@@ -20,8 +20,19 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
-    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-    from ghidra.program.model.mem import Memory as GhidraMemory  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Category as GhidraCategory,
+        DataType as GhidraDataType,
+        DataTypeManager as GhidraDataTypeManager,
+        DataUtilities as GhidraDataUtilities,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Data as GhidraData,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.model.mem import Memory as GhidraMemory  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +99,7 @@ class MemoryToolProvider(ToolProvider):
     async def _handle_read_bytes(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Normalize read-bytes params (binaryName→programPath, address→addressOrSymbol, size→length) and delegate to inspect-memory mode=read."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_read_bytes")
-        forwarded = dict(args)
+        forwarded: dict[str, Any] = dict(args)
         forwarded.setdefault("mode", "read")
         # Map read-bytes-specific param names to what _handle expects
         self._set_forwarded_if_missing(forwarded, "programpath", forwarded.get("binaryname"))
@@ -102,10 +113,11 @@ class MemoryToolProvider(ToolProvider):
         """Dispatch to blocks/read/data_at/data_items handler; segments is an alias for blocks."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle")
         self._require_program()
-        mode = self._get_str(args, "mode", default="blocks")
+        mode: str = self._get_str(args, "mode", default="blocks")
         assert self.program_info is not None, "program_info should be set after _require_program()"
-        program = self.program_info.program
-        memory = self._get_memory(program)
+        program: GhidraProgram | None = self.program_info.program
+        memory: GhidraMemory | None = self._get_memory(program)
+        assert program is not None and memory is not None, "program and memory should be set after _require_program()"
 
         return await self._dispatch_handler(
             args,
@@ -129,17 +141,17 @@ class MemoryToolProvider(ToolProvider):
         where code vs data lives before reading bytes or applying types.
         """
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_blocks")
-        blocks = []
+        blocks: list[dict[str, Any]] = []
         for blk in memory.getBlocks():
             blocks.append(
                 {
-                    "name": blk.getName(),
+                    "name": str(blk.getName()),
                     "start": str(blk.getStart()),
                     "end": str(blk.getEnd()),
-                    "size": blk.getSize(),
+                    "size": int(blk.getSize()),
                     "permissions": f"{'r' if blk.isRead() else '-'}{'w' if blk.isWrite() else '-'}{'x' if blk.isExecute() else '-'}",
                     "initialized": blk.isInitialized(),
-                    "type": str(blk.getType()) if hasattr(blk, "getType") else "DEFAULT",
+                    "type": str(blk.getType()) if hasattr(blk, "getType") else "DEFAULT",  # pyright: ignore[reportOptionalMemberAccess]
                 },
             )
         return create_success_response({"mode": "blocks", "blocks": blocks, "count": len(blocks)})
@@ -147,31 +159,37 @@ class MemoryToolProvider(ToolProvider):
     async def _handle_read(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Read raw bytes at address; return hex dump and ASCII view. Cap length at 10000 to avoid huge responses."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_read")
-        addr_str = self._require_address_or_symbol(args)
-        length = self._get_int(args, "length", "size", "len", default=256)
+        addr_str: str | None = self._require_address_or_symbol(args)
+        assert addr_str is not None, "addr_str should be set after _require_address_or_symbol()"
+        length: int | None = self._get_int(args, "length", "size", "len", default=256)
+        assert length is not None, "length should be set after _require_address_or_symbol()"
         length = min(length, 10000)
-        addr = self._resolve_address(addr_str, program=program)
+        addr: GhidraAddress | None = self._resolve_address(addr_str, program=program)
+        assert addr is not None, "addr should be set after _resolve_address()"
 
         import jpype  # noqa: PLC0415
 
         # Must use a JPype Java primitive byte[] array — passing Python bytearray to getBytes gives a
         # temporary Java copy that is never written back to the Python object, causing all-zero results.
-        buf = jpype.JByte[length]
-        actual = 0
+        # JByte[length] is valid at runtime but typed as the JByte class, not JArray[JByte]; use JArray().
+        # Stubs type JArray(JByte) as a non-callable generic; cast so (length) is accepted and slots are assignable.
+        buf: Any = cast(Any, jpype.JArray(jpype.JByte))(length)
+        actual: int = 0
         try:
             actual = memory.getBytes(addr, buf)
         except Exception:
             # Some Ghidra versions or address spaces don't support getBytes; fall back to byte-by-byte read
             for i in range(length):
                 try:
-                    buf[i] = memory.getByte(addr.add(i))  # signed Java byte; mask only on output
+                    # getByte may be typed as JByte (generic class); coerce to int for JPype array assignment
+                    buf[i] = int(memory.getByte(addr.add(i)))
                     actual = i + 1
                 except Exception:
                     break
 
         # Java bytes are signed (-128..127); mask with 0xFF for unsigned hex/ASCII display
-        hex_str = " ".join(f"{b & 0xFF:02x}" for b in buf[:actual])
-        ascii_str = "".join(chr(b & 0xFF) if 32 <= (b & 0xFF) < 127 else "." for b in buf[:actual])
+        hex_str: str = " ".join(f"{int(b) & 0xFF:02x}" for b in buf[:actual])
+        ascii_str: str = "".join(chr(int(b) & 0xFF) if 32 <= (int(b) & 0xFF) < 127 else "." for b in buf[:actual])
 
         return create_success_response(
             {
@@ -186,11 +204,14 @@ class MemoryToolProvider(ToolProvider):
     async def _handle_data_at(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Return the defined data at this address: type, length, value, label. Exact address first, then containing."""
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_data_at")
-        addr_str = self._require_address_or_symbol(args)
-        addr = self._resolve_address(addr_str, program=program)
+        addr_str: str | None = self._require_address_or_symbol(args)
+        assert addr_str is not None, "addr_str should be set after _require_address_or_symbol()"
+        addr: GhidraAddress | None = self._resolve_address(addr_str, program=program)
+        assert addr is not None, "addr should be set after _resolve_address()"
 
-        listing = self._get_listing(program)
-        data = listing.getDataAt(addr)
+        listing: GhidraListing | None = self._get_listing(program)
+        assert listing is not None, "listing should be set after _get_listing()"
+        data: GhidraData | None = listing.getDataAt(addr)
         if data is None:
             # Address might be inside a larger structure; getDataContaining finds the parent data
             data = listing.getDataContaining(addr)
@@ -220,14 +241,20 @@ class MemoryToolProvider(ToolProvider):
         getDefinedData(True) walks the listing forward; each item has address, dataType, length, label.
         """
         logger.debug("diag.enter %s", "mcp_server/providers/memory.py:MemoryToolProvider._handle_data_items")
+        offset: int | None = None
+        max_results: int | None = None
         offset, max_results = self._get_pagination_params(args, default_limit=100)
+        assert offset is not None and max_results is not None, "offset and max_results should be set after _get_pagination_params()"
 
-        listing = self._get_listing(program)
-        all_items = []
+        listing: GhidraListing | None = self._get_listing(program)
+        assert listing is not None, "listing should be set after _get_listing()"
+        all_items: list[dict[str, Any]] = []
+        data: GhidraData | None
         for data in listing.getDefinedData(True):
+            assert data is not None, "data should be set after getDefinedData()"
             all_items.append(
                 {
-                    "address": str(data.getAddress()),
+                    "address": str(data.getAddress()),  # pyright: ignore[reportCallIssue]
                     "dataType": str(data.getDataType()),
                     "length": data.getLength(),
                     "label": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else None,

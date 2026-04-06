@@ -82,7 +82,7 @@ uv run pytest --cov=src/agentdecompile_cli
 
 - **conftest.py** - Shared pytest fixtures
 - **helpers.py** - Test utility functions
-- **test_*.py** - Feature-specific test modules (providers, CLI, workflows, normalization)
+- **test_*.py** - Feature-specific test modules (providers, CLI, workflows, e2e)
 
 ### Testing Best Practices
 

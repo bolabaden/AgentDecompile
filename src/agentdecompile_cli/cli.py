@@ -40,6 +40,8 @@ from urllib.parse import urlparse
 
 import click
 
+from ghidrecomp.decompile import decompile
+
 from agentdecompile_cli import __version__
 from agentdecompile_cli.executor import (
     format_output,
@@ -49,7 +51,6 @@ from agentdecompile_cli.executor import (
     resolve_backend_url,
     run_async,
 )
-from ghidrecomp.decompile import decompile
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,
@@ -66,6 +67,9 @@ from agentdecompile_cli.registry import (
 if TYPE_CHECKING:
     from collections.abc import Coroutine
     from types import FunctionType
+
+    from mcp.client.session import ClientSession
+    from mcp.types import TextContent
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +262,7 @@ def _extract_text(result: Any) -> str | None:
     logger.debug("diag.enter %s", "cli.py:_extract_text")
     contents: list[Any] = getattr(result, "contents", None) or []
     for c in contents:
-        text = getattr(c, "text", None)
+        text = c.text if isinstance(c, TextContent) else None
         if text:
             return text
     return None
@@ -1883,21 +1887,21 @@ def list_grp() -> None:
 @click.pass_context
 def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     async def _run():
-        client = _client(ctx)
+        client: ClientSession = _client(ctx)
         async with client:
-            result = await client.read_resource("ghidra://programs")
+            result: TextContent = await client.read_resource("ghidra://programs")
         contents: list[Any] = getattr(result, "contents", None) or []
         programs: list[dict[str, Any]] = []
         for c in contents:
-            text = getattr(c, "text", None)
+            text = c.text
             if text:
-                data = json.loads(text) if isinstance(text, str) else text
-                progs = data if isinstance(data, list) else (data.get("programs") if isinstance(data, dict) else [])
+                data: Any = json.loads(text) if isinstance(text, str) else text
+                progs: Any = data if isinstance(data, list) else (data.get("programs") if isinstance(data, dict) else [])
                 if isinstance(progs, list):
                     programs = progs
                     break
         if programs:
-            names = [p.get("programPath", p.get("name", p)) if isinstance(p, dict) else p for p in programs]
+            names: list[str] = [p.get("programPath", p.get("name", p)) if isinstance(p, dict) else p for p in programs]
             click.echo(format_output(names, local_format or _fmt(ctx)))
         else:
             click.echo("No programs in project.")
