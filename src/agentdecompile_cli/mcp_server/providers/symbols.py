@@ -25,6 +25,7 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_symbols,
     iter_items,
 )
+from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS, get_current_mcp_session_id
 from agentdecompile_cli.mcp_server.tool_providers import (
     FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
@@ -338,7 +339,9 @@ class SymbolToolProvider(ToolProvider):
         # Prefer GhidraTools when it returns matches. On empty (common for some shared-server /
         # iterator edge cases), fall through to a full symbol-table scan — same substring semantics
         # as GhidraTools.search_symbols_by_name (documented: case-insensitive substring).
-        if self.ghidra_tools:
+        # Queries containing '_' (e.g. LFG `sh_<runId>_`): GhidraTools.search_symbols_by_name can return a
+        # **non-empty but incomplete** subset; early return then drops labels (strict /lfg step 5/7/11).
+        if self.ghidra_tools and "_" not in query:
             try:
                 gt_rows = self.ghidra_tools.search_symbols_by_name(query)
                 gt_dicts = _rows_to_dicts(list(gt_rows))
@@ -399,6 +402,83 @@ class SymbolToolProvider(ToolProvider):
                     )
 
         all_symbols = collect_symbols(program)
+
+        # Queries containing '_': merge collect_symbols matches with getDefinedSymbols (USER labels).
+        # Bulk getAllSymbols scans can omit user labels on some shared-server checkouts while
+        # getDefinedSymbols still lists create-label symbols (/lfg step 5 after MCP restart).
+        if qnorm and "_" in query:
+
+            def _row_from_collect_dict(sym: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "name": str(sym.get("name", "")),
+                    "address": str(sym.get("address", "")),
+                    "type": str(sym.get("symbolType", "")),
+                    "namespace": str(sym.get("namespace", "")),
+                    "source": str(sym.get("source", "")),
+                }
+
+            def _row_from_java_symbol(sym: Any) -> dict[str, Any]:
+                name = str(sym.getName(True))
+                return {
+                    "name": name,
+                    "address": str(sym.getAddress()),
+                    "type": str(sym.getSymbolType()),
+                    "namespace": str(sym.getParentNamespace()),
+                    "source": str(sym.getSource()),
+                }
+
+            all_matches: list[dict[str, Any]] = []
+            seen_keys: set[tuple[str, str]] = set()
+            for sym in all_symbols:
+                row = _row_from_collect_dict(sym)
+                nl = row["name"].lower()
+                if qnorm not in nl:
+                    continue
+                key = (row["address"], nl)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                all_matches.append(row)
+
+            if hasattr(st, "getDefinedSymbols"):
+                try:
+                    for sym in iter_items(st.getDefinedSymbols()):
+                        row = _row_from_java_symbol(sym)
+                        if qnorm not in row["name"].lower():
+                            continue
+                        key = (row["address"], row["name"].lower())
+                        if key in seen_keys:
+                            continue
+                        seen_keys.add(key)
+                        all_matches.append(row)
+                except Exception:
+                    logger.debug("search-symbols underscore-query getDefinedSymbols merge failed", exc_info=True)
+
+            if not all_matches and hasattr(st, "getSymbolIterator"):
+                try:
+                    bare_it = st.getSymbolIterator()
+                    for sym in iter_items(bare_it):
+                        row = _row_from_java_symbol(sym)
+                        if qnorm not in row["name"].lower():
+                            continue
+                        key = (row["address"], row["name"].lower())
+                        if key in seen_keys:
+                            continue
+                        seen_keys.add(key)
+                        all_matches.append(row)
+                except Exception:
+                    logger.debug("search-symbols underscore-query bare iterator failed", exc_info=True)
+
+            paginated_u, _hm_u = self._paginate_results(all_matches, offset, max_results)
+            return self._create_paginated_response(
+                paginated_u,
+                offset,
+                max_results,
+                total=len(all_matches),
+                query=query,
+                mode="search",
+            )
+
         results: list[dict[str, Any]] = []
         count: int = 0
 
@@ -722,6 +802,15 @@ class SymbolToolProvider(ToolProvider):
         except Exception:
             pass
 
+    def _record_pending_versioned_label(self, program_path_hint: str | None, addr: str, name: str) -> None:
+        """Session backup for versioned check-in reopen when symbol-table snapshots miss USER labels."""
+        sid = get_current_mcp_session_id()
+        pp = (program_path_hint or "").strip()
+        if not pp:
+            pp = (SESSION_CONTEXTS.get_or_create(sid).active_program_key or "").strip()
+        if pp:
+            SESSION_CONTEXTS.record_pending_versioned_label(sid, pp, addr, name)
+
     async def _create_label(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._create_label")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
@@ -746,6 +835,7 @@ class SymbolToolProvider(ToolProvider):
                         addr = self._resolve_address(str(a), program=program)
                         st.createLabel(addr, str(l), GhidraSourceType.USER_DEFINED)
                         results.append({"address": str(addr), "label": str(l), "success": True})
+                        self._record_pending_versioned_label(label_pp, str(addr), str(l))
                     except Exception as e:
                         results.append({"address": str(a), "label": str(l), "success": False, "error": str(e)})
                 self._touch_listing_for_shared_checkin(program)
@@ -762,7 +852,6 @@ class SymbolToolProvider(ToolProvider):
             sym_at_addr: GhidraSymbol | None = st.getPrimarySymbol(addr)
             if sym_at_addr is not None:
                 from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
-                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 
                 conflict_id = str(uuid.uuid4())
                 existing_name = sym_at_addr.getName()
@@ -788,6 +877,7 @@ class SymbolToolProvider(ToolProvider):
 
         self._run_program_transaction(program, "create-label", _create_label_single)
         self._notify_versioned_checkout_after_program_edit(program, label_pp)
+        self._record_pending_versioned_label(label_pp, str(addr), str(label))
         return create_success_response({"mode": "create_label", "address": str(addr), "label": label, "success": True})
 
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:

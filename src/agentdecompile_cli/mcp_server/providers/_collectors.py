@@ -398,6 +398,7 @@ def collect_symbols(
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_symbols")
     st: GhidraSymbolTable = program.getSymbolTable()
     results: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
 
     def _sym_display_name(sym: GhidraSymbol) -> str:
         # getName(true) includes namespace path; substring search (LFG sh_*_L1) must see the full name.
@@ -409,9 +410,14 @@ def collect_symbols(
     def _append_one(sym: GhidraSymbol) -> None:
         if symbol_type is not None and sym.getSymbolType() != symbol_type:
             return
+        disp = _sym_display_name(sym)
+        key = (str(sym.getAddress()), disp.lower())
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
         results.append(
             {
-                "name": _sym_display_name(sym),
+                "name": disp,
                 "address": str(sym.getAddress()),
                 "symbolType": str(sym.getSymbolType()),
                 "namespace": str(sym.getParentNamespace()),
@@ -420,6 +426,19 @@ def collect_symbols(
                 "isExternalEntryPoint": bool(sym.isExternalEntryPoint()) if hasattr(sym, "isExternalEntryPoint") else False,
             },
         )
+
+    def _merge_defined_symbols() -> None:
+        """Union defined symbols; JPype/shared sometimes returns a non-empty but incomplete getAllSymbols stream."""
+        if not hasattr(st, "getDefinedSymbols"):
+            return
+        try:
+            for sym in iter_items(st.getDefinedSymbols()):
+                sym: GhidraSymbol
+                _append_one(sym)
+                if limit is not None and len(results) >= limit:
+                    return
+        except Exception:
+            logger.debug("collect_symbols getDefinedSymbols merge failed", exc_info=True)
 
     # Primary: full symbol set including dynamics (matches GhidraTools.get_all_symbols(include_dynamic=True)).
     if hasattr(st, "getAllSymbols"):
@@ -435,6 +454,11 @@ def collect_symbols(
             if limit is not None and len(results) >= limit:
                 return results
 
+    # Always merge defined symbols (USER labels): incomplete getAllSymbols batches skip this when len>0 (/lfg 02d).
+    _merge_defined_symbols()
+    if limit is not None and len(results) >= limit:
+        return results
+
     # Fallback: on some shared-server / JPype paths, getAllSymbols(True) yields no items while
     # getSymbolIterator still walks the table (user labels then appear in search-symbols / manage-symbols).
     if len(results) == 0 and hasattr(st, "getSymbolIterator"):
@@ -448,16 +472,9 @@ def collect_symbols(
             if limit is not None and len(results) >= limit:
                 break
 
-    # User labels and other defined symbols (reliable when getAllSymbols iterators are empty on JPype/shared).
-    if len(results) == 0 and hasattr(st, "getDefinedSymbols"):
-        try:
-            for sym in iter_items(st.getDefinedSymbols()):
-                sym: GhidraSymbol
-                _append_one(sym)
-                if limit is not None and len(results) >= limit:
-                    return results
-        except Exception:
-            logger.debug("collect_symbols getDefinedSymbols fallback failed", exc_info=True)
+    # If still empty, retry defined symbols alone (merge may have been skipped if getDefinedSymbols threw).
+    if len(results) == 0:
+        _merge_defined_symbols()
 
     return results
 
