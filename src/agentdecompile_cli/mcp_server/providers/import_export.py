@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,86 @@ if TYPE_CHECKING:
     from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
+
+
+def _jpype_enum_equal(java_val: Any, py_const: Any) -> bool:
+    """Compare Ghidra/Java enum values from JPype to Python-imported constants.
+
+    Direct ``java_val == py_const`` often fails (different proxy objects) so USER_DEFINED
+    checks would always fail, emptying versioned check-in label snapshots and uploading
+    revisions without create-label symbols (LFG 02d search-symbols empty).
+    """
+    if java_val is None or py_const is None:
+        return False
+    try:
+        if java_val == py_const:
+            return True
+    except Exception:
+        pass
+    try:
+        if bool(java_val.equals(py_const)):
+            return True
+    except Exception:
+        pass
+    try:
+        return str(java_val) == str(py_const)
+    except Exception:
+        return False
+
+
+def _sym_is_user_defined_label(sym: Any) -> bool:
+    """True if ``sym`` is a USER_DEFINED LABEL (snapshot / reapply; tolerant of JPype enum proxies)."""
+    from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports]
+    from ghidra.program.model.symbol import SymbolType as GhidraSymbolType  # pyright: ignore[reportMissingImports]
+
+    try:
+        src = sym.getSource()
+        stype = sym.getSymbolType()
+    except Exception:
+        return False
+    ud = _jpype_enum_equal(src, GhidraSourceType.USER_DEFINED)
+    if not ud:
+        try:
+            su = str(src).upper()
+            ud = "USER_DEFINED" in su or su.endswith("_USER_DEFINED")
+        except Exception:
+            ud = False
+    if not ud:
+        return False
+    lab = _jpype_enum_equal(stype, GhidraSymbolType.LABEL)
+    if not lab:
+        try:
+            lab = "LABEL" in str(stype).upper()
+        except Exception:
+            lab = False
+    return bool(lab)
+
+
+_SNAPSHOT_SKIP_AUTO_LABEL_RE = re.compile(r"^(FUN|LAB|SUB|DAT|EXT|PTR|ARRAY)_[0-9a-fA-F]+$")
+
+
+def _sym_eligible_for_versioned_label_snapshot(sym: Any) -> bool:
+    """Symbols to persist across versioned check-in reopen (JPype may not compare SourceType.USER_DEFINED reliably).
+
+    Prefer strict USER_DEFINED LABEL match; otherwise accept any non-auto LABEL so create-label / custom names
+    are not dropped from ``label_snap`` (empty snap → empty server revisions → LFG search-symbols 0).
+    """
+    if _sym_is_user_defined_label(sym):
+        return True
+    try:
+        from ghidra.program.model.symbol import SymbolType as GhidraSymbolType  # pyright: ignore[reportMissingImports]
+
+        stype = sym.getSymbolType()
+        if not (_jpype_enum_equal(stype, GhidraSymbolType.LABEL) or "LABEL" in str(stype).upper()):
+            return False
+        nm = str(sym.getName()).strip()
+        if not nm or _SNAPSHOT_SKIP_AUTO_LABEL_RE.match(nm):
+            return False
+        # Any remaining LABEL with a non-auto name is worth preserving: JPype/shared sometimes reports
+        # user createLabel rows with SourceType strings that are neither USER_DEFINED nor plain ANALYSIS.
+        return True
+    except Exception:
+        return False
 
 
 def _stderr_is_only_jvm_java_tool_options_echo(stderr: str) -> bool:
@@ -973,9 +1054,26 @@ class ImportExportToolProvider(ToolProvider):
                             except Exception:
                                 versioned_ok = False
                     if not listed:
-                        raise RuntimeError(
-                            f"PyGhidra shared import: Ghidra Server listing never showed {program_name!r} (local folder={in_folder}, versioned={versioned_ok}, adapter_items={len(binaries)}); will try analyzeHeadless"
-                        )
+                        # RepositoryAdapter listing can lag or stay empty while ProjectData already has the
+                        # versioned domain file (LFG: adapter_items=0 → analyzeHeadless → broken VC / 02d empty).
+                        if in_folder and versioned_ok:
+                            path_key = f"/{str(program_name).lstrip('/')}"
+                            binaries = [
+                                {
+                                    "name": str(program_name),
+                                    "path": path_key,
+                                    "type": "Program",
+                                },
+                            ]
+                            logger.info(
+                                "PyGhidra shared import: adapter listing empty but folder has %r and file is versioned; "
+                                "using synthetic listing (skip analyzeHeadless)",
+                                program_name,
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"PyGhidra shared import: Ghidra Server listing never showed {program_name!r} (local folder={in_folder}, versioned={versioned_ok}, adapter_items={len(binaries)}); will try analyzeHeadless"
+                            )
 
                     SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
 
@@ -2715,30 +2813,92 @@ class ImportExportToolProvider(ToolProvider):
             logger.debug("bump_versioned_checkout_dirty_bookmark: %s", exc)
 
     def _snapshot_user_defined_primary_labels(self, program: Any) -> list[tuple[str, str]]:
-        """Capture USER_DEFINED primary LABEL symbols to reapply after reopen-based versioned check-in."""
+        """Capture USER_DEFINED LABEL symbols to reapply after reopen-based versioned check-in.
+
+        Includes non-primary labels: LFG create-label can leave a secondary LABEL at an address where a
+        function symbol is primary; filtering primary-only dropped ``*_L2``.
+
+        Dedupe exact (address, name) pairs only. Reapply applies **at most one** ``createLabel`` per name
+        (sorted by name, then address) so duplicate snapshot rows do not create two ``*_L1`` symbols.
+        """
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._snapshot_user_defined_primary_labels")
         out: list[tuple[str, str]] = []
         if program is None:
             return out
         try:
-            from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports]
-            from ghidra.program.model.symbol import SymbolType as GhidraSymbolType  # pyright: ignore[reportMissingImports]
-
             st = program.getSymbolTable()
-            for sym in iter_items(st.getDefinedSymbols()):
+            seen_addr_name: set[tuple[str, str]] = set()
+
+            def _take(sym: Any) -> None:
                 try:
-                    if sym.getSource() != GhidraSourceType.USER_DEFINED:
-                        continue
-                    if sym.getSymbolType() != GhidraSymbolType.LABEL:
-                        continue
-                    if hasattr(sym, "isPrimary") and not bool(sym.isPrimary()):
-                        continue
-                    out.append((str(sym.getAddress()), str(sym.getName())))
+                    if not _sym_eligible_for_versioned_label_snapshot(sym):
+                        return
+                    addr_s = str(sym.getAddress())
+                    nm = str(sym.getName())
+                    key = (addr_s, nm)
+                    if key in seen_addr_name:
+                        return
+                    seen_addr_name.add(key)
+                    out.append(key)
                 except Exception:
-                    continue
+                    return
+
+            for sym in iter_items(st.getDefinedSymbols()):
+                _take(sym)
+            # JPype/shared: user create-label rows may be visible only via getAllSymbols (or arrive late
+            # vs. getDefinedSymbols). Merging always — not only when `out` is empty — fixes versioned
+            # reopen check-ins that would otherwise upload revisions without LFG sh_* / loc_* labels.
+            if hasattr(st, "getAllSymbols"):
+                try:
+                    for sym in iter_items(st.getAllSymbols(True)):
+                        _take(sym)
+                except Exception:
+                    logger.debug("snapshot_user_defined_primary_labels getAllSymbols merge failed", exc_info=True)
+            if not out and hasattr(st, "getSymbolIterator"):
+                try:
+                    fwd = st.getSymbolIterator(True)
+                except Exception:
+                    fwd = st.getSymbolIterator()
+                try:
+                    for sym in iter_items(fwd):
+                        _take(sym)
+                except Exception:
+                    logger.debug("snapshot_user_defined_primary_labels getSymbolIterator fallback failed", exc_info=True)
+            # Secondary USER labels at function entries (LFG *_L2): getAllSymbols may omit them while
+            # getSymbols(addr) still lists the LABEL row — expand every defined-symbol address (sort-sized OK).
+            try:
+                af = program.getAddressFactory()
+                seen_addr: set[str] = set()
+                for sym in iter_items(st.getDefinedSymbols()):
+                    try:
+                        seen_addr.add(str(sym.getAddress()))
+                    except Exception:
+                        continue
+                for addr_s in seen_addr:
+                    try:
+                        a = af.getAddress(addr_s)
+                        if a is None:
+                            continue
+                        for sym in iter_items(st.getSymbols(a)):
+                            _take(sym)
+                    except Exception:
+                        continue
+            except Exception:
+                logger.debug("snapshot expand getSymbols(per-defined-address) failed", exc_info=True)
         except Exception as exc:
             logger.debug("snapshot_user_defined_primary_labels: %s", exc)
-        return out
+        # One row per label name: expand passes can collect the same name at two VAs; reapply already applies
+        # each name once — deduping here avoids ambiguous versioned check-ins and server-side oddities.
+        out.sort(key=lambda t: (t[1], t[0]))
+        deduped: list[tuple[str, str]] = []
+        seen_names: set[str] = set()
+        for addr_s, nm in out:
+            n = str(nm).strip()
+            if not n or n in seen_names:
+                continue
+            seen_names.add(n)
+            deduped.append((addr_s, n))
+        return deduped
 
     def _reapply_user_defined_primary_labels(self, program: Any, snapshots: list[tuple[str, str]]) -> None:
         """Recreate USER_DEFINED labels on a freshly opened Program (versioned check-in reopen path)."""
@@ -2749,14 +2909,60 @@ class ImportExportToolProvider(ToolProvider):
 
         st = program.getSymbolTable()
 
+        def _already_has_user_label_at(addr: Any, nm: str) -> bool:
+            try:
+                for sym in iter_items(st.getSymbols(addr)):
+                    try:
+                        if not _sym_is_user_defined_label(sym):
+                            continue
+                        if str(sym.getName()) == nm:
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                return False
+            return False
+
         def _apply() -> None:
-            for addr_s, name in snapshots:
+            applied_names: set[str] = set()
+            for addr_s, name in sorted(snapshots, key=lambda t: (t[1], t[0])):
                 nm = str(name).strip()
-                if not nm:
+                if not nm or nm in applied_names:
                     continue
                 try:
                     addr = self._resolve_address(str(addr_s).strip(), program=program)
-                    st.createLabel(addr, nm, GhidraSourceType.USER_DEFINED)
+                    if _already_has_user_label_at(addr, nm):
+                        applied_names.add(nm)
+                        continue
+                    fn_at = None
+                    try:
+                        fm = program.getFunctionManager()
+                        if fm is not None:
+                            fn_at = fm.getFunctionAt(addr)
+                    except Exception:
+                        fn_at = None
+                    created = False
+                    # Function entry: prefer non-primary label first (LFG *_L2); 3-arg often fails there.
+                    if fn_at is not None:
+                        try:
+                            ns = program.getGlobalNamespace()
+                            st.createLabel(addr, nm, ns, False, GhidraSourceType.USER_DEFINED)
+                            created = True
+                        except Exception:
+                            pass
+                    if not created:
+                        try:
+                            st.createLabel(addr, nm, GhidraSourceType.USER_DEFINED)
+                            created = True
+                        except Exception:
+                            try:
+                                ns = program.getGlobalNamespace()
+                                st.createLabel(addr, nm, ns, False, GhidraSourceType.USER_DEFINED)
+                                created = True
+                            except Exception:
+                                pass
+                    if created:
+                        applied_names.add(nm)
                 except Exception:
                     continue
 
@@ -3904,7 +4110,10 @@ class ImportExportToolProvider(ToolProvider):
                 gp_retry = getattr(self._manager, "ghidra_project", None) if self._manager else None
                 if gp_retry is None:
                     raise exc_chain
-                retry_df = checkin_domain_file
+                # Must match the DomainFile used by ``checkin_target.checkin(...)`` above. Using only the
+                # path-resolved ``checkin_domain_file`` when it differs from the program's file can reopen/save
+                # the wrong object so reopen check-in uploads no user labels (LFG 02d search-symbols empty).
+                retry_df = checkin_target
                 prog_retry = _ghidra_project_open_program_for_domain_file_save(
                     gp_retry,
                     retry_df,
@@ -4041,6 +4250,10 @@ class ImportExportToolProvider(ToolProvider):
                                         label_snap = self._snapshot_user_defined_primary_labels(po)
                                     except Exception:
                                         label_snap = []
+                                _pp_merge = (program_path or eff_path or "").strip()
+                                for _t in SESSION_CONTEXTS.copy_pending_versioned_labels_resolved(session_id_vc, _pp_merge):
+                                    if _t not in label_snap:
+                                        label_snap.append(_t)
                                 still_open = False
                                 if po is not None:
                                     try:
@@ -4056,7 +4269,12 @@ class ImportExportToolProvider(ToolProvider):
                                     label_snapshot=label_snap or None,
                                 )
                     else:
-                        _versioned_checkin_reopen_bump_and_checkin(checkin_exc, label_snapshot=None)
+                        _pp_only = (program_path or eff_path or "").strip()
+                        _pend_only = SESSION_CONTEXTS.copy_pending_versioned_labels_resolved(session_id_vc, _pp_only)
+                        _versioned_checkin_reopen_bump_and_checkin(
+                            checkin_exc,
+                            label_snapshot=_pend_only if _pend_only else None,
+                        )
                 else:
                     raise checkin_exc
 
@@ -4074,6 +4292,9 @@ class ImportExportToolProvider(ToolProvider):
                     },
                 )
             _release_session_eff_best_effort()
+            # Do not clear pending_versioned_labels here: reopen reapply can fail silently for one label
+            # (e.g. function-entry *_L2) while check-in still reports success; keeping pending lets the next
+            # merge + check-in retry until all create-label rows reach the server (LFG 02d needs L1–L3).
             return create_success_response(
                 {
                     "action": "checkin",

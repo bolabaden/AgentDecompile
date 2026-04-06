@@ -79,6 +79,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _shared_bootstrap_skip_local_project_path(program_key: str) -> bool:
+    """Return True if *program_key* is an existing local project dir or .gpr on this machine.
+
+    Shared-env bootstrap must not open the Ghidra Server for these paths: treating a host
+    filesystem directory as a repository program name breaks agentrepo (Ghidra may log
+    ``not listening!``) when AGENT_DECOMPILE_GHIDRA_SERVER_* is set alongside a local MCP
+    project path (e.g. LFG local_gpr_dir).
+    """
+    raw = (program_key or "").strip()
+    if not raw:
+        return False
+    # Repo-style program paths (e.g. /foo.exe) are never local Windows dirs; Unix backends may use /tmp/... .
+    if raw.startswith("/") and not raw.startswith("//"):
+        return False
+    try:
+        p = Path(raw.replace("\\", "/")).expanduser()
+        if not p.is_absolute():
+            return False
+        if not p.exists():
+            return False
+        return p.is_dir() or (p.suffix.lower() == ".gpr" and p.is_file())
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Default limits and constants
 # ---------------------------------------------------------------------------
@@ -1371,9 +1397,13 @@ class ToolProvider:
         list-cross-references and get-call-graph use the same logical target.
         """
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider._resolve_address")
-        if self.program_info is None:
-            raise ValueError("No program loaded in program_info")
-        target_program: GhidraProgram | None = program or self.program_info.program
+        # Prefer an explicit program (e.g. versioned check-in reopen path reapplies labels on a freshly
+        # opened ProgramDB while session program_info may already be cleared).
+        target_program: GhidraProgram | None = program
+        if target_program is None:
+            if self.program_info is None:
+                raise ValueError("No program loaded in program_info")
+            target_program = self.program_info.program
         if target_program is None:
             raise ValueError("No program loaded")
 
@@ -1746,6 +1776,13 @@ class ToolProviderManager:
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._bootstrap_shared_session_from_env")
         project_provider = self._get_project_provider()
         if project_provider is None:
+            return
+
+        if _shared_bootstrap_skip_local_project_path(requested_program_key):
+            logger.debug(
+                "shared_env_bootstrap: skip — program key is a local project path (%s)",
+                basename_hint(requested_program_key),
+            )
             return
 
         host = ""
@@ -2389,14 +2426,18 @@ class ToolProviderManager:
 
         # Program resolution order: args (programPath/binary/path) → session active → manager default
         requested_program_key: str | None = None
-        for key in ("programpath", "binary", "binaryname", "path"):
-            value = norm_args.get(key)
-            if value is None:
-                continue
-            value_s = str(value).strip()
-            if value_s:
-                requested_program_key = value_s
-                break
+        # import-binary: programPath is the *destination* name in the project/repo, not an existing program.
+        # Resolving it here runs shared checkout / local getFile before the import creates the file — breaks
+        # LFG (spurious checkout failures, versioned check-in "not modified", search-symbols empty on 02d).
+        if norm_name != "importbinary":
+            for key in ("programpath", "binary", "binaryname", "path"):
+                value = norm_args.get(key)
+                if value is None:
+                    continue
+                value_s = str(value).strip()
+                if value_s:
+                    requested_program_key = value_s
+                    break
 
         requested_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_program_info(session_id, requested_program_key) if requested_program_key else None
 

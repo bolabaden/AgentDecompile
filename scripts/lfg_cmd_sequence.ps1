@@ -88,6 +88,24 @@ function Test-LfgMcpPortBindAvailable {
     }
 }
 
+function Test-LfgGhidraPortBindAvailable {
+    <#
+    Ghidra listens on all interfaces; loopback-only bind probes can disagree with wildcard binds on Windows.
+    #>
+    param([int]$Port)
+    try {
+        $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $Port)
+        try {
+            $l.Start()
+            return $true
+        } finally {
+            try { $l.Stop() } catch {}
+        }
+    } catch {
+        return $false
+    }
+}
+
 function Stop-LfgMcpPortProcesses {
     <#
     Frees the chosen MCP listen port before this run and during teardown: stops whatever is listening
@@ -147,6 +165,17 @@ $py = Join-Path $RepoRoot ".venv/Scripts/python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
 $script:McpInvocation = 0
+# Strip these from the MCP child process env when -LocalTrack so PyGhidra does not auto-connect
+# to the Ghidra Server (shared-env bootstrap would treat the local project path as a repo program
+# and can put agentrepo into a bad state — LFG step 5 then sees 0 programs).
+$script:LfgMcpSharedEnvKeys = @(
+    'AGENT_DECOMPILE_GHIDRA_SERVER_HOST', 'AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST', 'AGENTDECOMPILE_GHIDRA_SERVER_HOST',
+    'AGENT_DECOMPILE_SERVER_HOST', 'AGENTDECOMPILE_SERVER_HOST',
+    'AGENT_DECOMPILE_GHIDRA_SERVER_PORT', 'AGENTDECOMPILE_GHIDRA_SERVER_PORT', 'AGENT_DECOMPILE_SERVER_PORT', 'AGENTDECOMPILE_SERVER_PORT',
+    'AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY', 'AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY', 'AGENTDECOMPILE_REPOSITORY', 'AGENT_DECOMPILE_REPOSITORY',
+    'AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME', 'AGENTDECOMPILE_GHIDRA_SERVER_USERNAME', 'AGENT_DECOMPILE_SERVER_USERNAME', 'AGENTDECOMPILE_SERVER_USERNAME',
+    'AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD', 'AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD', 'AGENT_DECOMPILE_SERVER_PASSWORD', 'AGENTDECOMPILE_SERVER_PASSWORD'
+)
 $script:LfgStartedGhidra = $false
 $script:LfgGhidraPatchedBat = $null
 $script:LfgGhidraCmdPid = $null
@@ -188,7 +217,7 @@ function Find-LfgFreeGhidraBasePort {
         for ($offset = 0; $offset -le 2; $offset++) {
             $candidate = $p + $offset
             if (Test-LfgTcpOpen $GhidraHost $candidate) { $allFree = $false; break }
-            if (-not (Test-LfgMcpPortBindAvailable -Port $candidate)) { $allFree = $false; break }
+            if (-not (Test-LfgGhidraPortBindAvailable -Port $candidate)) { $allFree = $false; break }
         }
         if ($allFree) { return $p }
     }
@@ -325,8 +354,16 @@ function Ensure-LfgGhidraServerUp {
     }
     Write-Host "Ghidra not listening on ${HostName}:${Port}; re-launching isolated LFG server (same repos dir)..." -ForegroundColor Yellow
     Invoke-LfgGhidraServerHeadless -GhidraRoot $ctx.GhidraRoot -EvidenceDir $ctx.EvidenceDir -ListenPort $ctx.ListenPort -WrapperConfPath $ctx.WrapperConfPath
+    $ghStdoutPath = Join-Path $ctx.EvidenceDir "ghidra_server.stdout.log"
+    $ghStderrPath = Join-Path $ctx.EvidenceDir "ghidra_server.stderr.log"
     $ghOk = $false
     for ($i = 0; $i -lt 120; $i++) {
+        $ghLog = (Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Out-String) + (Get-Content $ghStderrPath -ErrorAction SilentlyContinue | Out-String)
+        if ($ghLog -match '(?i)invalid usage!|port already in use|exportexception|shutting down wrapper|error starting wrapper') {
+            Write-Host "=== Ghidra relaunch failed (see ghidra_server.stdout.log) ===" -ForegroundColor Red
+            Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
+            throw "Ghidra relaunch failed to start (see evidence dir $($ctx.EvidenceDir))"
+        }
         if (Test-LfgTcpOpen $HostName $Port) { $ghOk = $true; break }
         if ($i -gt 0 -and ($i % 15) -eq 0) {
             Write-Host "  still waiting for Ghidra relaunch on ${HostName}:${Port} (attempt $i/120)..." -ForegroundColor DarkYellow
@@ -334,7 +371,7 @@ function Ensure-LfgGhidraServerUp {
         Start-Sleep -Seconds 2
     }
     if (-not $ghOk) {
-        throw "Ghidra relaunch did not listen on ${HostName}:${Port} in time. See ghidra_server.stderr.log under $($ctx.EvidenceDir)"
+        throw "Ghidra relaunch did not listen on ${HostName}:${Port} in time. See ghidra_server.stdout.log under $($ctx.EvidenceDir)"
     }
     Write-Host "Ghidra relaunch ready on ${HostName}:${Port}" -ForegroundColor Green
     Start-Sleep -Seconds 5
@@ -348,24 +385,48 @@ function Stop-LfgMcp {
 }
 
 function Start-LfgMcp {
-    param([string]$ProjectPath)
+    param(
+        [string]$ProjectPath,
+        [switch]$LocalTrack
+    )
     Stop-LfgMcp
     $env:GHIDRA_INSTALL_DIR = $env:GHIDRA_INSTALL_DIR
     if (-not $env:GHIDRA_INSTALL_DIR) {
         throw "Set GHIDRA_INSTALL_DIR to your Ghidra install"
     }
     # MCP shared Ghidra env (bootstrap skips checkout when requested key == repository name).
-    $env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = $GhidraHost
-    $env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "$GhidraPort"
-    $env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = $Repo
-    $env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = $GhidraUser
-    $env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = $GhidraPasswordPlain
+    if (-not $LocalTrack) {
+        $env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = $GhidraHost
+        $env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "$GhidraPort"
+        $env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = $Repo
+        $env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = $GhidraUser
+        $env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = $GhidraPasswordPlain
+    }
+
+    $savedSharedEnv = [ordered]@{}
+    if ($LocalTrack) {
+        foreach ($k in $script:LfgMcpSharedEnvKeys) {
+            $savedSharedEnv[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+            [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+        }
+    }
+
     $script:McpInvocation++
     $n = $script:McpInvocation
     $mcpOut = Join-Path $Evidence "mcp_server_${n}.stdout.log"
     $mcpErr = Join-Path $Evidence "mcp_server_${n}.stderr.log"
+    try {
     if ($StartMcpInNewWindow) {
         $mcpLauncher = Join-Path $Evidence "launch_mcp_lfg_${n}.ps1"
+        $keysForInner = ($script:LfgMcpSharedEnvKeys | ForEach-Object { "'$($_.Replace("'","''"))'" }) -join ','
+        if ($LocalTrack) {
+        @"
+Write-Host "LFG MCP #$n (local track, no shared env) — http://127.0.0.1:$McpPort/health — tee log: $($mcpOut.Replace("'", "''"))" -ForegroundColor Cyan
+Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
+foreach (`$k in @($keysForInner)) { Remove-Item "Env:\`$k" -ErrorAction SilentlyContinue }
+& '$($py.Replace("'", "''"))' -m agentdecompile_cli.server -t streamable-http --host 127.0.0.1 --port $McpPort --project-path '$($ProjectPath.Replace("'", "''"))' 2>&1 | Tee-Object -FilePath '$($mcpOut.Replace("'", "''"))' -Append
+"@ | Set-Content -LiteralPath $mcpLauncher -Encoding utf8
+        } else {
         @"
 Write-Host "LFG MCP #$n — http://127.0.0.1:$McpPort/health — tee log: $($mcpOut.Replace("'", "''"))" -ForegroundColor Cyan
 Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
@@ -376,6 +437,7 @@ Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
 `$env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = '$($GhidraPasswordPlain.Replace("'","''"))'
 & '$($py.Replace("'", "''"))' -m agentdecompile_cli.server -t streamable-http --host 127.0.0.1 --port $McpPort --project-path '$($ProjectPath.Replace("'", "''"))' 2>&1 | Tee-Object -FilePath '$($mcpOut.Replace("'", "''"))' -Append
 "@ | Set-Content -LiteralPath $mcpLauncher -Encoding utf8
+        }
         Start-Process -FilePath "powershell.exe" -WorkingDirectory $RepoRoot `
             -ArgumentList @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $mcpLauncher) | Out-Null
     } else {
@@ -387,18 +449,81 @@ Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
             -RedirectStandardOutput $mcpOut -RedirectStandardError $mcpErr `
             -WindowStyle Hidden -PassThru | Out-Null
     }
+    } finally {
+        if ($LocalTrack) {
+            foreach ($k in $script:LfgMcpSharedEnvKeys) {
+                $v = $savedSharedEnv[$k]
+                if ($null -eq $v -or $v -eq '') {
+                    [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+                } else {
+                    [Environment]::SetEnvironmentVariable($k, $v, 'Process')
+                }
+            }
+        }
+    }
+
     Write-Host "MCP logs: $mcpOut | $mcpErr" -ForegroundColor DarkGray
     $ok = $false
-    for ($i = 0; $i -lt 90; $i++) {
-        try {
-            $r = Invoke-WebRequest -Uri "http://127.0.0.1:$McpPort/health" -UseBasicParsing -TimeoutSec 3
-            if ($r.StatusCode -eq 200) { $ok = $true; break }
-        } catch {}
+    $fallbackPortFromLog = $null
+    $readyRe = [regex]::new('AgentDecompile ready on port (\d+)')
+    $autoPortRe = [regex]::new('Auto-selecting random port (\d+)')
+    for ($i = 0; $i -lt 120; $i++) {
+        $errTxt = ""
+        if (Test-Path -LiteralPath $mcpErr) {
+            try {
+                $errTxt = [System.IO.File]::ReadAllText($mcpErr)
+            } catch {}
+        }
+        $am = $autoPortRe.Match($errTxt)
+        if ($am.Success) { $fallbackPortFromLog = [int]$am.Groups[1].Value }
+        $ports = [System.Collections.Generic.List[int]]::new()
+        foreach ($p in @($McpPort, $fallbackPortFromLog)) {
+            if ($null -ne $p -and $ports -notcontains $p) { [void]$ports.Add($p) }
+        }
+        foreach ($p in $ports) {
+            try {
+                $r = Invoke-WebRequest -Uri "http://127.0.0.1:$p/health" -UseBasicParsing -TimeoutSec 3
+                if ($r.StatusCode -eq 200) {
+                    if ($p -ne $McpPort) {
+                        Write-Host "MCP health OK on port $p (requested $McpPort); aligning CLI ServerUrl." -ForegroundColor Yellow
+                        Set-Variable -Name McpPort -Value $p -Scope Script
+                        Set-Variable -Name ServerUrl -Value "http://127.0.0.1:$p" -Scope Script
+                        $env:AGENT_DECOMPILE_PORT = "$p"
+                    }
+                    $ok = $true
+                    break
+                }
+            } catch {}
+        }
+        if ($ok) { break }
+        $rm = $readyRe.Match($errTxt)
+        if ($rm.Success) {
+            $rp = [int]$rm.Groups[1].Value
+            if ($rp -ne $McpPort) {
+                Set-Variable -Name McpPort -Value $rp -Scope Script
+                Set-Variable -Name ServerUrl -Value "http://127.0.0.1:$rp" -Scope Script
+                $env:AGENT_DECOMPILE_PORT = "$rp"
+            }
+        }
         Start-Sleep -Seconds 1
     }
-    if (-not $ok) { throw "MCP health check failed on port $McpPort (see $mcpOut / $mcpErr)" }
-    # Uvicorn /health can succeed before streamable-http MCP is fully accepting tool-seq traffic.
-    Start-Sleep -Seconds 5
+    if (-not $ok) { throw "MCP health check failed (see $mcpOut / $mcpErr)" }
+    # Final bind port from launcher stderr (authoritative for tool-seq).
+    $boundPort = $null
+    if (Test-Path -LiteralPath $mcpErr) {
+        try {
+            $tailErr = [System.IO.File]::ReadAllText($mcpErr)
+            $m2 = $readyRe.Match($tailErr)
+            if ($m2.Success) { $boundPort = [int]$m2.Groups[1].Value }
+        } catch {}
+    }
+    if ($null -ne $boundPort -and $boundPort -ne $McpPort) {
+        Write-Host "MCP ready marker on port $boundPort (CLI was $McpPort); updating ServerUrl and AGENT_DECOMPILE_PORT." -ForegroundColor Yellow
+        Set-Variable -Name McpPort -Value $boundPort -Scope Script
+        Set-Variable -Name ServerUrl -Value "http://127.0.0.1:$boundPort" -Scope Script
+        $env:AGENT_DECOMPILE_PORT = "$boundPort"
+    }
+    Start-Sleep -Seconds 2
 }
 
 function Clear-LfgCliState {
@@ -423,14 +548,15 @@ function Invoke-LfgSeq {
         $ec = $LASTEXITCODE
         $combined = $out | Out-String
         if ($ec -eq 0) { break }
-        $transient = $combined -match '(?i)connection attempts failed|connection refused|ConnectError|Could not connect|Cannot connect|agentdecompile backend|actively refused|ghidra server not reachable|notconnectedexception|connection to server failed|10061'
+        $transient = $combined -match '(?i)connection attempts failed|connection refused|ConnectError|Could not connect|Cannot connect|agentdecompile backend|actively refused|ghidra server not reachable|notconnectedexception|connection to server failed|10061|500 internal|503 service|502 bad gateway|readtimeout|timed out|broken pipe|remoteprotocolerror|client error ''5'
         if (-not $transient -or $attempt -ge $maxAttempts) { break }
-        Write-Host "tool-seq $Name transient connection failure (attempt $attempt/$maxAttempts); retrying in 3s..." -ForegroundColor Yellow
+        $delay = if ($attempt -ge 6) { 8 } elseif ($attempt -ge 3) { 5 } else { 3 }
+        Write-Host "tool-seq $Name transient failure (attempt $attempt/$maxAttempts); retrying in ${delay}s..." -ForegroundColor Yellow
         # Ghidra JVM/console may exit during long MCP-only phases; re-arm before retry on shared-server steps.
         if ($Name -match '(?i)_shared_|^(05_|07_|08_|09_)') {
             Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
         }
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds $delay
     }
     Set-Content -LiteralPath $log -Value $combined -Encoding utf8
     if ($ec -ne 0) {
@@ -512,7 +638,27 @@ function Invoke-LfgCreateLabelWithOptionalResolve {
   {"name":"create-label","arguments":{"programPath":"$ProgramPath","address":"$Address","labelName":"$LabelName"}}
 ]
 "@
-    $exitC = Invoke-LfgSeqUnchecked -Name $LogBaseName -Json $json
+    # Same transient retries as Invoke-LfgSeq (create-label used Unchecked before — no retries — so one MCP
+    # blip after a long versioned check-in/reopen left LFG dead at e.g. 02_shared_ck3_label).
+    $attempt = 0
+    $maxAttempts = 10
+    $exitC = 1
+    while ($attempt -lt $maxAttempts) {
+        $attempt++
+        $exitC = Invoke-LfgSeqUnchecked -Name $LogBaseName -Json $json
+        if ($exitC -eq 0) { return }
+        $logPath = Join-Path $Evidence "$LogBaseName.stdout.log"
+        $raw = if (Test-Path -LiteralPath $logPath) { [System.IO.File]::ReadAllText($logPath) } else { "" }
+        if ($raw -match '(?i)## Modification conflict') { break }
+        $transient = $raw -match '(?i)connection attempts failed|connection refused|ConnectError|Could not connect|Cannot connect|agentdecompile backend|actively refused|ghidra server not reachable|notconnectedexception|connection to server failed|10061|500 internal|503 service|502 bad gateway|readtimeout|timed out|broken pipe|remoteprotocolerror|client error ''5'
+        if (-not $transient -or $attempt -ge $maxAttempts) { break }
+        $delay = if ($attempt -ge 6) { 8 } elseif ($attempt -ge 3) { 5 } else { 3 }
+        Write-Host "create-label $LabelName transient failure (attempt $attempt/$maxAttempts); retrying in ${delay}s..." -ForegroundColor Yellow
+        if ($LogBaseName -match '(?i)_shared_' -or $ProgramPath -match '^/') {
+            Ensure-LfgGhidraServerUp -HostName $GhidraHost -Port $GhidraPort
+        }
+        Start-Sleep -Seconds $delay
+    }
     if ($exitC -eq 0) { return }
     $logPath = Join-Path $Evidence "$LogBaseName.stdout.log"
     $raw = [System.IO.File]::ReadAllText($logPath)
@@ -531,6 +677,9 @@ function Invoke-LfgCreateLabelWithOptionalResolve {
 ]
 "@
     Invoke-LfgSeq -Name "${LogBaseName}_resolve" -Json $resJson
+    # Re-run create-label: resolve completes the pending change but a second explicit create-label
+    # ensures the symbol is present for later search-symbols / LFG assertions (parity with ck1/ck3).
+    Invoke-LfgSeq -Name "${LogBaseName}_after_resolve" -Json $json
 }
 
 function Invoke-LfgPushFifthVerifySequence {
@@ -651,30 +800,35 @@ if (-not $AutoStartGhidraServer) {
         ListenPort      = $GhidraPort
         WrapperConfPath = $dstConfFull
     }
-    $ghOk = $false
     $ghStderrPath = Join-Path $Evidence "ghidra_server.stderr.log"
     $ghStdoutPath = Join-Path $Evidence "ghidra_server.stdout.log"
-    for ($i = 0; $i -lt 120; $i++) {
-        if (Test-LfgTcpOpen $GhidraHost $GhidraPort) { $ghOk = $true; break }
-        # Early-exit detection: if Ghidra already printed "Invalid usage!" or "Shutting down", stop waiting.
+    # Do not treat "something listens on base port" as success: another process may hold 25100 while 25101
+    # is still taken, or Ghidra may bind the registry port then abort on SSL (ExportException). Wait for
+    # the repositories ``users`` marker and scan logs every iteration for fatal startup errors.
+    $usersMarker = Join-Path $reposRoot "users"
+    $srvInitOk = $false
+    for ($i = 0; $i -lt 200; $i++) {
         $ghLog = (Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Out-String) + (Get-Content $ghStderrPath -ErrorAction SilentlyContinue | Out-String)
-        if ($ghLog -match 'Invalid usage!|Shutting down Wrapper|error starting wrapper') {
-            # Print the last 20 lines so the problem is immediately visible.
+        if ($ghLog -match '(?i)invalid usage!|port already in use|exportexception|shutting down wrapper|error starting wrapper') {
             Write-Host "" -ForegroundColor Red
-            Write-Host "=== Ghidra server exited with an error (early-exit detected) ===" -ForegroundColor Red
-            Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Select-Object -Last 20 | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
+            Write-Host "=== Ghidra server exited with an error (see log) ===" -ForegroundColor Red
+            Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
             throw "Ghidra server failed to start (see ghidra_server.stdout.log under $Evidence)"
         }
+        if (Test-Path -LiteralPath $usersMarker -PathType Leaf) {
+            $srvInitOk = $true
+            break
+        }
         if ($i -gt 0 -and ($i % 15) -eq 0) {
-            Write-Host "  still waiting for Ghidra on ${GhidraHost}:${GhidraPort} (attempt $i/120)..." -ForegroundColor DarkYellow
+            $tcpUp = Test-LfgTcpOpen $GhidraHost $GhidraPort
+            Write-Host "  waiting for Ghidra repos marker: $usersMarker (tcp ${GhidraHost}:${GhidraPort} open=$tcpUp, poll $i/200)..." -ForegroundColor DarkYellow
         }
         Start-Sleep -Seconds 2
     }
-    if (-not $ghOk) {
-        throw "Ghidra did not listen on ${GhidraHost}:${GhidraPort} in time. See ghidra_server.stderr.log under $Evidence"
+    if (-not $srvInitOk) {
+        throw "Ghidra Server did not create '$usersMarker' in time (svrAdmin needs it). See ghidra_server.stdout.log under $Evidence"
     }
-    Write-Host "Ghidra ready on ${GhidraHost}:${GhidraPort}" -ForegroundColor Green
-    Start-Sleep -Seconds 5
+    Write-Host "Ghidra ready on ${GhidraHost}:${GhidraPort} (repositories initialized)" -ForegroundColor Green
     $ecAd = Invoke-LfgGhidraSvrAdmin -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -AdminArgs @('-add', $GhidraUser)
     if (($null -ne $ecAd) -and ($ecAd -ne 0)) {
         Write-Host "svrAdmin -add $GhidraUser exit $ecAd (OK if user already exists)." -ForegroundColor DarkYellow
@@ -816,11 +970,15 @@ if ($script:LfgIsolatedGhidraRepos) {
 Invoke-LfgSeq "02_shared_ck1_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"exclusive`":true}}]"
 Invoke-LfgCreateLabelWithOptionalResolve "02_shared_ck1_label" $SharedProgramPath $addr1 "sh_${RunId}_L1"
 Invoke-LfgSeq "02_shared_ck1_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"comment`":`"sh_${RunId}_ck_1`"}}]"
+Start-Sleep -Seconds 4
 Invoke-LfgSeq "02_shared_ck2_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"exclusive`":true}}]"
 Invoke-LfgCreateLabelWithOptionalResolve "02_shared_ck2_label" $SharedProgramPath $addr2 "sh_${RunId}_L2"
 Invoke-LfgSeq "02_shared_ck2_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"comment`":`"sh_${RunId}_ck_2`"}}]"
+# Versioned reopen/check-in can keep the JVM busy; cool down before the third cycle (flaky MCP HTTP otherwise).
+Start-Sleep -Seconds 10
 Invoke-LfgSeq "02_shared_ck3_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"exclusive`":true}}]"
 Invoke-LfgCreateLabelWithOptionalResolve "02_shared_ck3_label" $SharedProgramPath $addr3 "sh_${RunId}_L3"
+Start-Sleep -Seconds 3
 Invoke-LfgSeq "02_shared_ck3_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$SharedProgramPath`",`"comment`":`"sh_${RunId}_ck_3`"}}]"
 # Bisect LFG step 5: if this fails, labels/search are wrong before any MCP restart (not cross-process persistence).
 Invoke-LfgSeq "02d_shared_search_same_mcp" @"
@@ -834,7 +992,12 @@ Assert-LfgLogContainsAll "02d_shared_search_same_mcp.stdout.log" @(
 ) -Message "02d: after third shared check-in, search-symbols must list sh_* L1-L3 (same MCP session)"
 
 # Steps 3–4: local three check-ins
-Start-LfgMcp -ProjectPath $McpWsJson
+# Use local_gpr_dir as --project-path (not mcp_workspace): opening a different .gpr from the same
+# PyGhidra launcher root as the shared track can desync versioned files under mcp_workspace and break
+# step 5 (search-symbols empty after MCP restart) even when shared check-ins report success.
+# -LocalTrack strips Ghidra Server env vars for this MCP child only so PyGhidra never auto-connects to
+# agentrepo during local work (shared-env bootstrap against a directory path can break the server repo).
+Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 Invoke-LfgSeq "03_local_open_import" $openLocalImport
 Invoke-LfgSeq "04_local_ck1_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}}]"
@@ -858,7 +1021,7 @@ Assert-LfgLogContainsAll "05_assert_shared_after_mcp.stdout.log" @(
 ) -Message "Step 5 shared persistence: search-symbols must list sh_* L1-L3"
 
 # Steps 7–8: local persistence after MCP restart
-Start-LfgMcp -ProjectPath $McpWsJson
+Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 Invoke-LfgSeq "06_assert_local_after_mcp" $assertLocal
 Assert-LfgLogContainsAll "06_assert_local_after_mcp.stdout.log" @(
@@ -914,7 +1077,7 @@ Assert-LfgLogContainsAll $pushVerifyLogRel @(
 Assert-LfgLogMatch $pushVerifyLogRel '"latest_version"\s*:\s*5' -Message "Step 12: checkout-status latest_version must be 5 after fifth check-in"
 
 # Steps 13–14: local .gpr Track B still has L1–L3
-Start-LfgMcp -ProjectPath $McpWsJson
+Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 Invoke-LfgSeq "10_assert_local_persistence" $assertLocalAgain
 Assert-LfgLogContainsAll "10_assert_local_persistence.stdout.log" @(
@@ -928,7 +1091,7 @@ Assert-LfgLogContainsAll "10_assert_local_persistence.stdout.log" @(
 $exportPath = (Join-Path $Evidence "export_out.sarif") -replace '\\', '/'
 
 # Phase A: analyze + read-only query tools (no checkout needed)
-Start-LfgMcp -ProjectPath $McpWsJson
+Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 $extFail = 0
 Invoke-LfgSeq "11_ext_open_analyze" @"

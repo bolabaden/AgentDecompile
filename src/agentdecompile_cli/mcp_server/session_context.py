@@ -147,6 +147,9 @@ class SessionContext:
     client_fingerprint: str | None = None
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
+    # create-label (addr, name) pairs per canonical program path — merged into versioned check-in reopen
+    # snapshots when Ghidra/JPype omits USER_DEFINED labels from the symbol table (LFG shared search 0 hits).
+    pending_versioned_labels: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
     def touch(self) -> None:
         """Update last-activity timestamp."""
@@ -455,6 +458,77 @@ class SessionContextStore:
             if session.project_binaries:
                 return list(session.project_binaries)
             return []
+
+    def record_pending_versioned_label(self, session_id: str, program_path: str, addr: str, name: str) -> None:
+        """Remember a user create-label for versioned check-in reopen when symbol snapshots are unreliable."""
+        logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.record_pending_versioned_label")
+        raw = (program_path or "").strip()
+        if not raw:
+            return
+        key = self.canonicalize_program_path(session_id, raw)
+        if not key:
+            return
+        session = self.get_or_create(session_id)
+        t = (str(addr).strip(), str(name).strip())
+        if not t[0] or not t[1]:
+            return
+        with self._lock:
+            lst = session.pending_versioned_labels.setdefault(key, [])
+            if t not in lst:
+                lst.append(t)
+            session.touch()
+
+    def copy_pending_versioned_labels(self, session_id: str, program_path: str) -> list[tuple[str, str]]:
+        """Return a copy of pending labels for this program path (do not clear)."""
+        logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.copy_pending_versioned_labels")
+        raw = (program_path or "").strip()
+        if not raw:
+            return []
+        key = self.canonicalize_program_path(session_id, raw)
+        session = self.get_or_create(session_id)
+        with self._lock:
+            return list(session.pending_versioned_labels.get(key, []))
+
+    def copy_pending_versioned_labels_resolved(self, session_id: str, program_path: str) -> list[tuple[str, str]]:
+        """Pending labels for the canonical path plus any bucket sharing the same basename.
+
+        create-label and checkin-program can disagree on the stored session path key (canonicalize drift,
+        adapter vs. tool path); a strict key lookup then misses rows and versioned reopen check-in uploads
+        empty symbol trees (flaky LFG 02d / step 5).
+        """
+        logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.copy_pending_versioned_labels_resolved")
+        merged: list[tuple[str, str]] = list(self.copy_pending_versioned_labels(session_id, program_path))
+        seen: set[tuple[str, str]] = set(merged)
+        raw = (program_path or "").strip().replace("\\", "/")
+        if not raw:
+            return merged
+        want_base = raw.split("/")[-1].lower()
+        if not want_base:
+            return merged
+        session = self.get_or_create(session_id)
+        with self._lock:
+            for k, lst in session.pending_versioned_labels.items():
+                k_norm = str(k).strip().replace("\\", "/")
+                kb = k_norm.split("/")[-1].lower()
+                if kb != want_base:
+                    continue
+                for t in lst:
+                    if t not in seen:
+                        seen.add(t)
+                        merged.append(t)
+        return merged
+
+    def clear_pending_versioned_labels(self, session_id: str, program_path: str) -> None:
+        """Drop pending labels after a successful versioned check-in for this program."""
+        logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.clear_pending_versioned_labels")
+        raw = (program_path or "").strip()
+        if not raw:
+            return
+        key = self.canonicalize_program_path(session_id, raw)
+        session = self.get_or_create(session_id)
+        with self._lock:
+            session.pending_versioned_labels.pop(key, None)
+            session.touch()
 
     def canonicalize_program_path(self, session_id: str, program_path: str) -> str:
         """Return the session listing's canonical path when ``program_path`` matches case-insensitively.
