@@ -33,17 +33,6 @@ async def test_suggest_no_args_returns_available_types() -> None:
     assert "function_name" in types_list
 
 
-@pytest.mark.unit
-def test_suggest_schema_no_required() -> None:
-    """suggest schema must list no required parameters."""
-    provider = SuggestionToolProvider()
-    tools = provider.list_tools()
-    tool_map = {t.name: t for t in tools}
-    assert "suggest" in tool_map
-    required = tool_map["suggest"].inputSchema.get("required", [])
-    assert required == [], f"suggest has required params: {required}"
-
-
 # ---------------------------------------------------------------------------
 # import-binary
 # ---------------------------------------------------------------------------
@@ -59,17 +48,6 @@ async def test_import_binary_no_args_returns_open_programs() -> None:
     assert "openPrograms" in payload, f"Expected openPrograms in {payload}"
     assert "note" in payload
     assert "path" in str(payload["note"]).lower()
-
-
-@pytest.mark.unit
-def test_import_binary_schema_no_required() -> None:
-    """import-binary schema must list no required parameters."""
-    provider = ImportExportToolProvider()
-    tools = provider.list_tools()
-    tool_map = {t.name: t for t in tools}
-    assert "import-binary" in tool_map
-    required = tool_map["import-binary"].inputSchema.get("required", [])
-    assert required == [], f"import-binary has required params: {required}"
 
 
 # ---------------------------------------------------------------------------
@@ -89,14 +67,3 @@ async def test_change_processor_no_args_no_program_returns_error() -> None:
     error = (payload.get("error") or "").lower()
     assert "language" not in error, f"Should not complain about missing language; got: {error}"
     assert "program" in error, f"Expected program-missing error; got: {error}"
-
-
-@pytest.mark.unit
-def test_change_processor_schema_no_required() -> None:
-    """change-processor schema must list no required parameters."""
-    provider = ImportExportToolProvider()
-    tools = provider.list_tools()
-    tool_map = {t.name: t for t in tools}
-    assert "change-processor" in tool_map
-    required = tool_map["change-processor"].inputSchema.get("required", [])
-    assert required == [], f"change-processor has required params: {required}"

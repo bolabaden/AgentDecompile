@@ -78,8 +78,20 @@ def iter_items(source: Any) -> Any:
     if source is None:
         return
     if hasattr(source, "hasNext") and hasattr(source, "next"):
+        n_seen = 0
         while source.hasNext():
             yield source.next()
+            n_seen += 1
+        # Ghidra SymbolIterator + JPype: hasNext() can be false on a non-empty iterator; drain via next().
+        if n_seen == 0:
+            try:
+                while True:
+                    item = source.next()
+                    if item is None:
+                        break
+                    yield item
+            except Exception:
+                logger.debug("iter_items: null-drain after empty hasNext loop failed", exc_info=True)
         return
     for item in source:
         yield item
@@ -385,15 +397,21 @@ def collect_symbols(
 ) -> list[dict[str, Any]]:
     logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_symbols")
     st: GhidraSymbolTable = program.getSymbolTable()
-    iterator: GhidraSymbolIterator = st.getAllSymbols(True) if hasattr(st, "getAllSymbols") else st.getSymbolIterator()
     results: list[dict[str, Any]] = []
-    sym: GhidraSymbol
-    for sym in iter_items(iterator):
+
+    def _sym_display_name(sym: GhidraSymbol) -> str:
+        # getName(true) includes namespace path; substring search (LFG sh_*_L1) must see the full name.
+        try:
+            return str(sym.getName(True))
+        except Exception:
+            return str(sym.getName())
+
+    def _append_one(sym: GhidraSymbol) -> None:
         if symbol_type is not None and sym.getSymbolType() != symbol_type:
-            continue
+            return
         results.append(
             {
-                "name": str(sym.getName()),
+                "name": _sym_display_name(sym),
                 "address": str(sym.getAddress()),
                 "symbolType": str(sym.getSymbolType()),
                 "namespace": str(sym.getParentNamespace()),
@@ -402,8 +420,45 @@ def collect_symbols(
                 "isExternalEntryPoint": bool(sym.isExternalEntryPoint()) if hasattr(sym, "isExternalEntryPoint") else False,
             },
         )
-        if limit is not None and len(results) >= limit:
-            break
+
+    # Primary: full symbol set including dynamics (matches GhidraTools.get_all_symbols(include_dynamic=True)).
+    if hasattr(st, "getAllSymbols"):
+        for sym in iter_items(st.getAllSymbols(True)):
+            sym: GhidraSymbol
+            _append_one(sym)
+            if limit is not None and len(results) >= limit:
+                return results
+    else:
+        for sym in iter_items(st.getSymbolIterator()):
+            sym: GhidraSymbol
+            _append_one(sym)
+            if limit is not None and len(results) >= limit:
+                return results
+
+    # Fallback: on some shared-server / JPype paths, getAllSymbols(True) yields no items while
+    # getSymbolIterator still walks the table (user labels then appear in search-symbols / manage-symbols).
+    if len(results) == 0 and hasattr(st, "getSymbolIterator"):
+        try:
+            forward_iter = st.getSymbolIterator(True)
+        except Exception:
+            forward_iter = st.getSymbolIterator()
+        for sym in iter_items(forward_iter):
+            sym: GhidraSymbol
+            _append_one(sym)
+            if limit is not None and len(results) >= limit:
+                break
+
+    # User labels and other defined symbols (reliable when getAllSymbols iterators are empty on JPype/shared).
+    if len(results) == 0 and hasattr(st, "getDefinedSymbols"):
+        try:
+            for sym in iter_items(st.getDefinedSymbols()):
+                sym: GhidraSymbol
+                _append_one(sym)
+                if limit is not None and len(results) >= limit:
+                    return results
+        except Exception:
+            logger.debug("collect_symbols getDefinedSymbols fallback failed", exc_info=True)
+
     return results
 
 

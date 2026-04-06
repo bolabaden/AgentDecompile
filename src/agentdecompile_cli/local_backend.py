@@ -276,8 +276,8 @@ class LocalToolBackend:
         return [
             {
                 "name": t.name,
-                "description": getattr(t, "description", ""),
-                "inputSchema": getattr(t, "inputSchema", {}),
+                "description": t.description or "",
+                "inputSchema": t.inputSchema or {},
             }
             for t in tools
         ]
@@ -297,7 +297,7 @@ class LocalToolBackend:
         from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS  # pyright: ignore[reportMissingImports]
 
         ctx = SESSION_CONTEXTS.get_or_create(_LOCAL_SESSION_ID)
-        return {k: {"name": getattr(v, "name", k)} for k, v in (ctx.open_programs or {}).items()}
+        return {k: {"name": v.name or k} for k, v in (ctx.open_programs or {}).items()}
 
 
 # ------------------------------------------------------------------
@@ -311,8 +311,8 @@ def _text_content_to_response(result: list[Any]) -> dict[str, Any]:
     content: list[dict[str, Any]] = []
     is_error = False
     for item in result or []:
-        text = getattr(item, "text", None)
-        item_type = getattr(item, "type", "text")
+        text = item.text if isinstance(item, types.TextContent) else None
+        item_type = item.type if isinstance(item, types.TextContent) else "text"
         if text is not None:
             content.append({"type": str(item_type), "text": str(text)})
             # Check if the tool returned an error payload

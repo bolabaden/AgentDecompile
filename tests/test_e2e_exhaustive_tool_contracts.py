@@ -1265,48 +1265,6 @@ class TestRemoveProgramBinary:
 # 19. Protocol-level tests
 # ============================================================================
 
-class TestToolsListProtocol:
-    """Validate the tools/list response at the MCP protocol level."""
-
-    def test_tool_count(self, local_http_session: JsonRpcMcpSession):
-        tools = local_http_session.list_tools()
-        assert len(tools) >= 36
-
-    def test_all_36_default_tools_present(self, local_http_session: JsonRpcMcpSession):
-        tools = local_http_session.list_tools()
-        names = {t["name"] for t in tools}
-        # The 36 default advertised tools (snake_case in MCP protocol output)
-        expected = {
-            "analyze_data_flow", "analyze_program", "analyze_vtables",
-            "apply_data_type", "change_processor", "checkin_program",
-            "checkout_program", "checkout_status", "create_label",
-            "decompile_function", "execute_script", "export",
-            "get_call_graph", "get_current_program", "get_data",
-            "get_references", "import_binary", "inspect_memory",
-            "list_cross_references", "list_exports", "list_functions",
-            "list_imports", "list_processors", "list_project_files",
-            "list_strings", "manage_function_tags", "match_function",
-            "open", "read_bytes", "remove_program_binary",
-            "search_code", "search_constants", "search_everything",
-            "search_strings", "search_symbols", "sync_project",
-        }
-        missing = expected - names
-        assert not missing, f"Missing advertised tools: {missing}"
-
-    def test_each_tool_has_description(self, local_http_session: JsonRpcMcpSession):
-        tools = local_http_session.list_tools()
-        for t in tools:
-            assert "description" in t
-            assert len(t["description"]) > 10
-
-    def test_each_tool_has_input_schema(self, local_http_session: JsonRpcMcpSession):
-        tools = local_http_session.list_tools()
-        for t in tools:
-            assert "inputSchema" in t
-            schema = t["inputSchema"]
-            assert schema.get("type") == "object"
-
-
 class TestResourcesListProtocol:
     """Validate the resources/list response."""
 

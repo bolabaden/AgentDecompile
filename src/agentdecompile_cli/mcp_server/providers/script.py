@@ -12,7 +12,7 @@ import logging
 import traceback
 
 from contextlib import redirect_stderr, redirect_stdout
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -22,6 +22,25 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        DecompInterface as GhidraDecompInterface,
+    )
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        ArrayDataType as GhidraArrayDataType,
+        CategoryPath as GhidraCategoryPath,
+        DataType as GhidraDataType,
+        PointerDataType as GhidraPointerDataType,
+        StructureDataType as GhidraStructureDataType,
+    )
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        RefType as GhidraRefType,
+        SourceType as GhidraSourceType,
+        SymbolType as GhidraSymbolType,
+    )
+    from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +66,9 @@ class ScriptToolProvider(ToolProvider):
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": ("The raw Python source code to execute. To pass data out, assign your output to the `__result__` variable (e.g. `__result__ = currentProgram.getName()`)."),
+                            "description": (
+                                "The raw Python source code to execute. To pass data out, assign your output to the `__result__` variable (e.g. `__result__ = currentProgram.getName()`)."
+                            ),
                         },
                         "programPath": {
                             "type": "string",
@@ -115,7 +136,7 @@ class ScriptToolProvider(ToolProvider):
         decompiler = None
 
         if self.program_info is not None:
-            program = getattr(self.program_info, "program", None)
+            program = self.program_info.program
             flat_api = getattr(self.program_info, "flat_api", None)
             decompiler = getattr(self.program_info, "decompiler", None)
 
@@ -243,16 +264,18 @@ class ScriptToolProvider(ToolProvider):
             ("ghidra.app.util.bin.format.elf", []),  # ELF helpers
             ("java.lang", ["String", "Integer", "Long", "System"]),
         ]
+        module_path: str
+        names: list[str]
         for module_path, names in _safe_imports:
             try:
-                mod = __import__(module_path, fromlist=names or ["__name__"])
+                mod: Any = __import__(module_path, fromlist=names or ["__name__"])
                 if names:
                     for name in names:
-                        obj = getattr(mod, name, None)
+                        obj: Any = getattr(mod, name, None)
                         if obj is not None:
                             ns.setdefault(name, obj)
                 else:
-                    short = module_path.rsplit(".", 1)[-1]
+                    short: str = module_path.rsplit(".", 1)[-1]
                     ns.setdefault(short, mod)
             except Exception:
                 pass
@@ -288,21 +311,23 @@ class ScriptToolProvider(ToolProvider):
         at the tool invocation layer (not in this provider).
         """
         logger.debug("diag.enter %s", "mcp_server/providers/script.py:ScriptToolProvider._handle_execute")
-        code = self._require_str(args, "code", "script", "expression", "source", name="code")
-        timeout = self._get_int(args, "timeout", default=30)
+        code: str = self._require_str(args, "code", "script", "expression", "source", name="code")
+        timeout: int | None = self._get_int(args, "timeout", default=30)
+        if timeout is None:
+            timeout = 30
 
-        ns = self._build_namespace()
+        ns: dict[str, Any] = self._build_namespace()
         ns["__result__"] = None
 
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
+        stdout_capture: io.StringIO = io.StringIO()
+        stderr_capture: io.StringIO = io.StringIO()
 
         try:
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                 # Try eval first (single expression) for convenience.
                 # This handles: 1+1, getFunction("main"), currentProgram.getName()
                 try:
-                    result = eval(code, ns)  # noqa: S307
+                    result: Any = eval(code, ns)  # noqa: S307
                     if result is not None:
                         ns["__result__"] = result
                 except SyntaxError:
@@ -312,7 +337,7 @@ class ScriptToolProvider(ToolProvider):
                     result = ns.get("__result__")
         except Exception as script_exc:
             # Any exception (not just SyntaxError) → capture traceback to stderr
-            tb = traceback.format_exc()
+            tb: str = traceback.format_exc()
             stderr_capture.write(tb)
             result = None
             logger.warning(
@@ -321,21 +346,21 @@ class ScriptToolProvider(ToolProvider):
                 norm_arg_keys(args),
             )
 
-        stdout_text = stdout_capture.getvalue()
-        stderr_text = stderr_capture.getvalue()
+        stdout_text: str = stdout_capture.getvalue()
+        stderr_text: str = stderr_capture.getvalue()
 
         # Serialize the result using best-effort approach.
         # Falls back to repr() for objects we can't serialize nicely.
-        result_value = ns.get("__result__", result)
-        result_str = ""
+        result_value: Any = ns.get("__result__", result)
+        result_str: str = ""
         if result_value is not None:
             try:
                 result_str = _serialize_result(result_value)
-            except Exception as e:
+            except Exception:
                 result_str = repr(result_value)
 
         # Build response: success=True only if no errors caught
-        response: dict[str, Any] = {"success": not bool(stderr_text and not stdout_text and result_str == "")}
+        response: dict[str, Any] = {"success": not (stderr_text and not stdout_text and result_str == "")}
         if stdout_text:
             response["stdout"] = stdout_text
         if stderr_text:
@@ -387,7 +412,7 @@ def _serialize_result(obj: Any, max_depth: int = 3, max_items: int = 200) -> str
 
     # Lists / tuples – recurse with item count limit.
     if isinstance(obj, (list, tuple)):
-        items = []
+        items: list[str] = []
         for i, item in enumerate(obj):
             if i >= max_items:
                 items.append(f"... ({len(obj) - max_items} more)")
@@ -436,7 +461,7 @@ def _serialize_result(obj: Any, max_depth: int = 3, max_items: int = 200) -> str
 
     # Fallback: str() for objects with meaningful __str__, or repr().
     try:
-        s = str(obj)
+        s: str = str(obj)
         # Avoid '<java_object...>' repr strings – prefer repr() in that case.
         if s and not s.startswith("<"):
             return s

@@ -14,62 +14,17 @@ Professional pytest suite for testing AgentDecompile with PyGhidra.
 
 These tests verify that AgentDecompile components work together correctly:
 
-- **Integration Tests**: PyGhidra initialization, launcher lifecycle, tool connectivity
-- **Unit Tests**: Individual tool providers, normalization, configuration
-- **E2E Tests**: Full CLI workflows and cross-client compatibility  
-- **Provider Tests**: Each of the 19 tool providers in isolation
+- **Integration tests**: PyGhidra initialization, launcher lifecycle, real program workflows (`@pytest.mark.integration`)
+- **Unit tests**: Fast checks with mocked or minimal dependencies (`@pytest.mark.unit`)
+- **E2E tests**: HTTP MCP server (`TestClient`), CLI subprocesses, tool sweeps, Docker-backed shared-project flows
+- **Provider tests**: Individual `tests/test_provider_*.py` modules calling real provider handlers where practical
 
-## Test Types and Organization
+List modules with:
 
-Tests are organized by functionality (37 test files total):
-
-### Core Tests
-- `test_pyghidra.py` - PyGhidra initialization
-- `test_launcher.py` - AgentDecompileLauncher lifecycle
-- `test_mcp_tools.py` - MCP tool connectivity
-- `test_config.py` - Configuration loading
-- `test_session_context.py` - Session context management
-- `test_legacy_tools_advertisement.py` - Environment variable control of tool advertisement
-- `test_unified_provider_advertisement.py` - Tool advertisement contracts and parity
-
-### CLI Tests
-- `test_cli_connect_mode.py` - CLI in connect mode (server attachment)
-- `test_cli_dynamic.py` - CLI dynamic tool execution
-- `test_cli_e2e.py` - CLI end-to-end workflows
-- `test_cli_helpers.py` - CLI helper utilities
-- `test_cli_project_manager.py` - CLI project management
-
-### Tool Provider Tests (19 providers)
-- `test_provider_symbols.py` - Symbol management
-- `test_provider_functions.py` - Function analysis
-- `test_provider_memory.py` - Memory inspection
-- `test_provider_callgraph.py` - Call graph analysis
-- `test_provider_comments.py` - Comments/annotations
-- `test_provider_bookmarks.py` - Bookmarks
-- `test_provider_strings.py` - String management
-- `test_provider_structures_datatypes_data.py` - Data types and structures
-- `test_provider_xrefs.py` - Cross-references
-- `test_provider_dataflow.py` - Data flow analysis
-- `test_provider_getfunction.py` - Function retrieval
-- `test_provider_import_export.py` - Import/export operations
-- `test_provider_constants.py` - Constants and data
-- `test_provider_decompiler.py` - Decompiler integration
-- `test_provider_vtable.py` - Virtual table analysis
-- `test_provider_suggestions.py` - Suggestion generation
-
-### Normalization and Compatibility Tests
-- `test_normalization_combinatorial.py` - Comprehensive normalization coverage
-- `test_python_tool_registry_parity.py` - Tool registry parity checks
-
-### Workflow and Integration Tests
-- `test_e2e_workflow.py` - End-to-end workflow scenarios
-- `test_dynamic_tool_executor.py` - Dynamic tool execution
-- `test_import_e2e.py` - Binary import workflows
-- `test_shared_project_flow.py` - Shared project flow: open(shared), list-project-files (source=shared-server-session), is_shared_server_handle
-
-### Helpers and Configuration
-- `conftest.py` - Pytest fixtures (shared across all tests)
-- `helpers.py` - Utility functions (MCP requests, program creation)
+```bash
+dir tests\test_*.py   # Windows
+ls tests/test_*.py    # Unix
+```
 
 ## Running Tests
 
@@ -78,84 +33,56 @@ Tests are organized by functionality (37 test files total):
 ```bash
 # Install dependencies with uv
 uv sync
-# or: pip install -r tests/requirements.txt
 
 # Ensure GHIDRA_INSTALL_DIR is set
 export GHIDRA_INSTALL_DIR=/path/to/ghidra  # or set via Windows environment
-
-# AgentDecompile is installed as editable package (via uv sync)
 ```
 
 ### Run All Tests
 
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/ -v --timeout=120
 ```
 
 ### Run Tests by Category
 
 ```bash
-# Core functionality tests only
-uv run pytest tests/test_launcher.py tests/test_config.py -v
-
-# CLI tests
-uv run pytest tests/test_cli_*.py -v
-
-# Provider tests
+uv run pytest -m unit -v
 uv run pytest tests/test_provider_*.py -v
-
-# Normalization/compatibility tests
-uv run pytest tests/test_*normalization*.py tests/test_*compatibility*.py -v
-
-# Legacy tools advertisement tests (isolated)
-uv run pytest tests/test_legacy_tools_advertisement.py -v
+uv run pytest tests/test_cli_*.py -v
+uv run pytest tests/test_e2e_*.py -v
 ```
-
-### Legacy Tools Advertisement Tests
-
-The `test_legacy_tools_advertisement.py` module tests environment variable control of tool advertisement:
-
-- **Environment Variables**: `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS`, `AGENTDECOMPILE_SHOW_LEGACY_TOOLS`
-- **Truthy Values**: `1`, `true`, `yes`, `on` (case-insensitive)
-- **Test Isolation**: Uses module reloading with cleanup fixtures
-- **Coverage**: 45 tests validating default/legacy advertisement modes
-
-**Note**: These tests modify global registry state and use comprehensive cleanup. They integrate safely with other tests but can be run in isolation for faster iteration.
 
 ### Run Tests Matching Pattern
 
 ```bash
-uv run pytest tests/ -k "symbols" -v          # All symbol-related tests
-uv run pytest tests/ -k "provider" -v         # All provider tests
-uv run pytest tests/ -k "normalize" -v        # All normalization tests
+uv run pytest tests/ -k "symbols" -v
+uv run pytest tests/ -k "provider" -v
 ```
 
 ### Run with Timeout
 
 ```bash
-uv run pytest tests/ -v --timeout=120  # 2-minute timeout per test (matches pyproject.toml)
+uv run pytest tests/ -v --timeout=120
 ```
 
 ### Run with Different Output
 
 ```bash
-uv run pytest tests/ -v --tb=short    # Shorter tracebacks
-uv run pytest tests/ -v --tb=line     # One-line tracebacks
-uv run pytest tests/ -v -s            # Show print statements
+uv run pytest tests/ -v --tb=short
+uv run pytest tests/ -v --tb=line
+uv run pytest tests/ -v -s
 ```
 
 ## Test Markers
 
-Tests use pytest markers for filtering:
-
 ```bash
-@pytest.mark.unit        # Unit tests (mocked PyGhidra)
-@pytest.mark.integration # Integration tests (requires PyGhidra)
+@pytest.mark.unit        # Unit tests (mocked / no full Ghidra)
+@pytest.mark.integration # Integration tests (PyGhidra)
 @pytest.mark.e2e         # End-to-end tests
-@pytest.mark.slow        # Slow tests (skip with --ignore-slow)
+@pytest.mark.slow        # Slow tests
 ```
 
-Run only specific markers:
 ```bash
 uv run pytest tests/ -m integration -v
 uv run pytest tests/ -m "not slow" -v
@@ -163,118 +90,37 @@ uv run pytest tests/ -m "not slow" -v
 
 ## CI Integration
 
-The GitHub Actions workflows under `.github/workflows/` run these tests and packaging checks:
-
-- **Matrix**: see the workflow YAML files for the current OS and version matrix
-- **Timeout**: 30 minutes per job
-- **Python**: 3.10
-- **Artifacts**: uploads test results and logs when configured by the workflow
-
-Workflow steps:
-1. Setup Java 21 (required for PyGhidra)
-2. Install Ghidra
-3. Setup Python and `uv`
-4. Install Python dependencies (`uv sync`)
-5. Install PyGhidra from local Ghidra when needed
-6. Run pytest (`uv run pytest tests/ -v --timeout=120`)
-7. Upload test results and artifacts
+GitHub Actions workflows under `.github/workflows/` run pytest and packaging checks (see workflow YAML for matrix and timeouts).
 
 ## Writing New Tests
 
-### Example: Test a New Tool Provider
+Prefer tests that invoke **`tools/call`** (or provider `call_tool`) and assert on structured **results**, not only on `tools/list` or schema shape.
 
 ```python
 # tests/test_provider_mytool.py
 import pytest
-from tests.helpers import get_response_result
 
 class TestMyToolProvider:
-    """Test my-tool-provider functionality"""
-
-    def test_tool_is_callable(self, mcp_client):
-        """my-tool is registered and responds"""
-        response = mcp_client.call_tool("my-tool", {
-            "programPath": "/TestProgram"
-        })
-
-        assert response is not None
-        result = get_response_result(response)
-        assert result is not None
-
-    def test_tool_with_arguments(self, mcp_client):
-        """my-tool accepts expected arguments"""
-        response = mcp_client.call_tool("my-tool", {
-            "programPath": "/TestProgram",
-            "myArg": "someValue"
-        })
-
-        result = get_response_result(response)
-        assert "expected_field" in result
-```
-
-### Example: Test Normalization
-
-```python
-# tests/test_my_normalization.py
-import pytest
-from agentdecompile_cli.registry import normalize_identifier
-
-def test_tool_name_normalization():
-    """Tool names normalize correctly"""
-    assert normalize_identifier("my-tool") == "mytool"
-    assert normalize_identifier("MY_TOOL") == "mytool"
-    assert normalize_identifier("myTool") == "mytool"
-
-def test_with_mcp_client(mcp_client):
-    """Tool accepts any normalized variant"""
-    # All these should call the same tool
-    for name_variant in ["my-tool", "MY-TOOL", "my_tool", "myTool"]:
-        response = mcp_client.call_tool(name_variant, {"programPath": "/TestProgram"})
-        assert response is not None
+    def test_tool_returns_expected_shape(self):
+        from agentdecompile_cli.mcp_server.providers.mytool import MyToolProvider
+        # call_tool(...) and assert on JSON payload keys / success / errors
 ```
 
 ## Troubleshooting
 
 ### PyGhidra Initialization Fails
+
 ```
 Error: GHIDRA_INSTALL_DIR not set
 ```
-Set the environment variable:
-```bash
-export GHIDRA_INSTALL_DIR=/path/to/ghidra  # Linux/macOS
-set GHIDRA_INSTALL_DIR=C:\path\to\ghidra   # Windows  
-```
+
+Set `GHIDRA_INSTALL_DIR` to your Ghidra install root.
 
 ### Tests Timeout
-If tests timeout during CI:
-1. Increase the `--timeout` value (default 120 seconds in pyproject.toml)
-2. Look for slow fixtures or heavy operations
-3. Mark very slow tests with `@pytest.mark.slow`
 
-### Fixture Issues
-If you get fixture errors, ensure:
-- `conftest.py` is in the top-level tests/ directory
-- Fixtures are properly scoped (session, module, function, etc.)
-- Dependencies are installed (`uv sync`)
+Increase `--timeout` or mark very slow tests and skip with `-m "not slow"`.
 
-## Performance
+## Related Docs
 
-Typical test execution times:
-
-- **PyGhidra initialization**: 10-30 seconds (once per session)
-- **Server start**: 2-5 seconds (per test using `server` fixture)
-- **MCP request**: <1 second
-- **Full test suite**: ~2-5 minutes (depends on test count)
-
-## Best Practices
-
-1. **Use fixtures** - Reuse `ghidra_initialized` and `mcp_client` rather than creating new ones
-2. **Test one thing** - Keep tests focused on a single behavior
-3. **Use markers** - Mark slow tests with `@pytest.mark.slow`
-4. **Clean up** - Ensure temporary projects/files are cleaned up after tests
-5. **Verify state changes** - For integration tests, verify actual program state changed
-
-## Related Documentation
-
-- **Main README**: [README.md](../README.md) - Project overview
-- **CI Workflows**: [../.github/CI_WORKFLOWS.md](../.github/CI_WORKFLOWS.md) - Complete CI documentation
+- [../CONTRIBUTING.md](../CONTRIBUTING.md) — development setup and test commands
+- [../AGENTS.md](../AGENTS.md) — agent environment notes

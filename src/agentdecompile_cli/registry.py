@@ -21,6 +21,7 @@ import logging
 import os
 import re
 
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -223,10 +224,34 @@ class Tool(str, Enum):
         return [t for t in cls if t.is_advertised]
 
 
+class ToolSurfaceProfile(str, Enum):
+    """Named advertised tool surfaces for clients with different complexity budgets."""
+
+    CURATED = "curated"
+    FULL = "full"
+    LEGACY = "legacy"
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    """Machine-readable tool metadata for client/tool-surface selection."""
+
+    context_rich: bool
+    single_purpose: bool
+    writes_state: bool
+    legacy: bool
+    replacement: tuple[str, ...] = ()
+
+
 # Backward-compat alias
 ToolName = Tool
 
 TOOLS: list[str] = [t.value for t in Tool]
+
+_TOOL_SURFACE_ENV_VARS: tuple[str, ...] = (
+    "AGENTDECOMPILE_TOOL_SURFACE",
+    "AGENT_DECOMPILE_TOOL_SURFACE",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -917,6 +942,89 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     },
 )
 
+_CONTEXT_RICH_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.GET_CALL_GRAPH,
+        Tool.GET_CURRENT_PROGRAM,
+        Tool.GET_DATA,
+        Tool.GET_FUNCTION,
+        Tool.GET_REFERENCES,
+        Tool.INSPECT_MEMORY,
+        Tool.LIST_EXPORTS,
+        Tool.LIST_FUNCTIONS,
+        Tool.LIST_IMPORTS,
+        Tool.LIST_STRINGS,
+        Tool.SEARCH_CODE,
+        Tool.SEARCH_CONSTANTS,
+        Tool.SEARCH_EVERYTHING,
+        Tool.SEARCH_STRINGS,
+        Tool.SEARCH_SYMBOLS,
+    },
+)
+
+_MULTI_MODE_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.GET_CALL_GRAPH,
+        Tool.GET_REFERENCES,
+        Tool.INSPECT_MEMORY,
+        Tool.MANAGE_BOOKMARKS,
+        Tool.MANAGE_COMMENTS,
+        Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_FILES,
+        Tool.MANAGE_FUNCTION,
+        Tool.MANAGE_FUNCTION_TAGS,
+        Tool.MANAGE_STRINGS,
+        Tool.MANAGE_STRUCTURES,
+        Tool.MANAGE_SYMBOLS,
+        Tool.OPEN,
+        Tool.SEARCH_CONSTANTS,
+        Tool.SYNC_PROJECT,
+    },
+)
+
+_STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.APPLY_DATA_TYPE,
+        Tool.CHANGE_PROCESSOR,
+        Tool.CHECKIN_PROGRAM,
+        Tool.CHECKOUT_PROGRAM,
+        Tool.CREATE_LABEL,
+        Tool.DELETE_PROJECT_BINARY,
+        Tool.EXECUTE_SCRIPT,
+        Tool.IMPORT_BINARY,
+        Tool.MANAGE_BOOKMARKS,
+        Tool.MANAGE_COMMENTS,
+        Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_FILES,
+        Tool.MANAGE_FUNCTION,
+        Tool.MANAGE_FUNCTION_TAGS,
+        Tool.MANAGE_STRINGS,
+        Tool.MANAGE_STRUCTURES,
+        Tool.MANAGE_SYMBOLS,
+        Tool.MATCH_FUNCTION,
+        Tool.MIGRATE_METADATA,
+        Tool.OPEN,
+        Tool.REMOVE_PROGRAM_BINARY,
+        Tool.RESOLVE_MODIFICATION_CONFLICT,
+        Tool.SVR_ADMIN,
+        Tool.SYNC_PROJECT,
+    },
+)
+
+_LEGACY_TOOLS: frozenset[Tool] = _DEFAULT_HIDDEN_TOOLS
+
+_TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
+    Tool.DECOMPILE_FUNCTION: (Tool.GET_FUNCTION.value,),
+    Tool.DELETE_PROJECT_BINARY: (Tool.REMOVE_PROGRAM_BINARY.value,),
+    Tool.GEN_CALLGRAPH: (Tool.GET_CALL_GRAPH.value,),
+    Tool.GET_FUNCTIONS: (Tool.GET_FUNCTION.value,),
+    Tool.MANAGE_STRINGS: (Tool.LIST_STRINGS.value, Tool.SEARCH_STRINGS.value),
+}
+
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
     "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
     "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
@@ -946,6 +1054,67 @@ def _is_truthy_env(value: str | None) -> bool:
 def _legacy_tools_advertised() -> bool:
     logger.debug("diag.enter %s", "registry.py:_legacy_tools_advertised")
     return any(_is_truthy_env(os.getenv(var_name)) for var_name in _LEGACY_TOOLS_ENV_VARS)
+
+
+def _get_tool_surface_profile() -> ToolSurfaceProfile:
+    """Return the active tool-surface profile.
+
+    Default remains `curated` to preserve the existing advertisement surface.
+    Legacy env vars map to the `legacy` profile for backward compatibility.
+    """
+    logger.debug("diag.enter %s", "registry.py:_get_tool_surface_profile")
+    for var_name in _TOOL_SURFACE_ENV_VARS:
+        raw = os.getenv(var_name)
+        if raw is None:
+            continue
+        value = raw.strip().lower()
+        if not value:
+            continue
+        if value in {profile.value for profile in ToolSurfaceProfile}:
+            return ToolSurfaceProfile(value)
+    if _legacy_tools_advertised():
+        return ToolSurfaceProfile.LEGACY
+    return ToolSurfaceProfile.CURATED
+
+
+def get_active_tool_surface_profile() -> str:
+    """Return the active tool-surface profile name."""
+    logger.debug("diag.enter %s", "registry.py:get_active_tool_surface_profile")
+    return _get_tool_surface_profile().value
+
+
+def _profiles_for_tool(tool: Tool) -> tuple[ToolSurfaceProfile, ...]:
+    logger.debug("diag.enter %s", "registry.py:_profiles_for_tool")
+    if tool in DISABLED_GUI_ONLY_TOOLS:
+        return tuple()
+    profiles: list[ToolSurfaceProfile] = [ToolSurfaceProfile.FULL, ToolSurfaceProfile.LEGACY]
+    if tool not in _DEFAULT_HIDDEN_TOOLS:
+        profiles.insert(0, ToolSurfaceProfile.CURATED)
+    return tuple(profiles)
+
+
+def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
+    """Return machine-readable metadata for a canonical tool name."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_metadata")
+    tool = tool_name if isinstance(tool_name, Tool) else Tool.from_string(tool_name)
+    if tool is None:
+        return None
+    return ToolMetadata(
+        context_rich=tool in _CONTEXT_RICH_TOOLS,
+        single_purpose=tool not in _MULTI_MODE_TOOLS,
+        writes_state=tool in _STATE_WRITING_TOOLS,
+        legacy=tool in _LEGACY_TOOLS,
+        replacement=_TOOL_REPLACEMENTS.get(tool, ()),
+    )
+
+
+def get_tool_profiles(tool_name: Tool | str) -> list[str]:
+    """Return the advertised profiles a canonical tool belongs to."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_profiles")
+    tool = tool_name if isinstance(tool_name, Tool) else Tool.from_string(tool_name)
+    if tool is None:
+        return []
+    return [profile.value for profile in _profiles_for_tool(tool)]
 
 
 def _get_disabled_tools() -> set[str]:
@@ -990,28 +1159,30 @@ def _build_advertised_tools() -> list[str]:
     _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
     """
     logger.debug("diag.enter %s", "registry.py:_build_advertised_tools")
-    canonical_visible: list[str] = [t.value for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
+    canonical_visible: list[Tool] = [t for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
     hidden_set: set[str] = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
     disabled_set: set[str] = _get_disabled_tools()
     explicit_set: set[str] | None = _get_explicit_enabled_tools()
+    surface_profile = _get_tool_surface_profile()
 
     if explicit_set is not None:
         # AGENTDECOMPILE_ENABLE_TOOLS takes absolute priority – expose exactly these tools.
-        result: list[str] = [tool for tool in canonical_visible if normalize_identifier(tool) in explicit_set]
+        result: list[str] = [tool.value for tool in canonical_visible if normalize_identifier(tool.value) in explicit_set]
         if _auto_checkin_enabled():
             checkin_norm = normalize_identifier(Tool.CHECKIN_PROGRAM.value)
             result = [t for t in result if normalize_identifier(t) != checkin_norm]
         return result
 
-    include_hidden: bool = _legacy_tools_advertised()
-
     result: list[str] = []
     for tool in canonical_visible:
-        norm: str = normalize_identifier(tool)
+        norm: str = normalize_identifier(tool.value)
         if norm in disabled_set:
             continue
-        if norm not in hidden_set or include_hidden:
-            result.append(tool)
+        profiles = _profiles_for_tool(tool)
+        if surface_profile == ToolSurfaceProfile.CURATED and norm in hidden_set:
+            continue
+        if surface_profile.value in {profile.value for profile in profiles}:
+            result.append(tool.value)
     # When auto-checkin is enabled, hide checkin-program (it runs automatically after modifying tools).
     if _auto_checkin_enabled():
         checkin_norm: str = normalize_identifier(Tool.CHECKIN_PROGRAM.value)

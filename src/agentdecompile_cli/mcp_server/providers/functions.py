@@ -130,7 +130,7 @@ class FunctionToolProvider(ToolProvider):
         include_ext = self._get_bool(args, "includeexternals", "externals", default=True)
         offset, max_results = self._get_pagination_params(args, default_limit=100)
 
-        program = getattr(self.program_info, "program", None)
+        program = self.program_info.program
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
 
@@ -193,7 +193,7 @@ class FunctionToolProvider(ToolProvider):
         max_results: int = self._get_int(args, "limit", "maxresults", default=100)
         timeout: int = self._get_int(args, "timeout", "decompiletimeout", default=60)
 
-        program = getattr(self.program_info, "program", None)
+        program = self.program_info.program
         if program is None or not hasattr(program, "getFunctionManager"):
             raise ValueError("No program loaded")
 

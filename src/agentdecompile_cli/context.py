@@ -79,6 +79,10 @@ class ProgramInfo:
     load_time: float | None = None
     code_collection: Collection | None = None
     strings_collection: Collection | None = None
+    # Ghidra consumer passed to Program.release() for shared/versioned opens (see ProjectToolProvider).
+    domain_object_consumer: Any | None = None
+    # Resolved DomainFile for shared checkout / version-control flows (see ProjectToolProvider).
+    domain_file: GhidraDomainFile | None = None
 
     def get_decompiler(self) -> GhidraDecompInterface | None:
         """Return the decompiler, lazily initializing it on first access if needed.

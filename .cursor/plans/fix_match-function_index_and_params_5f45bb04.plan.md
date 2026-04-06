@@ -77,7 +77,7 @@ flowchart LR
 ## Testing
 
 - **Unit:** Add or extend a test that builds the index and looks up a function by the same name/address (e.g. in a test program or mock) and verifies the lookup succeeds and returns the expected feature. Optionally test that two resolutions of the same function (e.g. by name and by address) both find the same index entry.
-- **Regression:** Run existing match-function–related tests (e.g. in `test_e2e_exhaustive_tool_contracts.py`, normalization tests) to ensure no breakage.
+- **Regression:** Run existing match-function–related tests (e.g. in `test_e2e_exhaustive_tool_contracts.py`) to ensure no breakage.
 - **Manual:** Run `match-function` with `programPath`, `function`/`functionIdentifier`/`symbol` (e.g. WinMain), and no `targetProgramPaths`; confirm results instead of “Function not indexed for matching”. Then call with `targetProgramPaths` set and confirm the clear “not implemented” message.
 
 ---

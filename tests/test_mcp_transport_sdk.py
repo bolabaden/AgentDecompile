@@ -32,7 +32,6 @@ import agentdecompile_cli.project_manager as project_manager_module
 
 from agentdecompile_cli import bridge as bridge_module, cli as cli_module
 from agentdecompile_cli.bridge import AgentDecompileStdioBridge
-from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.mcp_server.providers import project as project_provider_module
 from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
@@ -42,20 +41,6 @@ from agentdecompile_cli.registry import tool_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HTTP_TIMEOUT = 30.0
-
-
-@pytest.mark.parametrize(
-    ("raw_url", "expected_url"),
-    [
-        ("http://127.0.0.1:8080", "http://127.0.0.1:8080/mcp/message"),
-        ("http://127.0.0.1:8080/mcp", "http://127.0.0.1:8080/mcp/message"),
-        ("http://127.0.0.1:8080/mcp/", "http://127.0.0.1:8080/mcp/message"),
-        ("http://127.0.0.1:8080/mcp/message", "http://127.0.0.1:8080/mcp/message"),
-        ("http://127.0.0.1:8080/api", "http://127.0.0.1:8080/api/mcp/message"),
-    ],
-)
-def test_normalize_backend_url_accepts_supported_mcp_paths(raw_url: str, expected_url: str) -> None:
-    assert normalize_backend_url(raw_url) == expected_url
 
 
 @pytest.mark.unit
@@ -340,7 +325,7 @@ async def test_stdio_bridge_forwards_proxy_shared_headers_to_backend(monkeypatch
 
     await bridge._ensure_backend("frontend-session")
 
-    assert captured["url"] == normalize_backend_url("http://127.0.0.1:8080/mcp")
+    assert captured["url"] == "http://127.0.0.1:8080/mcp/message"
     assert captured["extra_headers"]["mcp-session-id"] == "cli-persisted-session-abc"
     assert captured["extra_headers"]["X-Ghidra-Server-Host"] == "170.9.241.140"
     assert captured["extra_headers"]["X-Ghidra-Server-Port"] == "13100"

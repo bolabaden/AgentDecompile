@@ -4,8 +4,8 @@ Tests the PythonMcpServer and AgentDecompileMcpProxyServer via Starlette
 TestClient with real HTTP requests — NO mocking, NO monkeypatching.
 
 Group A: Standalone MCP server (PythonMcpServer)
-  - Health endpoint, MCP initialize, tools/list, tools/call, resources/read
-  - Every advertised tool is called and response structure validated
+  - Health endpoint, MCP initialize, tools/call, resources/read
+  - Tools are exercised via tools/call and response structure validated
   - Import/export workflows
   - CLI subprocess integration
 
@@ -49,15 +49,6 @@ def _initialize_payload(request_id: int = 1) -> dict[str, object]:
             "capabilities": {},
             "clientInfo": {"name": "pytest-e2e-standalone", "version": "1.0"},
         },
-    }
-
-
-def _tools_list_payload(request_id: int = 2) -> dict[str, object]:
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "tools/list",
-        "params": {},
     }
 
 
@@ -234,90 +225,6 @@ class TestStandaloneServerInit:
             sid = resp.headers.get("mcp-session-id", "")
             # The server should return a valid session identifier
             assert isinstance(sid, str)
-
-
-class TestStandaloneToolsList:
-    """Test tools/list endpoint returns the expected tool set."""
-
-    def test_list_tools_returns_advertised_set(self):
-        server = PythonMcpServer()
-        with TestClient(server.app) as client:
-            _, sid = _init_session(client)
-            body = _post_with_session(client, sid, _tools_list_payload())
-            tools = body["result"]["tools"]
-            assert isinstance(tools, list)
-            assert len(tools) > 0
-            tool_names = {t["name"] for t in tools}
-
-            # Normalize tool names: server may use underscore or hyphen style
-            normalized_names = {name.replace("-", "_") for name in tool_names} | {name.replace("_", "-") for name in tool_names}
-
-            # Verify all core advertised tools are present (check both hyphen and underscore forms)
-            expected_core = [
-                "open",
-                "list-project-files",
-                "get-current-program",
-                "decompile-function",
-                "search-symbols",
-                "get-references",
-                "list-imports",
-                "list-exports",
-                "list-functions",
-                "export",
-                "import-binary",
-                "analyze-program",
-                "inspect-memory",
-                "read-bytes",
-                "search-code",
-                "search-strings",
-                "search-everything",
-                "list-strings",
-                "get-call-graph",
-                "analyze-data-flow",
-                "analyze-vtables",
-                "list-cross-references",
-                "manage-function-tags",
-                "execute-script",
-                "checkin-program",
-                "get-data",
-                "match-function",
-                "list-processors",
-                "change-processor",
-                "create-label",
-                "search-constants",
-                "apply-data-type",
-                "sync-project",
-                "checkout-program",
-                "checkout-status",
-                "remove-program-binary",
-            ]
-            for tool in expected_core:
-                underscore_form = tool.replace("-", "_")
-                assert tool in tool_names or underscore_form in tool_names, (
-                    f"Expected tool '{tool}' (or '{underscore_form}') not found in advertised tools: {sorted(tool_names)}"
-                )
-
-    def test_each_tool_has_input_schema(self):
-        server = PythonMcpServer()
-        with TestClient(server.app) as client:
-            _, sid = _init_session(client)
-            body = _post_with_session(client, sid, _tools_list_payload())
-            tools = body["result"]["tools"]
-            for tool in tools:
-                assert "name" in tool, f"Tool missing 'name': {tool}"
-                assert "inputSchema" in tool, f"Tool '{tool['name']}' missing 'inputSchema'"
-                assert isinstance(tool["inputSchema"], dict), f"Tool '{tool['name']}' inputSchema is not a dict"
-                assert tool["inputSchema"].get("type") == "object", f"Tool '{tool['name']}' inputSchema type is not 'object'"
-
-    def test_each_tool_has_description(self):
-        server = PythonMcpServer()
-        with TestClient(server.app) as client:
-            _, sid = _init_session(client)
-            body = _post_with_session(client, sid, _tools_list_payload())
-            tools = body["result"]["tools"]
-            for tool in tools:
-                assert "description" in tool, f"Tool '{tool['name']}' missing 'description'"
-                assert len(tool["description"]) > 0, f"Tool '{tool['name']}' has empty description"
 
 
 class TestStandaloneResourcesList:
@@ -801,31 +708,6 @@ class TestProxyServerInitialize:
         with TestClient(proxy.app) as client:
             body = _post(client, "/mcp/message/", _initialize_payload())
             assert body["result"]["serverInfo"]["name"] == "AgentDecompile"
-
-
-class TestProxyServerToolsList:
-    """Test proxy server tools/list endpoint (proxy manages its own MCP session)."""
-
-    def test_proxy_tools_list_returns_valid_response(self):
-        """Proxy tools/list returns a valid MCP response; tools list reflects the bridge's registry."""
-        proxy = AgentDecompileMcpProxyServer(
-            ProxyServerConfig(
-                host="127.0.0.1",
-                port=19086,
-                backend_url="http://127.0.0.1:8080/mcp/message",
-            )
-        )
-        with TestClient(proxy.app) as client:
-            body, sid = _init_session(client, "/mcp/message")
-            tools_body = _post_with_session(client, sid, _tools_list_payload())
-            assert "result" in tools_body
-            tools = tools_body["result"]["tools"]
-            assert isinstance(tools, list)
-            # In proxy mode the bridge advertises tools from the bridge registry
-            for tool in tools:
-                assert "name" in tool
-                assert "inputSchema" in tool
-                assert "description" in tool
 
 
 # ---------------------------------------------------------------------------

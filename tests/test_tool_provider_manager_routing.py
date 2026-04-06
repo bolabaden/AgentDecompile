@@ -34,7 +34,7 @@ class _RoutingProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, object]) -> list[types.TextContent]:
         program_name = None
-        if self.program_info is not None and getattr(self.program_info, "program", None) is not None:
+        if self.program_info is not None and self.program_info.program is not None:
             program_name = self.program_info.program.getName()
         return create_success_response({"programName": program_name})
 
