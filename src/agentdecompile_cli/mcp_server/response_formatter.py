@@ -1815,7 +1815,8 @@ def _render_import_export(data: dict[str, Any]) -> str:
             lines.append(_md_heading(3, "Imported Programs"))
             lines.append("")
             for p in programs:
-                lines.append(f"- `{p.get('programName', '')}` from `{p.get('sourcePath', '')}`")
+                src = p.get("sourcePath") or p.get("path", "")
+                lines.append(f"- `{p.get('programName', '')}` from `{src}`")
         errors: list[str] = data.get("errors", [])
         if errors:
             lines.append("")
@@ -1930,6 +1931,59 @@ def _render_project(data: dict[str, Any]) -> str:
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     lines: list[str] = []
+
+    if action == "import":
+        # Import result from open-project path — render as a rich import summary
+        lines.append(_md_heading(2, "Project Opened (Import)"))
+        lines.append("")
+        imported_from = data.get("importedFrom", "")
+        if imported_from:
+            lines.append(_md_bold_kv("Source", _md_code_inline(imported_from)))
+        lines.append(_md_bold_kv("Files Discovered", data.get("filesDiscovered", 0)))
+        lines.append(_md_bold_kv("Files Imported", data.get("filesImported", 0)))
+        lines.append(_md_bold_kv("Analysis", "Requested" if data.get("analysisRequested") else "Skipped"))
+        errors = data.get("errors", [])
+        if errors:
+            lines.append("")
+            lines.append(_md_heading(3, "Import Errors"))
+            for e in errors:
+                if isinstance(e, dict):
+                    lines.append(f"- `{e.get('path', '')}`: {e.get('error', '')}")
+                else:
+                    lines.append(f"- {e}")
+        imported_programs: list[dict[str, Any]] = data.get("importedPrograms", [])
+        if imported_programs:
+            lines.append("")
+            lines.append(_md_heading(3, f"Imported Programs ({len(imported_programs)})"))
+            lines.append("")
+            headers_imp = ["Program Name", "Source"]
+            rows_imp = [[p.get("programName", ""), p.get("sourcePath") or p.get("path", "")] for p in imported_programs]
+            lines.append(_md_table(headers_imp, rows_imp))
+        program_details: list[dict[str, Any]] = data.get("programDetails", [])
+        if program_details:
+            lines.append("")
+            lines.append(_md_heading(3, "Program Details"))
+            for detail in program_details:
+                detail_name = detail.get("name", detail.get("programPath", ""))
+                lines.append("")
+                lines.append(_md_heading(4, detail_name or "Program"))
+                _append_program_detail_lines(lines, detail)
+                funcs: list[dict[str, Any]] = detail.get("topFunctions", [])
+                if funcs:
+                    lines.append("")
+                    lines.append(_md_bold_kv("Top Functions", ""))
+                    f_headers = ["Address", "Name", "Signature"]
+                    f_rows = [[f.get("address", ""), f.get("name", ""), f.get("signature", "")] for f in funcs]
+                    lines.append(_md_table(f_headers, f_rows))
+        project_files: list[dict[str, Any]] = data.get("projectFiles", [])
+        if project_files:
+            lines.append("")
+            lines.append(_md_heading(3, f"Project Files ({len(project_files)})"))
+            lines.append("")
+            pf_headers = ["Name", "Path", "Size"]
+            pf_rows = [[f.get("name", ""), f.get("path", ""), str(f.get("size", ""))] for f in project_files]
+            lines.append(_md_table(pf_headers, pf_rows))
+        return "\n".join(lines)
 
     if action == Tool.OPEN.value:
         mode: str = data.get("mode", "")
@@ -2546,6 +2600,7 @@ TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "changeprocessor": _render_import_export,
     "listprocessors": _render_import_export,
     "open": _render_project,
+    "openproject": _render_project,
     "getcurrentprogram": _render_project,
     "listprojectfiles": _render_project,
     "managefiles": _render_project,

@@ -309,7 +309,24 @@ function Invoke-LfgGhidraSvrAdmin {
     $tail = if ($AdminArgs -and $AdminArgs.Count -gt 0) { ' ' + ($AdminArgs -join ' ') } else { '' }
     $inner = "call `"$launchBat`" fg jre svrAdmin 128M `"$vmargs`" ghidra.server.ServerAdmin `"$ServerConfPath`"$tail"
     cmd.exe /c $inner
-    return $LASTEXITCODE
+    $exitCode = $LASTEXITCODE
+    return $exitCode
+}
+
+function Test-LfgGhidraSvrAdminUserKnown {
+    <#
+    Uses svrAdmin -users (not -list): -list is repository-centric and may omit user SIDs when no repos exist.
+    #>
+    param(
+        [string]$GhidraRoot,
+        [string]$ServerConfPath,
+        [string]$UserSid
+    )
+    $launchBat = Join-Path $GhidraRoot "support\launch.bat"
+    if (-not (Test-Path -LiteralPath $launchBat)) { return $false }
+    $usersOut = & cmd.exe /c "call `"$launchBat`" fg jre svrAdmin 128M `"-DUserAdmin.invocation=svrAdmin`" ghidra.server.ServerAdmin `"$ServerConfPath`" -users" 2>&1
+    $usersText = ($usersOut | Out-String)
+    return ($usersText -match [regex]::new('\b' + [regex]::Escape($UserSid) + '\b', 'IgnoreCase'))
 }
 
 function Stop-LfgGhidra {
@@ -830,26 +847,56 @@ if (-not $AutoStartGhidraServer) {
     }
     Write-Host "Ghidra ready on ${GhidraHost}:${GhidraPort} (repositories initialized)" -ForegroundColor Green
     $ecAd = Invoke-LfgGhidraSvrAdmin -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -AdminArgs @('-add', $GhidraUser)
-    if (($null -ne $ecAd) -and ($ecAd -ne 0)) {
-        Write-Host "svrAdmin -add $GhidraUser exit $ecAd (OK if user already exists)." -ForegroundColor DarkYellow
+    Write-Host "svrAdmin -add $GhidraUser exit $ecAd (OK if user already exists)." -ForegroundColor DarkYellow
+    Start-Sleep -Seconds 3
+    # On Windows, the repository file watcher may not process ~admin immediately; a restart runs
+    # "Processing queued commands" again so -add takes effect (see ghidra server.log if user stays unknown).
+    if (-not (Test-LfgGhidraSvrAdminUserKnown -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -UserSid $GhidraUser)) {
+        Write-Host "svrAdmin -add queued but user not listed yet; restarting Ghidra once to flush admin command queue..." -ForegroundColor Yellow
+        Stop-LfgGhidra -Port $GhidraPort
+        Start-Sleep -Seconds 3
+        Invoke-LfgGhidraServerHeadless -GhidraRoot $ghidraRoot -EvidenceDir $Evidence -ListenPort $GhidraPort -WrapperConfPath $dstConfFull
+        $script:LfgStartedGhidra = $true
+        $srvInitOk = $false
+        for ($ri = 0; $ri -lt 200; $ri++) {
+            $ghLog = (Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Out-String) + (Get-Content $ghStderrPath -ErrorAction SilentlyContinue | Out-String)
+            if ($ghLog -match '(?i)invalid usage!|port already in use|exportexception|shutting down wrapper|error starting wrapper') {
+                Get-Content $ghStdoutPath -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
+                throw "Ghidra server failed after admin-queue restart (see ghidra_server.stdout.log under $Evidence)"
+            }
+            if (Test-Path -LiteralPath $usersMarker -PathType Leaf) {
+                $srvInitOk = $true
+                break
+            }
+            if ($ri -gt 0 -and ($ri % 15) -eq 0) {
+                $tcpUp = Test-LfgTcpOpen $GhidraHost $GhidraPort
+                Write-Host "  waiting for Ghidra after restart: $usersMarker (tcp ${GhidraHost}:${GhidraPort} open=$tcpUp, poll $ri/200)..." -ForegroundColor DarkYellow
+            }
+            Start-Sleep -Seconds 2
+        }
+        if (-not $srvInitOk) {
+            throw "Ghidra Server did not recreate '$usersMarker' after admin-queue restart. See ghidra_server.stdout.log under $Evidence"
+        }
+        Write-Host "Ghidra restarted; re-issuing svrAdmin -add $GhidraUser" -ForegroundColor Cyan
+        $ecAd2 = Invoke-LfgGhidraSvrAdmin -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -AdminArgs @('-add', $GhidraUser)
+        Write-Host "svrAdmin -add $GhidraUser (post-restart) exit $ecAd2" -ForegroundColor DarkYellow
+        Start-Sleep -Seconds 3
     }
     # Poll until the server has processed the queued -add (YAJSW queues commands asynchronously)
     $userConfirmed = $false
     for ($uPoll = 0; $uPoll -lt 30; $uPoll++) {
-        $listOut = & cmd.exe /c "call `"$(Join-Path $ghidraRoot 'support\launch.bat')`" fg jre svrAdmin 128M `"-DUserAdmin.invocation=svrAdmin`" ghidra.server.ServerAdmin `"$dstConfFull`" -list" 2>&1
-        $listText = ($listOut | Out-String)
-        if ($listText -match [regex]::new('\b' + [regex]::Escape($GhidraUser) + '\b', 'IgnoreCase')) {
+        if (Test-LfgGhidraSvrAdminUserKnown -GhidraRoot $ghidraRoot -ServerConfPath $dstConfFull -UserSid $GhidraUser) {
             $userConfirmed = $true
-            Write-Host "svrAdmin -list confirms user '$GhidraUser' exists (poll $uPoll)." -ForegroundColor Green
+            Write-Host "svrAdmin -users confirms '$GhidraUser' exists (poll $uPoll)." -ForegroundColor Green
             break
         }
         if ($uPoll -gt 0 -and ($uPoll % 5) -eq 0) {
-            Write-Host "  waiting for server to process -add (svrAdmin -list poll $uPoll/30)..." -ForegroundColor DarkYellow
+            Write-Host "  waiting for server to process -add (svrAdmin -users poll $uPoll/30)..." -ForegroundColor DarkYellow
         }
         Start-Sleep -Seconds 2
     }
     if (-not $userConfirmed) {
-        Write-Host "WARNING: svrAdmin -list did not confirm user '$GhidraUser' after 60s. Proceeding with ghidra/changeme (same as svrAdmin -add default when the user exists)." -ForegroundColor Red
+        throw "svrAdmin did not register user '$GhidraUser' after -add and optional Ghidra restart. See ghidra_server_repositories\server.log and svrREADME (filesystem watcher / ~admin queue)."
     }
     $GhidraPassword = 'changeme'
     $GhidraPasswordPlain = 'changeme'
@@ -862,9 +909,10 @@ $openShared = @"
 ]
 "@
 
-# Off-alignment VAs ~2KiB apart deep in .text so create-label avoids function entries, CRT/IAT, and PE helpers on sort.exe.
+# Off-alignment VAs deep in .text; consecutive labels are ~4.5KiB apart so L2/L3 rarely land in the same
+# function body as L1 (three-arg create-label + versioned check-in could drop mid-function user labels from search).
 # RunId-scoped slide reduces collisions when re-running /lfg against the same shared EXE.
-$addrKey = [Text.Encoding]::UTF8.GetBytes("${RunId}|lfg-addr-v6")
+$addrKey = [Text.Encoding]::UTF8.GetBytes("${RunId}|lfg-addr-v7")
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
     $addrHash = $sha.ComputeHash($addrKey)
@@ -874,11 +922,11 @@ try {
 $slide = [int]([BitConverter]::ToUInt32($addrHash, 0) % 2048)
 $base = [int64]0x140002000 + [int64]$slide
 $addr1 = "0x{0:X}" -f ($base + 0x80)
-$addr2 = "0x{0:X}" -f ($base + 0x880)
-$addr3 = "0x{0:X}" -f ($base + 0x1080)
-$addr4 = "0x{0:X}" -f ($base + 0x1880)
-$addrPush = "0x{0:X}" -f ($base + 0x2080)
-$addrCli  = "0x{0:X}" -f ($base + 0x2800)
+$addr2 = "0x{0:X}" -f ($base + 0x1280)
+$addr3 = "0x{0:X}" -f ($base + 0x2480)
+$addr4 = "0x{0:X}" -f ($base + 0x3680)
+$addrPush = "0x{0:X}" -f ($base + 0x4880)
+$addrCli  = "0x{0:X}" -f ($base + 0x6000)
 # Valid .text read for inspect-memory on PE64 sort.exe (avoid guard/invalid pages)
 $addrInspect = "0x{0:X}" -f $base
 

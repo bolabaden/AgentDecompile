@@ -733,6 +733,25 @@ class ImportExportToolProvider(ToolProvider):
             if not repository_adapter.isConnected():
                 repository_adapter.connect()
 
+            # When the program is not already on the Ghidra Server, skip PyGhidra createFile/addToVersionControl on
+            # the local GhidraProject. That path leaves a local-only DomainFile while RepositoryAdapter.getItemList
+            # stays empty; analyzeHeadless then publishes a real server copy and subsequent shared check-ins can
+            # bind to the wrong DomainFile (LFG 05: program listed but search-symbols 0 after MCP restart).
+            try:
+                pre_binaries = self._list_repository_items(repository_adapter)
+            except Exception as pre_exc:
+                logger.debug("shared import pre-list probe: %s", pre_exc)
+                pre_binaries = []
+            if not _shared_repo_listing_contains_program(pre_binaries, effective_program_file_name):
+                logger.info(
+                    "Shared import: %r not in server listing (%d item(s)) — skipping PyGhidra local import; analyzeHeadless",
+                    effective_program_file_name,
+                    len(pre_binaries),
+                )
+                raise RuntimeError(
+                    f"PyGhidra shared import skipped: {effective_program_file_name!r} not on server yet; will try analyzeHeadless"
+                )
+
             # Get the manager's ghidra_project or create a temporary one connected to the repository
             ghidra_project: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
             if ghidra_project is None:
@@ -1053,27 +1072,18 @@ class ImportExportToolProvider(ToolProvider):
                                 versioned_ok = bool(domain_file is not None and domain_file.isVersioned())
                             except Exception:
                                 versioned_ok = False
+                    # Do not call clearRepositoryAdapter here: if reconnect fails, the JVM cache is cleared but
+                    # handle["repository_adapter"] still points at a stale object — later analyzeHeadless listing
+                    # verification then sees programCount=0 forever (LFG import-binary failure).
                     if not listed:
-                        # RepositoryAdapter listing can lag or stay empty while ProjectData already has the
-                        # versioned domain file (LFG: adapter_items=0 → analyzeHeadless → broken VC / 02d empty).
-                        if in_folder and versioned_ok:
-                            path_key = f"/{str(program_name).lstrip('/')}"
-                            binaries = [
-                                {
-                                    "name": str(program_name),
-                                    "path": path_key,
-                                    "type": "Program",
-                                },
-                            ]
-                            logger.info(
-                                "PyGhidra shared import: adapter listing empty but folder has %r and file is versioned; "
-                                "using synthetic listing (skip analyzeHeadless)",
-                                program_name,
-                            )
-                        else:
-                            raise RuntimeError(
-                                f"PyGhidra shared import: Ghidra Server listing never showed {program_name!r} (local folder={in_folder}, versioned={versioned_ok}, adapter_items={len(binaries)}); will try analyzeHeadless"
-                            )
+                        # Never fabricate session binaries: local ProjectData can show a versioned file while
+                        # RepositoryAdapter.getItemList is empty — the next MCP JVM then sees programCount=0 (LFG 05).
+                        # Fall through to analyzeHeadless ghidra:// -import -commit so the program exists on the server.
+                        raise RuntimeError(
+                            f"PyGhidra shared import: Ghidra Server listing never showed {program_name!r} "
+                            f"(local folder={in_folder}, versioned={versioned_ok}, adapter_items={len(binaries)}); "
+                            "will try analyzeHeadless"
+                        )
 
                     SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
 
@@ -1190,14 +1200,75 @@ class ImportExportToolProvider(ToolProvider):
         stdout = completed.stdout.strip()
         stderr = completed.stderr.strip()
 
+        rebind_after_headless_done: list[bool] = [False]
+
+        def _rebind_shared_repository_adapter_after_headless() -> Any:
+            """Clear client cache and attach a fresh RepositoryAdapter (same order as connect-shared-project)."""
+            from ghidra.framework.client import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+                ClientUtil,
+                PasswordClientAuthenticator,
+            )
+
+            if server_username and server_password:
+                ClientUtil.setClientAuthenticator(
+                    PasswordClientAuthenticator(server_username, server_password),
+                )
+            if server_username:
+                try:
+                    from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
+
+                    JavaSystem.setProperty("user.name", server_username)
+                except Exception:
+                    pass
+                try:
+                    from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+                    field = SystemUtilities.class_.getDeclaredField("userName")
+                    field.setAccessible(True)
+                    field.set(None, server_username)
+                except Exception:
+                    pass
+
+            logger.info(
+                "Shared import (post-analyzeHeadless): clearRepositoryAdapter %s:%s and refetch %r",
+                server_host,
+                server_port,
+                repository_name,
+            )
+            ClientUtil.clearRepositoryAdapter(server_host, server_port)
+            server_adapter2 = ClientUtil.getRepositoryServer(server_host, server_port, True)
+            if server_adapter2 is None:
+                raise RuntimeError("getRepositoryServer returned None after headless import rebind")
+            if not server_adapter2.isConnected():
+                server_adapter2.connect()
+            ra2 = server_adapter2.getRepository(repository_name)
+            if ra2 is None:
+                raise RuntimeError("getRepository returned None after headless import rebind")
+            if not ra2.isConnected():
+                ra2.connect()
+            handle["repository_adapter"] = ra2
+            return ra2
+
         def _refresh_import_succeeded() -> bool:
+            nonlocal repository_adapter
             try:
                 if not repository_adapter.isConnected():
                     repository_adapter.connect()
                 listing = self._list_repository_items(repository_adapter)
-                return _shared_repo_listing_contains_program(listing, effective_program_file_name)
-            except Exception:
-                return False
+                if _shared_repo_listing_contains_program(listing, effective_program_file_name):
+                    return True
+            except Exception as first_exc:
+                logger.debug("shared import listing probe (pre-rebind): %s", first_exc)
+            if not rebind_after_headless_done[0]:
+                try:
+                    ra_new = _rebind_shared_repository_adapter_after_headless()
+                    repository_adapter = ra_new
+                    rebind_after_headless_done[0] = True
+                    listing2 = self._list_repository_items(repository_adapter)
+                    return _shared_repo_listing_contains_program(listing2, effective_program_file_name)
+                except Exception as re_exc:
+                    logger.warning("shared import listing after headless: adapter rebind failed: %s", re_exc)
+            return False
 
         # Always refresh repository listing and treat as success if file appears (analyzeHeadless
         # may write JVM warnings to stderr or return non-zero despite committing)
@@ -2107,6 +2178,69 @@ class ImportExportToolProvider(ToolProvider):
             return bool(pb) and pb == tb
         except Exception:
             return False
+
+    def _versioned_checkin_target_domain_file(
+        self,
+        path_resolved_df: GhidraDomainFile,
+        program_for_ops: GhidraProgram | None,
+        program_path: str,
+        program_display_name: str,
+    ) -> GhidraDomainFile:
+        """Return the domain file handle that versioned ``.checkin()`` must use so in-memory edits persist.
+
+        ``project_data.getFile`` / checkout-status resolution can yield a different ``GhidraDomainFile`` instance
+        than ``Program.getDomainFile()`` after analyzeHeadless or adapter checkout. Flushing/checking in only
+        the path-resolved object then reports *not modified* while labels live on the open program (LFG 02d).
+        Basename-only pairing is unsafe for unrelated same-named files; require the open program's file to be
+        versioned, checked out, and match the basename of the program path we are checking in.
+        """
+        if program_for_ops is None:
+            return path_resolved_df
+        try:
+            op_df = program_for_ops.getDomainFile()
+        except Exception:
+            return path_resolved_df
+        if op_df is None or op_df is path_resolved_df:
+            return path_resolved_df
+        try:
+            p_op = str(op_df.getPathname() or "").strip()
+            p_ci = str(path_resolved_df.getPathname() or "").strip()
+            if self._ghidra_paths_equal(p_op, p_ci):
+                return op_df
+        except Exception:
+            pass
+        want_raw = (program_path or program_display_name or "").strip()
+        want_bn = Path(want_raw.replace("\\", "/")).name.lower() if want_raw else ""
+        try:
+            op_name = str(op_df.getName() or "").strip().lower()
+            op_bn = op_name if op_name else Path(p_op.replace("\\", "/")).name.lower()
+        except Exception:
+            op_bn = ""
+        try:
+            op_checked_out = bool(op_df.isCheckedOut())
+        except Exception:
+            op_checked_out = False
+        try:
+            op_versioned = bool(op_df.isVersioned()) if hasattr(op_df, "isVersioned") else False
+        except Exception:
+            op_versioned = False
+        op_vc = op_versioned and op_checked_out
+
+        if not want_bn or op_bn != want_bn:
+            return path_resolved_df
+        if op_vc:
+            logger.info(
+                "checkin: using open program DomainFile as check-in target (versioned checkout, name matches %r)",
+                want_bn,
+            )
+            return op_df
+        if op_checked_out:
+            logger.info(
+                "checkin: using open program DomainFile as check-in target (checked out, name matches %r; isVersioned false)",
+                want_bn,
+            )
+            return op_df
+        return path_resolved_df
 
     def _canonical_program_path_for_session(self, program_path: str) -> str:
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._canonical_program_path_for_session")
@@ -3980,21 +4114,19 @@ class ImportExportToolProvider(ToolProvider):
                     program_display_name,
                 )
 
-            # Prefer Program.getDomainFile() for versioned check-in whenever it aligns with the path-resolved file.
-            # getFile() can return a different Java object than the Program's file; path-string equality can fail
-            # (repo vs local pathname, slash style) while basename/name still match. Flushing and .checkin() on
-            # only the path handle then yields "not modified" and empty server revisions (LFG shared labels).
-            checkin_target: GhidraDomainFile = checkin_domain_file
+            # Prefer Program.getDomainFile() when it is the versioned working copy for this program basename.
+            # Loose _domain_files_align_for_checkin (basename-only) can target the wrong GhidraFileData.
+            checkin_target: GhidraDomainFile = self._versioned_checkin_target_domain_file(
+                checkin_domain_file,
+                program_for_ops,
+                program_path or "",
+                program_display_name,
+            )
             try:
                 if program_for_ops is not None:
-                    op_df = program_for_ops.getDomainFile()
-                    if op_df is not None and self._domain_files_align_for_checkin(op_df, checkin_domain_file):
-                        if op_df is not checkin_domain_file:
-                            logger.info(
-                                "checkin: using program DomainFile as checkin target (aligned with path handle) program=%s",
-                                program_display_name,
-                            )
-                        checkin_target = op_df
+                    op_df_eff = program_for_ops.getDomainFile()
+                    if op_df_eff is not None and checkin_target is op_df_eff:
+                        eff_domain_file = op_df_eff
             except Exception:
                 pass
 
@@ -4110,9 +4242,11 @@ class ImportExportToolProvider(ToolProvider):
                 gp_retry = getattr(self._manager, "ghidra_project", None) if self._manager else None
                 if gp_retry is None:
                     raise exc_chain
-                # Must match the DomainFile used by ``checkin_target.checkin(...)`` above. Using only the
-                # path-resolved ``checkin_domain_file`` when it differs from the program's file can reopen/save
-                # the wrong object so reopen check-in uploads no user labels (LFG 02d search-symbols empty).
+                # Open via checkin_target, then check in Program.getDomainFile() if it differs. Two Java
+                # GhidraDomainFile wrappers can share the same basename (repo path vs local pathname) but
+                # reference different GhidraFileData; checking in only checkin_target after reapply can upload
+                # an unmodified sibling while labels sit on the Program's file (LFG step 05 empty search).
+                # Do not use basename-only alignment here — only the DomainFile the open Program reports.
                 retry_df = checkin_target
                 prog_retry = _ghidra_project_open_program_for_domain_file_save(
                     gp_retry,
@@ -4121,22 +4255,49 @@ class ImportExportToolProvider(ToolProvider):
                 )
                 if prog_retry is None:
                     raise exc_chain
+                prog_df: GhidraDomainFile | None = None
+                try:
+                    prog_df = prog_retry.getDomainFile()
+                except Exception:
+                    prog_df = None
+                ci_df: GhidraDomainFile = prog_df if prog_df is not None else retry_df
+                if prog_df is not None and prog_df is not retry_df:
+                    try:
+                        pp = str(prog_df.getPathname() or "").strip().replace("\\", "/")
+                        tp = str(retry_df.getPathname() or "").strip().replace("\\", "/")
+                        if not self._ghidra_paths_equal(pp, tp):
+                            logger.info(
+                                "versioned reopen checkin: program DomainFile path differs from checkin_target (%r vs %r); checking in program's file",
+                                pp,
+                                tp,
+                            )
+                    except Exception:
+                        logger.info(
+                            "versioned reopen checkin: program DomainFile differs from checkin_target; checking in program's file program=%s",
+                            program_display_name,
+                        )
                 if label_snapshot:
                     self._reapply_user_defined_primary_labels(prog_retry, label_snapshot)
                 self._bump_versioned_checkout_dirty_bookmark(prog_retry)
                 self._persist_open_program_for_versioned_checkin(prog_retry)
-                self._save_domain_file_before_versioned_checkin(retry_df, prog_retry)
-                self._try_mark_versioned_checkout_dirty(retry_df)
-                self._notify_domain_file_changed_for_versioned_checkin(retry_df, prog_retry)
-                if eff_domain_file is not retry_df:
+                self._save_domain_file_before_versioned_checkin(ci_df, prog_retry)
+                self._try_mark_versioned_checkout_dirty(ci_df)
+                self._notify_domain_file_changed_for_versioned_checkin(ci_df, prog_retry)
+                if retry_df is not ci_df:
+                    self._save_domain_file_before_versioned_checkin(retry_df, prog_retry)
+                    self._try_mark_versioned_checkout_dirty(retry_df)
+                    self._notify_domain_file_changed_for_versioned_checkin(retry_df, prog_retry)
+                if eff_domain_file is not ci_df and eff_domain_file is not retry_df:
                     self._try_mark_versioned_checkout_dirty(eff_domain_file)
                     self._notify_domain_file_changed_for_versioned_checkin(eff_domain_file, prog_retry)
-                self._end_open_transactions_on_domain_file_consumers(retry_df)
+                self._end_open_transactions_on_domain_file_consumers(ci_df)
+                if retry_df is not ci_df:
+                    self._end_open_transactions_on_domain_file_consumers(retry_df)
                 if not self._release_open_program_before_versioned_checkin(
                     session_id=session_id_vc,
                     program_path_key=program_path or None,
                     program=prog_retry,
-                    domain_file=retry_df,
+                    domain_file=ci_df,
                 ):
                     raise exc_chain
                 try:
@@ -4146,12 +4307,12 @@ class ImportExportToolProvider(ToolProvider):
                         if isinstance(project_provider_r, ProjectToolProvider):
                             project_provider_r._release_session_programs_for_domain_file(
                                 session_id=session_id_vc,
-                                domain_file=retry_df,
+                                domain_file=ci_df,
                             )
                 except Exception as rel_sess_exc:
                     logger.debug("release_session_programs_for_domain_file (checkin reopen path): %s", rel_sess_exc)
                 handler_fb = GhidraDefaultCheckinHandler(comment, _keep, False)
-                retry_df.checkin(handler_fb, GhidraTaskMonitor.DUMMY)  # pyright: ignore[reportOptionalMemberAccess]
+                ci_df.checkin(handler_fb, GhidraTaskMonitor.DUMMY)  # pyright: ignore[reportOptionalMemberAccess]
 
             # Call check-in before releasing the open Program. Releasing first and then handling
             # "not modified" by reopening loads a fresh ProgramDB without in-memory label/symbol edits,

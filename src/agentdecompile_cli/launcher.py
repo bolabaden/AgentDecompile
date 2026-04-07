@@ -462,6 +462,9 @@ class PyGhidraContext:
             sym_file_path: Path to a specific PDB file.
         """
         logger.debug("diag.enter %s", "launcher.py:PyGhidraContext.__init__")
+        # One id per Python process; paired with `.agentdecompile_shared_checkout_epoch` under the workspace
+        # (see ProjectToolProvider) so a new MCP JVM re-runs RepositoryAdapter.checkout after restart (LFG 05).
+        os.environ.setdefault("AGENTDECOMPILE_JVM_EPOCH", uuid.uuid4().hex)
         sys.stderr.write(f"[PyGhidraContext] Initializing: project_name={project_name!r}, project_path={project_path!r}\n")
         self._init_basic_attributes(project_name, project_path)
         self._init_project_and_programs()
