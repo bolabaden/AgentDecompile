@@ -454,7 +454,11 @@ class SymbolToolProvider(ToolProvider):
                 except Exception:
                     logger.debug("search-symbols underscore-query getDefinedSymbols merge failed", exc_info=True)
 
-            if not all_matches and hasattr(st, "getSymbolIterator"):
+            # Always walk getSymbolIterator for underscore queries — collect_symbols / getDefinedSymbols can
+            # omit non-primary user labels (e.g. LFG sh_*_L2 at a function entry) while the iterator still
+            # lists every Symbol row. Previously we only ran this when all_matches was empty, so L1+L3 from
+            # the first pass hid L2 from search-symbols (/lfg 02d).
+            if hasattr(st, "getSymbolIterator"):
                 try:
                     bare_it = st.getSymbolIterator()
                     for sym in iter_items(bare_it):
@@ -818,7 +822,6 @@ class SymbolToolProvider(ToolProvider):
 
         assert self.program_info is not None  # for type checker
         program: GhidraProgram = self.program_info.program
-        from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingModuleSource]
 
         label_pp = (self._get_str(args, "programpath", "binary", "path") or "").strip() or None
 
@@ -830,6 +833,8 @@ class SymbolToolProvider(ToolProvider):
             st: GhidraSymbolTable = self._get_symbol_table(program)
 
             def _create_labels_batch() -> None:
+                from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
                 for a, l in zip(addr_list, label_list):  # noqa: E741
                     try:
                         addr = self._resolve_address(str(a), program=program)
@@ -872,6 +877,8 @@ class SymbolToolProvider(ToolProvider):
                 return create_conflict_response(conflict_id, Tool.MANAGE_SYMBOLS.value, conflict_summary, next_step)
 
         def _create_label_single() -> None:
+            from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
             st.createLabel(addr, label, GhidraSourceType.USER_DEFINED)
             self._touch_listing_for_shared_checkin(program)
 

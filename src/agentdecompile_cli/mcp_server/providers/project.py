@@ -3301,7 +3301,13 @@ class ProjectToolProvider(ToolProvider):
                         type(dec_exc).__name__,
                     )
 
-                program_path: str = str(program.getDomainFile().getPathname()) if program.getDomainFile() else str(entry)
+                # Prefer the domain file pathname; if Ghidra assigns a generic '/Untitled' path,
+                # use '/<programName>' so the session key is meaningful and distinct.
+                _raw_prog_path: str = str(program.getDomainFile().getPathname()) if program.getDomainFile() else ""
+                _prog_name_raw: str = program.getName() if hasattr(program, "getName") else entry.name
+                if not _raw_prog_path or _raw_prog_path in ("/Untitled", "", "/"):
+                    _raw_prog_path = f"/{_prog_name_raw}"
+                program_path: str = _raw_prog_path
                 program_info: ProgramInfo = ProgramInfo(
                     name=program.getName(),
                     program=program,
@@ -3319,11 +3325,12 @@ class ProjectToolProvider(ToolProvider):
                     self.set_program_info(program_info)
 
                 imported_count += 1
-                imported.append({"path": str(entry), "programName": program.getName() if hasattr(program, "getName") else entry.name})
+                prog_name = program.getName() if hasattr(program, "getName") else entry.name
+                imported.append({"path": str(entry), "programName": prog_name, "projectPath": program_path})
                 imported_session_binaries.append(
                     {
                         "path": program_path,
-                        "name": program.getName() if hasattr(program, "getName") else entry.name,
+                        "name": prog_name,
                         "type": "Program",
                         "sourcePath": str(entry),
                     },
@@ -3342,6 +3349,80 @@ class ProjectToolProvider(ToolProvider):
                 merged_by_path[str(item["path"])] = item
             SESSION_CONTEXTS.set_project_binaries(session_id, list(merged_by_path.values()))
 
+        # --- Collect enriched program details for each imported program ---
+        program_details: list[dict[str, Any]] = []
+        try:
+            from agentdecompile_cli.mcp_server.program_metadata import collect_program_summary
+
+            active_session = SESSION_CONTEXTS.get_or_create(session_id)
+            for imp_item in imported:
+                prog_path_key = imp_item.get("projectPath", imp_item.get("path", ""))
+                prog_info = active_session.open_programs.get(prog_path_key)
+                if prog_info is None:
+                    # Try case-insensitive fallback
+                    for k, v in active_session.open_programs.items():
+                        if k.lower().rstrip("/") == prog_path_key.lower().rstrip("/"):
+                            prog_info = v
+                            break
+                if prog_info is not None:
+                    try:
+                        detail = collect_program_summary(prog_info)
+                        detail["name"] = imp_item.get("programName", detail.get("name", ""))
+                        detail["projectPath"] = prog_path_key
+                        # Collect a sample of named functions for context (first 50 non-thunk named)
+                        top_funcs: list[dict[str, Any]] = []
+                        try:
+                            program_obj = getattr(prog_info, "program", None)
+                            if program_obj is not None:
+                                fm_obj = program_obj.getFunctionManager()
+                                func_iter = fm_obj.getFunctions(True)
+                                count = 0
+                                for fn in func_iter:
+                                    if count >= 50:
+                                        break
+                                    fn_name = str(fn.getName())
+                                    if fn_name.startswith("FUN_") or fn_name.startswith("thunk_FUN_"):
+                                        continue
+                                    top_funcs.append(
+                                        {
+                                            "address": str(fn.getEntryPoint()),
+                                            "name": fn_name,
+                                            "signature": str(fn.getSignature()),
+                                        }
+                                    )
+                                    count += 1
+                        except Exception:
+                            pass
+                        if top_funcs:
+                            detail["topFunctions"] = top_funcs
+                        program_details.append(detail)
+                    except Exception as det_exc:
+                        logger.debug("import_file collect_summary failed prog=%s exc=%s", prog_path_key, det_exc)
+        except Exception as pe:
+            logger.debug("import_file program_details collection failed: %s", pe)
+
+        # --- Collect a snapshot of project files after import ---
+        project_files_snapshot: list[dict[str, Any]] = []
+        try:
+            ghidra_project_snap: GhidraProject | None = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            if ghidra_project_snap is not None:
+                root_snap = ghidra_project_snap.getRootFolder()
+                if root_snap is not None:
+                    project_files_snapshot = self._list_domain_files(root_snap, 200)
+        except Exception as pfe:
+            logger.debug("import_file project_files snapshot failed: %s", pfe)
+        if not project_files_snapshot:
+            # Fall back to session-tracked binaries
+            for item in SESSION_CONTEXTS.get_project_binaries(session_id)[:200]:
+                project_files_snapshot.append(
+                    {
+                        "name": str(item.get("name") or ""),
+                        "path": str(item.get("path") or ""),
+                        "type": item.get("type", "Program"),
+                        "size": item.get("size", ""),
+                    }
+                )
+
         return create_success_response(
             {
                 "operation": "import",
@@ -3354,6 +3435,8 @@ class ProjectToolProvider(ToolProvider):
                 "wasRecursive": recursive,
                 "analysisRequested": analyze,
                 "errors": errors,
+                "programDetails": program_details,
+                "projectFiles": project_files_snapshot,
             },
         )
 
@@ -4813,6 +4896,101 @@ class ProjectToolProvider(ToolProvider):
                 continue
         return matches[0] if matches else None
 
+    _SHARED_CHECKOUT_EPOCH_FILENAME: ClassVar[str] = ".agentdecompile_shared_checkout_epoch"
+
+    @staticmethod
+    def _jvm_epoch_env() -> str:
+        return (os.environ.get("AGENTDECOMPILE_JVM_EPOCH") or os.environ.get("AGENT_DECOMPILE_JVM_EPOCH") or "").strip()
+
+    def _shared_checkout_epoch_workspace_dir(self) -> Path | None:
+        """Stable MCP ``--project-path`` dir (LFG ``mcp_workspace``), not the temp shared-checkout project.
+
+        ``connect-shared-project`` rebinds ``ghidra_project`` to ``%TEMP%/agentdecompile_shared/...``.
+        Epoch must live next to the persistent workspace so the next JVM sees it (LFG step 05).
+        """
+        mgr = self._manager
+        if mgr is not None:
+            ctx = getattr(mgr, "pyghidra_context_ref", None)
+            if ctx is not None:
+                pp = getattr(ctx, "project_path", None)
+                if pp is not None:
+                    try:
+                        return Path(pp)
+                    except Exception:
+                        pass
+        ghidra_project = mgr.ghidra_project if mgr else None
+        if ghidra_project is not None:
+            try:
+                locator = ghidra_project.getProject().getProjectLocator()
+                marker = locator.getMarkerFile()
+                if marker is not None:
+                    parent = marker.getParentFile()
+                    if parent is not None:
+                        return Path(str(parent.getAbsolutePath()))
+            except Exception:
+                pass
+        return self._derive_projects_dir({})
+
+    def _read_shared_checkout_epoch_disk(self) -> str | None:
+        wd = self._shared_checkout_epoch_workspace_dir()
+        if wd is None:
+            return None
+        try:
+            p = wd / ProjectToolProvider._SHARED_CHECKOUT_EPOCH_FILENAME
+            if not p.is_file():
+                return None
+            return p.read_text(encoding="utf-8").strip()
+        except Exception:
+            return None
+
+    def _write_shared_checkout_epoch_disk(self, epoch: str) -> None:
+        wd = self._shared_checkout_epoch_workspace_dir()
+        if wd is None or not (epoch or "").strip():
+            return
+        try:
+            wd.mkdir(parents=True, exist_ok=True)
+            (wd / ProjectToolProvider._SHARED_CHECKOUT_EPOCH_FILENAME).write_text(epoch.strip(), encoding="utf-8")
+        except Exception as exc:
+            logger.debug("shared checkout epoch write failed: %s", exc)
+
+    def _needs_repository_adapter_refresh(
+        self,
+        domain_file: GhidraDomainFile | None,
+        repo_item: GhidraRepositoryItem | None,
+    ) -> bool:
+        """True when local VC metadata is behind the repository head and adapter checkout should re-sync.
+
+        After an MCP restart, ``_resolve_shared_checkout_domain_file`` can return a project file that still
+        looks checked out / versioned on disk while the server has newer revisions (LFG step 05: labels
+        missing until ``RepositoryAdapter.checkout`` runs). We only force refresh when version numbers
+        disagree, not on every exclusive checkout, to avoid the PyGhidra ``not modified`` checkin regression.
+        """
+        if domain_file is None or repo_item is None:
+            return False
+        try:
+            if not bool(domain_file.isVersioned()):
+                return False
+        except Exception:
+            return False
+
+        def _safe_int(v: object) -> int | None:
+            try:
+                if v is None:
+                    return None
+                return int(v)
+            except Exception:
+                return None
+
+        local_base = _safe_int(domain_file.getVersion()) if hasattr(domain_file, "getVersion") else None
+        local_repo_head = _safe_int(domain_file.getLatestVersion()) if hasattr(domain_file, "getLatestVersion") else None
+        server_item = _safe_int(repo_item.getVersion()) if hasattr(repo_item, "getVersion") else None
+
+        if local_base is not None and local_repo_head is not None and local_repo_head > local_base:
+            return True
+        if server_item is not None and local_base is not None and server_item > local_base:
+            return True
+        return False
+
     def _resolve_shared_checkout_domain_file(
         self,
         project_data: GhidraProjectData | None,
@@ -5110,7 +5288,33 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 already_exclusive = False
             force_adapter_checkout = bool(exclusive) and not already_exclusive
-            if (needs_adapter_checkout or force_adapter_checkout) and hasattr(repository_adapter, "checkout"):
+            epoch_env = self._jvm_epoch_env()
+            disk_epoch = self._read_shared_checkout_epoch_disk()
+            # Missing disk epoch means no prior successful checkout recorded this JVM generation, or the
+            # file was never written because adapter checkout was skipped while the domain file already
+            # looked checked out. After an MCP restart the on-disk checkout can still be stale (LFG 05:
+            # search-symbols returns 0). Treat missing epoch like mismatch so we always re-run adapter
+            # checkout on exclusive checkout when the process id does not match recorded state.
+            stale_process_epoch = (
+                bool(exclusive)
+                and bool(epoch_env)
+                and domain_file is not None
+                and (not disk_epoch or disk_epoch != epoch_env)
+            )
+
+            vc_refresh = self._needs_repository_adapter_refresh(domain_file, repo_item)
+            needs_adapter_refresh = vc_refresh or stale_process_epoch
+            if stale_process_epoch:
+                logger.info(
+                    "Forcing RepositoryAdapter.checkout for %s: workspace epoch != process (post-MCP restart resync)",
+                    program_path,
+                )
+            elif vc_refresh:
+                logger.info(
+                    "Forcing RepositoryAdapter.checkout for %s: local VC metadata behind repository head",
+                    program_path,
+                )
+            if (needs_adapter_checkout or force_adapter_checkout or needs_adapter_refresh) and hasattr(repository_adapter, "checkout"):
                 try:
                     from ghidra.framework.store import CheckoutType as GhidraCheckoutType  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
@@ -5149,9 +5353,13 @@ class ProjectToolProvider(ToolProvider):
                         if domain_file is not None:
                             self._ensure_shared_domain_file_registered_for_version_control(domain_file, program_path)
                             logger.info("Checked out '%s' via RepositoryAdapter.checkout (versioned)", program_path)
+                    # Ghidra may return null/None from checkout on success; still record epoch so the next
+                    # MCP process can detect a JVM restart (LFG step 05).
+                    if epoch_env:
+                        self._write_shared_checkout_epoch_disk(epoch_env)
                 except Exception as exc:
                     logger.debug("RepositoryAdapter.checkout for '%s' failed: %s. Trying createFile fallback.", program_path, exc)
-                    if needs_adapter_checkout:
+                    if needs_adapter_checkout or needs_adapter_refresh:
                         domain_file = None
 
             if domain_file is None:
@@ -5395,6 +5603,13 @@ class ProjectToolProvider(ToolProvider):
             self._manager.set_program_info(program_info)
         else:
             self.set_program_info(program_info)
+
+        # Record JVM generation beside the project marker even when RepositoryAdapter.checkout threw and we
+        # fell back to createFile/ProgramDB (epoch write inside the adapter try would be skipped).
+        if exclusive:
+            epoch_tail = self._jvm_epoch_env()
+            if epoch_tail:
+                self._write_shared_checkout_epoch_disk(epoch_tail)
 
         logger.info("Checked out program '%s' from shared repository", program_path)
         return program_path

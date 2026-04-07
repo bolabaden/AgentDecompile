@@ -51,7 +51,7 @@
 
 - Isolated repos under evidence, patched **`ghidraSvr`** + **`lfg_ghidra_server.conf`**.
 - Wait for **`ghidra_server_repositories/users`** (not merely TCP on the base port — see script).
-- **`svrAdmin -add`** for the Ghidra user; poll **`-list`**; if unconfirmed after ~60s, script forces password to **`changeme`** for MCP **`open`**.
+- **`svrAdmin -add`** for the Ghidra user; poll **`-users`** (not **`-list`**, which is repo-centric and may omit SIDs when no repos exist); if still missing, **restart Ghidra once** to flush the `~admin` queue, **`-add`** again, then poll; if the user never appears, the script **throws** (no bogus **`changeme`**). MCP **`open`** uses **`changeme`** once the user exists.
 
 ### Session A — Shared server: fixture + three versioned check-ins (one MCP process)
 
