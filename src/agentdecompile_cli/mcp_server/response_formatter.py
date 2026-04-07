@@ -2289,15 +2289,15 @@ def _render_function_detail_block(data: dict[str, Any], *, heading_level: int = 
         count_label = f"{count} shown (more exist)" if truncated else str(count)
         lines.append(_md_bold_kv("Instructions", count_label))
         lines.append("")
-        asm_lines_list: list[str] = []
+        asm_rows: list[list[str]] = []
         for instr in instructions:
             a = instr.get("address", "")
             b = instr.get("bytes", "")
             mnem = instr.get("mnemonic", "")
             full_op = instr.get("operands", "")
             ops_only = full_op[len(mnem):].lstrip() if full_op.startswith(mnem) else full_op
-            asm_lines_list.append(f"{a}  {b:<18s}  {mnem:<8} {ops_only}".rstrip())
-        lines.append(_md_code_block("\n".join(asm_lines_list), "asm"))
+            asm_rows.append([a, b, mnem, ops_only])
+        lines.append(_md_table(["Address", "Bytes", "Mnemonic", "Operands"], asm_rows))
         lines.append("")
 
     callers: list[dict[str, Any]] = data.get("callers") or []
