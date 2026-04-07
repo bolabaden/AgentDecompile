@@ -365,6 +365,7 @@ class GetFunctionAioToolProvider(ToolProvider):
                 max_callers=max_callers,
                 max_callees=max_callees,
                 relationship="caller",
+                include_code=False,
             )
             for func in caller_funcs
         ]
@@ -378,6 +379,7 @@ class GetFunctionAioToolProvider(ToolProvider):
                 max_callers=max_callers,
                 max_callees=max_callees,
                 relationship="callee",
+                include_code=False,
             )
             for func in callee_funcs
         ]
@@ -435,6 +437,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         max_callers: int | None,
         max_callees: int | None,
         relationship: str | None = None,
+        include_code: bool = True,
     ) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._collect_function_details")
         entry = func.getEntryPoint()
@@ -445,10 +448,15 @@ class GetFunctionAioToolProvider(ToolProvider):
         metadata["callerCount"] = len(callers_list)
         metadata["calleeCount"] = len(callees_list)
 
-        try:
-            _decompilation = self._decompile(func, program, timeout or DEFAULT_TIMEOUT_SECONDS)
-        except RuntimeError as _decompile_err:
-            _decompilation = f"[decompilation unavailable: {_decompile_err}]"
+        if include_code:
+            try:
+                _decompilation = self._decompile(func, program, timeout or DEFAULT_TIMEOUT_SECONDS)
+            except RuntimeError as _decompile_err:
+                _decompilation = f"[decompilation unavailable: {_decompile_err}]"
+            _disassembly = self._disassemble(func, program, max_instructions)
+        else:
+            _decompilation = ""
+            _disassembly: dict[str, Any] = {"instructions": [], "count": 0, "truncated": False}
 
         details: dict[str, Any] = {
             "name": func.getName(),
@@ -457,7 +465,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             "metadata": metadata,
             "namespace": self._collect_namespace(func),
             "decompilation": _decompilation,
-            "disassembly": self._disassemble(func, program, max_instructions),
+            "disassembly": _disassembly,
             "comments": self._collect_all_comments(func, program, body),
             "labels": self._collect_labels(program, body),
             "callers": callers_list,
