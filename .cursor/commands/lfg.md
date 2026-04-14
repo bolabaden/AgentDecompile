@@ -138,11 +138,11 @@ After step **H**, the script runs **additional `tool-seq` groups** against **`/s
 | Log prefix (example) | Tools invoked (in order) |
 |----------------------|---------------------------|
 | `11_ext_open_analyze` | **`open`** local project dir only (**`Invoke-LfgSeq`** — must succeed; name is historical) |
-| `11_ext_list_functions` | `list-functions`, `list-exports`, `list-imports`, `list-strings`, `list-project-files`, `get-current-program` |
+| `11_ext_discovery_surface` | `search-everything`, `manage-symbols` (imports/exports), `list-project-files`, `get-current-program` |
 | `11_ext_memory_bytes` | `inspect-memory` (read + data_at) |
-| `11_ext_decompile_callgraph` | `decompile-function`, `get-function`, `get-call-graph` |
-| `11_ext_search_tools` | `search-strings`, `search-constants`, `search-everything`, `search-code` |
-| `11_ext_refs_xrefs` | `get-references`, `list-cross-references` |
+| `11_ext_function_context` | `get-function`, `get-call-graph` |
+| `11_ext_search_tools` | `search-everything`, `search-constants` |
+| `11_ext_refs_xrefs` | `get-function` |
 | `11_ext_data_types_structures` | `manage-data-types` (list), `manage-structures` (list), `list-project-files`, `manage-files` (list), `manage-symbols` (symbols) |
 | `11_ext_manage_readonly` | `manage-bookmarks` (list), `manage-comments` (search), `manage-function-tags` (list), `get-function` |
 | `11_ext_export_suggest` | `export` (SARIF to evidence path), `suggest` |
@@ -156,7 +156,7 @@ After step **H**, the script runs **additional `tool-seq` groups** against **`/s
 
 **Phase C — shared program (analyze + read + checkin)**
 
-- **`13_ext_shared_open_analyze`:** `open` shared → `checkout-program` exclusive → **`analyze-program`** → `list-functions`, `list-imports`, `decompile-function` → **`checkin-program`**
+- **`13_ext_shared_open_analyze`:** `open` shared → `checkout-program` exclusive → **`analyze-program`** → `search-everything`, `get-function` → **`checkin-program`**
 
 **Phase D — `svr-admin`**
 
@@ -176,7 +176,7 @@ After step **H**, the script runs **additional `tool-seq` groups** against **`/s
    - **`open`** **`/sort.exe`** → **`search-symbols`** **`cli_<RUN_ID>_`**
    - **Hard assert:** **`cli_<RUN_ID>_L1`** in log.
 4. **Step 17 (`17_cli_local_readonly`):** third **`--local`** invocation (unchecked exit — warns on failure):
-   - **`open`** **`/sort.exe`** → **`list-functions`**, **`decompile-function`**, **`inspect-memory`**, **`search-strings`**
+   - **`open`** **`/sort.exe`** → **`get-function`**, **`inspect-memory`**, **`search-everything`**
 
 ---
 

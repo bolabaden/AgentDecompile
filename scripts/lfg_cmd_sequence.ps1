@@ -1148,17 +1148,16 @@ Invoke-LfgSeq "11_ext_open_analyze" @"
 ]
 "@
 
-$ec = Invoke-LfgSeqUnchecked "11_ext_list_functions" @"
+$ec = Invoke-LfgSeqUnchecked "11_ext_discovery_surface" @"
 [
-  {"name":"list-functions","arguments":{"programPath":"/sort.exe","limit":5}},
-  {"name":"list-exports","arguments":{"programPath":"/sort.exe","limit":5}},
-  {"name":"list-imports","arguments":{"programPath":"/sort.exe","limit":5}},
-  {"name":"list-strings","arguments":{"programPath":"/sort.exe","limit":5}},
-  {"name":"list-project-files","arguments":{}},
-  {"name":"get-current-program","arguments":{}}
+    {"name":"search-everything","arguments":{"programPath":"/sort.exe","queries":["entry","sort"],"limit":10}},
+    {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"imports","limit":5}},
+    {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"exports","limit":5}},
+    {"name":"list-project-files","arguments":{}},
+    {"name":"get-current-program","arguments":{}}
 ]
 "@
-if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_list_functions had failures (exit $ec)" -ForegroundColor Yellow }
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_discovery_surface had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_memory_bytes" @"
 [
@@ -1168,29 +1167,26 @@ $ec = Invoke-LfgSeqUnchecked "11_ext_memory_bytes" @"
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_memory_bytes had failures (exit $ec)" -ForegroundColor Yellow }
 
-$ec = Invoke-LfgSeqUnchecked "11_ext_decompile_callgraph" @"
+$ec = Invoke-LfgSeqUnchecked "11_ext_function_context" @"
 [
-  {"name":"decompile-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300","limit":50}},
-  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300"}},
-  {"name":"get-call-graph","arguments":{"programPath":"/sort.exe","function":"0x140001300","mode":"graph"}}
+    {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300","maxInstructions":200,"maxRefs":25}},
+    {"name":"get-call-graph","arguments":{"programPath":"/sort.exe","function":"0x140001300","mode":"graph"}}
 ]
 "@
-if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_decompile_callgraph had failures (exit $ec)" -ForegroundColor Yellow }
+if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_function_context had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_search_tools" @"
 [
-  {"name":"search-strings","arguments":{"programPath":"/sort.exe","query":"sort","limit":10}},
+    {"name":"search-everything","arguments":{"programPath":"/sort.exe","queries":["sort","main"],"limit":10}},
   {"name":"search-constants","arguments":{"programPath":"/sort.exe","mode":"common","topN":5}},
-  {"name":"search-everything","arguments":{"programPath":"/sort.exe","query":"main","limit":10}},
-  {"name":"search-code","arguments":{"programPath":"/sort.exe","pattern":"CALL","maxResults":5}}
+    {"name":"search-everything","arguments":{"programPath":"/sort.exe","mode":"literal","query":"CALL","limit":5}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_search_tools had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_refs_xrefs" @"
 [
-  {"name":"get-references","arguments":{"programPath":"/sort.exe","target":"entry","direction":"from","limit":10}},
-  {"name":"list-cross-references","arguments":{"programPath":"/sort.exe","target":"entry","limit":10}}
+    {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry","maxRefs":25,"maxCallers":10,"maxCallees":10}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_refs_xrefs had failures (exit $ec)" -ForegroundColor Yellow }
@@ -1266,9 +1262,8 @@ $ec = Invoke-LfgSeqUnchecked "13_ext_shared_open_analyze" @"
   {"name":"open","arguments":{"shared":true,"path":"$Repo","serverHost":"$GhidraHost","serverPort":$GhidraPort,"serverUsername":"$GhidraUser","serverPassword":"$GhidraPasswordPlain"}},
   {"name":"checkout-program","arguments":{"programPath":"$SharedProgramPath","exclusive":true}},
   {"name":"analyze-program","arguments":{"programPath":"$SharedProgramPath","force":false}},
-  {"name":"list-functions","arguments":{"programPath":"$SharedProgramPath","limit":5}},
-  {"name":"list-imports","arguments":{"programPath":"$SharedProgramPath","limit":5}},
-  {"name":"decompile-function","arguments":{"programPath":"$SharedProgramPath","functionIdentifier":"entry","limit":30}},
+    {"name":"search-everything","arguments":{"programPath":"$SharedProgramPath","queries":["entry","sort"],"limit":10}},
+    {"name":"get-function","arguments":{"programPath":"$SharedProgramPath","functionIdentifier":"entry","maxInstructions":200,"maxRefs":25}},
   {"name":"checkin-program","arguments":{"programPath":"$SharedProgramPath","comment":"lfg_ext_shared_analysis"}}
 ]
 "@
@@ -1342,10 +1337,9 @@ if ($SkipLocalHeadless) {
     $cliStep17 = @"
 [
   {`"name`":`"open`",`"arguments`":{`"path`":`"/sort.exe`"}},
-  {`"name`":`"list-functions`",`"arguments`":{`"programPath`":`"/sort.exe`",`"limit`":5}},
-  {`"name`":`"decompile-function`",`"arguments`":{`"programPath`":`"/sort.exe`",`"functionIdentifier`":`"entry`",`"limit`":30}},
+    {`"name`":`"get-function`",`"arguments`":{`"programPath`":`"/sort.exe`",`"functionIdentifier`":`"entry`",`"maxInstructions`":200,`"maxRefs`":25}},
   {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"/sort.exe`",`"mode`":`"read`",`"address`":`"$addrInspect`",`"length`":32}},
-  {`"name`":`"search-strings`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"sort`",`"limit`":5}}
+    {`"name`":`"search-everything`",`"arguments`":{`"programPath`":`"/sort.exe`",`"queries`":[`"sort`",`"entry`"],`"limit`":5}}
 ]
 "@
     $ec = Invoke-LfgLocalSeqUnchecked "17_cli_local_readonly" $cliStep17 $LocalCliDirJson

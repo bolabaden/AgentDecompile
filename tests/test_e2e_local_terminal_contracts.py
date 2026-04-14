@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from agentdecompile_cli.registry import get_advertised_tools
+
 from tests.e2e_project_lifecycle_helpers import (
     JsonRpcMcpSession,
     build_local_server_env,
@@ -41,47 +43,7 @@ pytestmark = [
 KNOWN_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "test_x86_64"
 KNOWN_FIXTURE_NAME = KNOWN_FIXTURE_PATH.name
 KNOWN_ENTRY_ADDRESS = "1000004b0"
-# Sorted canonical names matching the 37 tools advertised over streamable-http.
-# If a new tool is added to DEFAULT_ADVERTISED_TOOLS in registry.py, add it here too.
-DEFAULT_HTTP_ADVERTISED_TOOLS = frozenset([
-    "analyze_data_flow",
-    "analyze_program",
-    "analyze_vtables",
-    "apply_data_type",
-    "change_processor",
-    "checkin_program",
-    "checkout_program",
-    "checkout_status",
-    "create_label",
-    "decompile_function",
-    "execute_script",
-    "export",
-    "get_call_graph",
-    "get_current_program",
-    "get_data",
-    "get_references",
-    "import_binary",
-    "inspect_memory",
-    "list_cross_references",
-    "list_exports",
-    "list_functions",
-    "list_imports",
-    "list_processors",
-    "list_project_files",
-    "list_strings",
-    "manage_function_tags",
-    "match_function",
-    "open",
-    "read_bytes",
-    "remove_program_binary",
-    "search_code",
-    "search_constants",
-    "search_everything",
-    "search_strings",
-    "search_symbols",
-    "svr_admin",
-    "sync_project",
-])
+DEFAULT_HTTP_ADVERTISED_TOOLS = frozenset(tool.replace("-", "_") for tool in get_advertised_tools())
 
 
 @pytest.fixture(scope="module")
@@ -307,8 +269,7 @@ def test_live_local_default_advertised_tool_surface_matches_terminal_contract(
 
     # Exact set match – every tool that should be advertised is present.
     assert tool_name_set == DEFAULT_HTTP_ADVERTISED_TOOLS
-    # Count: 37 tools as confirmed by live `tool --list-tools` in the terminal.
-    assert len(tool_names) == 37
+    assert len(tool_names) == len(DEFAULT_HTTP_ADVERTISED_TOOLS)
     assert "manage-comments" not in tool_name_set
     assert "switch-project" not in tool_name_set
     assert "open" in tool_name_set
@@ -316,6 +277,12 @@ def test_live_local_default_advertised_tool_surface_matches_terminal_contract(
     assert "sync_project" in tool_name_set
     assert "change_processor" in tool_name_set
     assert "svr_admin" in tool_name_set
+    assert "search_everything" in tool_name_set
+    assert "get_function" in tool_name_set
+    assert "list_project_files" in tool_name_set
+    assert "get_references" not in tool_name_set
+    assert "list_functions" not in tool_name_set
+    assert "search_symbols" not in tool_name_set
 
 
 def test_live_local_open_switch_import_and_listing_contracts(

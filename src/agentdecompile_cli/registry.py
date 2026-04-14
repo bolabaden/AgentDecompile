@@ -930,14 +930,29 @@ _add_builtin_param_aliases()
 # (create_label, rename_data) are advertised by default for annotation and organization.
 _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
         Tool.DELETE_PROJECT_BINARY,
         Tool.DECOMPILE_FUNCTION,
         Tool.GEN_CALLGRAPH,
+        Tool.GET_DATA,
         Tool.GET_FUNCTIONS,
+        Tool.GET_REFERENCES,
+        Tool.LIST_EXPORTS,
+        Tool.LIST_CROSS_REFERENCES,
+        Tool.LIST_FALLBACK_PROJECTS,
+        Tool.LIST_FUNCTIONS,
+        Tool.LIST_IMPORTS,
+        Tool.LIST_STRINGS,
         Tool.MANAGE_DATA_TYPES,
         Tool.MANAGE_FILES,
         Tool.MANAGE_STRINGS,
         Tool.MANAGE_STRUCTURES,
+        Tool.READ_BYTES,
+        Tool.REINTEGRATE_FALLBACK_PROJECTS,
+        Tool.SEARCH_CODE,
+        Tool.SEARCH_STRINGS,
+        Tool.SEARCH_SYMBOLS,
         Tool.SUGGEST,
     },
 )
@@ -1018,11 +1033,26 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
 _LEGACY_TOOLS: frozenset[Tool] = _DEFAULT_HIDDEN_TOOLS
 
 _TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
+    Tool.ANALYZE_DATA_FLOW: (Tool.GET_FUNCTION.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.ANALYZE_VTABLES: (Tool.GET_FUNCTION.value, Tool.SEARCH_EVERYTHING.value),
     Tool.DECOMPILE_FUNCTION: (Tool.GET_FUNCTION.value,),
     Tool.DELETE_PROJECT_BINARY: (Tool.REMOVE_PROGRAM_BINARY.value,),
     Tool.GEN_CALLGRAPH: (Tool.GET_CALL_GRAPH.value,),
     Tool.GET_FUNCTIONS: (Tool.GET_FUNCTION.value,),
-    Tool.MANAGE_STRINGS: (Tool.LIST_STRINGS.value, Tool.SEARCH_STRINGS.value),
+    Tool.GET_REFERENCES: (Tool.GET_FUNCTION.value,),
+    Tool.LIST_EXPORTS: (Tool.MANAGE_SYMBOLS.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.LIST_CROSS_REFERENCES: (Tool.GET_FUNCTION.value,),
+    Tool.LIST_FALLBACK_PROJECTS: (Tool.OPEN.value, Tool.SYNC_PROJECT.value, Tool.LIST_PROJECT_FILES.value),
+    Tool.LIST_FUNCTIONS: (Tool.SEARCH_EVERYTHING.value, Tool.GET_FUNCTION.value),
+    Tool.LIST_IMPORTS: (Tool.MANAGE_SYMBOLS.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.LIST_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.MANAGE_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.READ_BYTES: (Tool.INSPECT_MEMORY.value,),
+    Tool.REINTEGRATE_FALLBACK_PROJECTS: (Tool.OPEN.value, Tool.SYNC_PROJECT.value),
+    Tool.SEARCH_CODE: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_SYMBOLS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.GET_DATA: (Tool.INSPECT_MEMORY.value,),
 }
 
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
