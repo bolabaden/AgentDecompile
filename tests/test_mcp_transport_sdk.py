@@ -17,6 +17,7 @@ import sys
 import time
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -235,6 +236,32 @@ async def test_open_project_shared_flag_forces_shared_route(tmp_path: Path, monk
     assert payload["route"] == "shared"
     assert payload["shared"] is True
     assert payload["serverhost"] == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_open_without_path_returns_list_project_files_via_manager() -> None:
+    provider = ProjectToolProvider()
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def _fake_call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+        calls.append((name, dict(arguments)))
+        return project_provider_module.create_success_response(
+            {
+                "success": True,
+                "action": "list-project-files",
+                "files": [{"path": "/sort.exe", "name": "sort.exe"}],
+            }
+        )
+
+    provider._manager = SimpleNamespace(call_tool=_fake_call_tool)
+
+    response = await provider._handle_open({})
+    payload = json.loads(response[0].text)
+
+    assert calls == [("list-project-files", {"__auto_prereq_invocation": True})]
+    assert payload["success"] is True
+    assert payload["action"] == "list-project-files"
+    assert payload["files"][0]["path"] == "/sort.exe"
 
 
 @pytest.mark.asyncio

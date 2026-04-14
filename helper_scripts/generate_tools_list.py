@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import difflib
 import re
+import sys
 
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,11 @@ TOOLS_LIST_GENERATED = ROOT / "TOOLS_LIST_GENERATED.md"
 DIFF_OUT = ROOT / "tmp" / "TOOLS_LIST_GENERATED.diff"
 
 REGISTRY_PATH = ROOT / "src/agentdecompile_cli/registry.py"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentdecompile_cli.registry import TOOLS, get_advertised_tools, get_tool_metadata, is_tool_advertised  # noqa: E402
 
 
 def parse_registry_tools_and_params() -> tuple[list[str], dict[str, list[str]]]:
@@ -109,6 +115,23 @@ def parse_sections(full_text: str) -> tuple[str, list[tuple[str, str, str | None
     return preamble, sections
 
 
+def build_surface_note(tool_name: str) -> str:
+    metadata = get_tool_metadata(tool_name)
+    if metadata is None:
+        return "**Surface**: Unknown.\n\n"
+
+    if metadata.legacy:
+        replacements = ", ".join(f"`{name}`" for name in metadata.replacement)
+        if replacements:
+            return f"**Surface**: Legacy-hidden by default. Prefer {replacements}.\n\n"
+        return "**Surface**: Legacy-hidden by default.\n\n"
+
+    if is_tool_advertised(tool_name):
+        return "**Surface**: Default advertised tool.\n\n"
+
+    return "**Surface**: Not advertised in the default surface profile.\n\n"
+
+
 def build_overload_block(
     tool_name: str,
     forward_target: str | None,
@@ -167,6 +190,47 @@ def replace_or_insert_overloads(section_body: str, overload_block: str) -> str:
     return section_body[:insert_anchor] + "\n" + overload_block + section_body[insert_anchor:]
 
 
+def replace_or_insert_surface_note(section_body: str, surface_note: str) -> str:
+    if "**Surface**:" in section_body:
+        return re.sub(
+            r"\*\*Surface\*\*:[^\n]*\n\n",
+            surface_note,
+            section_body,
+            count=1,
+            flags=re.M,
+        )
+
+    insert_anchor = section_body.find("\n**Description**:")
+    if insert_anchor != -1:
+        return section_body[:insert_anchor] + "\n" + surface_note + section_body[insert_anchor:]
+
+    return section_body.rstrip() + "\n\n" + surface_note
+
+
+def build_surface_summary() -> str:
+    advertised = list(get_advertised_tools())
+    legacy = [tool for tool in TOOLS if tool not in advertised]
+
+    lines = [
+        "## Tool Surface Summary",
+        "",
+        f"- Default advertised tools: {len(advertised)}",
+        f"- Legacy-hidden tools: {len(legacy)}",
+        "",
+        "### Default Advertised Tools",
+        "",
+    ]
+    lines.extend(f"- `{tool}`" for tool in advertised)
+    lines.extend([
+        "",
+        "### Legacy-Hidden Tools",
+        "",
+    ])
+    lines.extend(f"- `{tool}`" for tool in legacy)
+    lines.append("")
+    return "\n".join(lines)
+
+
 def generate_tools_list() -> tuple[str, str]:
     registry_tools, registry_params = parse_registry_tools_and_params()
     mapping = parse_map()
@@ -182,7 +246,8 @@ def generate_tools_list() -> tuple[str, str]:
     for name, body, forward_target in sections:
         seen_names.add(name)
         block = build_overload_block(name, forward_target, body, overloads, registry_params)
-        generated_sections.append(replace_or_insert_overloads(body, block))
+        section_with_overloads = replace_or_insert_overloads(body, block)
+        generated_sections.append(replace_or_insert_surface_note(section_with_overloads, build_surface_note(name)))
 
     missing_from_doc = [tool for tool in registry_tools if tool not in seen_names]
     for tool in missing_from_doc:
@@ -190,6 +255,8 @@ def generate_tools_list() -> tuple[str, str]:
         params_md = "\n".join([f"- `{p}` (string, optional): Auto-generated parameter placeholder." for p in params])
         section = (
             f"\n### `{tool}`\n\n"
+            + build_surface_note(tool)
+            +
             f"**Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.\n\n"
             f"**Parameters**:\n"
             + (params_md + "\n" if params_md else "- None.\n")
@@ -200,7 +267,7 @@ def generate_tools_list() -> tuple[str, str]:
         )
         generated_sections.append(section)
 
-    generated_text = preamble + "".join(generated_sections)
+    generated_text = preamble + build_surface_summary() + "\n" + "".join(generated_sections)
     return original, generated_text
 
 

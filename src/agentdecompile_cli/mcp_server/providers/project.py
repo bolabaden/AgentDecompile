@@ -1751,15 +1751,7 @@ class ProjectToolProvider(ToolProvider):
         path: str = (path_raw or "").replace("\\", "/").strip()
 
         if not path:
-            raise ActionableError(
-                "programPath or filePath required",
-                context={"action": "open", "mode": "local-or-project"},
-                next_steps=[
-                    "For local binaries, call `import-binary` with `path`.",
-                    "For project/repository contexts, call `open` with a `.gpr` path, project directory, or shared-server settings.",
-                    "For shared server usage, use `connect-shared-project` tool instead.",
-                ],
-            )
+            return await self._manager.call_tool(Tool.LIST_PROJECT_FILES.value, {"__auto_prereq_invocation": True})
 
         # Detect Windows-style paths on a non-Windows backend early so we
         # never feed them into Path.resolve() (which would mangle them into
