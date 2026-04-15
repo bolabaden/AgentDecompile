@@ -1341,15 +1341,166 @@ def _render_search_everything(data: dict[str, Any]) -> str:
 
     results: list[dict[str, Any]] = data.get("results", [])
     if results:
-        headers = ["Type", "Name", "Address", "Context"]
-        rows = []
-        for r in results:
-            rtype = r.get("resultType", r.get("type", ""))
-            name = r.get("name", r.get("function", ""))
-            addr = r.get("address", r.get("functionAddress", ""))
-            context = r.get("match", r.get("snippet", r.get("value", "")))
-            rows.append([rtype, str(name), str(addr), _truncate(str(context))])
-        lines.append(_md_table(headers, rows))
+        breakdown: dict[str, int] = {}
+        for result in results:
+            result_type = str(result.get("resultType", result.get("type", "result")) or "result")
+            breakdown[result_type] = breakdown.get(result_type, 0) + 1
+        breakdown_text = ", ".join(f"{count} {result_type}" for result_type, count in sorted(breakdown.items(), key=lambda item: (-item[1], item[0])))
+        lines.append(_md_bold_kv("Breakdown", breakdown_text))
+        lines.append("")
+
+        for index, result in enumerate(results, start=1):
+            result_type = str(result.get("resultType", result.get("type", "result")) or "result")
+            result_name = str(result.get("name", result.get("function", result.get("field", ""))) or "<unnamed>")
+            lines.append(_md_heading(4, f"{index}. {result_type} {result_name}"))
+
+            match_query = str(result.get("query", "") or "")
+            match_type = str(result.get("matchType", "") or "")
+            score = float(result.get("score", 0.0) or 0.0)
+            match_summary = []
+            if match_query:
+                match_summary.append(f"matched {_md_code_inline(match_query)}")
+            if match_type:
+                match_summary.append(match_type)
+            match_summary.append(f"score {score:.2f}")
+            lines.append(_md_bold_kv("Match", " | ".join(match_summary)))
+
+            program_name = str(result.get("program", "") or "")
+            address = str(result.get("address", result.get("functionAddress", "")) or "").strip()
+            address_note = str(result.get("addressNote", "") or "")
+            where_parts: list[str] = []
+            if address and address.upper() != "NO ADDRESS":
+                where_parts.append(f"address {_md_code_inline(address)}")
+            elif address_note:
+                where_parts.append(address_note)
+            else:
+                where_parts.append("no concrete address")
+            if program_name:
+                where_parts.append(f"program {_md_code_inline(program_name)}")
+            namespace = str(result.get("namespace", "") or "")
+            category_path = str(result.get("categoryPath", result.get("relatedStructureCategoryPath", "")) or "")
+            if namespace:
+                where_parts.append(f"namespace {_md_code_inline(namespace)}")
+            if category_path:
+                where_parts.append(f"category {_md_code_inline(category_path)}")
+            lines.append(_md_bold_kv("Where", " | ".join(where_parts)))
+
+            what_parts: list[str] = []
+            if result_type == "structure":
+                field_count = int(result.get("fieldCount", result.get("numComponents", 0)) or 0)
+                length = int(result.get("length", 0) or 0)
+                what_parts.append(f"{length} bytes")
+                what_parts.append(f"{field_count} fields")
+                if result.get("isUnion"):
+                    what_parts.append("union")
+                description = str(result.get("description", "") or "")
+                if description:
+                    what_parts.append(_truncate(description, 160))
+            elif result_type == "class":
+                source = str(result.get("source", "") or "")
+                if source:
+                    what_parts.append(f"source {source}")
+                if result.get("isPrimary"):
+                    what_parts.append("primary symbol")
+                related_structure = str(result.get("relatedStructure", "") or "")
+                if related_structure:
+                    related_length = int(result.get("relatedStructureLength", 0) or 0)
+                    related_fields = int(result.get("relatedStructureFieldCount", 0) or 0)
+                    what_parts.append(f"mirrors structure {_md_code_inline(related_structure)} ({related_length} bytes, {related_fields} fields)")
+            elif result_type == "structure_field":
+                field_type = str(result.get("fieldType", "") or "")
+                offset = int(result.get("offset", 0) or 0)
+                length = int(result.get("length", 0) or 0)
+                what_parts.append(f"offset 0x{offset:x}")
+                if field_type:
+                    what_parts.append(f"type {_md_code_inline(field_type)}")
+                if length:
+                    what_parts.append(f"{length} bytes")
+                comment = str(result.get("comment", "") or "")
+                if comment:
+                    what_parts.append(_truncate(comment, 160))
+            elif result_type == "function":
+                signature = str(result.get("signature", "") or "")
+                if signature:
+                    what_parts.append(_md_code_inline(signature))
+                caller_count = int(result.get("callerCount", 0) or 0)
+                callee_count = int(result.get("calleeCount", 0) or 0)
+                what_parts.append(f"{caller_count} callers")
+                what_parts.append(f"{callee_count} callees")
+            elif result_type == "string":
+                value = str(result.get("value", "") or "")
+                if value:
+                    what_parts.append(_truncate(value, 180))
+                length = int(result.get("length", 0) or 0)
+                if length:
+                    what_parts.append(f"{length} chars")
+                data_type = str(result.get("dataType", "") or "")
+                if data_type:
+                    what_parts.append(f"type {_md_code_inline(data_type)}")
+            else:
+                for key in ("displayName", "description", "symbolType", "type", "value"):
+                    value = str(result.get(key, "") or "")
+                    if value:
+                        what_parts.append(_truncate(value, 180))
+                        break
+            if what_parts:
+                lines.append(_md_bold_kv("What", " | ".join(what_parts)))
+
+            field_preview_text = str(result.get("fieldPreviewText", result.get("relatedStructureFieldPreviewText", "")) or "")
+            if field_preview_text:
+                lines.append(_md_bold_kv("Fields", field_preview_text))
+
+            related_parts: list[str] = []
+            related_classes = result.get("relatedClasses") or []
+            if isinstance(related_classes, list) and related_classes:
+                related_parts.append("classes " + ", ".join(_md_code_inline(str(item)) for item in related_classes[:3]))
+            related_structure = str(result.get("relatedStructure", "") or "")
+            if related_structure:
+                related_parts.append(f"structure {_md_code_inline(related_structure)}")
+            if related_parts:
+                lines.append(_md_bold_kv("Related", " | ".join(related_parts)))
+
+            reference_count = result.get("referenceCount")
+            references_preview = result.get("referencesPreview") or []
+            used_by_parts: list[str] = []
+            if reference_count is not None:
+                used_by_parts.append(f"{int(reference_count)} inbound reference(s)")
+                if isinstance(references_preview, list) and references_preview:
+                    preview_text = []
+                    for reference in references_preview[:3]:
+                        from_addr = str(reference.get("fromAddress", "") or "")
+                        function = str(reference.get("function", "") or "")
+                        ref_type = str(reference.get("type", "") or "")
+                        chunk = from_addr
+                        if function:
+                            chunk += f" in {function}"
+                        if ref_type:
+                            chunk += f" ({ref_type})"
+                        preview_text.append(chunk)
+                    used_by_parts.append("; ".join(preview_text))
+            elif address_note:
+                used_by_parts.append(address_note)
+            if used_by_parts:
+                lines.append(_md_bold_kv("Used By", " | ".join(used_by_parts)))
+
+            next_tools = result.get("nextTools") or []
+            if isinstance(next_tools, list) and next_tools:
+                follow_up_parts: list[str] = []
+                for tool_call in next_tools[:2]:
+                    tool_name = str(tool_call.get("tool", "") or "")
+                    args = tool_call.get("args") or {}
+                    if not tool_name:
+                        continue
+                    args_text = " ".join(f"{key}={value}" for key, value in args.items())
+                    follow_up_parts.append(_md_code_inline(f"{tool_name} {args_text}".strip()))
+                if follow_up_parts:
+                    lines.append(_md_bold_kv("Follow Up", " | ".join(follow_up_parts)))
+
+            snippet = str(result.get("snippet", result.get("match", "")) or "")
+            if snippet:
+                lines.append(_md_bold_kv("Context", _truncate(snippet, 220)))
+
+            lines.append("")
     else:
         lines.append("*No results found.*")
 
