@@ -30,9 +30,34 @@ Program path: /K1/k1_win_gog_swkotor.exe
 Notes:
 
 - The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
+- The web UI starts automatically alongside `agentdecompile-mcp`, `mcp_agentdecompile`, `mcp-agentdecompile`, `agentdecompile-server`, and `agentdecompile-proxy`. It binds to `http://127.0.0.1:8002/` by default.
 - **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
 - Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
+
+## Web UI
+
+The browser UI is a sidecar, not a separate primary entrypoint. Start any supported runtime and the UI comes up against that runtime's backend automatically.
+
+```powershell
+uv run agentdecompile-server -t streamable-http C:\path\to\binary.exe
+```
+
+For remote passthrough, start the proxy instead:
+
+```powershell
+uv run agentdecompile-proxy --backend-url http://127.0.0.1:8080/mcp -t streamable-http
+```
+
+The web UI is intended to be exhaustive rather than minimal. It exposes tool invocation, prompt rendering, resource browsing, live tool-surface metadata, and a documentation hub with Ghidra API, docking, and Java Swing links for desktop integrations.
+
+Relevant environment variables:
+
+- `AGENT_DECOMPILE_WEBUI_HOST` / `AGENTDECOMPILE_WEBUI_HOST`
+- `AGENT_DECOMPILE_WEBUI_PORT` / `AGENTDECOMPILE_WEBUI_PORT`
+- `AGENT_DECOMPILE_WEBUI_ENABLED` / `AGENTDECOMPILE_WEBUI_ENABLED`
+- `AGENT_DECOMPILE_WEBUI` / `AGENTDECOMPILE_WEBUI`
+- `AGENT_DECOMPILE_WEBUI_BACKEND_URL` / `AGENTDECOMPILE_WEBUI_BACKEND_URL`
 
 ## Unique Patterns From Live Validation
 

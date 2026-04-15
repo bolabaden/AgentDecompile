@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from mcp import types
 
     from agentdecompile_cli.context import PyGhidraContext, ProgramInfo
+    from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
     from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class LocalToolBackend:
         self._initialized: bool = False
         self._context: PyGhidraContext | None = None
         self._tool_manager: ToolProviderManager | None = None
+        self._resource_manager: ResourceProviderManager | None = None
 
     # ------------------------------------------------------------------
     # Context manager interface (matches AgentDecompileMcpClient)
@@ -181,10 +183,13 @@ class LocalToolBackend:
                 sys.stderr.write(f"Warning: import failed for {binary_path}: {exc}\n")
 
         # --- Tool provider manager ---
+        from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager  # pyright: ignore[reportMissingImports]
         from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager  # pyright: ignore[reportMissingImports]
 
         self._tool_manager = ToolProviderManager()
         self._tool_manager.register_all_providers()
+        self._resource_manager = ResourceProviderManager()
+        self._resource_manager.set_tool_provider_manager(self._tool_manager)
 
         # Seed manager + session with already-open programs from the project
         from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS  # pyright: ignore[reportMissingImports]
@@ -206,6 +211,7 @@ class LocalToolBackend:
             # Set manager's program_info to the first available program
             first_prog_info = next(iter(self._context.programs.values()))
             self._tool_manager.set_program_info(first_prog_info)
+            self._resource_manager.set_program_info(first_prog_info)
 
         # Store GhidraProject reference so providers can checkout/checkin
         if hasattr(self._context, "project") and self._context.project is not None:
@@ -281,6 +287,76 @@ class LocalToolBackend:
             }
             for t in tools
         ]
+
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        """Return available prompts in a browser-friendly shape."""
+        logger.debug("diag.enter %s", "local_backend.py:LocalToolBackend.list_prompts")
+        if not self._initialized:
+            await self.initialize()
+
+        from agentdecompile_cli.mcp_server import prompt_providers  # pyright: ignore[reportMissingImports]
+
+        prompts = prompt_providers.list_prompts()
+        return [
+            {
+                "name": prompt.name,
+                "description": prompt.description or "",
+                "arguments": [
+                    {
+                        "name": argument.name,
+                        "description": argument.description or "",
+                        "required": bool(argument.required),
+                    }
+                    for argument in (prompt.arguments or [])
+                ],
+            }
+            for prompt in prompts
+        ]
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        """Return available resources in a browser-friendly shape."""
+        logger.debug("diag.enter %s", "local_backend.py:LocalToolBackend.list_resources")
+        if not self._initialized:
+            await self.initialize()
+
+        if self._resource_manager is None:
+            return []
+
+        resources = self._resource_manager.list_resources()
+        return [
+            {
+                "name": getattr(resource, "name", "") or getattr(resource, "uri", ""),
+                "uri": str(getattr(resource, "uri", "")),
+                "description": getattr(resource, "description", "") or "",
+                "mimeType": getattr(resource, "mimeType", None),
+            }
+            for resource in resources
+        ]
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        """Read an MCP resource and preserve both raw and parsed content when possible."""
+        logger.debug("diag.enter %s", "local_backend.py:LocalToolBackend.read_resource")
+        if not self._initialized:
+            await self.initialize()
+
+        if self._resource_manager is None:
+            return {"uri": uri, "raw": "", "parsed": None}
+
+        from agentdecompile_cli.mcp_server.session_context import CURRENT_MCP_SESSION_ID  # pyright: ignore[reportMissingImports]
+
+        token = CURRENT_MCP_SESSION_ID.set(_LOCAL_SESSION_ID)
+        try:
+            raw = await self._resource_manager.read_resource(uri)
+        finally:
+            CURRENT_MCP_SESSION_ID.reset(token)
+
+        parsed: Any = None
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+
+        return {"uri": uri, "raw": raw, "parsed": parsed}
 
     # ------------------------------------------------------------------
     # Session / program helpers
