@@ -258,7 +258,7 @@ class SearchEverythingToolProvider(ToolProvider):
             try:
                 compiled: dict[str, re.Pattern[str]] = self._compile_regexes(queries, mode_n, case_sensitive)
 
-                target_programs, target_warnings = await self._resolve_target_programs(args)
+                target_programs, target_warnings, resolution_meta = await self._resolve_target_programs(args)
                 if not target_programs:
                     raise ValueError("No target programs found. Open a program, pass programPath/programName/binaryName, or ensure project programs are available.")
 
@@ -342,7 +342,14 @@ class SearchEverythingToolProvider(ToolProvider):
                     mode="search",
                     scopes=scopes,
                     queries=queries,
+                    targetProgramCount=len(target_programs),
+                    requestedProgramCount=resolution_meta.get("requestedProgramCount"),
+                    projectProgramCount=resolution_meta.get("projectProgramCount"),
                     targetPrograms=[str(tp.get("programKey", "")) for tp in target_programs],
+                    skippedProgramCount=len(resolution_meta.get("skippedPrograms", [])),
+                    skippedPrograms=resolution_meta.get("skippedPrograms", []),
+                    usedProjectInventory=bool(resolution_meta.get("usedProjectInventory")),
+                    usedActiveFallback=bool(resolution_meta.get("usedActiveFallback")),
                     searchMode=mode_n,
                     caseSensitive=case_sensitive,
                     similarityThreshold=threshold,
@@ -469,7 +476,7 @@ class SearchEverythingToolProvider(ToolProvider):
             raise ValueError("minValue and maxValue are required when mode is range")
         return request
 
-    async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_target_programs")
         warnings: list[str] = []
         requested_program_keys: list[str] = self._collect_requested_program_keys(args)
@@ -477,36 +484,54 @@ class SearchEverythingToolProvider(ToolProvider):
         session_id: str = get_current_mcp_session_id()
         targets: list[dict[str, Any]] = []
         seen: set[str] = set()
+        skipped_programs: list[dict[str, str]] = []
+        project_paths: list[str] = []
+        candidate_program_keys: list[str] = []
+        used_active_fallback = False
 
         if requested_program_keys:
-            for key in requested_program_keys:
+            candidate_program_keys = list(requested_program_keys)
+            for key in candidate_program_keys:
                 info: ProgramInfo | None = SESSION_CONTEXTS.get_program_info(session_id, key)
+                activation_error = ""
                 if info is None and self._manager is not None:
                     try:
                         info = await self._manager._activate_requested_program(session_id, key)
                     except Exception as e:
+                        activation_error = str(e)
                         warnings.append(f"program '{key}': {e}")
                 if info is None or info.program is None:
                     warnings.append(f"program '{key}': not found")
+                    skipped_programs.append({"program": str(key), "reason": activation_error or "not found"})
                     continue
                 name = str(key)
                 if name in seen:
                     continue
                 seen.add(name)
                 targets.append({"programKey": name, "program": info.program, "programInfo": info})
-            return targets, warnings
+            return targets, warnings, {
+                "requestedProgramCount": len(candidate_program_keys),
+                "projectProgramCount": None,
+                "skippedPrograms": skipped_programs,
+                "usedProjectInventory": False,
+                "usedActiveFallback": False,
+            }
 
         # No explicit program target: search all programs in project if available.
-        project_paths: list[str] = self._collect_project_program_paths()
+        project_paths = self._collect_project_program_paths(session_id=session_id)
         if project_paths and self._manager is not None:
-            for path in project_paths:
+            candidate_program_keys = list(project_paths)
+            for path in candidate_program_keys:
                 info = SESSION_CONTEXTS.get_program_info(session_id, path)
+                activation_error = ""
                 if info is None:
                     try:
                         info = await self._manager._activate_requested_program(session_id, path)
                     except Exception as e:
+                        activation_error = str(e)
                         warnings.append(f"program '{path}': {e}")
                 if info is None or info.program is None:
+                    skipped_programs.append({"program": str(path), "reason": activation_error or "not activated"})
                     continue
                 key = str(path)
                 if key in seen:
@@ -515,15 +540,28 @@ class SearchEverythingToolProvider(ToolProvider):
                 targets.append({"programKey": key, "program": info.program, "programInfo": info})
 
         if targets:
-            return targets, warnings
+            return targets, warnings, {
+                "requestedProgramCount": len(candidate_program_keys),
+                "projectProgramCount": len(project_paths) or None,
+                "skippedPrograms": skipped_programs,
+                "usedProjectInventory": bool(project_paths),
+                "usedActiveFallback": False,
+            }
 
         # Fallback to active session program.
         active_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id) or self.program_info
         if active_info is not None and active_info.program is not None:
             active_name: str = self._get_str(args, "programpath", "programname", "binaryname", default="<active>") or "<active>"
             targets.append({"programKey": active_name, "program": active_info.program, "programInfo": active_info})
+            used_active_fallback = True
 
-        return targets, warnings
+        return targets, warnings, {
+            "requestedProgramCount": len(candidate_program_keys) or (1 if used_active_fallback else 0),
+            "projectProgramCount": len(project_paths) or None,
+            "skippedPrograms": skipped_programs,
+            "usedProjectInventory": bool(project_paths),
+            "usedActiveFallback": used_active_fallback,
+        }
 
     def _collect_requested_program_keys(self, args: dict[str, Any]) -> list[str]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_requested_program_keys")
@@ -556,8 +594,28 @@ class SearchEverythingToolProvider(ToolProvider):
             unique.append(key)
         return unique
 
-    def _collect_project_program_paths(self) -> list[str]:
+    def _collect_project_program_paths(self, session_id: str | None = None) -> list[str]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_project_program_paths")
+        active_session_id = session_id or get_current_mcp_session_id()
+        session_binaries = SESSION_CONTEXTS.get_project_binaries(active_session_id, fallback_to_latest=False)
+        session_paths: list[str] = []
+        for item in session_binaries:
+            if not isinstance(item, dict):
+                continue
+            pathname = str(item.get("path") or item.get("programPath") or item.get("name") or "")
+            if pathname:
+                session_paths.append(pathname)
+        if session_paths:
+            unique_session_paths: list[str] = []
+            seen_session_paths: set[str] = set()
+            for path in session_paths:
+                key = path.strip().lower()
+                if not key or key in seen_session_paths:
+                    continue
+                seen_session_paths.add(key)
+                unique_session_paths.append(path)
+            return unique_session_paths
+
         manager: ToolProviderManager | None = self._manager
         if manager is None:
             return []

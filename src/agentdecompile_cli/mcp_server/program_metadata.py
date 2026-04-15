@@ -26,6 +26,31 @@ from agentdecompile_cli.mcp_server.session_context import (
 logger = logging.getLogger(__name__)
 
 
+def _dedupe_program_keys(keys: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        normalized = str(key).strip()
+        if not normalized:
+            continue
+        dedupe_key = normalized.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        unique.append(normalized)
+    return unique
+
+
+def _collect_project_inventory_program_keys(session: SessionContext) -> list[str]:
+    project_binaries = getattr(session, "project_binaries", []) or []
+    inventory_keys = [
+        str(item.get("path") or item.get("programPath") or item.get("name") or "")
+        for item in project_binaries
+        if isinstance(item, dict)
+    ]
+    return _dedupe_program_keys(inventory_keys)
+
+
 # ---------------------------------------------------------------------------
 # Per-program summary (rich detail for open-project)
 # ---------------------------------------------------------------------------
@@ -221,9 +246,11 @@ def collect_project_context(session_id: str) -> dict[str, Any] | None:
     handle = session.project_handle
     open_programs = session.open_programs or {}
     active_key = session.active_program_key
+    project_inventory = _collect_project_inventory_program_keys(session)
+    open_program_keys = _dedupe_program_keys(list(open_programs.keys()))
 
     # Nothing loaded → skip
-    if not handle and not open_programs:
+    if not handle and not open_programs and not project_inventory:
         return None
 
     ctx: dict[str, Any] = {}
@@ -245,10 +272,12 @@ def collect_project_context(session_id: str) -> dict[str, Any] | None:
             ctx["projectName"] = str(project_name)
 
     # --- Programs ---
-    program_names = list(open_programs.keys())
-    ctx["programCount"] = len(program_names)
-    if program_names:
-        ctx["programs"] = program_names
+    project_program_count = len(project_inventory) or len(open_program_keys)
+    ctx["programCount"] = project_program_count
+    ctx["projectProgramCount"] = project_program_count
+    ctx["openProgramCount"] = len(open_program_keys)
+    if open_program_keys:
+        ctx["openPrograms"] = open_program_keys
     if active_key:
         ctx["activeProgram"] = active_key
 
