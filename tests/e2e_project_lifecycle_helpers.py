@@ -299,8 +299,8 @@ class LocalServerPool:
     """Cache local subprocess MCP servers for grouped live test reuse."""
 
     def __init__(self, repo_root: Path, *, default_timeout: float = 120.0) -> None:
-        self.repo_root = repo_root
-        self.default_timeout = default_timeout
+        self.repo_root: Path = repo_root
+        self.default_timeout: float = default_timeout
         self._handles: dict[str, LocalServerHandle] = {}
 
     def get_or_start(
@@ -381,12 +381,12 @@ class JsonRpcMcpSession:
         timeout: float = 30.0,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        self.client = httpx.Client(base_url=base_url, timeout=timeout)
-        self.endpoint = endpoint
-        self.timeout = timeout
-        self.extra_headers = dict(extra_headers or {})
-        self.session_id = ""
-        self._next_request_id = 1
+        self.client: httpx.Client = httpx.Client(base_url=base_url, timeout=timeout)
+        self.endpoint: str = endpoint
+        self.timeout: float = timeout
+        self.extra_headers: dict[str, str] = dict(extra_headers or {})
+        self.session_id: str = ""
+        self._next_request_id: int = 1
         self.initialize()
 
     def close(self) -> None:
