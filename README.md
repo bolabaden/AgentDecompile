@@ -417,6 +417,29 @@ docker run --rm \
 
 The MCP server starts on port 8080 with the canonical streamable-HTTP endpoint at `http://localhost:8080/mcp`, the compatibility endpoint at `http://localhost:8080/mcp/message`, the API index at `http://localhost:8080/`, and Swagger UI at `http://localhost:8080/docs`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
 
+### Web UI
+
+AgentDecompile also ships a browser UI for direct human interaction outside MCP clients and the CLI. It is launched automatically alongside the existing MCP/server entrypoints: `agentdecompile-mcp`, `mcp_agentdecompile`, `mcp-agentdecompile`, `agentdecompile-server`, and `agentdecompile-proxy`.
+
+```bash
+uv run agentdecompile-server -t streamable-http /path/to/binary
+```
+
+By default the web UI binds to `http://127.0.0.1:8002/` and targets the backend created by the command you launched. For proxy mode, it points at the proxied MCP endpoint automatically:
+
+```bash
+uv run agentdecompile-proxy --backend-url http://127.0.0.1:8080/mcp -t streamable-http
+```
+
+The web UI includes live tool execution with JSON argument editing, canonical tool-surface reference data, prompt browsing and rendering, resource browsing, and a documentation hub with Ghidra docking and Java Swing API links.
+
+Environment variables:
+
+- `AGENT_DECOMPILE_WEBUI_PORT` or `AGENTDECOMPILE_WEBUI_PORT`: Web UI bind port. Default `8002`.
+- `AGENT_DECOMPILE_WEBUI_HOST` or `AGENTDECOMPILE_WEBUI_HOST`: Web UI bind host. Default `127.0.0.1`.
+- `AGENT_DECOMPILE_WEBUI_ENABLED` or `AGENTDECOMPILE_WEBUI_ENABLED`: Set to `0`, `false`, `no`, or `off` to disable the sidecar.
+- `AGENT_DECOMPILE_WEBUI_BACKEND_URL` or `AGENTDECOMPILE_WEBUI_BACKEND_URL`: Optional override for the backend URL the sidecar targets.
+
 Prefer pointing MCP clients and examples at `http://localhost:8080/mcp`. The CLI also accepts the base server URL and normalizes it for you. `http://localhost:8080/` and `http://localhost:8080/api` are metadata/index routes, not alternate MCP transport paths, and `/api/mcp` is not supported.
 
 ```bash
@@ -776,6 +799,10 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 | `AGENT_DECOMPILE_PROJECT_NAME` | Name for the local Ghidra project when using a directory-backed project (ignored when `PROJECT_PATH` points to a `.gpr` file). Defaults to the current working directory name. Accepts `AGENTDECOMPILE_PROJECT_NAME` as an alias. | `agentdecompile-server --project-name` |
 | `AGENT_DECOMPILE_HOST` | Standalone headless MCP server bind host (default `127.0.0.1`; Docker commonly `0.0.0.0`). | `agentdecompile-server --host` |
 | `AGENT_DECOMPILE_PORT` | Standalone headless MCP server bind port (default `8080`). | `agentdecompile-server --port` |
+| `AGENT_DECOMPILE_WEBUI_HOST` | AgentDecompile web UI bind host (default `127.0.0.1`). Accepts `AGENTDECOMPILE_WEBUI_HOST` as an alias. | Sidecar bind host |
+| `AGENT_DECOMPILE_WEBUI_PORT` | AgentDecompile web UI bind port (default `8002`). Accepts `AGENTDECOMPILE_WEBUI_PORT` as an alias. | Sidecar bind port |
+| `AGENT_DECOMPILE_WEBUI_ENABLED` | Enable or disable automatic web UI sidecar startup. Accepts `AGENTDECOMPILE_WEBUI_ENABLED`, `AGENT_DECOMPILE_WEBUI`, and `AGENTDECOMPILE_WEBUI` as aliases. Falsy values: `0`, `false`, `no`, `off`. | Automatic sidecar toggle |
+| `AGENT_DECOMPILE_WEBUI_BACKEND_URL` | Optional MCP HTTP backend URL override for the sidecar instead of the auto-detected local/proxy endpoint. Accepts `AGENTDECOMPILE_WEBUI_BACKEND_URL` as an alias. | Sidecar backend override |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | Ghidra Server username (shared projects). | `agentdecompile-server --ghidra-server-username`; `agentdecompile-cli --ghidra-server-username` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | Ghidra Server password (shared projects). | `agentdecompile-server --ghidra-server-password`; `agentdecompile-cli --ghidra-server-password` |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_HOST` | Ghidra Server host (reference). | `agentdecompile-server --ghidra-server-host`; `agentdecompile-cli --ghidra-server-host` |

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentDecompile Web UI</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AgentDecompile</p>
+        <h1>Web UI Control Deck</h1>
+        <p class="lede">A browser-native interface for the full AgentDecompile workflow: tool execution, prompt exploration, resource inspection, project access, and Ghidra desktop API reference.</p>
+      </div>
+      <div class="hero-card" id="statusCard">
+        <h2>Runtime</h2>
+        <dl>
+          <div><dt>Mode</dt><dd id="metaMode">Loading</dd></div>
+          <div><dt>Port</dt><dd id="metaPort">-</dd></div>
+          <div><dt>Advertised Tools</dt><dd id="metaTools">-</dd></div>
+          <div><dt>Open Programs</dt><dd id="metaPrograms">-</dd></div>
+        </dl>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="panel panel-overview">
+        <div class="panel-head">
+          <h2>Quick Access</h2>
+          <button id="refreshAll" class="ghost">Refresh</button>
+        </div>
+        <div class="quick-actions">
+          <button data-tool="open">Open Project</button>
+          <button data-tool="import-binary">Import Binary</button>
+          <button data-tool="list-project-files">List Project Files</button>
+          <button data-tool="search-everything">Search Everything</button>
+          <button data-tool="get-function">Inspect Function</button>
+          <button data-tool="execute-script">Execute Script</button>
+        </div>
+        <div class="stats" id="statsGrid"></div>
+      </section>
+
+      <section class="panel panel-tools">
+        <div class="panel-head">
+          <h2>Tool Catalog</h2>
+          <input id="toolSearch" type="search" placeholder="Filter tools, aliases, or descriptions">
+        </div>
+        <div class="tool-layout">
+          <aside>
+            <ul id="toolList" class="tool-list"></ul>
+          </aside>
+          <div class="tool-detail">
+            <div id="toolSummary" class="tool-summary"></div>
+            <div class="editor-head">
+              <h3>Arguments</h3>
+              <button id="resetArgs" class="ghost">Reset JSON</button>
+            </div>
+            <textarea id="toolArgs" spellcheck="false"></textarea>
+            <div class="tool-actions">
+              <button id="runTool">Run Tool</button>
+              <span id="toolHint"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-results">
+        <div class="panel-head">
+          <h2>Invocation Output</h2>
+          <button id="clearResults" class="ghost">Clear</button>
+        </div>
+        <div id="resultStack" class="result-stack"></div>
+      </section>
+
+      <section class="panel panel-prompts">
+        <div class="panel-head">
+          <h2>Prompt Workflows</h2>
+          <select id="promptSelect"></select>
+        </div>
+        <div id="promptMeta" class="prompt-meta"></div>
+        <textarea id="promptArgs" spellcheck="false"></textarea>
+        <div class="tool-actions">
+          <button id="renderPrompt">Render Prompt</button>
+        </div>
+        <pre id="promptOutput" class="code-block"></pre>
+      </section>
+
+      <section class="panel panel-resources">
+        <div class="panel-head">
+          <h2>Resources</h2>
+          <select id="resourceSelect"></select>
+        </div>
+        <div class="tool-actions">
+          <button id="readResource">Read Resource</button>
+        </div>
+        <pre id="resourceOutput" class="code-block"></pre>
+      </section>
+
+      <section class="panel panel-docs">
+        <div class="panel-head">
+          <h2>Docs And Swing APIs</h2>
+        </div>
+        <div id="docsHub" class="docs-grid"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/assets/app.js" type="module"></script>
+</body>
+</html>

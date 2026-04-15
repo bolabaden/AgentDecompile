@@ -582,6 +582,19 @@ async def _run_http_mode(host: str, port: int | None) -> None:
         await asyncio.sleep(3600)
 
 
+def _start_webui_sidecar_for_backend(backend_url: str, *, verbose: bool = False):
+    logger.debug("diag.enter %s", "server.py:_start_webui_sidecar_for_backend")
+    from agentdecompile_cli.webui import launch_webui_sidecar
+
+    return launch_webui_sidecar(backend_url, verbose=verbose)
+
+
+def _loopback_backend_host(host: str) -> str:
+    if host in {"0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    return host
+
+
 def _cleanup_resources(
     launcher: AgentDecompileLauncher | None,
     project_manager: ProjectManager | None,
@@ -843,11 +856,17 @@ def main() -> None:
         tls_keyfile=tls_keyfile,
     )
 
-    # Run the appropriate transport mode
+    webui_sidecar = None
+
     try:
         runtime_port = launcher.get_port()
         if runtime_port is None:
             raise RuntimeError("Launcher did not provide a server port")
+
+        webui_sidecar = _start_webui_sidecar_for_backend(
+            f"http://{_loopback_backend_host(host)}:{runtime_port}/mcp",
+            verbose=bool(args.verbose),
+        )
 
         if args.transport == "stdio":
             run_async(_run_stdio_mode(launcher, project_manager, runtime_port))
@@ -859,6 +878,11 @@ def main() -> None:
     except KeyboardInterrupt:
         sys.stderr.write("\nShutdown complete\n")
     finally:
+        if webui_sidecar is not None:
+            try:
+                webui_sidecar.stop()
+            except Exception:
+                pass
         _cleanup_resources(launcher, project_manager)
 
 
@@ -952,14 +976,24 @@ def proxy_main() -> None:
 
     sys.stderr.write(f"Proxy mode: forwarding to {backend_url}\n")
 
+    webui_backend_url = backend_url
+    webui_sidecar = None
+
     if args.transport == "stdio":
         from agentdecompile_cli.bridge import AgentDecompileStdioBridge
 
+        webui_sidecar = _start_webui_sidecar_for_backend(backend_url, verbose=bool(args.verbose))
         bridge = AgentDecompileStdioBridge(backend_url)
         try:
             run_async(bridge.run())
         except KeyboardInterrupt:
             sys.stderr.write("\nShutdown complete\n")
+        finally:
+            if webui_sidecar is not None:
+                try:
+                    webui_sidecar.stop()
+                except Exception:
+                    pass
         return
 
     proxy_server = AgentDecompileMcpProxyServer(
@@ -974,6 +1008,8 @@ def proxy_main() -> None:
     )
     try:
         started_port = proxy_server.start()
+        webui_backend_url = f"http://{_loopback_backend_host(host)}:{started_port}/mcp"
+        webui_sidecar = _start_webui_sidecar_for_backend(webui_backend_url, verbose=bool(args.verbose))
         sys.stderr.write(
             f"AgentDecompile proxy running at http://{host}:{started_port}/mcp/message\n",
         )
@@ -984,6 +1020,11 @@ def proxy_main() -> None:
     except KeyboardInterrupt:
         sys.stderr.write("\nShutdown complete\n")
     finally:
+        if webui_sidecar is not None:
+            try:
+                webui_sidecar.stop()
+            except Exception:
+                pass
         proxy_server.stop()
 
 

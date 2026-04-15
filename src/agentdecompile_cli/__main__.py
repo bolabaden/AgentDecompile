@@ -46,6 +46,8 @@ except ImportError:
 if TYPE_CHECKING:
     from types import FrameType
 
+    from agentdecompile_cli.webui import WebUiSidecar
+
 
 def _redirect_java_outputs():
     """Best-effort JVM output redirection setup.
@@ -245,6 +247,7 @@ class AgentDecompileCLI:
         launcher: AgentDecompileLauncher | None,
         project_manager: ProjectManager | None,
         backend: int | str,
+        webui_sidecar: WebUiSidecar | None = None,
     ):
         """Initialize AgentDecompile CLI with pre-initialized components.
 
@@ -257,6 +260,7 @@ class AgentDecompileCLI:
         self.launcher: AgentDecompileLauncher | None = launcher
         self.project_manager: ProjectManager | None = project_manager
         self.backend: int | str = backend
+        self.webui_sidecar: WebUiSidecar | None = webui_sidecar
         self.bridge: AgentDecompileStdioBridge | None = None
         self.cleanup_done: bool = False
 
@@ -291,6 +295,12 @@ class AgentDecompileCLI:
         if self.bridge is not None:
             try:
                 self.bridge.stop()
+            except Exception:
+                pass
+
+        if self.webui_sidecar is not None:
+            try:
+                self.webui_sidecar.stop()
             except Exception:
                 pass
 
@@ -404,10 +414,14 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
 def _handle_connect_mode(args: argparse.Namespace) -> None:
     """Handle connect mode to existing MCP server."""
     logger.debug("diag.enter %s", "__main__.py:_handle_connect_mode")
+    from agentdecompile_cli.webui import launch_webui_sidecar
+
+    webui_sidecar = launch_webui_sidecar(args.server_url, verbose=bool(args.verbose))
     cli = AgentDecompileCLI(
         launcher=None,
         project_manager=None,
         backend=args.server_url,
+        webui_sidecar=webui_sidecar,
     )
     try:
         run_async(cli.run())
@@ -484,10 +498,14 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
 def _run_async_execution(launcher: AgentDecompileLauncher, project_manager: ProjectManager, port: int) -> None:
     """Run the async stdio bridge with initialized components."""
     logger.debug("diag.enter %s", "__main__.py:_run_async_execution")
+    from agentdecompile_cli.webui import launch_webui_sidecar
+
+    webui_sidecar = launch_webui_sidecar(f"http://127.0.0.1:{port}/mcp", verbose=False)
     cli = AgentDecompileCLI(
         launcher=launcher,
         project_manager=project_manager,
         backend=port,
+        webui_sidecar=webui_sidecar,
     )
 
     try:
