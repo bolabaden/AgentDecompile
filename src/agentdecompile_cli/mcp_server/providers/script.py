@@ -12,7 +12,8 @@ import logging
 import traceback
 
 from contextlib import redirect_stderr, redirect_stdout
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp import types
 
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScriptToolProvider(ToolProvider):
-    HANDLERS = {
+    HANDLERS: ClassVar[dict[str, str]] = {
         "executescript": "_handle_execute",
     }
 
@@ -87,7 +88,7 @@ class ScriptToolProvider(ToolProvider):
 
     # ------------------------------------------------------------------
 
-    def _build_namespace(self) -> dict[str, Any]:
+    def _build_namespace(self, program_info: ProgramInfo | SimpleNamespace | None = None) -> dict[str, Any]:
         """Build the execution namespace for Ghidra script execution.
 
         Populates a Python namespace with Ghidra API equivalents so that script
@@ -135,10 +136,11 @@ class ScriptToolProvider(ToolProvider):
         flat_api = None
         decompiler = None
 
-        if self.program_info is not None:
-            program = self.program_info.program
-            flat_api = getattr(self.program_info, "flat_api", None)
-            decompiler = getattr(self.program_info, "decompiler", None)
+        effective_program_info = program_info if program_info is not None else self.program_info
+        if effective_program_info is not None:
+            program = effective_program_info.program
+            flat_api = getattr(effective_program_info, "flat_api", None)
+            decompiler = getattr(effective_program_info, "decompiler", None)
 
         # Core Ghidra script variables
         ns["currentProgram"] = program
@@ -316,7 +318,20 @@ class ScriptToolProvider(ToolProvider):
         if timeout is None:
             timeout = 30
 
-        ns: dict[str, Any] = self._build_namespace()
+        requested_program_path = self._get_str(args, "programpath", "program_path", "path", default="")
+        effective_program_info = self.program_info
+        ns: dict[str, Any] = self._build_namespace(effective_program_info)
+        executed_program = ns.get("currentProgram")
+
+        if requested_program_path and executed_program is None:
+            return create_success_response(
+                {
+                    "success": False,
+                    "error": f"Requested program path '{requested_program_path}' resolved without a loaded program object.",
+                    "state": "missing-program-object",
+                    "requestedProgramPath": requested_program_path,
+                }
+            )
         ns["__result__"] = None
 
         stdout_capture: io.StringIO = io.StringIO()
@@ -369,6 +384,28 @@ class ScriptToolProvider(ToolProvider):
             response["result"] = result_str
         if not stdout_text and not stderr_text and not result_str:
             response["result"] = "None"
+
+        execution_target: dict[str, str] = {}
+        if effective_program_info is not None:
+            program_path = getattr(effective_program_info, "file_path", None)
+            if program_path is not None:
+                execution_target["path"] = str(program_path)
+            elif requested_program_path:
+                execution_target["path"] = requested_program_path
+            program_name = getattr(effective_program_info, "name", "")
+            if program_name:
+                execution_target["name"] = str(program_name)
+        elif requested_program_path:
+            execution_target["path"] = requested_program_path
+
+        if executed_program is not None and not execution_target.get("name"):
+            try:
+                execution_target["name"] = str(executed_program.getName())
+            except Exception:
+                pass
+
+        if execution_target:
+            response["executedProgram"] = execution_target
 
         return create_success_response(response)
 

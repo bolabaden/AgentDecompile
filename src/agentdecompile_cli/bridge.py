@@ -728,6 +728,24 @@ class AgentDecompileMcpClient:
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""
         logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._extract_result")
+
+        def _content_item_text(item: Any) -> str:
+            if isinstance(item, dict):
+                text = item.get("text")
+                return str(text) if text is not None else ""
+            text = getattr(item, "text", None)
+            if text is not None:
+                return str(text)
+            if hasattr(item, "model_dump"):
+                try:
+                    dumped = item.model_dump()
+                    if isinstance(dumped, dict):
+                        dumped_text = dumped.get("text")
+                        return str(dumped_text) if dumped_text is not None else ""
+                except Exception:
+                    return ""
+            return ""
+
         if isinstance(result, dict):
             result_dict = result
         elif hasattr(result, "model_dump"):
@@ -740,10 +758,10 @@ class AgentDecompileMcpClient:
             _clen = len(content) if isinstance(content, list) else 0
             logger.warning("mcp_client_result_shape branch=is_error content_len=%s", _clen)
             if content and len(content) > 0:
-                c0 = content[0]
-                if isinstance(c0, dict):
-                    error_text = c0.get("text", "Unknown error")
-                    raise ClientError(error_text)
+                for item in content:
+                    error_text = _content_item_text(item)
+                    if error_text:
+                        raise ClientError(error_text)
             raise ClientError("Unknown error occurred")
 
         if "structuredContent" in result_dict:

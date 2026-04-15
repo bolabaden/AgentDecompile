@@ -55,7 +55,7 @@ if TYPE_CHECKING:
         DecompileResults as GhidraDecompileResults,
         DecompiledFunction as GhidraDecompiledFunction,
     )
-    from ghidra.app.decompiler.component import (
+    from ghidra.app.decompiler.component import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401 # noqa: F401
         Decompiler as GhidraDecompiler,
     )
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401 # noqa: F401
