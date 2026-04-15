@@ -9,14 +9,13 @@ but does not know which tool to call.
 
 from __future__ import annotations
 
-import os
 import difflib
 import logging
+import os
 import re
 
 from contextlib import nullcontext
 from time import perf_counter
-
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from mcp import types
@@ -24,6 +23,7 @@ from mcp import types
 from agentdecompile_cli.context import (
     ProgramInfo,
 )
+from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_bookmarks,
     collect_comments,
@@ -39,7 +39,6 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_symbols,
     collect_vtable_candidates,
 )
-from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -55,6 +54,9 @@ if TYPE_CHECKING:
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DecompileResults as GhidraDecompileResults,
         DecompiledFunction as GhidraDecompiledFunction,
+    )
+    from ghidra.app.decompiler.component import (
+        Decompiler as GhidraDecompiler,
     )
     from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401 # noqa: F401
         DomainFile as GhidraDomainFile,
@@ -276,6 +278,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 for target in target_programs:
                     program_key = str(target.get("programKey", ""))
                     program: GhidraProgram | None = target.get("program")
+                    program_info: ProgramInfo | None = target.get("programInfo")
                     if program is None:
                         continue
                     for scope in ordered_scopes:
@@ -293,6 +296,7 @@ class SearchEverythingToolProvider(ToolProvider):
                             scoped, diagnostic = self._search_scope(
                                 scope=scope,
                                 program=program,
+                                program_info=program_info,
                                 queries=queries,
                                 mode=mode_n,
                                 case_sensitive=case_sensitive,
@@ -489,7 +493,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 if name in seen:
                     continue
                 seen.add(name)
-                targets.append({"programKey": name, "program": info.program})
+                targets.append({"programKey": name, "program": info.program, "programInfo": info})
             return targets, warnings
 
         # No explicit program target: search all programs in project if available.
@@ -508,7 +512,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 if key in seen:
                     continue
                 seen.add(key)
-                targets.append({"programKey": key, "program": info.program})
+                targets.append({"programKey": key, "program": info.program, "programInfo": info})
 
         if targets:
             return targets, warnings
@@ -517,7 +521,7 @@ class SearchEverythingToolProvider(ToolProvider):
         active_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id) or self.program_info
         if active_info is not None and active_info.program is not None:
             active_name: str = self._get_str(args, "programpath", "programname", "binaryname", default="<active>") or "<active>"
-            targets.append({"programKey": active_name, "program": active_info.program})
+            targets.append({"programKey": active_name, "program": active_info.program, "programInfo": active_info})
 
         return targets, warnings
 
@@ -762,6 +766,7 @@ class SearchEverythingToolProvider(ToolProvider):
         *,
         scope: str,
         program: GhidraProgram,
+        program_info: ProgramInfo | None,
         queries: list[str],
         mode: str,
         case_sensitive: bool,
@@ -802,7 +807,7 @@ class SearchEverythingToolProvider(ToolProvider):
                 constant_request,
             ), None
         if scope == "decompilation":
-            return self._search_decompilation(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, decompile_timeout)
+            return self._search_decompilation(program, program_info, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, decompile_timeout)
         if scope == "disassembly":
             return self._search_disassembly(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, max_instructions_scan)
         if scope == "symbols":
@@ -860,6 +865,7 @@ class SearchEverythingToolProvider(ToolProvider):
             return None
 
         cmp_text: str = text if case_sensitive else text.lower()
+        fuzzy_candidates: list[str] | None = None
         best: dict[str, Any] | None = None
         for q in queries:
             q_cmp: str = q if case_sensitive else q.lower()
@@ -882,7 +888,9 @@ class SearchEverythingToolProvider(ToolProvider):
                 score = 1.0
                 kind = "literal"
             elif mode in {"fuzzy", "auto"}:
-                similarity = self._fuzzy_similarity(q_cmp, text, case_sensitive)
+                if fuzzy_candidates is None:
+                    fuzzy_candidates = self._prepare_fuzzy_candidates(text, case_sensitive)
+                similarity = self._fuzzy_similarity(q_cmp, text, case_sensitive, prepared_candidates=fuzzy_candidates)
                 if similarity >= threshold:
                     matched = True
                     score = float(similarity)
@@ -893,21 +901,34 @@ class SearchEverythingToolProvider(ToolProvider):
             candidate = {"query": q, "score": score, "matchType": kind}
             if best is None or candidate["score"] > best["score"]:
                 best = candidate
+                if float(candidate["score"]) >= 1.0:
+                    break
 
         return best
 
-    def _fuzzy_similarity(self, query: str, text: str, case_sensitive: bool) -> float:
+    def _prepare_fuzzy_candidates(self, text: str, case_sensitive: bool) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._prepare_fuzzy_candidates")
+        if not text:
+            return []
+
+        if len(text) <= _MAX_FUZZY_FULL_TEXT_CHARS:
+            return [text if case_sensitive else text.lower()]
+
+        return [segment if case_sensitive else segment.lower() for segment in self._iter_fuzzy_segments(text)]
+
+    def _fuzzy_similarity(self, query: str, text: str, case_sensitive: bool, *, prepared_candidates: list[str] | None = None) -> float:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._fuzzy_similarity")
         if not text:
             return 0.0
 
-        if len(text) <= _MAX_FUZZY_FULL_TEXT_CHARS:
-            candidate = text if case_sensitive else text.lower()
-            return float(difflib.SequenceMatcher(None, query, candidate).ratio())
+        candidates: list[str] = prepared_candidates if prepared_candidates is not None else self._prepare_fuzzy_candidates(text, case_sensitive)
+        if not candidates:
+            return 0.0
+        if len(candidates) == 1:
+            return float(difflib.SequenceMatcher(None, query, candidates[0]).ratio())
 
         best = 0.0
-        for segment in self._iter_fuzzy_segments(text):
-            candidate = segment if case_sensitive else segment.lower()
+        for candidate in candidates:
             similarity = float(difflib.SequenceMatcher(None, query, candidate).ratio())
             if similarity > best:
                 best = similarity
@@ -1223,6 +1244,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def _search_decompilation(
         self,
         program: GhidraProgram,
+        program_info: ProgramInfo | None,
         queries: list[str],
         mode: str,
         case_sensitive: bool,
@@ -1252,7 +1274,18 @@ class SearchEverythingToolProvider(ToolProvider):
             if fm is None:
                 return results, diagnostic
             monitor = GhidraConsoleTaskMonitor()
-            session_decompiler = getattr(self.program_info, "decompiler", None)
+            session_decompiler: GhidraDecompiler | None = None
+            if program_info is not None:
+                getter = getattr(program_info, "get_decompiler", None)
+                if callable(getter):
+                    try:
+                        session_decompiler = getter()
+                    except Exception:
+                        session_decompiler = getattr(program_info, "decompiler", None)
+                else:
+                    session_decompiler = getattr(program_info, "decompiler", None)
+            if session_decompiler is None:
+                session_decompiler = getattr(self.program_info, "decompiler", None)
             with acquire_decompiler_for_program(session_decompiler, program) as lease:
                 diagnostic["reusedSessionDecompiler"] = bool(lease.reused_session)
                 func: GhidraFunction
