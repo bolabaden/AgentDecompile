@@ -149,7 +149,7 @@ _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
 
 def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
     """Drop recommendation lines that reference tools disabled via env configuration.
-    Also drops steps that mention get-functions (e.g. `get-functions mode=decompile address=...`)
+    Also drops steps that mention get-functions (e.g. `get-functions address=...`)
     when that tool is not advertised (legacy mode off).
     """
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_filter_disabled_tool_recommendations")
@@ -162,7 +162,7 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
             if token_norm in _DISABLABLE_RECOMMENDATION_TOOLS and not is_tool_advertised(token):
                 blocked = True
                 break
-        # Steps like "Decompile containing function: `get-functions mode=decompile address=...`"
+        # Steps like "Decompile/disassemble/inspect containing function: `get-function address=...`"
         # have the tool name inside a longer backticked phrase; the regex above won't match.
         if not blocked and "get-functions" in step and not is_tool_advertised("get-functions"):
             blocked = True
@@ -185,7 +185,7 @@ def _next_steps_execute_script(data: dict[str, Any]) -> list[str]:
     if has_error and not has_output:
         steps.append("Review the traceback above and fix the script, then call `execute-script` again.")
     if has_output:
-        steps.append("If the script retrieved function/address data, use `get-functions mode=decompile` to inspect specific functions.")
+        steps.append("If the script retrieved function/address data, use `get-function address=...` to inspect specific functions.")
         steps.append("Use `manage-comments` or `manage-bookmarks` to annotate interesting findings.")
     steps.append("For batch analysis across many functions, combine `list-functions` output with `execute-script` loops.")
     return steps
@@ -201,7 +201,7 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
     if addr:
         steps.append(f'Call `manage-comments address={addr} mode=set comment="..."` to annotate your findings.')
         steps.append(f"Call `get-references address={addr}` to find all cross-references to/from this function.")
-    steps.append("If the function calls suspicious subroutines, use `get-functions mode=decompile` on those next.")
+    steps.append("If the function calls suspicious subroutines, use `get-function` on those next.")
     steps.append("Use `annotate-function mode=rename` to give this function a meaningful name if auto-named.")
     return steps
 
@@ -233,24 +233,19 @@ def _next_steps_get_functions(data: dict[str, Any]) -> list[str]:
     addr: str = data.get("address", "")
     steps: list[str] = []
     if view == "info":
-        steps.append(f"Call `get-functions mode=decompile function={name}` to see the C pseudocode.")
-        steps.append(f"Call `get-call-graph function={name} mode=graph` to map call relationships.")
-        steps.append(f"Call `get-functions function={name} view=disassemble` for raw assembly instructions.")
+        steps.append(f"Call `get-function function={name}` to get c pseudocode, disassembly, call graph, and other details.")
     elif view == "calls":
         callers: list[dict[str, Any]] = data.get("callers", [])
         callees: list[dict[str, Any]] = data.get("callees", [])
         if callees:
-            steps.append(f"Decompile called functions: try `get-functions mode=decompile function={callees[0].get('name', '')}`.")
+            steps.append(f"Decompile/disassemble/inspect called functions: try `get-function functionIdentifier={callees[0].get('name', '')}`.")
         if callers:
-            steps.append(f"Trace callers: try `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append(f"For a full call tree, use `get-call-graph function={name} mode=tree depth=3`.")
+            steps.append(f"Trace callers: try `get-function functionIdentifier={callers[0].get('name', '')}`.")
     elif view == "decompile":
-        steps.append(f"Call `get-call-graph function={name} mode=graph` to see call relationships.")
         steps.append(f"Call `manage-comments address={addr} mode=set` to annotate your analysis.")
     elif view == "disassemble":
         steps.append("Look for interesting patterns: `CALL`, `JMP` targets, or unusual `MOV` operands.")
-        steps.append(f"Call `get-functions mode=decompile function={name}` for a higher-level C view of this assembly.")
-        steps.append(f"Call `get-references address={addr}` to trace cross-references from specific instructions.")
+        steps.append(f"Call `get-function function={name}` for a higher-level C view of this assembly, disassembly, call graph, and other details.")
     return steps
 
 
@@ -264,7 +259,7 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
             first_name: str = results[0].get("name", "")
             first_addr: str = results[0].get("address", "")
             if first_name:
-                steps.append(f"Decompile a symbol: `get-functions mode=decompile function={first_name}`.")
+                steps.append(f"Decompile a symbol: `get-function function={first_name}`.")
             if first_addr:
                 steps.append(f"Get cross-references: `get-references address={first_addr}`.")
         steps.append("Use `query` to filter symbols by pattern (supports regex).")
@@ -276,7 +271,7 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
         steps.append("Call `search-everything query=<import_name>` to find all uses in decompiled code.")
     elif mode == "exports":
         if results:
-            steps.append(f"Decompile an export: `get-functions mode=decompile function={results[0].get('name', '')}`.")
+            steps.append(f"Decompile an export: `get-function function={results[0].get('name', '')}`.")
         steps.append("Exports are the binary's public API — start analysis from these entry points.")
     elif mode == "classes":
         if results:
@@ -306,7 +301,7 @@ def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
                 steps.append(f"Follow up: `{tool} {args_str}`")
         if not next_tools:
             if rt == "function":
-                steps.append(f"Decompile: `get-functions mode=decompile function={first.get('name', first.get('function', ''))}`.")
+                steps.append(f"Decompile: `get-function function={first.get('name', first.get('function', ''))}`.")
             elif rt in ("symbol", "export", "import"):
                 steps.append(f"Cross-refs: `get-references address={first.get('address', '')}`.")
         class_like_results: list[dict[str, Any]] = [row for row in results if str(row.get("resultType", "")) in {"class", "namespace"}]
@@ -651,13 +646,13 @@ def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
         if entries:
             first_target = entries[0].get("function", entries[0].get("target", ""))
             if first_target:
-                steps.append(f"Decompile virtual method: `get-functions mode=decompile function={first_target}`.")
+                steps.append(f"Decompile/disassemble/inspect virtual method: `get-function function={first_target}`.")
         steps.append("Each vtable entry is a function pointer — decompile targets to understand the class interface.")
     elif mode == "callers":
         steps.append("Vtable callers show where virtual dispatch happens — these are polymorphic call sites.")
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
-            steps.append(f"Decompile call site: `get-functions mode=decompile address={results[0].get('fromAddress', '')}`.")
+            steps.append(f"Decompile/disassemble/inspect call site: `get-function function={results[0].get('fromAddress', '')}`.")
     return steps
 
 
@@ -708,7 +703,7 @@ def _next_steps_strings(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         addr = first.get("address", "")
         if addr:
-            steps.append(f"Decompile containing function: `get-functions mode=decompile address={addr}`.")
+            steps.append(f"Decompile/disassemble/inspect containing function: `get-function function={addr}`.")
         steps.append("Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings.")
     else:
         # No results: context-aware suggestions when the user ran a search with a query
@@ -769,7 +764,7 @@ def _next_steps_search_code(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         func_name = first.get("function", "")
         if func_name:
-            steps.append(f"Decompile matching function: `get-functions mode=decompile function={func_name}`.")
+            steps.append(f"Decompile/disassemble/inspect matching function: `get-function function={func_name}`.")
     steps.append("Use `searchMode=regex` for pattern matching, or `searchMode=literal` for exact text.")
     return steps
 
@@ -998,7 +993,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     "managefunction": (
         "Rename, set prototype, or modify function properties.",
         lambda d: [
-            "After renaming, use `get-functions mode=decompile` to verify the new name appears correctly.",
+            "After renaming, use `get-function function=<function_name>` to verify the new name appears correctly.",
             "Use `manage-comments` to document why you renamed/retyped.",
         ],
     ),
