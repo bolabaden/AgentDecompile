@@ -134,25 +134,18 @@ class DecompileTool:
     ) -> DecompiledFunction:
         """Core single function decompilation logic."""
         logger.debug("diag.enter %s", "tools/decompile_tool.py:DecompileTool._decompile_single_function")
-        from agentdecompile_cli.mcp_utils.decompiler_util import resolve_decompiler_for_program
+        from agentdecompile_cli.mcp_utils.decompiler_util import acquire_decompiler_for_program
 
         if not self.program:
             raise ValueError("Program must be set")
 
-        decompiler, owns_ephemeral = resolve_decompiler_for_program(self.decompiler, self.program)
-        try:
-            result = self._decompile_with_decompiler(func, decompiler, timeout)
+        with acquire_decompiler_for_program(self.decompiler, self.program) as lease:
+            result = self._decompile_with_decompiler(func, lease.decompiler, timeout)
             return DecompiledFunction(
                 name=self._get_function_name(func),
                 code=result["code"],
                 signature=result["signature"],
             )
-        finally:
-            if owns_ephemeral:
-                try:
-                    decompiler.dispose()
-                except Exception:
-                    logger.debug("ephemeral_decompiler_dispose_failed", exc_info=True)
 
     def _decompile_with_decompiler(
         self,

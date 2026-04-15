@@ -111,7 +111,7 @@ flowchart TD
 
 1. `agentdecompile_cli.server:main` initializes PyGhidra, project paths, and the provider managers when running locally.
 2. `agentdecompile_cli.__main__:main` serves the stdio MCP path and can either bootstrap local runtime state or connect to an existing backend.
-3. `agentdecompile_cli.cli:cli_entry_point` stays HTTP-first and dispatches tool calls through `AgentDecompileMcpClient` instead of executing tool logic locally.
+3. `agentdecompile_cli.cli:cli_entry_point` prefers HTTP transport, but when no explicit backend target was requested it can auto-start a local MCP server or fall back to in-process local execution.
 4. `agentdecompile_cli.server:proxy_main` forwards tools, resources, and prompts to an existing MCP backend without starting local PyGhidra.
 5. Tool providers execute the actual operations and return structured responses through the MCP server layer.
 
@@ -164,6 +164,7 @@ Run focused tests first, then broader suites.
 ```bash
 uv run pytest -m unit -v
 uv run pytest tests/ -v --timeout=120
+uv run pytest tests/test_e2e_cancelled_profile.py -v --timeout=300 -s
 ```
 
 Use markers when needed:
@@ -171,6 +172,14 @@ Use markers when needed:
 ```bash
 uv run pytest -m "not slow" -v
 ```
+
+For the profiled cancelled-timeout reproduction suite, run:
+
+```bash
+uv run pytest tests/test_e2e_cancelled_profile.py -v --timeout=300 -s
+```
+
+The suite starts a local subprocess-backed server, imports a deterministic duplicated fixture corpus, records Python cProfile output, and emits a JFR dump for the embedded PyGhidra JVM.
 
 **Manual E2E (shared/local checkout–checkin, `sync-project`, MCP restart):** See **[docs/e2e_shared_local_checkout_sync.md](docs/e2e_shared_local_checkout_sync.md)** for the full runbook. With Ghidra Server and `agentdecompile-server` running, use `scripts/e2e_checkout_sync_plan_runner.ps1`. Prefer **`-Phase shared_plus_sync`** for one `tool-seq` that runs open → import → three edit cycles → `sync-project` pull/push (same MCP session; avoids losing `project_data` before sync). Other phases: `shared`, `restart_assert`, `sync`, `local_full`, `restart_local_assert`, `all`, `all_local`. Use **`-AnalyzeAfterImport`** if `list-functions` / rename targets need analysis. **`-ContinueOnError`** forwards `tool-seq --continue-on-error` (runs all steps; CLI still exits non-zero if any step failed). **`tool-seq`** also counts steps as failed when the MCP text payload contains markdown **`## Error`** (blockquote-style) or **`## Modification conflict`**, even if **`isError`** is false. Override `-ProgramPath`, `-FunCycle1`, `-LabelAddress`, `-FunCycle3` from `list-project-files` / `list-functions` if your binary differs from `sort.exe`.
 

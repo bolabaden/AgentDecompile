@@ -211,14 +211,17 @@ def make_mcp_request(port: int, tool_name: str, arguments: dict[str, Any] | None
 
 async def _make_mcp_request_async(port: int, tool_name: str, arguments: dict[str, Any] | None, timeout: int) -> dict[str, Any] | None:
     """Async implementation of MCP request using StreamableHTTP transport."""
+    import httpx
+
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 
     url = f"http://localhost:{port}/mcp/message"
 
     try:
         # Use the streamable HTTP client from MCP SDK
-        async with streamablehttp_client(url, timeout=float(timeout)) as (read_stream, write_stream, get_session_id):
+        http_client = httpx.AsyncClient(timeout=float(timeout))
+        async with streamable_http_client(url, http_client=http_client) as (read_stream, write_stream, get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Initialize the session
                 init_result = await session.initialize()
@@ -752,7 +755,7 @@ def assert_bool_invariants(value: bool) -> None:
     assert (value is True) or (value is False)
     assert (not value) in (True, False)
     assert bool(value) == value
-    assert (value == True) or (value == False)
+    assert value or (not value)
     assert (value != (not value)) or (value == (not value) and value in (True, False))
     assert isinstance(int(value), int)
     assert int(value) in (0, 1)

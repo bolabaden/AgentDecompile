@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import sys
 import time
 
@@ -48,6 +49,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _HTTP_TRANSPORTS: frozenset[str] = frozenset({"streamable-http", "http", "sse"})
+
+
+def _get_pyghidra_vmargs() -> list[str]:
+    """Return extra JVM args for embedded PyGhidra startup from env."""
+    raw = str(
+        os.getenv("AGENTDECOMPILE_PYGHIDRA_VMARGS")
+        or os.getenv("AGENT_DECOMPILE_PYGHIDRA_VMARGS")
+        or ""
+    ).strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    if "\n" in raw:
+        return [line.strip() for line in raw.splitlines() if line.strip()]
+    return [arg for arg in shlex.split(raw, posix=False) if arg]
 
 
 def init_agentdecompile_context(
@@ -539,7 +561,19 @@ def _initialize_pyghidra(verbose_analysis: bool) -> None:
                 "PyGhidra is not installed. Install with: pip install 'agentdecompile[local]'\n",
             )
             sys.exit(1)
-        pyghidra.start(verbose=verbose_analysis)
+        vm_args = _get_pyghidra_vmargs()
+        if vm_args:
+            from pyghidra.launcher import HeadlessPyGhidraLauncher
+
+            install_dir_raw = str(os.getenv("GHIDRA_INSTALL_DIR", "")).strip()
+            launcher = HeadlessPyGhidraLauncher(
+                verbose=verbose_analysis,
+                install_dir=Path(install_dir_raw) if install_dir_raw else None,
+            )
+            launcher.add_vmargs(*vm_args)
+            launcher.start()
+        else:
+            pyghidra.start(verbose=verbose_analysis)
         if _redirect_java_outputs:
             _redirect_java_outputs()
         sys.stderr.write("PyGhidra initialized\n")

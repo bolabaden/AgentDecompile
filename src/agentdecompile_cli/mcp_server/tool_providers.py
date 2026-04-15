@@ -2641,8 +2641,12 @@ class ToolProviderManager:
                 except Exception as auto_checkin_exc:
                     logger.warning("Auto check-in after modify failed (best-effort): %s", auto_checkin_exc)
 
-        # Convert JSON response to rich markdown via response_formatter unless format=json or internal prereq
-        response_fmt: str = norm_args.get("responseFormat") or (norm_args.get("format") if norm_args.get("format") in ("markdown", "json") else "markdown")
+        # Convert JSON response to rich markdown via response_formatter unless responseFormat/format=json.
+        # Argument keys are normalized earlier, so responseFormat and response_format both map to responseformat.
+        response_fmt: str = str(
+            norm_args.get(n("responseFormat"))
+            or (norm_args.get("format") if norm_args.get("format") in ("markdown", "json") else "markdown")
+        )
         if not norm_args.get("autoprereqinvocation") and response_fmt != "json" and result and isinstance(result[0], types.TextContent):
             try:
                 data = _json.loads(result[0].text)

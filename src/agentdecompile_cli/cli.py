@@ -26,13 +26,18 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import multiprocessing
 import os
+import socket
+import subprocess
 import sys
+import time
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -41,6 +46,7 @@ from urllib.parse import urlparse
 import click
 
 from ghidrecomp.decompile import decompile
+from httpx import AsyncClient, Timeout
 
 from agentdecompile_cli import __version__
 from agentdecompile_cli.executor import (
@@ -48,7 +54,6 @@ from agentdecompile_cli.executor import (
     get_client,
     handle_command_error,
     normalize_backend_url,
-    resolve_backend_url,
     run_async,
 )
 from agentdecompile_cli.registry import (
@@ -79,6 +84,36 @@ _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
 _DEFAULT_OUTPUT_FORMAT = "text"
+_LOCAL_SERVER_STATE_KEY = "local_server"
+_LOCAL_SERVER_MANAGED_MARKER = "agentdecompile-cli"
+_LOCAL_SERVER_READY_TIMEOUT_S = 45.0
+_LOCAL_SERVER_POLL_INTERVAL_S = 0.5
+_LOCAL_SERVER_PROBE_TIMEOUT_S = 1.5
+_BACKEND_ENV_URL_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_URL",
+    "AGENT_DECOMPILE_SERVER_URL",
+    "AGENTDECOMPILE_MCP_SERVER_URL",
+    "AGENTDECOMPILE_SERVER_URL",
+)
+_BACKEND_ENV_HOST_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_HOST",
+    "AGENT_DECOMPILE_SERVER_HOST",
+    "AGENTDECOMPILE_SERVER_HOST",
+)
+_BACKEND_ENV_PORT_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_PORT",
+    "AGENT_DECOMPILE_SERVER_PORT",
+    "AGENTDECOMPILE_SERVER_PORT",
+)
+
+
+@dataclass(frozen=True)
+class BackendTargetResolution:
+    url: str
+    source: str
+    explicit_cli: bool = False
+    env_provided: bool = False
+    cached_local: bool = False
 
 
 def _configure_runtime_logging(verbose: bool) -> None:
@@ -152,6 +187,298 @@ def _get_opts(ctx: click.Context) -> dict[str, Any]:
     return {}
 
 
+def _env_value(keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _parse_env_port(keys: tuple[str, ...], default: int) -> int:
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(str(raw).strip())
+        except ValueError:
+            return default
+    return default
+
+
+def _normalize_url_or_none(value: str | None) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return normalize_backend_url(value.strip())
+    except Exception:
+        return value.strip().rstrip("/")
+
+
+def _is_pid_running(pid: int | None) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    except Exception:
+        return False
+    return True
+
+
+def _is_tcp_port_available(port: int) -> bool:
+    if port <= 0 or port > 65535:
+        return False
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def _find_free_local_port() -> int:
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _cli_state_local_server() -> dict[str, Any] | None:
+    state = _load_cli_state()
+    entry = state.get(_LOCAL_SERVER_STATE_KEY)
+    return entry if isinstance(entry, dict) else None
+
+
+def _clear_local_server_state() -> None:
+    state = _load_cli_state()
+    if _LOCAL_SERVER_STATE_KEY not in state:
+        return
+    state = dict(state)
+    state.pop(_LOCAL_SERVER_STATE_KEY, None)
+    _save_cli_state(state)
+
+
+def _persist_local_server_state(url: str, port: int, pid: int | None) -> None:
+    state = _load_cli_state()
+    state = dict(state)
+    state[_LOCAL_SERVER_STATE_KEY] = {
+        "url": _normalize_url_or_none(url) or url,
+        "port": int(port),
+        "pid": int(pid) if isinstance(pid, int) and pid > 0 else None,
+        "managed_by": _LOCAL_SERVER_MANAGED_MARKER,
+        "started_at": time.time(),
+    }
+    _save_cli_state(state)
+
+
+def _get_cached_local_server_url() -> str | None:
+    entry = _cli_state_local_server()
+    if not entry:
+        return None
+    if entry.get("managed_by") != _LOCAL_SERVER_MANAGED_MARKER:
+        return None
+    url = _normalize_url_or_none(entry.get("url"))
+    if not url:
+        _clear_local_server_state()
+        return None
+    pid = entry.get("pid")
+    if isinstance(pid, int) and pid > 0 and not _is_pid_running(pid):
+        _clear_local_server_state()
+        return None
+    return url
+
+
+def _resolve_backend_target(ctx: click.Context) -> BackendTargetResolution:
+    opts = _get_opts(ctx)
+
+    explicit_server_url = opts.get("server_url")
+    if isinstance(explicit_server_url, str) and explicit_server_url.strip() and opts.get("backend_cli_url_explicit"):
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(explicit_server_url) or explicit_server_url.strip(),
+            source="explicit_cli_url",
+            explicit_cli=True,
+        )
+
+    if opts.get("backend_host_explicit") or opts.get("backend_port_explicit"):
+        host = str(opts.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+        try:
+            port = int(opts.get("port") or 8080)
+        except Exception:
+            port = 8080
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+            source="explicit_cli_host_port",
+            explicit_cli=True,
+        )
+
+    env_url = _env_value(_BACKEND_ENV_URL_KEYS)
+    if env_url:
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(env_url) or env_url,
+            source="env_url",
+            env_provided=True,
+        )
+
+    env_host = _env_value(_BACKEND_ENV_HOST_KEYS)
+    env_port_raw = _env_value(_BACKEND_ENV_PORT_KEYS)
+    if env_host or env_port_raw is not None:
+        port = _parse_env_port(_BACKEND_ENV_PORT_KEYS, 8080)
+        host = env_host or "127.0.0.1"
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+            source="env_host_port",
+            env_provided=True,
+        )
+
+    cached_local_url = _get_cached_local_server_url()
+    if cached_local_url:
+        return BackendTargetResolution(
+            url=cached_local_url,
+            source="cached_local_server",
+            cached_local=True,
+        )
+
+    host = str(opts.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        port = int(opts.get("port") or 8080)
+    except Exception:
+        port = 8080
+    return BackendTargetResolution(
+        url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+        source="implicit_default",
+    )
+
+
+def _should_attempt_local_recovery(ctx: click.Context) -> bool:
+    opts = _get_opts(ctx)
+    return not bool(opts.get("backend_cli_explicit"))
+
+
+def _local_server_log_path() -> Path:
+    state_path = _cli_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    return state_path.parent / "local_server.log"
+
+
+def _local_server_port_candidates() -> list[int]:
+    candidates: list[int] = []
+    entry = _cli_state_local_server()
+    if entry:
+        port = entry.get("port")
+        if isinstance(port, int) and port > 0:
+            candidates.append(int(port))
+    if 8080 not in candidates:
+        candidates.append(8080)
+    free_port = _find_free_local_port()
+    if free_port not in candidates:
+        candidates.append(free_port)
+    return candidates
+
+
+async def _probe_backend_health(url: str) -> bool:
+    normalized = _normalize_url_or_none(url)
+    if not normalized:
+        return False
+    parsed = urlparse(normalized)
+    if not parsed.scheme or not parsed.hostname or parsed.port is None:
+        return False
+    health_url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}/health"
+    try:
+        async with AsyncClient(timeout=Timeout(_LOCAL_SERVER_PROBE_TIMEOUT_S)) as client:
+            response = await client.get(health_url)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+async def _wait_for_backend_health(url: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if await _probe_backend_health(url):
+            return True
+        await asyncio.sleep(_LOCAL_SERVER_POLL_INTERVAL_S)
+    return False
+
+
+def _spawn_local_server_process(port: int, ctx: click.Context) -> subprocess.Popen[str]:
+    opts = _get_opts(ctx)
+    env = os.environ.copy()
+    if isinstance(opts.get("local_project_path"), str) and opts.get("local_project_path"):
+        env["AGENT_DECOMPILE_PROJECT_PATH"] = str(opts["local_project_path"])
+    if isinstance(opts.get("local_project_name"), str) and opts.get("local_project_name"):
+        env["AGENT_DECOMPILE_PROJECT_NAME"] = str(opts["local_project_name"])
+    env["PYTHONUNBUFFERED"] = "1"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "agentdecompile_cli.server",
+        "-t",
+        "streamable-http",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+
+    log_file = _local_server_log_path().open("a", encoding="utf-8")
+    creationflags = 0
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(Path.cwd()),
+        "env": env,
+        "stdout": log_file,
+        "stderr": log_file,
+        "stdin": subprocess.DEVNULL,
+        "text": True,
+    }
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(cmd, **popen_kwargs)
+    finally:
+        log_file.close()
+    return process
+
+
+async def _ensure_local_server_url(ctx: click.Context, reason: str) -> str | None:
+    cached_url = _get_cached_local_server_url()
+    if cached_url and await _probe_backend_health(cached_url):
+        click.echo(f"Reusing cached local AgentDecompile server at {cached_url}", err=True)
+        return cached_url
+    if cached_url is not None and cached_url.strip():
+        _clear_local_server_state()
+
+    for port in _local_server_port_candidates():
+        if not _is_tcp_port_available(port):
+            candidate_url = _normalize_url_or_none(f"http://127.0.0.1:{port}") or f"http://127.0.0.1:{port}"
+            if await _probe_backend_health(candidate_url):
+                _persist_local_server_state(candidate_url, port, None)
+                click.echo(f"Reusing local AgentDecompile server at {candidate_url}", err=True)
+                return candidate_url
+            continue
+
+        click.echo(f"Starting local AgentDecompile server on http://127.0.0.1:{port} ({reason})", err=True)
+        process = _spawn_local_server_process(port, ctx)
+        candidate_url = _normalize_url_or_none(f"http://127.0.0.1:{port}") or f"http://127.0.0.1:{port}"
+        if await _wait_for_backend_health(candidate_url, _LOCAL_SERVER_READY_TIMEOUT_S):
+            _persist_local_server_state(candidate_url, port, process.pid)
+            return candidate_url
+        if process.poll() is not None:
+            continue
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Local mode helpers
 # ---------------------------------------------------------------------------
@@ -202,7 +529,7 @@ def _get_local_backend(ctx: click.Context) -> Any:
     return _local_backend_instance
 
 
-def _client(ctx: click.Context) -> Any:
+def _client(ctx: click.Context, url_override: str | None = None) -> Any:
     """Create an MCP HTTP client connected to the backend.
 
     Reads server host/port/url from CLI context options and creates
@@ -215,15 +542,12 @@ def _client(ctx: click.Context) -> Any:
     """
     logger.debug("diag.enter %s", "cli.py:_client")
     opts = _get_opts(ctx)
-    url = resolve_backend_url(
-        opts.get("server_url"),
-        opts.get("host"),
-        opts.get("port"),
-    )
+    resolution = _resolve_backend_target(ctx)
+    url = _normalize_url_or_none(url_override) or resolution.url
     extra_headers = dict(_shared_request_headers(ctx) or {})
     # Send persisted session id so second invocation reuses same server session (two-command persistence)
     state = _load_cli_state()
-    scope = _cache_scope_key(ctx)
+    scope = _cache_scope_key(ctx, url_override=url)
     backends = state.get("backends") if isinstance(state, dict) else None
     if isinstance(backends, dict):
         entry = backends.get(scope)
@@ -249,13 +573,6 @@ def _fmt(ctx: click.Context) -> str:
     """
     logger.debug("diag.enter %s", "cli.py:_fmt")
     return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
-
-
-def _cookie_file_path(ctx: click.Context) -> Path | None:
-    """Get the path to the cookie file from CLI context options."""
-    logger.debug("diag.enter %s", "cli.py:_cookie_file_path")
-    opts = _get_opts(ctx)
-    return opts.get("cookie_file")
 
 
 def _extract_text(result: Any) -> str | None:
@@ -311,24 +628,24 @@ def _parse_json(result: Any) -> dict | list | None:
     return parsed
 
 
-def _ensure_count_in_project_file_results(data: Any) -> Any:
+def _ensure_count_in_project_file_results(data: dict[str, Any] | Any) -> Any:
     """Backfill `count` for list-project-files style payloads when backend omits it."""
     logger.debug("diag.enter %s", "cli.py:_ensure_count_in_project_file_results")
     if not isinstance(data, dict):
         return data
 
-    files = data.get("files")
+    files: list[Any] | Any = data.get("files")
     if "count" not in data and isinstance(files, list):
         data["count"] = len(files)
 
-    content = data.get("content")
+    content: list[Any] | Any = data.get("content")
     if isinstance(content, list):
         for item in content:
             if not isinstance(item, dict):
                 continue
-            nested = _safe_json_loads(item.get("text"))
+            nested: dict[str, Any] | None = _safe_json_loads(item.get("text"))
             if isinstance(nested, dict):
-                nested_files = nested.get("files")
+                nested_files: list[Any] | Any = nested.get("files")
                 if "count" not in nested and isinstance(nested_files, list):
                     nested["count"] = len(nested_files)
                     item["text"] = json.dumps(nested)
@@ -435,8 +752,7 @@ def _build_svr_admin_payload(
 
 def _backend_host_for_recovery(ctx: click.Context) -> str:
     logger.debug("diag.enter %s", "cli.py:_backend_host_for_recovery")
-    opts: dict[str, Any] = _get_opts(ctx)
-    backend_url: str | None = resolve_backend_url(opts.get("server_url"), opts.get("host"), opts.get("port"))
+    backend_url = _resolve_backend_target(ctx).url
     if backend_url:
         try:
             parsed = urlparse(backend_url)
@@ -444,7 +760,7 @@ def _backend_host_for_recovery(ctx: click.Context) -> str:
                 return parsed.hostname
         except Exception:
             pass
-    return str(opts.get("host", "127.0.0.1"))
+    return "127.0.0.1"
 
 
 def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
@@ -789,17 +1105,17 @@ def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, 
 
 
 async def _call(ctx: click.Context, tool: str | Tool, **kwargs: Any) -> None:
-    """Call tool on the remote MCP server via HTTP client.
+    """Call tool through the preferred backend for this CLI invocation.
 
-    The CLI is a pure HTTP client — it NEVER executes tools locally.  All tool
-    calls are forwarded to the MCP server (which runs with PyGhidra and has
-    access to Ghidra APIs).
+    The CLI prefers an MCP HTTP backend, but when no explicit backend was
+    requested it can auto-start a local AgentDecompile server or fall back to
+    in-process local execution.
 
     Workflow:
     1. Clean payload (remove None values)
     2. Resolve tool name and arguments through registry
     3. Cache explicit program paths for future commands
-    4. Make HTTP call to MCP server
+    4. Make an HTTP call to MCP server, or recover to local execution when allowed
     5. Auto-recover from "no program loaded" errors
     6. Format and display results
 
@@ -864,6 +1180,75 @@ async def _call_raw(
     return await _execute_tool_call(ctx, call_tool_snake, prepared_payload, client_override)
 
 
+async def _call_tool_locally(
+    ctx: click.Context,
+    call_tool_name: str,
+    payload: dict[str, Any],
+) -> Any:
+    backend = _get_local_backend(ctx)
+    try:
+        await backend.initialize()
+        return await backend.call_tool(call_tool_name, payload)
+    except (ImportError, EnvironmentError) as exc:
+        click.echo(f"Error (local mode): {exc}", err=True)
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(f"Error calling tool '{call_tool_name}' (local mode): {exc}", err=True)
+        sys.exit(1)
+
+
+async def _run_tool_with_connected_client(
+    ctx: click.Context,
+    client: Any,
+    call_tool_name: str,
+    payload: dict[str, Any],
+) -> Any:
+    bootstrap = await _maybe_bootstrap_shared_listing(ctx, client, call_tool_name, payload)
+    if bootstrap is not None:
+        return bootstrap
+    preopen_error = await _maybe_preopen_requested_program(ctx, client, call_tool_name, payload)
+    if preopen_error is not None:
+        return preopen_error
+    first = await client.call_tool(call_tool_name, payload)
+    result = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
+    _persist_session_id(ctx, client)
+    return result
+
+
+async def _attempt_local_backend_recovery(
+    ctx: click.Context,
+    call_tool_name: str,
+    payload: dict[str, Any],
+    original_error: BaseException,
+) -> Any | None:
+    resolution = _resolve_backend_target(ctx)
+    if resolution.explicit_cli:
+        return None
+
+    if resolution.env_provided:
+        click.echo(f"Ignoring unavailable MCP server from environment: {resolution.url}", err=True)
+    elif resolution.source == "implicit_default":
+        click.echo(f"No reachable AgentDecompile server at default local target: {resolution.url}", err=True)
+    elif resolution.source == "cached_local_server":
+        click.echo(f"Cached local AgentDecompile server is unavailable: {resolution.url}", err=True)
+        _clear_local_server_state()
+
+    local_url = await _ensure_local_server_url(ctx, "auto-start for CLI fallback")
+    if local_url:
+        try:
+            client = _client(ctx, url_override=local_url)
+            async with client:
+                return await _run_tool_with_connected_client(ctx, client, call_tool_name, payload)
+        except Exception as exc:
+            click.echo(f"Local AgentDecompile server startup did not produce a usable backend: {exc}", err=True)
+
+    click.echo(
+        f"Falling back to in-process local execution after backend connection failure: {original_error}",
+        err=True,
+    )
+    return await _call_tool_locally(ctx, call_tool_name, payload)
+
+
 async def _execute_tool_call(
     ctx: click.Context,
     call_tool_name: str,
@@ -875,48 +1260,22 @@ async def _execute_tool_call(
 
     # --- Local mode: call ToolProviderManager in-process, no MCP transport ---
     if _is_local_mode(ctx) and client_override is None:
-        backend = _get_local_backend(ctx)
-        try:
-            # initialize() is idempotent — no-op if already initialized.
-            # Do NOT use "async with backend" here because __aexit__ calls close(),
-            # which would destroy the Ghidra project between consecutive tool calls.
-            await backend.initialize()
-            return await backend.call_tool(call_tool_name, payload)
-        except (ImportError, EnvironmentError) as exc:
-            click.echo(f"Error (local mode): {exc}", err=True)
-            sys.exit(1)
-        except Exception as exc:
-            click.echo(f"Error calling tool '{call_tool_name}' (local mode): {exc}", err=True)
-            sys.exit(1)
+        return await _call_tool_locally(ctx, call_tool_name, payload)
 
     from agentdecompile_cli.bridge import ClientError, ServerNotRunningError  # noqa: PLC0415
 
     try:
         if client_override is not None:
-            bootstrap = await _maybe_bootstrap_shared_listing(ctx, client_override, call_tool_name, payload)
-            if bootstrap is not None:
-                return bootstrap
-            preopen_error = await _maybe_preopen_requested_program(ctx, client_override, call_tool_name, payload)
-            if preopen_error is not None:
-                return preopen_error
-            first = await client_override.call_tool(call_tool_name, payload)
-            result = await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
-            _persist_session_id(ctx, client_override)
-            return result
+            return await _run_tool_with_connected_client(ctx, client_override, call_tool_name, payload)
 
         client = _client(ctx)
         async with client:
-            bootstrap = await _maybe_bootstrap_shared_listing(ctx, client, call_tool_name, payload)
-            if bootstrap is not None:
-                return bootstrap
-            preopen_error = await _maybe_preopen_requested_program(ctx, client, call_tool_name, payload)
-            if preopen_error is not None:
-                return preopen_error
-            first = await client.call_tool(call_tool_name, payload)
-            result = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
-            _persist_session_id(ctx, client)
-            return result
+            return await _run_tool_with_connected_client(ctx, client, call_tool_name, payload)
     except ServerNotRunningError as exc:
+        if client_override is None and _should_attempt_local_recovery(ctx):
+            recovered = await _attempt_local_backend_recovery(ctx, call_tool_name, payload, exc)
+            if recovered is not None:
+                return recovered
         click.echo(str(exc), err=True)
         sys.exit(1)
     except Exception as exc:
@@ -1056,20 +1415,17 @@ def _save_cli_state(data: dict[str, Any]) -> None:
         return
 
 
-def _cache_scope_key(ctx: click.Context) -> str:
+def _cache_scope_key(ctx: click.Context, url_override: str | None = None) -> str:
     logger.debug("diag.enter %s", "cli.py:_cache_scope_key")
-    opts = _get_opts(ctx)
-    url = resolve_backend_url(
-        opts.get("server_url"),
-        opts.get("host"),
-        opts.get("port"),
-    )
+    url = _normalize_url_or_none(url_override)
+    if not url:
+        url = _resolve_backend_target(ctx).url
     if url:
         try:
             return normalize_backend_url(url)
         except Exception:
             return url.rstrip("/")
-    return f"http://{opts.get('host', '127.0.0.1')}:{opts.get('port', 8080)}"
+    return "http://127.0.0.1:8080"
 
 
 def _extract_program_argument(payload: dict[str, Any]) -> str | None:
@@ -1409,24 +1765,24 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
 def _create_dynamic_commands(cli_group: click.Group) -> None:
     """Dynamically create CLI commands from the tool registry."""
     logger.debug("diag.enter %s", "cli.py:_create_dynamic_commands")
-    advertised_set = set(ADVERTISED_TOOLS)
+    advertised_set: set[str] = set(ADVERTISED_TOOLS)
     for tool_name in TOOLS:
-        tool_params = _supported_cli_tool_params(tool_name)
-        snake_params = [to_snake_case(param) for param in tool_params]
-        params_help = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
-        command_help = f"Call `{tool_name}`. Parameters: {params_help}"
+        tool_params: list[str] = _supported_cli_tool_params(tool_name)
+        snake_params: list[str] = [to_snake_case(param) for param in tool_params]
+        params_help: str = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
+        command_help: str = f"Call `{tool_name}`. Parameters: {params_help}"
 
         # Create parameter options for this tool
         def tool_command(_tool_name: str = tool_name, **kwargs: Any) -> None:
             """Auto-generated MCP tool command."""
             ctx = click.get_current_context()
             # Remove None values and format arguments
-            args = {k: v for k, v in kwargs.items() if v is not None}
+            args: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
             # For open, merge global Ghidra server options so --ghidra-server-username etc. are sent
             if _tool_name == Tool.OPEN.value:
-                opts = _get_opts(ctx)
+                opts: dict[str, Any] = _get_opts(ctx)
                 if not args.get("serverUsername") and not args.get("server_username"):
-                    v = opts.get("ghidra_server_username") or opts.get("server_username")
+                    v: Any = opts.get("ghidra_server_username") or opts.get("server_username")
                     if v:
                         args["serverUsername"] = str(v).strip()
                 if not args.get("serverPassword") and not args.get("server_password"):
@@ -1451,7 +1807,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             # Call the tool using the unified registry
             async def _run():
                 try:
-                    result = await _call(ctx, _tool_name, **args)
+                    result: Any = await _call(ctx, _tool_name, **args)
                     if result:
                         click.echo(result)
                 except Exception as e:
@@ -1461,8 +1817,8 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 
         # Add options to the command function
         for param in tool_params:
-            snake_param = to_snake_case(param)
-            option_name = f"--{snake_param}"
+            snake_param: str = to_snake_case(param)
+            option_name: str = f"--{snake_param}"
 
             # Determine option type based on parameter name
             if "path" in param.lower() or "file" in param.lower():
@@ -1475,7 +1831,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
                 option_type = str
 
             # Check if parameter is required (programPath resolves from session / env when omitted)
-            required = param in ["addressOrSymbol", "action", "mode"]
+            required: bool = param in ["addressOrSymbol", "action", "mode"]
 
             # Add the option decorator
             tool_command = click.option(
@@ -1500,7 +1856,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 def _tool_aliases_for(canonical_tool: str) -> list[str]:
     logger.debug("diag.enter %s", "cli.py:_tool_aliases_for")
     aliases: list[str] = [alias for alias, target in NON_ADVERTISED_TOOL_ALIASES.items() if target == canonical_tool]
-    snake_alias = to_snake_case(canonical_tool)
+    snake_alias: str = to_snake_case(canonical_tool)
     if snake_alias != canonical_tool:
         aliases.append(snake_alias)
     return sorted(set(aliases))
@@ -1511,19 +1867,19 @@ _CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS: frozenset[str] = frozenset({"limit", "maxr
 
 def _is_cli_result_limit_param(param: str) -> bool:
     logger.debug("diag.enter %s", "cli.py:_is_cli_result_limit_param")
-    normalized = param.replace("_", "").replace("-", "").lower()
+    normalized: str = param.replace("_", "").replace("-", "").lower()
     return normalized in _CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS
 
 
 def _supported_cli_tool_params(tool_name: str) -> list[str]:
     logger.debug("diag.enter %s", "cli.py:_supported_cli_tool_params")
-    params = get_tool_params(tool_name)
+    params: list[str] = get_tool_params(tool_name)
     return [param for param in params if not _is_cli_result_limit_param(param)]
 
 
 def _tool_signature(tool_name: str) -> str:
     logger.debug("diag.enter %s", "cli.py:_tool_signature")
-    params = _supported_cli_tool_params(tool_name)
+    params: list[str] = _supported_cli_tool_params(tool_name)
     params = [to_snake_case(param) for param in params]
     return " ".join(f"--{param}" for param in params) if params else "(none)"
 
@@ -1658,14 +2014,34 @@ def main(
     logger.debug("diag.enter %s", "cli.py:main")
     _configure_runtime_logging(verbose)
 
-    existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-    effective_server_url = server_url or mcp_server_url or backend_url or mcp_backend_url
-    pp = (cli_default_program_path or "").strip() or None
-    bn = (cli_default_binary_name or "").strip() or None
+    def _cli_explicit(name: str) -> bool:
+        getter = getattr(ctx, "get_parameter_source", None)
+        if getter is None:
+            return False
+        try:
+            source = getter(name)
+        except Exception:
+            return False
+        return str(source).endswith("COMMANDLINE")
+
+    existing_obj: dict[str, Any] = ctx.obj if isinstance(ctx.obj, dict) else {}
+    effective_server_url: str | None = server_url or mcp_server_url or backend_url or mcp_backend_url
+    pp: str | None = (cli_default_program_path or "").strip() or None
+    bn: str | None = (cli_default_binary_name or "").strip() or None
+    backend_cli_url_explicit: bool = any(
+        _cli_explicit(name)
+        for name in ("server_url", "mcp_server_url", "backend_url", "mcp_backend_url")
+    )
+    backend_host_explicit: bool = _cli_explicit("host")
+    backend_port_explicit: bool = _cli_explicit("port")
     ctx.obj = {
         "host": host,
         "port": port,
         "server_url": effective_server_url,
+        "backend_cli_url_explicit": backend_cli_url_explicit,
+        "backend_host_explicit": backend_host_explicit,
+        "backend_port_explicit": backend_port_explicit,
+        "backend_cli_explicit": backend_cli_url_explicit or backend_host_explicit or backend_port_explicit,
         "ghidra_server_host": ghidra_server_host,
         "ghidra_server_port": ghidra_server_port,
         "ghidra_server_username": ghidra_server_username,
@@ -4552,12 +4928,9 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
         _use_local = _is_local_mode(ctx)
-        # In local mode no HTTP client is needed; nullcontext is a no-op wrapper.
-        # client=None routes _call_raw → _execute_tool_call → LocalToolBackend.
-        from contextlib import nullcontext  # noqa: PLC0415
         client = None if _use_local else _client(ctx)
-        _ctx_mgr = nullcontext() if _use_local else client
-        async with _ctx_mgr:
+
+        async def _run_steps(client_override: Any | None) -> None:
             step: dict[str, Any]
             for index, step in enumerate(parsed_steps, start=1):
                 name = step.get("name")
@@ -4620,7 +4993,7 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                             if not prepared_arguments.get("path"):
                                 prepared_arguments["path"] = str(v).strip()
 
-                data = await _call_raw(ctx, name, prepared_arguments, client_override=client)
+                data = await _call_raw(ctx, name, prepared_arguments, client_override=client_override)
                 step_ok = _tool_seq_step_succeeded(data)
                 step_result = {
                     "index": index,
@@ -4633,6 +5006,13 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                 if not step_ok and not continue_on_error:
                     click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
                     sys.exit(1)
+
+        if _use_local:
+            await _run_steps(None)
+        else:
+            assert client is not None
+            async with client:
+                await _run_steps(client)
 
         all_ok = all(step["success"] for step in results)
         click.echo(format_output({"success": all_ok, "steps": results}, _fmt(ctx)))

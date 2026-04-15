@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING, Any
+from threading import Lock, RLock
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
@@ -17,6 +19,60 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DECOMPILER_LOCKS_GUARD = Lock()
+_DECOMPILER_LOCKS: dict[int, RLock] = {}
+
+
+@dataclass
+class DecompilerLease:
+    """Tracks a borrowed decompiler interface and how it should be released."""
+
+    decompiler: GhidraDecompInterface
+    owns_dispose: bool
+    reused_session: bool
+    _release: Callable[[], None] | None = None
+
+    def close(self) -> None:
+        """Dispose or unlock the leased interface."""
+        dispose_error: Exception | None = None
+        try:
+            if self.owns_dispose:
+                self.decompiler.dispose()
+        except Exception as exc:
+            dispose_error = exc
+        finally:
+            release = self._release
+            self._release = None
+            if release is not None:
+                release()
+        if dispose_error is not None:
+            raise dispose_error
+
+    def __enter__(self) -> DecompilerLease:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+
+def _get_decompiler_lock(decompiler: GhidraDecompInterface) -> RLock:
+    key = id(decompiler)
+    with _DECOMPILER_LOCKS_GUARD:
+        lock = _DECOMPILER_LOCKS.get(key)
+        if lock is None:
+            lock = RLock()
+            _DECOMPILER_LOCKS[key] = lock
+        return lock
+
+
+def _configure_decompiler_for_program(decompiler: GhidraDecompInterface, program: GhidraProgram) -> None:
+    from ghidra.app.decompiler import DecompileOptions  # pyright: ignore[reportMissingModuleSource]
+
+    prog_options = DecompileOptions()
+    prog_options.grabFromProgram(program)
+    prog_options.setMaxPayloadMBytes(100)
+    decompiler.setOptions(prog_options)
+
 
 def programs_same_decompiler_context(bound: GhidraProgram | None, program: GhidraProgram | None) -> bool:
     """True when ``bound`` is the same Ghidra program as ``program`` for DecompInterface reuse."""
@@ -26,15 +82,7 @@ def programs_same_decompiler_context(bound: GhidraProgram | None, program: Ghidr
     if bound is program:
         return True
     try:
-        if bound == program:
-            return True
-    except Exception:
-        pass
-    try:
-        df_a = bound.getDomainFile()
-        df_b = program.getDomainFile()
-        if df_a is not None and df_b is not None:
-            return str(df_a.getPathname()) == str(df_b.getPathname())
+        return bool(bound == program)
     except Exception:
         pass
     return False
@@ -53,17 +101,53 @@ def resolve_decompiler_for_program(session_decomp: GhidraDecompInterface | None,
         except Exception:
             bound = None
         if programs_same_decompiler_context(bound, program):
-            from ghidra.app.decompiler import DecompileOptions  # pyright: ignore[reportMissingModuleSource]
-
             try:
-                options = DecompileOptions()
-                options.grabFromProgram(program)
-                session_decomp.setOptions(options)
+                _configure_decompiler_for_program(session_decomp, program)
             except Exception:
                 pass
             return session_decomp, False
     decomp = open_decompiler_for_program(program)
     return decomp, True
+
+
+def acquire_decompiler_for_program(session_decomp: GhidraDecompInterface | None, program: GhidraProgram) -> DecompilerLease:
+    """Return a leased decompiler for ``program``.
+
+    Shared session decompilers are serialized with a re-entrant lock so concurrent
+    requests do not race the same native DecompInterface. When the session
+    decompiler is not already bound to the exact ``Program`` object, a fresh
+    ephemeral interface is opened instead.
+    """
+    logger.debug("diag.enter %s", "mcp_utils/decompiler_util.py:acquire_decompiler_for_program")
+    if session_decomp is not None:
+        lock = _get_decompiler_lock(session_decomp)
+        lock.acquire()
+        try:
+            try:
+                bound = session_decomp.getProgram()
+            except Exception:
+                bound = None
+            if programs_same_decompiler_context(bound, program):
+                try:
+                    _configure_decompiler_for_program(session_decomp, program)
+                except Exception:
+                    pass
+                return DecompilerLease(
+                    decompiler=session_decomp,
+                    owns_dispose=False,
+                    reused_session=True,
+                    _release=lock.release,
+                )
+        except Exception:
+            lock.release()
+            raise
+        lock.release()
+
+    return DecompilerLease(
+        decompiler=open_decompiler_for_program(program),
+        owns_dispose=True,
+        reused_session=False,
+    )
 
 
 def get_decompiled_function_from_results(decompile_results: GhidraDecompileResults | None) -> GhidraDecompiledFunction | None:
@@ -117,5 +201,16 @@ def open_decompiler_for_program(program: GhidraProgram) -> GhidraDecompInterface
     prog_options.setMaxPayloadMBytes(100)
     decomp = DecompInterface()
     decomp.setOptions(prog_options)
-    decomp.openProgram(program)
+    if not decomp.openProgram(program):
+        err_msg = ""
+        try:
+            err_msg = decomp.getLastMessage() or ""
+        except Exception:
+            err_msg = ""
+        try:
+            decomp.dispose()
+        except Exception:
+            pass
+        detail = err_msg or "no error message from DecompInterface"
+        raise RuntimeError(f"Failed to open DecompInterface for program: {detail}")
     return decomp
