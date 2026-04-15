@@ -204,15 +204,13 @@ class BookmarkToolProvider(ToolProvider):
                 bm_mgr.setBookmark(address, bm_type, category, comment)
 
             self._run_program_transaction(program, "set-bookmark", _set_bookmark)
-            return (
-                {
-                    "success": True,
-                    "action": "set",
-                    "address": str(address),
-                    "type": bm_type,
-                    "category": category,
-                },
-            )  # pyright: ignore[reportReturnType]
+            return {
+                "success": True,
+                "action": "set",
+                "address": str(address),
+                "type": bm_type,
+                "category": category,
+            }
         except Exception:
             return {
                 "success": True,

@@ -27,6 +27,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.mcp_server.providers._collectors import collect_function_data_flow
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
@@ -116,12 +117,23 @@ class DataFlowToolProvider(ToolProvider):
 
         direction = self._get_str(args, "direction", "mode", default="backward")
         max_ops = self._get_int(args, "maxops", default=500)
+        max_depth = self._get_int(args, "maxdepth", default=10)
         timeout_s = self._get_int(args, "timeout", default=30)
 
+        assert self.program_info is not None, "program_info should be set by _require_program()"
         program = self.program_info.program
-        addr = self._resolve_address(addr_str, program=program)
-
+        assert program is not None, "program should be loaded after _require_program()"
         fm = self._get_function_manager(program)
+        assert fm is not None, "function manager should be available for loaded program"
+        addr = self._resolve_address(addr_str, program=program)
+        func = None
+        if addr is not None:
+            func = fm.getFunctionContaining(addr)
+        if func is None:
+            func = self._resolve_function(addr_str, program=program)
+            if func is not None:
+                addr = func.getEntryPoint()
+        assert addr is not None, "addr should be set after resolving address or function"
         func = fm.getFunctionContaining(addr)
         if func is None:
             raise ValueError(f"No function found containing {addr_str}")
@@ -139,108 +151,36 @@ class DataFlowToolProvider(ToolProvider):
             addr=addr,
             func=func,
             max_ops=max_ops,
+            max_depth=max_depth,
             timeout_s=timeout_s,
         )
 
-    async def _handle_backward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_backward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, max_depth: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_backward")
-        return await self._analyze_data_flow("backward", program, addr, func, max_ops, timeout_s)
+        return await self._analyze_data_flow("backward", program, addr, func, max_ops, max_depth, timeout_s)
 
-    async def _handle_forward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_forward(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, max_depth: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_forward")
-        return await self._analyze_data_flow("forward", program, addr, func, max_ops, timeout_s)
+        return await self._analyze_data_flow("forward", program, addr, func, max_ops, max_depth, timeout_s)
 
-    async def _handle_variable_accesses(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _handle_variable_accesses(self, args: dict[str, Any], program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, max_depth: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._handle_variable_accesses")
-        return await self._analyze_data_flow("variable_accesses", program, addr, func, max_ops, timeout_s)
+        return await self._analyze_data_flow("variable_accesses", program, addr, func, max_ops, max_depth, timeout_s)
 
-    async def _analyze_data_flow(self, direction: str, program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, timeout_s: int) -> list[types.TextContent]:
+    async def _analyze_data_flow(self, direction: str, program: GhidraProgram, addr: GhidraAddress, func: GhidraFunction, max_ops: int, max_depth: int, timeout_s: int) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/dataflow.py:DataFlowToolProvider._analyze_data_flow")
-        decomp = None
         try:
-            from ghidra.app.decompiler import DecompInterface
-            from ghidra.util.task import ConsoleTaskMonitor
-
-            decomp = DecompInterface()
-            decomp.openProgram(program)
-            result = decomp.decompileFunction(func, timeout_s, ConsoleTaskMonitor())
-
-            if result is None or not result.decompileCompleted():
-                return self._empty_response(
-                    direction,
-                    addr,
-                    func_name=func.getName(),
-                    note="Decompilation failed or timed out",
-                )
-
-            hfunc = result.getHighFunction()
-            if hfunc is None:
-                return self._empty_response(
-                    direction,
-                    addr,
-                    func_name=func.getName(),
-                    note="No high-level function available",
-                )
-
-            if direction in ("variable_accesses", "variableaccesses"):
-                # Gather variable info from high function
-                variables = []
-                for sym in hfunc.getLocalSymbolMap().getSymbols():
-                    hv = sym.getHighVariable()
-                    if hv:
-                        variables.append(
-                            {
-                                "name": sym.getName(),
-                                "dataType": str(hv.getDataType()),
-                                "storage": str(hv.getRepresentative()),
-                                "size": hv.getSize(),
-                            },
-                        )
-                return create_success_response(
-                    {
-                        "direction": direction,
-                        "address": str(addr),
-                        "function": func.getName(),
-                        "variables": variables,
-                        "count": len(variables),
-                    },
-                )
-
-            # backward/forward: collect P-code operations
-            pcode_ops = []
-            op_iter = hfunc.getPcodeOps()
-            count = 0
-            while op_iter.hasNext() and count < max_ops:
-                op = op_iter.next()
-                pcode_ops.append(
-                    {
-                        "address": str(op.getSeqnum().getTarget()),
-                        "mnemonic": str(op.getMnemonic()),
-                        "output": str(op.getOutput()) if op.getOutput() else None,
-                        "inputs": [str(inp) for inp in op.getInputs()],
-                    },
-                )
-                count += 1
-
-            return create_success_response(
-                {
-                    "direction": direction,
-                    "address": str(addr),
-                    "function": func.getName(),
-                    "pcode": pcode_ops,
-                    "count": len(pcode_ops),
-                    "hasMore": count >= max_ops,
-                },
+            payload = collect_function_data_flow(
+                program,
+                func,
+                addr,
+                direction=direction,
+                max_ops=max_ops,
+                max_depth=max_depth,
+                timeout_s=timeout_s,
+                session_decompiler=getattr(self.program_info, "decompiler", None) if self.program_info is not None else None,
             )
-
-        except ImportError:
-            return self._empty_response(direction, addr, note="DecompInterface not available in this environment")
+            return create_success_response(payload)
         except Exception as e:
             logger.error("Data flow analysis error: %s", e)
             return self._empty_response(direction, addr, error=str(e))
-        finally:
-            if decomp is not None:
-                try:
-                    decomp.dispose()
-                except Exception:
-                    pass

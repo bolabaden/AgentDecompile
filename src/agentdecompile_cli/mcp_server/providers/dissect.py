@@ -8,9 +8,9 @@ in a single MCP tool call. MCP tool name is get-function; this module implements
 
 from __future__ import annotations
 
-from itertools import islice
 import logging
 
+from itertools import islice
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Bookmark as GhidraBookmark,
         BookmarkManager as GhidraBookmarkManager,
+        CodeUnit as GhidraCodeUnit,
         Function as GhidraFunction,
         Program as GhidraProgram,
     )
@@ -33,12 +34,13 @@ if TYPE_CHECKING:
 
 from mcp import types
 
+from agentdecompile_cli.mcp_server.constants import DEFAULT_TIMEOUT_SECONDS  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_function_comments,
+    collect_function_data_flow,
     collect_function_tags,
     make_task_monitor,
 )
-from agentdecompile_cli.mcp_server.constants import DEFAULT_TIMEOUT_SECONDS  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
@@ -90,6 +92,40 @@ class GetFunctionAioToolProvider(ToolProvider):
                         "functionIdentifier": {
                             "type": "string",
                             "description": "Another alternative for the function identifier.",
+                        },
+                        "functions": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "Compatibility input from legacy get-functions. If multiple identifiers are provided, get-function uses the first one.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "description": "Compatibility selector accepted from legacy decompile/get-functions/get-call-graph calls. get-function still returns the unified full view.",
+                        },
+                        "view": {
+                            "type": "string",
+                            "description": "Compatibility alias for legacy get-functions view selection. get-function still returns the unified full view.",
+                        },
+                        "dataFlowDirection": {
+                            "type": "string",
+                            "enum": ["backward", "forward", "variable_accesses"],
+                            "description": "Optional function-local data-flow slice to include in the response.",
+                        },
+                        "dataFlowAddress": {
+                            "type": "string",
+                            "description": "Address or symbol inside the target function to seed data-flow from. Defaults to the function entry point.",
+                        },
+                        "dataFlowMaxOps": {
+                            "type": "integer",
+                            "default": 150,
+                            "description": "Maximum number of P-code operations to include in the data-flow section.",
+                        },
+                        "dataFlowMaxDepth": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Maximum dependency depth for the data-flow slice.",
                         },
                         "timeout": {
                             "type": "integer",
@@ -160,6 +196,18 @@ class GetFunctionAioToolProvider(ToolProvider):
 
         func_id = self._get_address_or_symbol(args)
         if not func_id:
+            function_list = self._get_list(args, "functions") or []
+            if function_list:
+                first_identifier = function_list[0]
+                if isinstance(first_identifier, str) and first_identifier.strip():
+                    func_id = first_identifier.strip()
+        if not func_id:
+            functions_csv = self._get_str(args, "functions")
+            if functions_csv:
+                first_identifier = functions_csv.split(",", 1)[0].strip()
+                if first_identifier:
+                    func_id = first_identifier
+        if not func_id:
             func_id = self._get_str(args, "function", "functionidentifier", "identifier", "name", "symbol")
         if not func_id:
             raise ValueError("function, addressOrSymbol, or functionIdentifier required")
@@ -169,13 +217,20 @@ class GetFunctionAioToolProvider(ToolProvider):
         max_refs = self._get_int(args, "maxrefs", "maxreferences", default=200)
         max_callers = self._get_int(args, "maxcallers", default=None)
         max_callees = self._get_int(args, "maxcallees", default=None)
-        caller_depth = self._normalize_non_negative(self._get_int(args, "callerdepth", "relatedcallerdepth", default=2), default=2)
-        callee_depth = self._normalize_non_negative(self._get_int(args, "calleedepth", "relatedcalleedepth", default=2), default=2)
+        data_flow_direction = self._get_str(args, "dataflowdirection", default="")
+        data_flow_address = self._get_str(args, "dataflowaddress", default="")
+        data_flow_max_ops = self._get_int(args, "dataflowmaxops", default=150) or 150
+        data_flow_max_depth = self._normalize_non_negative(self._get_int(args, "dataflowmaxdepth", default=10), default=10)
+        legacy_depth = self._get_int(args, "maxdepth", "depth", default=None)
+        caller_depth = self._normalize_non_negative(self._get_int(args, "callerdepth", "relatedcallerdepth", default=legacy_depth if legacy_depth is not None else 2), default=2)
+        callee_depth = self._normalize_non_negative(self._get_int(args, "calleedepth", "relatedcalleedepth", default=legacy_depth if legacy_depth is not None else 2), default=2)
         caller_branching = self._normalize_non_negative(self._get_int(args, "callerbranching", "relatedcallerbranching", default=3), default=3)
         callee_branching = self._normalize_non_negative(self._get_int(args, "calleebranching", "relatedcalleebranching", default=3), default=3)
-        max_related_callers = self._normalize_non_negative(self._get_int(args, "maxrelatedcallers", "maxcallerdetails", default=9), default=9)
-        max_related_callees = self._normalize_non_negative(self._get_int(args, "maxrelatedcallees", "maxcalleedetails", default=9), default=9)
+        legacy_max_nodes = self._get_int(args, "maxnodes", default=None)
+        max_related_callers = self._normalize_non_negative(self._get_int(args, "maxrelatedcallers", "maxcallerdetails", default=legacy_max_nodes if legacy_max_nodes is not None else 9), default=9)
+        max_related_callees = self._normalize_non_negative(self._get_int(args, "maxrelatedcallees", "maxcalleedetails", default=legacy_max_nodes if legacy_max_nodes is not None else 9), default=9)
 
+        assert self.program_info is not None, "program_info should be set by _require_program()"
         program = self.program_info.program
         if program is None:
             raise ValueError("No program loaded")
@@ -340,6 +395,10 @@ class GetFunctionAioToolProvider(ToolProvider):
             max_refs=max_refs,
             max_callers=max_callers,
             max_callees=max_callees,
+            data_flow_direction=data_flow_direction,
+            data_flow_address=data_flow_address,
+            data_flow_max_ops=data_flow_max_ops,
+            data_flow_max_depth=data_flow_max_depth,
         )
         caller_tree, caller_funcs = self._collect_related_tree(
             target,
@@ -364,6 +423,10 @@ class GetFunctionAioToolProvider(ToolProvider):
                 max_refs=max_refs,
                 max_callers=max_callers,
                 max_callees=max_callees,
+                data_flow_direction="",
+                data_flow_address="",
+                data_flow_max_ops=0,
+                data_flow_max_depth=0,
                 relationship="caller",
                 include_code=False,
             )
@@ -378,6 +441,10 @@ class GetFunctionAioToolProvider(ToolProvider):
                 max_refs=max_refs,
                 max_callers=max_callers,
                 max_callees=max_callees,
+                data_flow_direction="",
+                data_flow_address="",
+                data_flow_max_ops=0,
+                data_flow_max_depth=0,
                 relationship="callee",
                 include_code=False,
             )
@@ -416,6 +483,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             "bookmarks",
             "stackFrame",
             "memoryBlock",
+            "dataFlow",
             "callGraphTree",
             "callerDetails",
             "calleeDetails",
@@ -436,6 +504,10 @@ class GetFunctionAioToolProvider(ToolProvider):
         max_refs: int | None,
         max_callers: int | None,
         max_callees: int | None,
+        data_flow_direction: str,
+        data_flow_address: str,
+        data_flow_max_ops: int,
+        data_flow_max_depth: int,
         relationship: str | None = None,
         include_code: bool = True,
     ) -> dict[str, Any]:
@@ -458,6 +530,27 @@ class GetFunctionAioToolProvider(ToolProvider):
             _decompilation = ""
             _disassembly: dict[str, Any] = {"instructions": [], "count": 0, "truncated": False}
 
+        data_flow: dict[str, Any] | None = None
+        if data_flow_direction:
+            seed_address = entry
+            if data_flow_address:
+                try:
+                    resolved_seed_address = self._resolve_address(data_flow_address, program=program)
+                    if resolved_seed_address is not None:
+                        seed_address = resolved_seed_address
+                except Exception:
+                    seed_address = entry
+            data_flow = collect_function_data_flow(
+                program,
+                func,
+                seed_address,
+                direction=data_flow_direction,
+                max_ops=data_flow_max_ops,
+                max_depth=data_flow_max_depth,
+                timeout_s=timeout or DEFAULT_TIMEOUT_SECONDS,
+                session_decompiler=getattr(self.program_info, "decompiler", None) if self.program_info is not None else None,
+            )
+
         details: dict[str, Any] = {
             "name": func.getName(),
             "address": str(entry),
@@ -477,6 +570,8 @@ class GetFunctionAioToolProvider(ToolProvider):
             "stackFrame": self._collect_stack_frame(func),
             "memoryBlock": self._collect_memory_block(program, entry) or {},
         }
+        if data_flow is not None:
+            details["dataFlow"] = data_flow
         if relationship and relationship.strip():
             details["relationship"] = relationship
         return details
@@ -597,12 +692,13 @@ class GetFunctionAioToolProvider(ToolProvider):
     def _decompile(self, func: GhidraFunction, program: GhidraProgram, timeout: int | None = None) -> str:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._decompile")
         try:
+            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
             from agentdecompile_cli.mcp_utils.decompiler_util import (
                 get_decompiled_function_from_results,
                 open_decompiler_for_program,
                 resolve_decompiler_for_program,
             )
-            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             monitor = ConsoleTaskMonitor()
 
@@ -679,7 +775,7 @@ class GetFunctionAioToolProvider(ToolProvider):
                 instr = it.next()
                 instructions.append(
                     {
-                        "address": str(instr.getAddress()),
+                        "address": str(instr.getAddress()),  # pyright: ignore[reportCallIssue]
                         "mnemonic": str(instr.getMnemonicString()),
                         "operands": str(instr),
                         "bytes": " ".join(f"{b & 0xff:02x}" for b in instr.getBytes()),
@@ -713,7 +809,7 @@ class GetFunctionAioToolProvider(ToolProvider):
             cu_iter = listing.getCodeUnits(body, True)
             while cu_iter.hasNext():
                 cu = cu_iter.next()
-                addr = str(cu.getAddress())
+                addr = str(cu.getAddress())  # pyright: ignore[reportCallIssue]
                 for label, code in _TYPES:
                     val = cu.getComment(code)
                     if val:
@@ -802,8 +898,8 @@ class GetFunctionAioToolProvider(ToolProvider):
         seen: set[tuple[str, str]] = set()
         it = listing.getCodeUnits(body, True)
         while it.hasNext() and (max_refs is None or len(refs) < max_refs):
-            cu = it.next()
-            from_addr = cu.getAddress()
+            cu: GhidraCodeUnit = it.next()
+            from_addr = cu.getAddress()  # pyright: ignore[reportCallIssue]
             for ref in ref_mgr.getReferencesFrom(from_addr):
                 if max_refs is not None and len(refs) >= max_refs:
                     return refs

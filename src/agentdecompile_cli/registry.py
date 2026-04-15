@@ -626,6 +626,19 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "unified-search": Tool.SEARCH_EVERYTHING.value,
 }
 
+CANONICAL_TOOL_FORWARDERS: dict[str, str] = {
+    # get-function
+    "decompilefunction": Tool.GET_FUNCTION.value,
+    "getfunctions": Tool.GET_FUNCTION.value,
+    "getcallgraph": Tool.GET_FUNCTION.value,
+    "gencallgraph": Tool.GET_FUNCTION.value,
+    # search-everything
+    "searchcode": Tool.SEARCH_EVERYTHING.value,
+    "searchconstants": Tool.SEARCH_EVERYTHING.value,
+    "searchstrings": Tool.SEARCH_EVERYTHING.value,
+    "searchsymbols": Tool.SEARCH_EVERYTHING.value,
+}
+
 # GUI-only tools disabled for headless MCP/CLI usage.
 # These tools require a graphical interface and are not available in server/headless mode.
 # They remain defined for completeness but are filtered out of advertised tool lists.
@@ -936,6 +949,7 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
         Tool.DECOMPILE_FUNCTION,
         Tool.GEN_CALLGRAPH,
         Tool.GET_DATA,
+        Tool.GET_CALL_GRAPH,
         Tool.GET_FUNCTIONS,
         Tool.GET_REFERENCES,
         Tool.LIST_EXPORTS,
@@ -951,6 +965,7 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
         Tool.READ_BYTES,
         Tool.REINTEGRATE_FALLBACK_PROJECTS,
         Tool.SEARCH_CODE,
+        Tool.SEARCH_CONSTANTS,
         Tool.SEARCH_STRINGS,
         Tool.SEARCH_SYMBOLS,
         Tool.SUGGEST,
@@ -1033,11 +1048,11 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
 _LEGACY_TOOLS: frozenset[Tool] = _DEFAULT_HIDDEN_TOOLS
 
 _TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
-    Tool.ANALYZE_DATA_FLOW: (Tool.GET_FUNCTION.value, Tool.SEARCH_EVERYTHING.value),
-    Tool.ANALYZE_VTABLES: (Tool.GET_FUNCTION.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.ANALYZE_DATA_FLOW: (Tool.GET_FUNCTION.value,),
     Tool.DECOMPILE_FUNCTION: (Tool.GET_FUNCTION.value,),
     Tool.DELETE_PROJECT_BINARY: (Tool.REMOVE_PROGRAM_BINARY.value,),
-    Tool.GEN_CALLGRAPH: (Tool.GET_CALL_GRAPH.value,),
+    Tool.GEN_CALLGRAPH: (Tool.GET_FUNCTION.value,),
+    Tool.GET_CALL_GRAPH: (Tool.GET_FUNCTION.value,),
     Tool.GET_FUNCTIONS: (Tool.GET_FUNCTION.value,),
     Tool.GET_REFERENCES: (Tool.GET_FUNCTION.value,),
     Tool.LIST_EXPORTS: (Tool.MANAGE_SYMBOLS.value, Tool.SEARCH_EVERYTHING.value),
@@ -1050,6 +1065,7 @@ _TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
     Tool.READ_BYTES: (Tool.INSPECT_MEMORY.value,),
     Tool.REINTEGRATE_FALLBACK_PROJECTS: (Tool.OPEN.value, Tool.SYNC_PROJECT.value),
     Tool.SEARCH_CODE: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_CONSTANTS: (Tool.SEARCH_EVERYTHING.value,),
     Tool.SEARCH_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
     Tool.SEARCH_SYMBOLS: (Tool.SEARCH_EVERYTHING.value,),
     Tool.GET_DATA: (Tool.INSPECT_MEMORY.value,),
@@ -1123,10 +1139,31 @@ def _profiles_for_tool(tool: Tool) -> tuple[ToolSurfaceProfile, ...]:
     return tuple(profiles)
 
 
+def _resolve_canonical_tool_identity(tool_name: Tool | str) -> Tool | None:
+    """Resolve a tool name for metadata without applying legacy call forwarders first."""
+    logger.debug("diag.enter %s", "registry.py:_resolve_canonical_tool_identity")
+    if isinstance(tool_name, Tool):
+        return tool_name
+    raw = str(tool_name or "").strip()
+    if not raw:
+        return None
+    try:
+        return Tool(raw)
+    except ValueError:
+        pass
+    direct = _TOOLS_BY_NORMALIZED.get(normalize_identifier(raw))
+    if direct is not None:
+        try:
+            return Tool(direct)
+        except ValueError:
+            pass
+    return Tool.from_string(raw)
+
+
 def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
     """Return machine-readable metadata for a canonical tool name."""
     logger.debug("diag.enter %s", "registry.py:get_tool_metadata")
-    tool = tool_name if isinstance(tool_name, Tool) else Tool.from_string(tool_name)
+    tool = _resolve_canonical_tool_identity(tool_name)
     if tool is None:
         return None
     return ToolMetadata(
@@ -1141,7 +1178,7 @@ def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
 def get_tool_profiles(tool_name: Tool | str) -> list[str]:
     """Return the advertised profiles a canonical tool belongs to."""
     logger.debug("diag.enter %s", "registry.py:get_tool_profiles")
-    tool = tool_name if isinstance(tool_name, Tool) else Tool.from_string(tool_name)
+    tool = _resolve_canonical_tool_identity(tool_name)
     if tool is None:
         return []
     return [profile.value for profile in _profiles_for_tool(tool)]
@@ -1331,6 +1368,10 @@ def resolve_tool_name(tool_name: str) -> str | None:
             len((tool_name or "").strip()),
         )
         return None
+
+    forwarded: str | None = CANONICAL_TOOL_FORWARDERS.get(norm)
+    if forwarded is not None:
+        return forwarded
 
     direct: str | None = _TOOLS_BY_NORMALIZED.get(norm)
     if direct is not None:
