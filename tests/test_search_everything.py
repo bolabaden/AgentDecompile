@@ -39,6 +39,53 @@ def test_match_text_bounds_fuzzy_similarity_to_small_segments(monkeypatch: pytes
     assert max(compared_lengths) <= search_module._MAX_FUZZY_SEGMENT_CHARS
 
 
+def test_match_text_reuses_prepared_fuzzy_candidates_for_multiple_queries(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+    prepare_calls: list[str] = []
+
+    def fake_prepare(text: str, case_sensitive: bool) -> list[str]:
+        prepare_calls.append(f"{len(text)}:{case_sensitive}")
+        return ["alpha token", "beta token"]
+
+    monkeypatch.setattr(provider, "_prepare_fuzzy_candidates", fake_prepare)
+
+    result = provider._match_text(
+        text="x" * 2000,
+        queries=["alpha token", "beta token"],
+        mode="fuzzy",
+        case_sensitive=False,
+        threshold=0.1,
+        compiled_regexes={},
+    )
+
+    assert result is not None
+    assert len(prepare_calls) == 1
+
+
+def test_match_text_stops_after_perfect_literal_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+    fuzzy_calls: list[str] = []
+
+    def fake_fuzzy(*args: object, **kwargs: object) -> float:
+        fuzzy_calls.append("called")
+        return 0.0
+
+    monkeypatch.setattr(provider, "_fuzzy_similarity", fake_fuzzy)
+
+    result = provider._match_text(
+        text="exact token present",
+        queries=["exact token", "something expensive", "another expensive"],
+        mode="auto",
+        case_sensitive=False,
+        threshold=0.7,
+        compiled_regexes={},
+    )
+
+    assert result is not None
+    assert result["matchType"] == "literal"
+    assert fuzzy_calls == []
+
+
 @pytest.mark.asyncio
 async def test_handle_skips_expensive_default_scopes_after_fast_hits(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = SearchEverythingToolProvider()
@@ -143,6 +190,7 @@ def test_search_decompilation_counts_cancelled_timeouts(monkeypatch: pytest.Monk
 
     results, diagnostic = provider._search_decompilation(
         cast(Any, object()),
+        None,
         ["ReadFieldCResRef"],
         "auto",
         False,
@@ -158,3 +206,79 @@ def test_search_decompilation_counts_cancelled_timeouts(monkeypatch: pytest.Monk
     assert diagnostic["timedOutCount"] == 2
     assert diagnostic["cancelledCount"] == 2
     assert diagnostic["failedCount"] == 2
+
+
+def test_search_decompilation_prefers_target_program_info_decompiler(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+
+    class FakeFunctionManager:
+        def getFunctions(self, _forward: bool):
+            return []
+
+    class FakeCachedDecompiler:
+        pass
+
+    class FakeProgramInfo:
+        def __init__(self) -> None:
+            self.decompiler = FakeCachedDecompiler()
+            self.get_decompiler_calls = 0
+
+        def get_decompiler(self) -> FakeCachedDecompiler:
+            self.get_decompiler_calls += 1
+            return self.decompiler
+
+    class FakeLease:
+        def __init__(self, decompiler: object) -> None:
+            self.decompiler = decompiler
+            self.reused_session = True
+
+        def __enter__(self) -> FakeLease:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    fake_info = FakeProgramInfo()
+    provider.program_info = cast(Any, SimpleNamespace(decompiler=None))
+    monkeypatch.setattr(provider, "_get_function_manager", lambda _program: FakeFunctionManager())
+
+    fake_ghidra = ModuleType("ghidra")
+    fake_ghidra_util = ModuleType("ghidra.util")
+    fake_ghidra_task = ModuleType("ghidra.util.task")
+    setattr(fake_ghidra_task, "ConsoleTaskMonitor", object)
+    monkeypatch.setitem(sys.modules, "ghidra", fake_ghidra)
+    monkeypatch.setitem(sys.modules, "ghidra.util", fake_ghidra_util)
+    monkeypatch.setitem(sys.modules, "ghidra.util.task", fake_ghidra_task)
+
+    seen_session_decompilers: list[object] = []
+
+    def fake_acquire(session_decompiler: object, _program: object) -> FakeLease:
+        seen_session_decompilers.append(session_decompiler)
+        return FakeLease(session_decompiler)
+
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decompiler_util.acquire_decompiler_for_program",
+        fake_acquire,
+    )
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decompiler_util.get_decompiled_function_from_results",
+        lambda _result: None,
+    )
+
+    results, diagnostic = provider._search_decompilation(
+        cast(Any, object()),
+        cast(Any, fake_info),
+        ["ReadFieldCResRef"],
+        "auto",
+        False,
+        0.7,
+        {},
+        10,
+        10,
+        1,
+    )
+
+    assert results == []
+    assert diagnostic["reusedSessionDecompiler"] is True
+    assert fake_info.get_decompiler_calls == 1
+    assert seen_session_decompilers == [fake_info.decompiler]
