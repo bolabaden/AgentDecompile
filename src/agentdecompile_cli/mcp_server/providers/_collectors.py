@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 
+from collections import deque
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -180,6 +182,185 @@ def collect_function_call_counts(func: GhidraFunction) -> dict[str, int]:
     except Exception:
         callee_count = 0
     return {"callerCount": caller_count, "calleeCount": callee_count}
+
+
+def collect_function_data_flow(
+    program: GhidraProgram,
+    func: GhidraFunction,
+    addr: GhidraAddress,
+    *,
+    direction: str,
+    max_ops: int = 500,
+    max_depth: int = 10,
+    timeout_s: int = 30,
+    session_decompiler: Any = None,
+) -> dict[str, Any]:
+    """Collect function-local data flow rooted at a specific address."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_function_data_flow")
+    payload: dict[str, Any] = {
+        "direction": direction,
+        "address": str(addr),
+        "function": str(func.getName()),
+    }
+
+    try:
+        from agentdecompile_cli.mcp_utils.decompiler_util import resolve_decompiler_for_program
+    except Exception as exc:
+        payload.update({"pcode": [], "note": f"Decompiler utilities unavailable: {exc}"})
+        return payload
+
+    decomp = None
+    owns_decompiler = False
+    try:
+        decomp, owns_decompiler = resolve_decompiler_for_program(session_decompiler, program)
+        result = decomp.decompileFunction(func, timeout_s, make_task_monitor())
+        if result is None or not result.decompileCompleted():
+            payload.update({"pcode": [], "note": "Decompilation failed or timed out"})
+            return payload
+
+        hfunc = result.getHighFunction()
+        if hfunc is None:
+            payload.update({"pcode": [], "note": "No high-level function available"})
+            return payload
+
+        if direction in {"variable_accesses", "variableaccesses"}:
+            variables: list[dict[str, Any]] = []
+            for sym in hfunc.getLocalSymbolMap().getSymbols():
+                hv = sym.getHighVariable()
+                if hv is None:
+                    continue
+                variables.append(
+                    {
+                        "name": str(sym.getName() or ""),
+                        "dataType": str(hv.getDataType()),
+                        "storage": str(hv.getRepresentative()),
+                        "size": int(hv.getSize()),
+                    },
+                )
+            payload.update({"variables": variables, "count": len(variables)})
+            return payload
+
+        ops: list[dict[str, Any]] = []
+        output_to_indices: dict[str, list[int]] = {}
+        input_to_indices: dict[str, list[int]] = {}
+        op_iter = hfunc.getPcodeOps()
+        target_address = str(addr)
+
+        while op_iter.hasNext():
+            op = op_iter.next()
+            op_address = str(op.getSeqnum().getTarget())
+            output = str(op.getOutput()) if op.getOutput() else None
+            inputs = [str(inp) for inp in op.getInputs()]
+            ops.append(
+                {
+                    "address": op_address,
+                    "mnemonic": str(op.getMnemonic()),
+                    "output": output,
+                    "inputs": inputs,
+                },
+            )
+            index = len(ops) - 1
+            if output:
+                output_to_indices.setdefault(output, []).append(index)
+            for input_name in inputs:
+                input_to_indices.setdefault(input_name, []).append(index)
+
+        seed_indices = [index for index, op in enumerate(ops) if str(op.get("address", "")) == target_address]
+        if not seed_indices:
+            payload.update(
+                {
+                    "pcode": [],
+                    "count": 0,
+                    "seedCount": 0,
+                    "totalPcodeOps": len(ops),
+                    "analysisDepth": max_depth,
+                    "note": "No P-code operations mapped directly to the requested address",
+                },
+            )
+            return payload
+
+        queue: deque[tuple[str, int]] = deque()
+        selected: set[int] = set(seed_indices)
+        for seed_index in seed_indices:
+            seed_op = ops[seed_index]
+            if direction == "backward":
+                for input_name in seed_op.get("inputs") or []:
+                    queue.append((str(input_name), 1))
+            else:
+                output = seed_op.get("output")
+                if output:
+                    queue.append((str(output), 1))
+
+        while queue and len(selected) < max_ops:
+            varnode_name, depth = queue.popleft()
+            if depth > max_depth:
+                continue
+            next_indices = output_to_indices.get(varnode_name, []) if direction == "backward" else input_to_indices.get(varnode_name, [])
+            for index in next_indices:
+                if index in selected:
+                    continue
+                selected.add(index)
+                if len(selected) >= max_ops:
+                    break
+                op = ops[index]
+                if direction == "backward":
+                    for input_name in op.get("inputs") or []:
+                        queue.append((str(input_name), depth + 1))
+                else:
+                    output = op.get("output")
+                    if output:
+                        queue.append((str(output), depth + 1))
+
+        ordered_indices = sorted(selected)
+        sliced_ops = [ops[index] for index in ordered_indices[:max_ops]]
+        payload.update(
+            {
+                "pcode": sliced_ops,
+                "count": len(sliced_ops),
+                "seedCount": len(seed_indices),
+                "totalPcodeOps": len(ops),
+                "analysisDepth": max_depth,
+                "hasMore": len(ordered_indices) > max_ops,
+            },
+        )
+        return payload
+    except ImportError:
+        payload.update({"pcode": [], "note": "DecompInterface not available in this environment"})
+        return payload
+    except Exception as exc:
+        logger.error("collect_function_data_flow failed: %s", exc)
+        payload.update({"pcode": [], "error": str(exc)})
+        return payload
+    finally:
+        if owns_decompiler and decomp is not None:
+            try:
+                decomp.dispose()
+            except Exception:
+                pass
+
+
+def collect_vtable_candidates(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
+    """Collect defined data items whose data type names suggest vtables."""
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_vtable_candidates")
+    listing: GhidraListing = program.getListing()
+    results: list[dict[str, Any]] = []
+    for data in listing.getDefinedData(True):
+        dt = data.getDataType()
+        dt_name = str(dt.getName()).lower() if dt else ""
+        if "vtable" not in dt_name and "vftable" not in dt_name:
+            continue
+        label = str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else dt_name
+        results.append(
+            {
+                "address": str(data.getAddress()),
+                "name": label,
+                "type": str(dt),
+                "size": int(data.getLength()),
+            },
+        )
+        if limit is not None and len(results) >= limit:
+            break
+    return results
 
 
 def _get_function_list(fm: GhidraFunctionManager) -> list[GhidraFunction]:

@@ -79,6 +79,32 @@ def _truncate(s: str, max_len: int = 120) -> str:
     return s[: max_len - 3] + "..."
 
 
+def _extract_searchable_ascii_token(text: str, min_len: int = 4) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_extract_searchable_ascii_token")
+    if not text:
+        return ""
+    match = re.search(rf"[A-Za-z0-9_.$@/-]{{{min_len},}}", text)
+    return match.group(0) if match else ""
+
+
+def _looks_like_pointer_type(data_type: str) -> bool:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_looks_like_pointer_type")
+    lowered = data_type.lower()
+    return "pointer" in lowered or "ptr" in lowered or "*" in data_type
+
+
+def _is_address_like(value: str) -> bool:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_is_address_like")
+    return bool(re.fullmatch(r"(?:0x)?[0-9A-Fa-f]+", value.strip()))
+
+
+def _prefer_function_target(entry: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_prefer_function_target")
+    address = str(entry.get("address", "") or "")
+    name = str(entry.get("name", "") or "")
+    return address or name
+
+
 def _decompilation_text_embeds_disassembly(decomp: str) -> bool:
     """True when the decompilation string already carries a disassembly listing (skip duplicate ### Disassembly)."""
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_decompilation_text_embeds_disassembly")
@@ -271,6 +297,7 @@ def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         rt: str = first.get("resultType", "")
         next_tools: list[dict[str, Any]] = first.get("nextTools", [])
+        suggested_tool_names: set[str] = {str(nt.get("tool", "")) for nt in next_tools}
         if next_tools:
             nt: dict[str, Any]
             for nt in next_tools[:2]:
@@ -282,6 +309,23 @@ def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
                 steps.append(f"Decompile: `get-functions mode=decompile function={first.get('name', first.get('function', ''))}`.")
             elif rt in ("symbol", "export", "import"):
                 steps.append(f"Cross-refs: `get-references address={first.get('address', '')}`.")
+        class_like_results: list[dict[str, Any]] = [row for row in results if str(row.get("resultType", "")) in {"class", "namespace"}]
+        addressful_results: list[dict[str, Any]] = [
+            row for row in results if str(row.get("functionAddress") or row.get("address") or "")
+        ]
+        if class_like_results:
+            steps.append(
+                "If `get-functions` or `analyze-vtables` surfaces relevant methods, open the most interesting caller/callee with `get-function addressOrSymbol=<address_or_name>` for full context."
+            )
+        elif addressful_results:
+            focus_address: str = str(addressful_results[0].get("functionAddress") or addressful_results[0].get("address") or "")
+            if focus_address and Tool.ANALYZE_DATA_FLOW.value not in suggested_tool_names:
+                steps.append(f"Trace the surrounding state with `analyze-data-flow addressOrSymbol={focus_address}` if this hit looks central to the behavior you are following.")
+            steps.append(
+                "After `get-function`, drill into any relevant caller/callee it reveals with `get-function addressOrSymbol=<address_or_name>`."
+            )
+        steps.append('Narrow results with `scopes` param (e.g. `scopes=["functions","strings"]`).')
+        return steps
     steps.append('Narrow results with `scopes` param (e.g. `scopes=["functions","strings"]`).')
     steps.append("Try `searchMode=regex` for pattern matching or `searchMode=fuzzy` for approximate matches.")
     return steps
@@ -293,25 +337,56 @@ def _next_steps_memory(data: dict[str, Any]) -> list[str]:
     steps: list[str] = []
     if mode == "blocks":
         blocks: list[dict[str, Any]] = data.get("blocks", [])
-        text_block: dict[str, Any] | None = next((b for b in blocks if str(b.get("permissions", "")).endswith("x")), None)
-        data_block: dict[str, Any] | None = next((b for b in blocks if "data" in str(b.get("name", "")).lower()), None)
-        if text_block:
-            steps.append(f"Read code section: `inspect-memory mode=read address={text_block['start']} length=256`.")
-        if data_block:
-            steps.append(f"Inspect data section: `inspect-memory mode=read address={data_block['start']} length=256`.")
-        steps.append("Memory blocks reveal the binary's layout — `.text` is code, `.data`/`.rdata` hold globals/constants.")
-        steps.append("Call `list-functions` to see what functions exist in the executable sections.")
+        exec_block: dict[str, Any] | None = next((b for b in blocks if "x" in str(b.get("permissions", ""))), None)
+        rodata_block: dict[str, Any] | None = next(
+            (
+                b
+                for b in blocks
+                if any(token in str(b.get("name", "")).lower() for token in ("rdata", "rodata", "cstring", "const", "literal"))
+                or (str(b.get("permissions", "")) == "r--" and bool(b.get("initialized", True)))
+            ),
+            None,
+        )
+        writable_block: dict[str, Any] | None = next(
+            (b for b in blocks if "w" in str(b.get("permissions", "")) and bool(b.get("initialized", True))),
+            None,
+        )
+        if exec_block:
+            steps.append(f"Sample the executable region first: `inspect-memory mode=read addressOrSymbol={exec_block['start']} length=64` to confirm code bytes before pivoting into `list-functions` or `get-function`.")
+        if rodata_block and rodata_block != exec_block:
+            steps.append(f"Probe the likely string/constant region: `inspect-memory mode=read addressOrSymbol={rodata_block['start']} length=128` and follow any printable data with `search-strings`.")
+        if writable_block:
+            steps.append("Review typed globals next with `inspect-memory mode=data_items`; writable initialized blocks usually hold state, tables, and struct instances worth naming early.")
+        steps.append("Best practice: prioritize executable blocks, then read-only strings/constants, then writable globals. Ignore uninitialized regions until code or xrefs force you there.")
     elif mode == "read":
         addr: str = data.get("address", "")
-        steps.append(f"Interpret this data: `inspect-memory mode=data_at address={addr}` to see if Ghidra has typed it.")
-        steps.append("Look for ASCII strings in the hex dump — they often reveal string literals or format strings.")
-        steps.append("Use `list-strings` to find all defined strings, or `search-strings query=...` for specific ones.")
+        ascii_token = _extract_searchable_ascii_token(str(data.get("ascii", "") or ""))
+        steps.append(f"Ask Ghidra for the typed view of these bytes: `get-data addressOrSymbol={addr}`.")
+        if ascii_token:
+            steps.append(f"Search for the same literal elsewhere with `search-strings query={ascii_token}` to find sibling tables, format strings, or nearby state names.")
+        steps.append(f"If this looks like a pointer table or embedded structure, follow up with `inspect-memory mode=data_at addressOrSymbol={addr}` and then pivot to `get-function` for code targets or `get-data` for data targets.")
     elif mode == "data_at":
-        steps.append("If the data type is a pointer, follow it with another `inspect-memory mode=data_at`.")
-        steps.append("Apply a different type with `apply-data-type` if the current interpretation is wrong.")
+        addr = str(data.get("address", "") or "")
+        data_type = str(data.get("dataType", "") or "")
+        value = str(data.get("value", "") or "")
+        note = str(data.get("note", "") or "")
+        if note:
+            steps.append(f"No typed data is defined here yet. Inspect raw bytes with `get-data addressOrSymbol={addr}` before you commit to a type.")
+            steps.append("If the bytes resolve into a table, string, or struct field layout, apply a type with `apply-data-type` or model the aggregate in `manage-structures`.")
+            return steps
+        steps.append(f"Find the code and data that reference this location: `get-references address={addr}`.")
+        if data_type and _looks_like_pointer_type(data_type) and value and _is_address_like(value):
+            steps.append(f"Follow the pointed-to target with `get-data addressOrSymbol={value}`; if it resolves to code, switch to `get-function addressOrSymbol={value}`.")
+        steps.append("If the current type is too coarse, refine it with `apply-data-type` or define a struct in `manage-structures` before revisiting the decompiler.")
     elif mode == "data_items":
-        steps.append("Defined data items show Ghidra's interpretation of memory regions.")
-        steps.append("Use `apply-data-type` to retype items, or `manage-structures` to create custom struct types.")
+        items: list[dict[str, Any]] = data.get("results", [])
+        if items:
+            first_addr = str(items[0].get("address", "") or "")
+            if first_addr:
+                steps.append(f"Inspect one concrete item in depth with `get-data addressOrSymbol={first_addr}`.")
+                steps.append(f"Trace who uses that global or table with `get-references address={first_addr}`.")
+        steps.append("Prioritize larger or named items first; they usually anchor struct recovery, string tables, and persistent global state.")
+        steps.append("Retype noisy byte arrays with `apply-data-type`, and graduate recurring layouts into `manage-structures` once you see repeated field patterns.")
     return steps
 
 
@@ -320,26 +395,49 @@ def _next_steps_callgraph(data: dict[str, Any]) -> list[str]:
     mode: str = data.get("mode", "graph")
     func_name: str = data.get("function", data.get("functionName", ""))
     steps: list[str] = []
-    if mode in ("graph", "tree"):
+    if mode == "overview":
+        functions: list[dict[str, Any]] = data.get("functions", [])
+        entry_points = [row for row in functions if bool(row.get("isEntryPoint"))]
+        hubs = sorted(functions, key=lambda row: int(row.get("callerCount", 0)), reverse=True)
+        if entry_points:
+            entry_target = _prefer_function_target(entry_points[0])
+            steps.append(f"Start from a root path, not a utility hub: `get-call-graph function={entry_target} mode=tree` to walk from an entry-point into real behavior.")
+        if hubs:
+            hub_target = _prefer_function_target(hubs[0])
+            steps.append(f"Use the hottest hub as a router map, then inspect it with `get-function addressOrSymbol={hub_target}` to decide which branch is worth following.")
+        steps.append("Best practice: use entry points to orient architecture, then descend into callees until you hit leaf functions that actually transform data or enforce logic.")
+    elif mode in ("graph", "tree"):
         callees: list[dict[str, Any]] = data.get("callees", [])
         callers: list[dict[str, Any]] = data.get("callers", [])
         if callees:
-            steps.append(f"Decompile a callee: `get-functions mode=decompile function={callees[0].get('name', '')}`.")
+            callee_target = _prefer_function_target(callees[0])
+            steps.append(f"Walk downward into behavior next with `get-function addressOrSymbol={callee_target}`; direct callees usually beat wrappers for understanding intent.")
         if callers:
-            steps.append(f"Trace a caller: `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append("Look for leaf functions (no callees) — they often implement core logic.")
-        steps.append("Look for hub functions (many callers) — they're likely utility/API wrappers.")
+            caller_target = _prefer_function_target(callers[0])
+            steps.append(f"Walk upward to recover purpose and reachability with `get-function addressOrSymbol={caller_target}`.")
+        steps.append("Best practice: use the caller side to learn how execution reaches this code, and the callee side to find where the real work or state mutation happens.")
     elif mode == "callers":
         callers = data.get("callers", data.get("commonCallers", []))
+        second_function = str(data.get("secondFunction", "") or "")
         if callers:
-            steps.append(f"Decompile caller: `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append(f"Get full graph: `get-call-graph function={func_name} mode=graph`.")
+            caller_target = _prefer_function_target(callers[0])
+            steps.append(f"Open the nearest caller in full context with `get-function addressOrSymbol={caller_target}`.")
+        elif func_name:
+            steps.append(f"No callers usually means a root entry, callback target, or dead code. Switch direction with `get-call-graph function={func_name} mode=callees` to see what it can reach.")
+        if second_function:
+            steps.append("Common callers are high-value orchestration sites; inspect one shared caller first before chasing the two target functions separately.")
+        elif func_name:
+            steps.append(f"Once you identify the important parent, widen the view with `get-call-graph function={func_name} mode=graph`.")
     elif mode == "callees":
         callees = data.get("callees", [])
         if callees:
-            steps.append(f"Decompile callee: `get-functions mode=decompile function={callees[0].get('name', '')}`.")
-    if func_name:
-        steps.append('Annotate: `manage-comments address=<addr> mode=set comment="analyzed call graph"`.')
+            callee_target = _prefer_function_target(callees[0])
+            steps.append(f"Inspect the first downstream target with `get-function addressOrSymbol={callee_target}` and keep descending until you hit a leaf or stateful helper.")
+            steps.append("Best practice: prefer callees that touch strings, globals, or external APIs over thin wrappers with dozens of pass-through calls.")
+        elif func_name:
+            steps.append(f"No callees means this is likely a leaf. Open it directly with `get-function addressOrSymbol={func_name}` and inspect constants, strings, and data accesses inside the body.")
+    if func_name and mode != "overview":
+        steps.append('Once the path is clear, leave a short note with `manage-comments address=<addr> mode=set comment="call path verified"` so the traversal decision persists.')
     return steps
 
 
@@ -349,46 +447,96 @@ def _next_steps_comments(data: dict[str, Any]) -> list[str]:
     steps: list[str] = []
     if action == "set":
         addr: str = data.get("address", "")
-        steps.append("Comment added. Continue annotating nearby addresses or use `manage-bookmarks` to flag the location.")
+        comment_type: str = str(data.get("type", "") or "eol")
+        steps.append("Verify the note in full context before adding more prose; comments are most useful when they capture a proven fact, not a guess.")
         if addr:
-            steps.append(f"Call `get-functions mode=decompile address={addr}` to verify the comment in context.")
+            steps.append(f"Open the containing function with `get-function addressOrSymbol={addr}` to confirm the comment still matches the code path, data use, and nearby labels.")
+        if comment_type == "eol":
+            steps.append(f"If this insight should survive every xref, promote it to a `repeatable` comment or add a durable marker with `manage-bookmarks addressOrSymbol={addr} mode=set`.")
+        elif comment_type == "plate":
+            steps.append("Plate comments are best for stable function summaries. Once the purpose is clear, follow up by naming the function or tagging it so the summary is backed by structure, not text alone.")
+        else:
+            steps.append("Use pre/post comments for local reasoning and reserve repeatable comments for facts that should travel with the address across references.")
     elif action == "get":
         addr = data.get("address", "")
+        comments: dict[str, str] = data.get("comments", {})
+        if comments:
+            steps.append(f"Re-open the surrounding function with `get-function addressOrSymbol={addr}` before editing; make sure the note still matches the latest analysis state.")
+            if "repeatable" in comments:
+                steps.append("Repeatable comments usually mark durable facts about data or APIs. If the fact is settled, consider adding a bookmark or better symbol/type so the meaning is encoded structurally too.")
+        else:
+            steps.append("No comments are present here yet. Add one only if you have a concrete finding worth preserving across sessions.")
         steps.append(f'To modify: `manage-comments address={addr} mode=set type=eol comment="new text"`.')
         steps.append(f"To remove: `manage-comments address={addr} mode=remove type=eol`.")
+    elif action == "remove":
+        addr = str(data.get("address", "") or "")
+        if addr:
+            steps.append(f"Verify the cleanup with `manage-comments address={addr} mode=get` so you do not leave stale reasoning behind.")
+            steps.append(f"If the removed note captured a still-valid finding, preserve it structurally with `manage-bookmarks addressOrSymbol={addr} mode=set` or a better symbol/type instead of deleting the knowledge outright.")
     elif action == "search":
-        steps.append("Comment search results show previously annotated locations — useful for resuming analysis.")
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
-            steps.append(f"Decompile annotated function: `get-functions mode=decompile address={results[0].get('address', '')}`.")
+            first_addr = str(results[0].get("address", "") or "")
+            first_type = str(results[0].get("type", "") or "")
+            steps.append(f"Resume from the first annotated site with `get-function addressOrSymbol={first_addr}` and verify whether the comment still reflects current understanding.")
+            if first_type:
+                steps.append(f"Use the comment type (`{first_type}`) to judge scope: repeatable comments usually capture reusable facts, while eol/pre/post comments often need nearby-code review before reuse.")
+        steps.append("Best practice: comment search is a resume tool. Use it to reopen prior conclusions, then convert stable insights into names, types, tags, or bookmarks where possible.")
     elif action == "search_decomp":
-        steps.append("Decompilation search found pattern matches in C pseudocode.")
         results = data.get("results", [])
         if results:
-            steps.append(f"Read full decompilation: `get-functions mode=decompile function={results[0].get('function', '')}`.")
+            first_func = str(results[0].get("function", "") or "")
+            first_addr = str(results[0].get("address", "") or "")
+            steps.append(f"Open the matched function in full context with `get-function addressOrSymbol={first_addr or first_func}` instead of relying on the snippet alone.")
+        steps.append("Decompiler comment search is best for reconnecting themes across functions. After opening a hit, leave a precise address-level comment only where the code actually justifies it.")
     return steps
 
 
 def _next_steps_bookmarks(data: dict[str, Any]) -> list[str]:
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_bookmarks")
     action: str = data.get("action", data.get("mode", ""))
+    if not action and data.get("categories"):
+        action = "categories"
     steps: list[str] = []
     if action in ("set", "add_batch"):
-        steps.append("Bookmark set. Use `manage-bookmarks mode=get` to list all bookmarks.")
-        steps.append("Bookmarks persist across sessions — use them to track analysis progress.")
+        addr = str(data.get("address", "") or "")
+        bm_type = str(data.get("type", "") or "")
+        category = str(data.get("category", "") or "")
+        if addr:
+            steps.append(f"Re-open the bookmarked location with `get-function addressOrSymbol={addr}` before you add more markers; each bookmark should correspond to a real next investigation step.")
+        if category:
+            steps.append(f"Keep the triage queue coherent by grouping similar findings under `category={category}` so you can reopen a whole analysis thread later.")
+        if bm_type in {"TODO", "Analysis", "Warning", "Bug"}:
+            steps.append("Use bookmark types to represent work state, not prose. Once the issue is understood, convert the bookmark into a better name, type, tag, or precise comment.")
+        else:
+            steps.append("Bookmarks persist across sessions; use them as a lightweight work queue, then promote durable conclusions into comments, symbols, tags, or data types.")
     elif action == "remove":
-        steps.append("Bookmark removed. Use `manage-bookmarks mode=get` to verify.")
+        addr = str(data.get("address", "") or "")
+        if addr:
+            steps.append(f"Verify cleanup with `manage-bookmarks addressOrSymbol={addr} mode=get` so stale queue items do not survive your review.")
+            steps.append(f"If the bookmark marked a still-relevant fact, preserve it structurally with `manage-comments address={addr} mode=set` or a better symbol/type before dropping the marker.")
+        else:
+            steps.append("Verify cleanup with `manage-bookmarks mode=get` so stale queue items do not survive your review.")
+    elif action == "remove_all":
+        steps.append("Clear-all is a reset operation. Recreate only the bookmarks that still map to active analysis threads, not everything you used during exploration.")
     elif action in ("get", "search"):
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
             first_addr: str = results[0].get("address", "")
-            steps.append(f"Resume analysis: `get-functions mode=decompile address={first_addr}`.")
-            steps.append(f"Read comments: `manage-comments address={first_addr} mode=get`.")
-        steps.append("Filter bookmarks with `query` or `category` parameters.")
+            first_category: str = str(results[0].get("category", "") or "")
+            first_type: str = str(results[0].get("type", "") or "")
+            steps.append(f"Resume from the first queued site with `get-function addressOrSymbol={first_addr}` so you recover call context, nearby comments, and data use in one step.")
+            steps.append(f"Pull any existing notes before acting with `manage-comments address={first_addr} mode=get`.")
+            if first_category:
+                steps.append(f"Use the category (`{first_category}`) as a workstream boundary; finish one bookmark cluster before jumping to unrelated findings.")
+            if first_type:
+                steps.append(f"Let the bookmark type (`{first_type}`) drive priority: Warning/Bug should be resolved or disproved first, while Note/Analysis can wait behind execution-critical paths.")
+        steps.append("Filter bookmark queues with `query`, `type`, or `category` so you review one subsystem or question at a time instead of reopening random addresses.")
     elif action == "categories":
         categories: list[str] = data.get("categories", [])
         if categories:
-            steps.append(f"List bookmarks in category: `manage-bookmarks mode=get category={categories[0]}`.")
+            steps.append(f"Open one bookmark lane at a time with `manage-bookmarks mode=get category={categories[0]}`.")
+        steps.append("Treat categories as analysis workstreams such as loader, UI, network, or save/load. If categories are noisy, consolidate them before adding more bookmarks.")
     return steps
 
 
@@ -424,14 +572,28 @@ def _next_steps_constants(data: dict[str, Any]) -> list[str]:
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
     if results:
-        first_addr: str = results[0].get("address", "") if results else ""
+        first = results[0]
+        first_addr: str = str(first.get("address", "") or "")
+        first_func: str = str(first.get("function", "") or "")
+        first_value = first.get("value")
         if first_addr:
-            steps.append(f"Decompile containing function: `get-functions mode=decompile address={first_addr}`.")
-            steps.append(f"Cross-references: `get-references address={first_addr}`.")
+            steps.append(f"Open the first hit in full context with `get-function addressOrSymbol={first_addr}` before deciding whether this constant is a flag, size, sentinel, or table index.")
+        if first_func:
+            steps.append(f"Use `get-call-graph function={first_func} mode=graph` to see whether this constant sits in a leaf implementation, a dispatcher, or a shared utility wrapper.")
+        if mode == "specific" and first_value is not None:
+            steps.append(f"Compare all uses of `{first_value}` before renaming anything; the same literal can be reused as a syscall number, loop bound, or protocol marker in different functions.")
+        elif mode == "range":
+            steps.append("Range hits are best treated as candidate families. Split them into pointer-like values, sizes, and bitmasks before chasing every occurrence individually.")
     if mode == "common":
-        steps.append("Common constants often include buffer sizes, error codes, Windows API flags, and crypto constants.")
-    steps.append("Search for specific values: `search-constants mode=specific value=0xDEADBEEF`.")
-    steps.append("Search ranges: `search-constants mode=range minValue=0x400000 maxValue=0x500000` for pointer-like values.")
+        steps.append("Common-constant scans are triage tools. Separate obvious buffer sizes and API flags from true magic values before you infer an algorithm from one familiar number.")
+    if not results:
+        if mode == "specific":
+            steps.append("No exact hit found. Broaden slightly with a small range if you suspect sign extension, masking, or nearby sentinel values in the same code path.")
+        elif mode == "range":
+            steps.append("No range hits found. Revisit the bounds; many binaries mix decimal sizes, page-aligned values, and sign-extended immediates that fall just outside a guessed window.")
+        elif mode == "common":
+            steps.append("No obvious common constants surfaced. Pivot to strings, imports, or a known literal from the protocol/format you are chasing, then come back with `mode=specific`.")
+    steps.append("After confirming a constant's role, encode the finding structurally: rename the function, add a precise comment, or tag the routine instead of relying on the number alone.")
     return steps
 
 
@@ -2298,6 +2460,49 @@ def _render_function_detail_block(data: dict[str, Any], *, heading_level: int = 
             ops_only = full_op[len(mnem):].lstrip() if full_op.startswith(mnem) else full_op
             asm_rows.append([a, b, mnem, ops_only])
         lines.append(_md_table(["Address", "Bytes", "Mnemonic", "Operands"], asm_rows))
+        lines.append("")
+
+    data_flow: dict[str, Any] = data.get("dataFlow") or {}
+    if data_flow:
+        direction = str(data_flow.get("direction", ""))
+        lines.append(_md_heading(3, f"Data flow ({direction or 'requested'})"))
+        lines.append("")
+        lines.append(_md_bold_kv("Seed address", _md_code_inline(str(data_flow.get("address", "")))))
+        if data_flow.get("seedCount") is not None:
+            lines.append(_md_bold_kv("Seed ops", str(data_flow.get("seedCount", 0))))
+        if data_flow.get("analysisDepth") is not None:
+            lines.append(_md_bold_kv("Depth", str(data_flow.get("analysisDepth", 0))))
+        note = data_flow.get("note") or data_flow.get("error")
+        if direction == "variable_accesses":
+            variables: list[dict[str, Any]] = data_flow.get("variables") or []
+            if variables:
+                rows = [[v.get("name", ""), v.get("dataType", ""), v.get("storage", ""), str(v.get("size", ""))] for v in variables[:25]]
+                lines.append(_md_table(["Name", "Type", "Storage", "Size"], rows))
+                if len(variables) > 25:
+                    lines.append(f"*... and {len(variables) - 25} more*")
+            elif note:
+                lines.append(f"*{note}*")
+            else:
+                lines.append("*No variable access information available.*")
+        else:
+            pcode: list[dict[str, Any]] = data_flow.get("pcode") or []
+            if pcode:
+                rows = [
+                    [
+                        op.get("address", ""),
+                        op.get("mnemonic", ""),
+                        op.get("output", "") or "",
+                        ", ".join(op.get("inputs", [])) if isinstance(op.get("inputs"), list) else str(op.get("inputs", "")),
+                    ]
+                    for op in pcode[:30]
+                ]
+                lines.append(_md_table(["Address", "Mnemonic", "Output", "Inputs"], rows))
+                if len(pcode) > 30:
+                    lines.append(f"*... and {len(pcode) - 30} more*")
+            elif note:
+                lines.append(f"*{note}*")
+            else:
+                lines.append("*No P-code slice available for the requested address.*")
         lines.append("")
 
     callers: list[dict[str, Any]] = data.get("callers") or []

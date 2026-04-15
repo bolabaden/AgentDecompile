@@ -2306,7 +2306,7 @@ class ToolProviderManager:
                 "type": "string",
                 "enum": ["markdown", "json"],
                 "default": "markdown",
-                "description": "Tool response format (default: markdown). Use responseFormat=json for machine-readable output.",
+                "description": "Tool response format (default: markdown).",
             }
 
             # Required list: if provider marks "mode" or any selector alias as required, treat mode as required in advertised schema

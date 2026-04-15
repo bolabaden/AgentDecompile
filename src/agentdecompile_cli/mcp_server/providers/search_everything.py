@@ -13,7 +13,7 @@ import difflib
 import logging
 import re
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from mcp import types
 
@@ -33,6 +33,7 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structure_fields,
     collect_structures,
     collect_symbols,
+    collect_vtable_candidates,
 )
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -77,8 +78,6 @@ if TYPE_CHECKING:
         Program as GhidraProgram,
     )
     from ghidra.program.util import DefaultLanguageService as GhidraDefaultLanguageService  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # noqa: F401
-    from typing_extensions import Literal
-
 logger = logging.getLogger(__name__)
 
 _REGEX_HINT = re.compile(r"[\[\]\\(){}|*+?^$]")
@@ -111,6 +110,7 @@ _ALL_SCOPES: tuple[str, ...] = (
     "imports",  # imported/external symbol names
     "namespaces",  # namespace symbol names
     "strings",  # defined string values
+    "vtables",  # discovered vtable-like defined data
     "structure_fields",  # structure field names/types/comments
     "structures",  # structure names/descriptions
     "symbols",  # all symbol names
@@ -124,6 +124,8 @@ _OPTIONAL_SCOPES: tuple[str, ...] = (
 
 class SearchEverythingToolProvider(ToolProvider):
     HANDLERS = {"searcheverything": "_handle"}
+    _TEXT_MATCH_MODES: ClassVar[frozenset[str]] = frozenset({"auto", "literal", "regex", "fuzzy"})
+    _LEGACY_CONSTANT_MODES: ClassVar[frozenset[str]] = frozenset({"specific", "range", "common"})
 
     def list_tools(self) -> list[types.Tool]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider.list_tools")
@@ -206,14 +208,12 @@ class SearchEverythingToolProvider(ToolProvider):
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._handle")
+        constant_request = self._collect_legacy_constant_request(args)
         queries = self._collect_queries(args)
-        if not queries:
+        if not queries and constant_request is None:
             raise ValueError("query or queries is required")
 
-        mode = self._get_str(args, "mode", "searchmode", default="auto")
-        mode_n = n(mode)
-        if mode_n not in {"auto", "literal", "regex", "fuzzy"}:
-            raise ValueError("mode must be one of: auto, literal, regex, fuzzy")
+        mode_n = self._resolve_text_match_mode(args, constant_request)
 
         case_sensitive = self._get_bool(args, "casesensitive", default=False)
         threshold_raw = self._get(args, "similaritythreshold", "threshold", default=0.7)
@@ -224,12 +224,13 @@ class SearchEverythingToolProvider(ToolProvider):
         threshold = max(0.0, min(1.0, threshold))
 
         offset, limit = self._get_pagination_params(args, default_limit=100)
-        per_scope_limit = self._get_int(args, "perscopelimit", "scope_limit", default=300)
-        max_functions_scan = self._get_int(args, "maxfunctionsscan", "maxfunctions", default=500)
-        max_instructions_scan = self._get_int(args, "maxinstructionsscan", "maxinstructions", default=200000)
-        decompile_timeout = self._get_int(args, "decompiletimeout", "timeout", default=10)
+        per_scope_limit = self._get_int(args, "perscopelimit", "scope_limit", default=300) or 300
+        max_functions_scan = self._get_int(args, "maxfunctionsscan", "maxfunctions", default=500) or 500
+        max_instructions_scan = self._get_int(args, "maxinstructionsscan", "maxinstructions", default=200000) or 200000
+        samples_per_constant = self._get_int(args, "samplesperconstant", default=5) or 5
+        decompile_timeout = self._get_int(args, "decompiletimeout", "timeout", default=10) or 10
         group_by_function = self._get_bool(args, "groupbyfunction", default=True)
-        scopes = self._collect_scopes(args)
+        scopes = self._collect_scopes(args, prefer_constants_only=constant_request is not None)
 
         compiled: dict[str, re.Pattern[str]] = self._compile_regexes(queries, mode_n, case_sensitive)
 
@@ -256,8 +257,10 @@ class SearchEverythingToolProvider(ToolProvider):
                         threshold=threshold,
                         compiled_regexes=compiled,
                         per_scope_limit=per_scope_limit,
+                        constant_request=constant_request,
                         max_functions_scan=max_functions_scan,
                         max_instructions_scan=max_instructions_scan,
+                        samples_per_constant=samples_per_constant,
                         decompile_timeout=decompile_timeout,
                     )
                     for row in scoped:
@@ -284,9 +287,53 @@ class SearchEverythingToolProvider(ToolProvider):
             searchMode=mode_n,
             caseSensitive=case_sensitive,
             similarityThreshold=threshold,
+            legacyConstantMode=constant_request.get("mode") if constant_request else None,
             groupByFunction=group_by_function,
             warnings=warnings,
         )
+
+    def _resolve_text_match_mode(self, args: dict[str, Any], constant_request: dict[str, Any] | None) -> str:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_text_match_mode")
+        explicit_search_mode = self._get_str(args, "searchmode", default="")
+        if explicit_search_mode:
+            normalized = n(explicit_search_mode)
+            if constant_request is not None and normalized in self._LEGACY_CONSTANT_MODES:
+                return "literal"
+            if normalized == "semantic":
+                return "fuzzy"
+            if normalized in self._TEXT_MATCH_MODES:
+                return normalized
+            raise ValueError("searchMode must be one of: semantic, literal, regex, fuzzy")
+
+        explicit_mode = self._get_str(args, "mode", default="auto")
+        normalized_mode = n(explicit_mode)
+        if normalized_mode in self._TEXT_MATCH_MODES:
+            return normalized_mode
+        if constant_request is not None:
+            return "literal"
+        raise ValueError("mode must be one of: auto, literal, regex, fuzzy")
+
+    def _collect_legacy_constant_request(self, args: dict[str, Any]) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_legacy_constant_request")
+        explicit_mode = n(self._get_str(args, "mode", default=""))
+        has_numeric_args = any(self._get(args, key) is not None for key in ("value", "minvalue", "maxvalue", "topn", "includesmallvalues"))
+        if explicit_mode not in self._LEGACY_CONSTANT_MODES and not has_numeric_args:
+            return None
+
+        mode = explicit_mode if explicit_mode in self._LEGACY_CONSTANT_MODES else "specific"
+        request: dict[str, Any] = {
+            "mode": mode,
+            "value": self._get_int(args, "value", default=0),
+            "minValue": self._get_int(args, "minvalue", default=0),
+            "maxValue": self._get_int(args, "maxvalue", default=0xFFFFFFFF),
+            "includeSmallValues": self._get_bool(args, "includesmallvalues", default=False),
+            "topN": self._get_int(args, "topn", default=0),
+        }
+        if mode == "specific" and self._get(args, "value") is None:
+            raise ValueError("value is required when mode is specific")
+        if mode == "range" and (self._get(args, "minvalue") is None or self._get(args, "maxvalue") is None):
+            raise ValueError("minValue and maxValue are required when mode is range")
+        return request
 
     async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_target_programs")
@@ -349,7 +396,7 @@ class SearchEverythingToolProvider(ToolProvider):
         keys: list[str] = []
 
         for alias in ("programpath", "programname", "binaryname"):
-            raw_list: list[Any] = self._get_list(args, alias)
+            raw_list: list[Any] = self._get_list(args, alias) or []
             if raw_list:
                 for value in raw_list:
                     if value is None:
@@ -466,10 +513,12 @@ class SearchEverythingToolProvider(ToolProvider):
             unique.append(q)
         return unique
 
-    def _collect_scopes(self, args: dict[str, Any]) -> list[str]:
+    def _collect_scopes(self, args: dict[str, Any], prefer_constants_only: bool = False) -> list[str]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_scopes")
         raw_scopes: list[Any] = self._get_list(args, "scopes", "scope", "domains", "sources", "types") or []
         if not raw_scopes:
+            if prefer_constants_only:
+                return ["constants"]
             return list(_ALL_SCOPES)
 
         aliases: dict[str, str] = {
@@ -514,6 +563,10 @@ class SearchEverythingToolProvider(ToolProvider):
             "class": "classes",
             "strings": "strings",
             "string": "strings",
+            "vtables": "vtables",
+            "vtable": "vtables",
+            "vftables": "vtables",
+            "vftable": "vtables",
             "datatypes": "data_types",
             "datatype": "data_types",
             "types": "data_types",
@@ -543,7 +596,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def _compile_regexes(
         self,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
     ) -> dict[str, re.Pattern[str]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._compile_regexes")
@@ -580,13 +633,15 @@ class SearchEverythingToolProvider(ToolProvider):
         scope: str,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
         per_scope_limit: int,
+        constant_request: dict[str, Any] | None,
         max_functions_scan: int,
         max_instructions_scan: int,
+        samples_per_constant: int,
         decompile_timeout: int,
     ) -> list[dict[str, Any]]:
         """Dispatch to the _search_* method for the given scope; program-agnostic scopes (processors, project_files) omit program."""
@@ -604,7 +659,18 @@ class SearchEverythingToolProvider(ToolProvider):
         if scope == "comments":
             return self._search_comments(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "constants":
-            return self._search_constants(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_instructions_scan)
+            return self._search_constants(
+                program,
+                queries,
+                mode,
+                case_sensitive,
+                threshold,
+                compiled_regexes,
+                per_scope_limit,
+                max_instructions_scan,
+                samples_per_constant,
+                constant_request,
+            )
         if scope == "decompilation":
             return self._search_decompilation(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, decompile_timeout)
         if scope == "disassembly":
@@ -621,6 +687,8 @@ class SearchEverythingToolProvider(ToolProvider):
             return self._search_classes(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "strings":
             return self._search_strings(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+        if scope == "vtables":
+            return self._search_vtables(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "data_types":
             return self._search_data_types(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
         if scope == "data_type_archives":
@@ -895,9 +963,23 @@ class SearchEverythingToolProvider(ToolProvider):
         compiled_regexes: dict[str, re.Pattern[str]],
         per_scope_limit: int,
         max_instructions_scan: int,
+        samples_per_constant: int,
+        constant_request: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_constants")
-        constants, _instr_count = collect_constants(program, max_instructions=max_instructions_scan)
+        value_filter = self._build_constant_filter(constant_request)
+        constants, _instr_count = collect_constants(
+            program,
+            value_filter=value_filter,
+            max_instructions=max_instructions_scan,
+            samples_per_constant=samples_per_constant,
+        )
+        if constant_request is not None and constant_request.get("mode") == "common":
+            if not constant_request.get("includeSmallValues"):
+                constants = [item for item in constants if abs(int(item.get("value", 0))) >= 0x100]
+            top_n = int(constant_request.get("topN") or 0)
+            if top_n > 0:
+                constants = constants[:top_n]
         results: list[dict[str, Any]] = []
         for item in constants:
             if len(results) >= per_scope_limit:
@@ -923,6 +1005,21 @@ class SearchEverythingToolProvider(ToolProvider):
             )
         return results
 
+    @staticmethod
+    def _build_constant_filter(constant_request: dict[str, Any] | None):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._build_constant_filter")
+        if constant_request is None:
+            return None
+        mode = str(constant_request.get("mode", "specific"))
+        if mode == "specific":
+            target = int(constant_request.get("value", 0))
+            return lambda value: value == target
+        if mode == "range":
+            min_value = int(constant_request.get("minValue", 0))
+            max_value = int(constant_request.get("maxValue", 0xFFFFFFFF))
+            return lambda value: min_value <= value <= max_value
+        return lambda value: True
+
     def _search_decompilation(
         self,
         program: GhidraProgram,
@@ -946,7 +1043,9 @@ class SearchEverythingToolProvider(ToolProvider):
 
             from agentdecompile_cli.mcp_utils.decompiler_util import get_decompiled_function_from_results
 
-            fm: GhidraFunctionManager = self._get_function_manager(program)
+            fm: GhidraFunctionManager | None = self._get_function_manager(program)
+            if fm is None:
+                return results
             decomp = GhidraDecompInterface()
             opts = GhidraDecompileOptions()
             opts.grabFromProgram(program)
@@ -1001,8 +1100,10 @@ class SearchEverythingToolProvider(ToolProvider):
         max_instructions_scan: int,
     ) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_disassembly")
-        fm: GhidraFunctionManager = self._get_function_manager(program)
-        listing: GhidraListing = self._get_listing(program)
+        fm: GhidraFunctionManager | None = self._get_function_manager(program)
+        listing: GhidraListing | None = self._get_listing(program)
+        if fm is None or listing is None:
+            return []
         results: list[dict[str, Any]] = []
         function_count: int = 0
         instruction_count: int = 0
@@ -1042,7 +1143,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1077,7 +1178,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1111,7 +1212,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1135,7 +1236,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1163,7 +1264,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1193,7 +1294,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1227,7 +1328,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1262,11 +1363,50 @@ class SearchEverythingToolProvider(ToolProvider):
             )
         return results
 
+    def _search_vtables(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_vtables")
+        results: list[dict[str, Any]] = []
+        for candidate in collect_vtable_candidates(program, limit=per_scope_limit):
+            haystack = " | ".join(
+                part for part in [str(candidate.get("name", "")), str(candidate.get("type", "")), str(candidate.get("address", ""))] if part
+            )
+            match: dict[str, Any] | None = self._match_text(
+                text=haystack,
+                queries=queries,
+                mode=mode,
+                case_sensitive=case_sensitive,
+                threshold=threshold,
+                compiled_regexes=compiled_regexes,
+            )
+            if not match:
+                continue
+            results.append(
+                {
+                    "scope": "vtables",
+                    "resultType": "vtable",
+                    "name": str(candidate.get("name", "")),
+                    "address": str(candidate.get("address", "")),
+                    "type": str(candidate.get("type", "")),
+                    "size": int(candidate.get("size", 0)),
+                    **match,
+                },
+            )
+        return results
+
     def _search_data_type_archives(
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1301,7 +1441,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1341,7 +1481,7 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         program: GhidraProgram,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1405,53 +1545,34 @@ class SearchEverythingToolProvider(ToolProvider):
 
     def _attach_next_tools(self, row: dict[str, Any]) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._attach_next_tools")
-        result_type: Literal[
-            "function",
-            "function_parameter",
-            "function_tag",
-            "bookmark",
-            "comment",
-            "instruction",
-            "export",
-            "symbol",
-            "string",
-            "decompiled_code",
-            "import",
-            "namespace",
-            "class",
-            "data_type",
-            "data_type_archive",
-            "structure",
-            "structure_field",
-            "constant",
-        ] = str(row.get("resultType", ""))
+        result_type: str = str(row.get("resultType", ""))
         address: str = str(row.get("functionAddress") or row.get("address") or "")
         function_name: str = str(row.get("function") or row.get("name") or "")
 
         next_tools: list[dict[str, Any]] = []
         if result_type == "function":
             next_tools = [
-                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": Tool.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name, "mode": "decompile"}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address or function_name}},
                 {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
                 {"tool": "manage-comments", "args": {"address": address, "mode": "get"}},
             ]
         elif result_type == "function_parameter":
             next_tools = [
-                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
                 {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": function_name}},
             ]
         elif result_type == "function_tag":
             next_tools = [{"tool": Tool.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]
         elif result_type in {"bookmark", "comment", "instruction", "export", "symbol", "string"}:
             next_tools = [
-                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
-                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"address": address}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address}},
+                {"tool": Tool.ANALYZE_DATA_FLOW.value, "args": {"addressOrSymbol": address}},
             ]
         elif result_type == "decompiled_code":
             next_tools = [
-                {"tool": Tool.DECOMPILE_FUNCTION.value, "args": {"name": function_name}},
-                {"tool": Tool.GET_CALL_GRAPH.value, "args": {"name": function_name, "mode": "graph"}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name, "mode": "decompile"}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address or function_name}},
             ]
         elif result_type == "import":
             next_tools = [
@@ -1459,7 +1580,15 @@ class SearchEverythingToolProvider(ToolProvider):
                 {"tool": "list-imports", "args": {"query": row.get("name", "")}},
             ]
         elif result_type in {"namespace", "class"}:
-            next_tools = [{"tool": "search-symbols", "args": {"query": row.get("name", "")}}]
+            next_tools = [
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": row.get("name", "")}},
+                {"tool": Tool.SEARCH_EVERYTHING.value, "args": {"query": row.get("name", ""), "scopes": ["vtables"]}},
+            ]
+        elif result_type == "vtable":
+            next_tools = [
+                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
+                {"tool": Tool.ANALYZE_VTABLES.value, "args": {"mode": "analyze", "addressOrSymbol": address}},
+            ]
         elif result_type == "data_type":
             next_tools = [{"tool": "manage-data-types", "args": {"mode": "info", "dataTypeString": row.get("name", "")}}]
         elif result_type == "data_type_archive":
@@ -1518,7 +1647,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def _search_processors(
         self,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
@@ -1562,7 +1691,7 @@ class SearchEverythingToolProvider(ToolProvider):
     def _search_project_files(
         self,
         queries: list[str],
-        mode: Literal["regex", "auto"],
+        mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],

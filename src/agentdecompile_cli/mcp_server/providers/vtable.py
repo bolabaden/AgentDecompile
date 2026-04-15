@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp import types
 
@@ -20,6 +20,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
     create_success_response,
 )
+from agentdecompile_cli.mcp_server.providers._collectors import collect_vtable_candidates
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
@@ -109,19 +110,7 @@ class VtableToolProvider(ToolProvider):
     ) -> list[types.TextContent]:
         # Scan all defined data; keep items whose type name suggests a vtable (user- or analyzer-named)
         logger.debug("diag.enter %s", "mcp_server/providers/vtable.py:VtableToolProvider._handle_containing")
-        all_results: list[dict[str, Any]] = []
-        for data in listing.getDefinedData(True):
-            dt = data.getDataType()
-            dt_name = dt.getName().lower() if dt else ""
-            if "vtable" in dt_name or "vftable" in dt_name:
-                all_results.append(
-                    {
-                        "address": str(data.getAddress()),
-                        "name": str(data.getLabel()) if hasattr(data, "getLabel") and data.getLabel() else dt_name,
-                        "type": str(dt),
-                        "size": data.getLength(),
-                    },
-                )
+        all_results = collect_vtable_candidates(program)
         paginated, _ = self._paginate_results(all_results, offset, max_results)
         return self._create_paginated_response(paginated, offset, max_results, total=len(all_results), mode="containing")
 
@@ -142,6 +131,9 @@ class VtableToolProvider(ToolProvider):
             raise ValueError("addressOrSymbol required for analyze mode")
 
         addr = self._resolve_address(addr_str, program=program)
+        assert addr is not None, "addr should be set after _resolve_address()"
+
+        import jpype  # noqa: PLC0415
 
         # Walk vtable slot-by-slot: read pointer-sized bytes, resolve to address, look up function
         entries = []
@@ -149,9 +141,9 @@ class VtableToolProvider(ToolProvider):
         for i in range(max_entries):
             entry_addr = addr.add(i * ptr_size)
             try:
-                buf = bytearray(ptr_size)
+                buf: Any = cast(Any, jpype.JArray(jpype.JByte))(ptr_size)
                 memory.getBytes(entry_addr, buf)
-                ptr_val = int.from_bytes(buf, byteorder="little")
+                ptr_val = int.from_bytes(bytes((int(b) & 0xFF) for b in buf), byteorder="little")
                 target_addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(ptr_val)
                 func = fm.getFunctionAt(target_addr)
                 # First slot can be null (e.g. offset-to-top); after that, null usually means end of vtable
