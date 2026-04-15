@@ -3628,15 +3628,10 @@ class ProjectToolProvider(ToolProvider):
 
     def _set_active_program_info(self, program: GhidraProgram, program_path: str) -> None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._set_active_program_info")
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
+        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
         from agentdecompile_cli.launcher import ProgramInfo
 
-        decompiler = DecompInterface()
-        decomp_options = DecompileOptions()
-        decomp_options.grabFromProgram(program)
-        decompiler.setOptions(decomp_options)
-        decompiler.openProgram(program)
+        decompiler = open_decompiler_for_program(program)
 
         session_id: str = get_current_mcp_session_id()
         prev_key: str | None = SESSION_CONTEXTS.get_active_program_key(session_id)
@@ -5553,18 +5548,10 @@ class ProjectToolProvider(ToolProvider):
                 logger.warning("Versioned GhidraDomainFile reopen failed for %s: %s", program_path, reopen_exc)
 
         # Build ProgramInfo
-        from ghidra.app.decompiler import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-            DecompInterface as GhidraDecompInterface,
-            DecompileOptions as GhidraDecompileOptions,
-        )
-
+        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
         from agentdecompile_cli.launcher import ProgramInfo
 
-        decompiler: GhidraDecompInterface = GhidraDecompInterface()
-        decomp_options: GhidraDecompileOptions = GhidraDecompileOptions()
-        decomp_options.grabFromProgram(program)
-        decompiler.setOptions(decomp_options)
-        decompiler.openProgram(program)
+        decompiler = open_decompiler_for_program(program)
 
         program_info = ProgramInfo(
             name=program.getName(),
