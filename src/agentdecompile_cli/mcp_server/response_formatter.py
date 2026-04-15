@@ -1021,6 +1021,15 @@ def _render_execute_script(data: dict[str, Any]) -> str:
     stdout_text = str(data.get("stdout", ""))
     stderr_text = str(data.get("stderr", ""))
     result_text = str(data.get("result", ""))
+    executed_program = data.get("executedProgram")
+
+    if isinstance(executed_program, dict):
+        executed_name = str(executed_program.get("name", ""))
+        executed_path = str(executed_program.get("path", ""))
+        if executed_name:
+            lines.append(_md_bold_kv("Executed Program", _md_code_inline(executed_name)))
+        if executed_path and executed_path != executed_name:
+            lines.append(_md_bold_kv("Program Path", _md_code_inline(executed_path)))
 
     if stdout_text or stderr_text:
         lines.append("")
@@ -2337,16 +2346,16 @@ def _render_error(data: dict[str, Any]) -> str:
     lines.append(f"> **{data.get('error', 'Unknown error')}**")
     lines.append("")
 
-    context = data.get("context", {})
-    state = data.get("state", context.get("state", ""))
+    context: dict[str, Any] = data.get("context", {})
+    state: str = data.get("state", context.get("state", ""))
     if state:
         lines.append(_md_bold_kv("State", _md_code_inline(state)))
 
-    tool = data.get("tool", context.get("tool", ""))
+    tool: str = data.get("tool", context.get("tool", ""))
     if tool:
         lines.append(_md_bold_kv("Tool", _md_code_inline(tool)))
 
-    detail_keys = [
+    detail_keys: list[tuple[str, str]] = [
         ("Provider", "provider"),
         ("Connection Stage", "connectionStage"),
         ("Server Host", "serverHost"),
@@ -2365,7 +2374,7 @@ def _render_error(data: dict[str, Any]) -> str:
             continue
         lines.append(_md_bold_kv(label, value))
 
-    next_steps = data.get("nextSteps", [])
+    next_steps: list[str] = data.get("nextSteps", [])
     if next_steps:
         lines.append("")
         lines.append(_md_heading(3, "How to Fix"))
@@ -2384,10 +2393,10 @@ def _render_error(data: dict[str, Any]) -> str:
 def _render_function_detail_block(data: dict[str, Any], *, heading_level: int = 2) -> str:
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_detail_block")
     lines: list[str] = []
-    name = data.get("name", "unknown")
-    addr = data.get("address", "")
-    sig = data.get("signature", "")
-    relationship = data.get("relationship")
+    name: str = data.get("name", "unknown")
+    addr: str = data.get("address", "")
+    sig: str = data.get("signature", "")
+    relationship: str = data.get("relationship", "")
 
     title = f"Function: `{name}`"
     if relationship:

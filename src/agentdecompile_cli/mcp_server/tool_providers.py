@@ -29,6 +29,7 @@ import time
 
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from mcp import types  # pyright: ignore[reportMissingImports]
@@ -751,9 +752,9 @@ class ToolProvider:
     call self._handle when either 'mytool', 'my-tool', 'MY_TOOL', etc. is invoked.
     """
 
-    def __init__(self, program_info: ProgramInfo | None = None) -> None:
+    def __init__(self, program_info: ProgramInfo | SimpleNamespace | None = None) -> None:
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProvider.__init__")
-        self.program_info: ProgramInfo | None = program_info
+        self.program_info: ProgramInfo | SimpleNamespace | None = program_info
         self.ghidra_tools: Any | None = None
         self._manager: ToolProviderManager | None = None  # set by manager._register
         if program_info is not None:
@@ -1743,7 +1744,7 @@ class ToolProviderManager:
 
     def set_program_info(
         self,
-        program_info: ProgramInfo,
+        program_info: ProgramInfo | SimpleNamespace,
     ) -> None:
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.set_program_info")
         logger.info("Setting program info: %s", program_info)
