@@ -72,7 +72,7 @@ class ProgramInfo:
     name: str
     program: GhidraProgram
     flat_api: GhidraFlatProgramAPI | None
-    decompiler: GhidraDecompInterface | None
+    decompiler: GhidraDecompInterface
     metadata: dict[str, Any]  # Ghidra program metadata
     ghidra_analysis_complete: bool
     file_path: Path | None = None
@@ -1164,16 +1164,8 @@ class PyGhidraContext:
         meta: dict[str, Any] = prog.getMetadata()
         return dict(meta)
 
-    def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface | None:
+    def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface:
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.setup_decompiler")
         from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
 
-        try:
-            return open_decompiler_for_program(program)
-        except Exception as exc:
-            logger.warning(
-                "setup_decompiler_failed program=%s exc_type=%s",
-                getattr(program, "name", "unknown"),
-                exc.__class__.__name__,
-            )
-            return None
+        return open_decompiler_for_program(program)
