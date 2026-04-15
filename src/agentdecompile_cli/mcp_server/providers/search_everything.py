@@ -135,7 +135,7 @@ _OPTIONAL_SCOPES: tuple[str, ...] = (
 
 class SearchEverythingToolProvider(ToolProvider):
     HANDLERS = {"searcheverything": "_handle"}
-    _TEXT_MATCH_MODES: ClassVar[frozenset[str]] = frozenset({"auto", "literal", "regex", "fuzzy"})
+    _TEXT_MATCH_MODES: ClassVar[frozenset[str]] = frozenset({"auto", "regex", "fuzzy"})
     _LEGACY_CONSTANT_MODES: ClassVar[frozenset[str]] = frozenset({"specific", "range", "common"})
 
     def list_tools(self) -> list[types.Tool]:
@@ -181,9 +181,9 @@ class SearchEverythingToolProvider(ToolProvider):
                         },
                         "mode": {
                             "type": "string",
-                            "enum": ["auto", "literal", "regex", "fuzzy"],
+                            "enum": ["auto", "regex", "fuzzy"],
                             "default": "auto",
-                            "description": "Match strategy. 'auto' detects regex chars and falls back to substring — WARNING: can produce false positives (e.g. '.sav' matches 'handleScreenSaver'). Use 'literal' to force exact substring matching (required for file extensions like '.sav', '.exe', or identifiers with dots). Use 'regex' to write an explicit anchored pattern. Use 'fuzzy' for approximate/similarity matching.",
+                            "description": "Match strategy. 'auto' handles normal exact-substring matching by default and only treats obvious regex input as regex — WARNING: auto can still produce false positives for regex-like text such as '.sav'. Use 'regex' to write an explicit anchored pattern. Use 'fuzzy' for approximate/similarity matching.",
                         },
                         "scopes": {
                             "type": "array",
@@ -439,20 +439,24 @@ class SearchEverythingToolProvider(ToolProvider):
         if explicit_search_mode:
             normalized = n(explicit_search_mode)
             if constant_request is not None and normalized in self._LEGACY_CONSTANT_MODES:
-                return "literal"
+                return "auto"
             if normalized == "semantic":
                 return "fuzzy"
+            if normalized == "literal":
+                return "auto"
             if normalized in self._TEXT_MATCH_MODES:
                 return normalized
-            raise ValueError("searchMode must be one of: semantic, literal, regex, fuzzy")
+            raise ValueError("searchMode must be one of: semantic, auto, regex, fuzzy")
 
         explicit_mode = self._get_str(args, "mode", default="auto")
         normalized_mode = n(explicit_mode)
+        if normalized_mode == "literal":
+            return "auto"
         if normalized_mode in self._TEXT_MATCH_MODES:
             return normalized_mode
         if constant_request is not None:
-            return "literal"
-        raise ValueError("mode must be one of: auto, literal, regex, fuzzy")
+            return "auto"
+        raise ValueError("mode must be one of: auto, regex, fuzzy")
 
     def _collect_legacy_constant_request(self, args: dict[str, Any]) -> dict[str, Any] | None:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_legacy_constant_request")
@@ -907,6 +911,157 @@ class SearchEverythingToolProvider(ToolProvider):
             return
         for item in source:
             yield item
+
+    @staticmethod
+    def _has_concrete_address(value: str) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._has_concrete_address")
+        text = str(value or "").strip()
+        if not text:
+            return False
+        if text.upper() == "NO ADDRESS":
+            return False
+        return bool(re.fullmatch(r"(?:0x)?[0-9A-Fa-f]+", text))
+
+    def _resolve_address(self, program: GhidraProgram, value: str) -> Any | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_address")
+        text = str(value or "").strip()
+        if not self._has_concrete_address(text):
+            return None
+        try:
+            factory = program.getAddressFactory()
+        except Exception:
+            return None
+
+        candidates = [text]
+        if text.lower().startswith("0x"):
+            candidates.append(text[2:])
+        else:
+            candidates.append(f"0x{text}")
+
+        for candidate in candidates:
+            try:
+                address = factory.getAddress(candidate)
+                if address is not None:
+                    return address
+            except Exception:
+                continue
+        return None
+
+    def _collect_reference_summary(self, program: GhidraProgram, address_value: str, *, max_refs: int = 3) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_reference_summary")
+        address = self._resolve_address(program, address_value)
+        if address is None:
+            return {}
+
+        try:
+            ref_mgr = program.getReferenceManager()
+        except Exception:
+            return {}
+
+        fm = self._get_function_manager(program)
+        references: list[dict[str, str]] = []
+        total_count = 0
+        try:
+            if hasattr(ref_mgr, "getReferenceCountTo"):
+                total_count = int(ref_mgr.getReferenceCountTo(address))
+        except Exception:
+            total_count = 0
+
+        try:
+            for ref in self._iter_items(ref_mgr.getReferencesTo(address)):
+                if len(references) >= max_refs:
+                    break
+                from_addr = ref.getFromAddress()
+                function_name = ""
+                if fm is not None:
+                    try:
+                        func = fm.getFunctionContaining(from_addr)
+                        if func is not None:
+                            function_name = str(func.getName() or "")
+                    except Exception:
+                        function_name = ""
+                references.append(
+                    {
+                        "fromAddress": str(from_addr),
+                        "type": str(ref.getReferenceType()),
+                        "function": function_name,
+                    },
+                )
+        except Exception:
+            references = []
+
+        if total_count <= 0:
+            total_count = len(references)
+
+        if total_count <= 0 and not references:
+            return {"referenceCount": 0}
+        return {"referenceCount": total_count, "referencesPreview": references}
+
+    @staticmethod
+    def _collect_structure_field_preview(fields: list[dict[str, Any]], *, max_fields: int = 5) -> tuple[list[dict[str, Any]], str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_structure_field_preview")
+        preview: list[dict[str, Any]] = []
+        preview_parts: list[str] = []
+        for field in fields[:max_fields]:
+            offset = int(field.get("offset", 0) or 0)
+            name = str(field.get("name", "") or f"field_{offset:x}")
+            field_type = str(field.get("type", "") or "?")
+            preview.append(
+                {
+                    "offset": offset,
+                    "name": name,
+                    "type": field_type,
+                    "comment": str(field.get("comment", "") or ""),
+                },
+            )
+            preview_parts.append(f"{name}@0x{offset:x}:{field_type}")
+        remaining = max(0, len(fields) - len(preview))
+        if remaining:
+            preview_parts.append(f"+{remaining} more")
+        return preview, ", ".join(preview_parts)
+
+    def _enrich_structure_match(self, program: GhidraProgram, struct: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._enrich_structure_match")
+        enriched = dict(row)
+        structure_obj = struct.get("structure")
+        if structure_obj is not None:
+            fields = collect_structure_fields(structure_obj)
+            preview_fields, preview_text = self._collect_structure_field_preview(fields)
+            enriched["fieldsPreview"] = preview_fields
+            enriched["fieldPreviewText"] = preview_text
+            enriched["fieldCount"] = len(fields)
+        else:
+            enriched["fieldCount"] = int(struct.get("numComponents", 0) or 0)
+        enriched.setdefault("addressNote", "Data type definition only; no concrete memory address for the type itself")
+        return enriched
+
+    def _enrich_class_match(self, program: GhidraProgram, sym: dict[str, Any], related_structures: dict[str, dict[str, Any]], row: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._enrich_class_match")
+        enriched = dict(row)
+        enriched["source"] = str(sym.get("source", ""))
+        enriched["isPrimary"] = bool(sym.get("isPrimary", False))
+        enriched["isExternalEntryPoint"] = bool(sym.get("isExternalEntryPoint", False))
+
+        class_name = str(sym.get("name", "") or "")
+        related = related_structures.get(class_name) or related_structures.get(class_name.rsplit("::", 1)[-1])
+        if related is not None:
+            enriched["relatedStructure"] = str(related.get("name", ""))
+            enriched["relatedStructureCategoryPath"] = str(related.get("categoryPath", ""))
+            enriched["relatedStructureLength"] = int(related.get("length", 0) or 0)
+            enriched["relatedStructureFieldCount"] = int(related.get("numComponents", 0) or 0)
+            structure_obj = related.get("structure")
+            if structure_obj is not None:
+                fields = collect_structure_fields(structure_obj)
+                preview_fields, preview_text = self._collect_structure_field_preview(fields)
+                enriched["relatedStructureFieldsPreview"] = preview_fields
+                enriched["relatedStructureFieldPreviewText"] = preview_text
+
+        address = str(sym.get("address", "") or "")
+        if self._has_concrete_address(address):
+            enriched.update(self._collect_reference_summary(program, address))
+        else:
+            enriched["addressNote"] = "Class namespace symbol has no concrete memory address"
+        return enriched
 
     def _match_text(
         self,
@@ -1593,6 +1748,13 @@ class SearchEverythingToolProvider(ToolProvider):
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
         except Exception:
             return []
+        related_structures: dict[str, dict[str, Any]] = {}
+        for struct in collect_structures(program):
+            name = str(struct.get("name", "") or "")
+            if not name:
+                continue
+            related_structures.setdefault(name, struct)
+            related_structures.setdefault(name.rsplit("::", 1)[-1], struct)
         results: list[dict[str, Any]] = []
         for sym in collect_symbols(program, symbol_type=SymbolType.CLASS, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -1603,9 +1765,15 @@ class SearchEverythingToolProvider(ToolProvider):
             )
             if not match:
                 continue
-            results.append(
-                {"scope": "classes", "resultType": "class", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match}
-            )
+            row = {
+                "scope": "classes",
+                "resultType": "class",
+                "name": name,
+                "address": str(sym.get("address", "")),
+                "namespace": str(sym.get("namespace", "")),
+                **match,
+            }
+            results.append(self._enrich_class_match(program, sym, related_structures, row))
         return results
 
     def _search_strings(
@@ -1766,6 +1934,20 @@ class SearchEverythingToolProvider(ToolProvider):
         per_scope_limit: int,
     ) -> list[dict[str, Any]]:
         logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structures")
+        try:
+            from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+        except Exception:
+            SymbolType = None
+
+        related_classes: dict[str, list[dict[str, Any]]] = {}
+        if SymbolType is not None:
+            for sym in collect_symbols(program, symbol_type=SymbolType.CLASS):
+                name = str(sym.get("name", "") or "")
+                if not name:
+                    continue
+                related_classes.setdefault(name, []).append(sym)
+                related_classes.setdefault(name.rsplit("::", 1)[-1], []).append(sym)
+
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
@@ -1780,19 +1962,37 @@ class SearchEverythingToolProvider(ToolProvider):
                     best = match
             if not best:
                 continue
-            results.append(
-                {
-                    "scope": "structures",
-                    "resultType": "structure",
-                    "name": str(struct.get("name", "")),
-                    "categoryPath": str(struct.get("categoryPath", "")),
-                    "description": str(struct.get("description", "")),
-                    "length": int(struct.get("length", 0)),
-                    "numComponents": int(struct.get("numComponents", 0)),
-                    "isUnion": bool(struct.get("isUnion", False)),
-                    **best,
-                },
-            )
+            row = {
+                "scope": "structures",
+                "resultType": "structure",
+                "name": str(struct.get("name", "")),
+                "categoryPath": str(struct.get("categoryPath", "")),
+                "description": str(struct.get("description", "")),
+                "length": int(struct.get("length", 0)),
+                "numComponents": int(struct.get("numComponents", 0)),
+                "isUnion": bool(struct.get("isUnion", False)),
+                **best,
+            }
+            enriched = self._enrich_structure_match(program, struct, row)
+
+            matching_classes = related_classes.get(str(struct.get("name", "") or ""), [])
+            if matching_classes:
+                unique_related_classes: list[dict[str, Any]] = []
+                seen_related_class_names: set[str] = set()
+                for item in matching_classes:
+                    class_name = str(item.get("name", "") or "")
+                    class_key = class_name.lower()
+                    if not class_key or class_key in seen_related_class_names:
+                        continue
+                    seen_related_class_names.add(class_key)
+                    unique_related_classes.append(item)
+                enriched["relatedClasses"] = [str(item.get("name", "")) for item in unique_related_classes[:3]]
+                first_class = unique_related_classes[0]
+                related_address = str(first_class.get("address", "") or "")
+                if self._has_concrete_address(related_address):
+                    enriched["relatedClassAddress"] = related_address
+                    enriched.update(self._collect_reference_summary(program, related_address))
+            results.append(enriched)
         return results
 
     def _search_structure_fields(
@@ -1829,11 +2029,15 @@ class SearchEverythingToolProvider(ToolProvider):
                         "scope": "structure_fields",
                         "resultType": "structure_field",
                         "structure": str(struct.get("name", "")),
+                        "categoryPath": str(struct.get("categoryPath", "")),
+                        "structureLength": int(struct.get("length", 0) or 0),
+                        "structureFieldCount": int(struct.get("numComponents", 0) or 0),
                         "field": str(component.get("name", "")),
                         "fieldType": str(component.get("type", "")),
                         "comment": str(component.get("comment", "")),
                         "offset": int(component.get("offset", 0)),
                         "length": int(component.get("length", 0)),
+                        "addressNote": "Structure field definition only; no concrete memory address for the data type field itself",
                         **best,
                     },
                 )

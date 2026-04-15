@@ -86,6 +86,13 @@ def test_match_text_stops_after_perfect_literal_match(monkeypatch: pytest.Monkey
     assert fuzzy_calls == []
 
 
+def test_resolve_text_match_mode_maps_literal_to_auto() -> None:
+    provider = SearchEverythingToolProvider()
+
+    assert provider._resolve_text_match_mode({"mode": "literal"}, None) == "auto"
+    assert provider._resolve_text_match_mode({"searchmode": "literal"}, None) == "auto"
+
+
 @pytest.mark.asyncio
 async def test_handle_skips_expensive_default_scopes_after_fast_hits(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = SearchEverythingToolProvider()
@@ -348,3 +355,141 @@ async def test_resolve_target_programs_reports_project_inventory_and_skips(monke
         {"program": "/Other BioWare Engines/Aurora/toolset.exe", "reason": "not activated"},
     ]
     assert warnings == ["program '/Other BioWare Engines/Aurora/nwserver.exe': checkout failed"]
+
+
+def test_search_structures_enriches_field_preview_and_related_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+
+    class FakeSymbolType:
+        CLASS = "CLASS"
+
+    fake_ghidra_program = ModuleType("ghidra.program")
+    fake_ghidra_model = ModuleType("ghidra.program.model")
+    fake_ghidra_symbol = ModuleType("ghidra.program.model.symbol")
+    setattr(fake_ghidra_symbol, "SymbolType", FakeSymbolType)
+
+    monkeypatch.setitem(sys.modules, "ghidra.program", fake_ghidra_program)
+    monkeypatch.setitem(sys.modules, "ghidra.program.model", fake_ghidra_model)
+    monkeypatch.setitem(sys.modules, "ghidra.program.model.symbol", fake_ghidra_symbol)
+
+    struct_obj = object()
+    monkeypatch.setattr(
+        search_module,
+        "collect_structures",
+        lambda _program, limit=None: [
+            {
+                "name": "CResTGA",
+                "categoryPath": "/Res",
+                "description": "Texture resource header",
+                "length": 64,
+                "numComponents": 3,
+                "isUnion": False,
+                "structure": struct_obj,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        search_module,
+        "collect_structure_fields",
+        lambda _structure: [
+            {"offset": 0, "name": "width", "type": "uint32", "comment": "texture width"},
+            {"offset": 4, "name": "height", "type": "uint32", "comment": "texture height"},
+            {"offset": 8, "name": "format", "type": "uint32", "comment": "pixel format"},
+        ],
+    )
+    monkeypatch.setattr(
+        search_module,
+        "collect_symbols",
+        lambda _program, symbol_type=None, limit=None: [
+            {"name": "CResTGA", "address": "0x401000", "namespace": "global", "source": "ANALYSIS", "isPrimary": True}
+        ] if symbol_type == FakeSymbolType.CLASS else [],
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_reference_summary",
+        lambda _program, _address, max_refs=3: {
+            "referenceCount": 2,
+            "referencesPreview": [{"fromAddress": "0x402000", "function": "LoadTexture", "type": "DATA"}],
+        },
+    )
+
+    results = provider._search_structures(cast(Any, object()), ["CResTGA"], "auto", False, 0.7, {}, 10)
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["fieldCount"] == 3
+    assert "width@0x0:uint32" in result["fieldPreviewText"]
+    assert result["relatedClasses"] == ["CResTGA"]
+    assert result["relatedClassAddress"] == "0x401000"
+    assert result["referenceCount"] == 2
+
+
+def test_search_classes_enriches_related_structure_and_references(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+
+    class FakeSymbolType:
+        CLASS = "CLASS"
+
+    fake_ghidra_program = ModuleType("ghidra.program")
+    fake_ghidra_model = ModuleType("ghidra.program.model")
+    fake_ghidra_symbol = ModuleType("ghidra.program.model.symbol")
+    setattr(fake_ghidra_symbol, "SymbolType", FakeSymbolType)
+
+    monkeypatch.setitem(sys.modules, "ghidra.program", fake_ghidra_program)
+    monkeypatch.setitem(sys.modules, "ghidra.program.model", fake_ghidra_model)
+    monkeypatch.setitem(sys.modules, "ghidra.program.model.symbol", fake_ghidra_symbol)
+
+    struct_obj = object()
+    monkeypatch.setattr(
+        search_module,
+        "collect_structures",
+        lambda _program: [
+            {
+                "name": "CResDDS",
+                "categoryPath": "/Res",
+                "description": "DDS resource",
+                "length": 80,
+                "numComponents": 2,
+                "structure": struct_obj,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        search_module,
+        "collect_structure_fields",
+        lambda _structure: [
+            {"offset": 0, "name": "header", "type": "DDSHeader", "comment": ""},
+            {"offset": 4, "name": "pixels", "type": "byte *", "comment": ""},
+        ],
+    )
+    monkeypatch.setattr(
+        search_module,
+        "collect_symbols",
+        lambda _program, symbol_type=None, limit=None: [
+            {
+                "name": "CResDDS",
+                "address": "0x405000",
+                "namespace": "global",
+                "source": "USER_DEFINED",
+                "isPrimary": True,
+                "isExternalEntryPoint": False,
+            },
+        ] if symbol_type == FakeSymbolType.CLASS else [],
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_reference_summary",
+        lambda _program, _address, max_refs=3: {
+            "referenceCount": 1,
+            "referencesPreview": [{"fromAddress": "0x406000", "function": "CreateDDS", "type": "UNCONDITIONAL_CALL"}],
+        },
+    )
+
+    results = provider._search_classes(cast(Any, object()), ["CResDDS"], "auto", False, 0.7, {}, 10)
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["relatedStructure"] == "CResDDS"
+    assert result["relatedStructureLength"] == 80
+    assert "header@0x0:DDSHeader" in result["relatedStructureFieldPreviewText"]
+    assert result["referenceCount"] == 1
