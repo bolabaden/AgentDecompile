@@ -23,6 +23,53 @@ _DECOMPILER_LOCKS_GUARD = Lock()
 _DECOMPILER_LOCKS: dict[int, RLock] = {}
 
 
+def _dispose_decompiler_quietly(decompiler: GhidraDecompInterface) -> None:
+    try:
+        decompiler.dispose()
+    except Exception:
+        pass
+
+
+def _describe_program(program: GhidraProgram) -> str:
+    try:
+        domain_file = program.getDomainFile()
+        if domain_file is not None:
+            pathname = domain_file.getPathname()
+            if pathname:
+                return str(pathname)
+    except Exception:
+        pass
+    try:
+        name = program.getName()
+        if name:
+            return str(name)
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _extract_decompiler_open_detail(decompiler: GhidraDecompInterface, exc: Exception | None = None) -> str:
+    parts: list[str] = []
+    if exc is not None:
+        parts.append(f"{exc.__class__.__name__}: {exc}")
+    try:
+        message = decompiler.getLastMessage() or ""
+    except Exception:
+        message = ""
+    if message:
+        parts.append(str(message))
+    return "; ".join(part for part in parts if part) or "no error message from DecompInterface"
+
+
+def _try_open_configured_decompiler(decompiler: GhidraDecompInterface, program: GhidraProgram) -> str | None:
+    try:
+        if decompiler.openProgram(program):
+            return None
+        return _extract_decompiler_open_detail(decompiler)
+    except Exception as exc:
+        return _extract_decompiler_open_detail(decompiler, exc)
+
+
 @dataclass
 class DecompilerLease:
     """Tracks a borrowed decompiler interface and how it should be released."""
@@ -199,18 +246,29 @@ def open_decompiler_for_program(program: GhidraProgram) -> GhidraDecompInterface
     prog_options = DecompileOptions()
     prog_options.grabFromProgram(program)
     prog_options.setMaxPayloadMBytes(100)
-    decomp = DecompInterface()
-    decomp.setOptions(prog_options)
-    if not decomp.openProgram(program):
-        err_msg = ""
-        try:
-            err_msg = decomp.getLastMessage() or ""
-        except Exception:
-            err_msg = ""
-        try:
-            decomp.dispose()
-        except Exception:
-            pass
-        detail = err_msg or "no error message from DecompInterface"
-        raise RuntimeError(f"Failed to open DecompInterface for program: {detail}")
-    return decomp
+    last_detail = "no error message from DecompInterface"
+    program_name = _describe_program(program)
+
+    for attempt in range(2):
+        decomp = DecompInterface()
+        decomp.setOptions(prog_options)
+        detail = _try_open_configured_decompiler(decomp, program)
+        if detail is None:
+            if attempt > 0:
+                logger.warning(
+                    "decompiler_open_program_recovered program=%s attempt=%s",
+                    program_name,
+                    attempt + 1,
+                )
+            return decomp
+
+        last_detail = detail
+        logger.warning(
+            "decompiler_open_program_failed program=%s attempt=%s detail=%s",
+            program_name,
+            attempt + 1,
+            detail,
+        )
+        _dispose_decompiler_quietly(decomp)
+
+    raise RuntimeError(f"Failed to open DecompInterface for program: {last_detail}")

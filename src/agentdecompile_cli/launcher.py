@@ -1579,27 +1579,19 @@ class PyGhidraContext:
         meta: dict[str, Any] = prog.getMetadata()
         return dict(meta)
 
-    def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface:
+    def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface | None:
         logger.debug("diag.enter %s", "launcher.py:PyGhidraContext.setup_decompiler")
-        from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
-            DecompInterface as GhidraDecompInterface,
-            DecompileOptions as GhidraDecompileOptions,
-        )
+        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
 
-        prog_options = GhidraDecompileOptions()
-
-        decomp = GhidraDecompInterface()
-
-        # grab default options from program
-        prog_options.grabFromProgram(program)
-
-        # increase maxpayload size to 100MB (default 50MB)
-        prog_options.setMaxPayloadMBytes(100)
-
-        decomp.setOptions(prog_options)
-        decomp.openProgram(program)
-
-        return decomp
+        try:
+            return open_decompiler_for_program(program)
+        except Exception as exc:
+            logger.warning(
+                "setup_decompiler_failed program=%s exc_type=%s",
+                getattr(program, "name", "unknown"),
+                exc.__class__.__name__,
+            )
+            return None
 
 
 # ---------------------------------------------------------------------------
