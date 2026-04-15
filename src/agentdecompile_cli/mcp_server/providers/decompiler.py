@@ -19,10 +19,11 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.mcp_utils.decompiler_util import (
+    DecompilerLease,
+    acquire_decompiler_for_program,
     get_decompiled_function_from_results,
     merge_decompile_dict_keys,
     open_decompiler_for_program,
-    resolve_decompiler_for_program,
 )
 from agentdecompile_cli.registry import Tool
 
@@ -136,16 +137,11 @@ class DecompilerToolProvider(ToolProvider):
             monitor = ConsoleTaskMonitor()
             session_decomp = getattr(self.program_info, "decompiler", None)
 
-            decomp, owns_decomp = self._setup_decompiler(session_decomp, program)
-
-            try:
-                result = self._perform_decompilation(decomp, target_func, timeout, monitor, session_decomp, program)
+            with self._setup_decompiler(session_decomp, program) as lease:
+                result = self._perform_decompilation(lease, target_func, timeout, monitor, session_decomp, program)
                 if isinstance(result, dict):
                     result = merge_decompile_dict_keys(result)
                 return create_success_response(result)
-            finally:
-                if owns_decomp:
-                    decomp.dispose()
 
         except ImportError as exc:
             raise RuntimeError("Ghidra DecompInterface is not available (PyGhidra / Ghidra classpath)") from exc
@@ -154,14 +150,14 @@ class DecompilerToolProvider(ToolProvider):
         self,
         session_decomp: GhidraDecompInterface | None,
         program: GhidraProgram,
-    ) -> tuple[GhidraDecompInterface, bool]:
-        """Set up the decompiler interface, returning (decomp, owns_decomp). When owns_decomp is True, caller must dispose decomp."""
+    ) -> DecompilerLease:
+        """Set up the decompiler interface and return a managed lease."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._setup_decompiler")
-        return resolve_decompiler_for_program(session_decomp, program)
+        return acquire_decompiler_for_program(session_decomp, program)
 
     def _perform_decompilation(
         self,
-        decomp: GhidraDecompInterface,
+        lease: DecompilerLease,
         target_func: GhidraFunction,
         timeout: int,
         monitor: GhidraTaskMonitor,
@@ -170,13 +166,14 @@ class DecompilerToolProvider(ToolProvider):
     ) -> dict[str, Any]:  # pyright: ignore[reportReturnType]
         """Perform the actual decompilation with retry logic."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._perform_decompilation")
+        decomp = lease.decompiler
         dr: GhidraDecompileResults = decomp.decompileFunction(target_func, timeout, monitor)
 
         if dr and dr.decompileCompleted():
             return self._extract_successful_decompilation(dr, target_func)
 
         # Try retry with fresh interface if session decomp failed
-        if session_decomp is not None:
+        if session_decomp is not None and lease.reused_session:
             retry_result = self._try_retry_decompilation(target_func, timeout, monitor, decomp, program)
             if retry_result:
                 return retry_result

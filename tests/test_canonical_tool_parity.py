@@ -3,12 +3,70 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from mcp import types
 
 import agentdecompile_cli.mcp_server.providers.dissect as dissect_module
 from agentdecompile_cli.mcp_server.providers.dataflow import DataFlowToolProvider
 from agentdecompile_cli.mcp_server.providers.dissect import GetFunctionAioToolProvider
 from agentdecompile_cli.mcp_server.providers.search_everything import SearchEverythingToolProvider
 from agentdecompile_cli.mcp_server.response_formatter import _render_get_function
+from agentdecompile_cli.mcp_server.tool_providers import ToolProvider, ToolProviderManager, create_success_response
+
+
+class DummyResponseFormatProvider(ToolProvider):
+    HANDLERS = {"dummyresponseformat": "_handle"}
+
+    def list_tools(self) -> list[types.Tool]:
+        return [
+            types.Tool(
+                name="dummy-response-format",
+                description="Test helper tool",
+                inputSchema={"type": "object", "properties": {}},
+            )
+        ]
+
+    async def _handle(self, args: dict[str, object]) -> list[types.TextContent]:
+        return create_success_response({"success": True, "payload": {"value": 7}})
+
+
+class DummyGetFunctionProvider(ToolProvider):
+    HANDLERS = {"getfunction": "_handle"}
+
+    def list_tools(self) -> list[types.Tool]:
+        return [
+            types.Tool(
+                name="get-function",
+                description="Test helper get-function tool",
+                inputSchema={"type": "object", "properties": {}},
+            )
+        ]
+
+    async def _handle(self, args: dict[str, object]) -> list[types.TextContent]:
+        return create_success_response(
+            {
+                "tool": "get-function",
+                "name": "entry",
+                "address": "1000004b0",
+                "signature": "void entry(void)",
+                "metadata": {"sizeBytes": 1},
+                "decompilation": "void entry(void) { }",
+                "disassembly": {"instructions": [], "count": 0, "truncated": False},
+                "callers": [],
+                "callees": [],
+                "crossReferences": [],
+                "outboundReferences": [],
+                "comments": {},
+                "labels": [],
+                "bookmarks": [],
+                "stackFrame": {},
+                "memoryBlock": {},
+                "namespace": "Global",
+                "targetFunction": {"name": "entry", "address": "1000004b0"},
+                "callGraphTree": {"callers": [], "callees": []},
+                "callerDetails": [],
+                "calleeDetails": [],
+            }
+        )
 
 
 class FakeFunction:
@@ -159,3 +217,26 @@ def test_render_get_function_includes_data_flow_section() -> None:
 
     assert "### Data flow (backward)" in rendered
     assert "**Seed address:** `1400019b0`" in rendered
+
+
+@pytest.mark.asyncio
+async def test_tool_provider_manager_honors_response_format_json() -> None:
+    manager = ToolProviderManager()
+    manager._register(DummyResponseFormatProvider())
+
+    result = await manager.call_tool("dummy-response-format", {"responseFormat": "json"})
+
+    assert len(result) == 1
+    assert result[0].text == '{"success": true, "payload": {"value": 7}}'
+
+
+@pytest.mark.asyncio
+async def test_get_function_honors_response_format_json() -> None:
+    manager = ToolProviderManager()
+    manager._register(DummyGetFunctionProvider())
+
+    result = await manager.call_tool("get-function", {"responseFormat": "json"})
+
+    assert len(result) == 1
+    assert result[0].text.startswith('{"tool": "get-function"')
+    assert not result[0].text.startswith("## Function:")

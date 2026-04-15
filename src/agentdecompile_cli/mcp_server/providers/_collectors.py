@@ -204,80 +204,79 @@ def collect_function_data_flow(
     }
 
     try:
-        from agentdecompile_cli.mcp_utils.decompiler_util import resolve_decompiler_for_program
+        from agentdecompile_cli.mcp_utils.decompiler_util import acquire_decompiler_for_program
     except Exception as exc:
         payload.update({"pcode": [], "note": f"Decompiler utilities unavailable: {exc}"})
         return payload
 
-    decomp = None
-    owns_decompiler = False
     try:
-        decomp, owns_decompiler = resolve_decompiler_for_program(session_decompiler, program)
-        result = decomp.decompileFunction(func, timeout_s, make_task_monitor())
-        if result is None or not result.decompileCompleted():
-            payload.update({"pcode": [], "note": "Decompilation failed or timed out"})
-            return payload
+        with acquire_decompiler_for_program(session_decompiler, program) as lease:
+            decomp = lease.decompiler
+            result = decomp.decompileFunction(func, timeout_s, make_task_monitor())
+            if result is None or not result.decompileCompleted():
+                payload.update({"pcode": [], "note": "Decompilation failed or timed out"})
+                return payload
 
-        hfunc = result.getHighFunction()
-        if hfunc is None:
-            payload.update({"pcode": [], "note": "No high-level function available"})
-            return payload
+            hfunc = result.getHighFunction()
+            if hfunc is None:
+                payload.update({"pcode": [], "note": "No high-level function available"})
+                return payload
 
-        if direction in {"variable_accesses", "variableaccesses"}:
-            variables: list[dict[str, Any]] = []
-            for sym in hfunc.getLocalSymbolMap().getSymbols():
-                hv = sym.getHighVariable()
-                if hv is None:
-                    continue
-                variables.append(
+            if direction in {"variable_accesses", "variableaccesses"}:
+                variables: list[dict[str, Any]] = []
+                for sym in hfunc.getLocalSymbolMap().getSymbols():
+                    hv = sym.getHighVariable()
+                    if hv is None:
+                        continue
+                    variables.append(
+                        {
+                            "name": str(sym.getName() or ""),
+                            "dataType": str(hv.getDataType()),
+                            "storage": str(hv.getRepresentative()),
+                            "size": int(hv.getSize()),
+                        },
+                    )
+                payload.update({"variables": variables, "count": len(variables)})
+                return payload
+
+            ops: list[dict[str, Any]] = []
+            output_to_indices: dict[str, list[int]] = {}
+            input_to_indices: dict[str, list[int]] = {}
+            op_iter = hfunc.getPcodeOps()
+            target_address = str(addr)
+
+            while op_iter.hasNext():
+                op = op_iter.next()
+                op_address = str(op.getSeqnum().getTarget())
+                output = str(op.getOutput()) if op.getOutput() else None
+                inputs = [str(inp) for inp in op.getInputs()]
+                ops.append(
                     {
-                        "name": str(sym.getName() or ""),
-                        "dataType": str(hv.getDataType()),
-                        "storage": str(hv.getRepresentative()),
-                        "size": int(hv.getSize()),
+                        "address": op_address,
+                        "mnemonic": str(op.getMnemonic()),
+                        "output": output,
+                        "inputs": inputs,
                     },
                 )
-            payload.update({"variables": variables, "count": len(variables)})
-            return payload
+                index = len(ops) - 1
+                if output:
+                    output_to_indices.setdefault(output, []).append(index)
+                for input_name in inputs:
+                    input_to_indices.setdefault(input_name, []).append(index)
 
-        ops: list[dict[str, Any]] = []
-        output_to_indices: dict[str, list[int]] = {}
-        input_to_indices: dict[str, list[int]] = {}
-        op_iter = hfunc.getPcodeOps()
-        target_address = str(addr)
-
-        while op_iter.hasNext():
-            op = op_iter.next()
-            op_address = str(op.getSeqnum().getTarget())
-            output = str(op.getOutput()) if op.getOutput() else None
-            inputs = [str(inp) for inp in op.getInputs()]
-            ops.append(
-                {
-                    "address": op_address,
-                    "mnemonic": str(op.getMnemonic()),
-                    "output": output,
-                    "inputs": inputs,
-                },
-            )
-            index = len(ops) - 1
-            if output:
-                output_to_indices.setdefault(output, []).append(index)
-            for input_name in inputs:
-                input_to_indices.setdefault(input_name, []).append(index)
-
-        seed_indices = [index for index, op in enumerate(ops) if str(op.get("address", "")) == target_address]
-        if not seed_indices:
-            payload.update(
-                {
-                    "pcode": [],
-                    "count": 0,
-                    "seedCount": 0,
-                    "totalPcodeOps": len(ops),
-                    "analysisDepth": max_depth,
-                    "note": "No P-code operations mapped directly to the requested address",
-                },
-            )
-            return payload
+            seed_indices = [index for index, op in enumerate(ops) if str(op.get("address", "")) == target_address]
+            if not seed_indices:
+                payload.update(
+                    {
+                        "pcode": [],
+                        "count": 0,
+                        "seedCount": 0,
+                        "totalPcodeOps": len(ops),
+                        "analysisDepth": max_depth,
+                        "note": "No P-code operations mapped directly to the requested address",
+                    },
+                )
+                return payload
 
         queue: deque[tuple[str, int]] = deque()
         selected: set[int] = set(seed_indices)
@@ -332,11 +331,7 @@ def collect_function_data_flow(
         payload.update({"pcode": [], "error": str(exc)})
         return payload
     finally:
-        if owns_decompiler and decomp is not None:
-            try:
-                decomp.dispose()
-            except Exception:
-                pass
+        pass
 
 
 def collect_vtable_candidates(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:

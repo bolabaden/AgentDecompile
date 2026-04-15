@@ -51,6 +51,7 @@ uv run pytest -m unit -v
 uv run pytest tests/test_provider_*.py -v
 uv run pytest tests/test_cli_*.py -v
 uv run pytest tests/test_e2e_*.py -v
+uv run pytest tests/test_e2e_cancelled_profile.py -v --timeout=300 -s
 ```
 
 ### Run Tests Matching Pattern
@@ -119,6 +120,23 @@ Set `GHIDRA_INSTALL_DIR` to your Ghidra install root.
 ### Tests Timeout
 
 Increase `--timeout` or mark very slow tests and skip with `-m "not slow"`.
+
+### Profiling E2E Suite
+
+The cancelled-timeout reproduction suite starts a local subprocess server with
+Python cProfile output and JVM JFR recording enabled.
+
+```bash
+uv run pytest tests/test_e2e_cancelled_profile.py -v --timeout=300 -s
+```
+
+Artifacts are written under the pytest temp directory for the module and include:
+
+- `server.log`
+- `profiles/*.prof`
+- `profiles/*.analysis.txt`
+- `profiles/*.analysis.json`
+- a JFR recording dump when `jcmd` is available
 
 ## Related Docs
 

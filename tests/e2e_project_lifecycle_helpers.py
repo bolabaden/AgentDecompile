@@ -2,16 +2,131 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
+import shutil
 import sys
 import time
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import httpx
+
+
+_JFR_JCMD_PID_RE = re.compile(r"Use jcmd\s+(\d+)\s+JFR\.dump\s+name=")
+
+
+def resolve_java_home() -> Path | None:
+    """Return a usable JAVA_HOME containing the JVM shared library."""
+    candidates: list[Path] = []
+
+    java_home_raw = os.environ.get("JAVA_HOME", "").strip()
+    if java_home_raw:
+        candidates.append(Path(java_home_raw))
+
+    java_exe = shutil.which("java")
+    if java_exe:
+        candidates.append(Path(java_exe).resolve().parent.parent)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate).rstrip("\\/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        home = Path(normalized)
+        if (home / "bin" / "server" / "jvm.dll").exists():
+            return home
+        if (home / "lib" / "server" / "libjvm.so").exists():
+            return home
+        if (home / "lib" / "jli" / "libjli.dylib").exists():
+            return home
+    return None
+
+
+def resolve_jcmd() -> Path | None:
+    """Return the jcmd executable when available."""
+    jcmd = shutil.which("jcmd")
+    if jcmd:
+        return Path(jcmd).resolve()
+
+    java_home = resolve_java_home()
+    if java_home is None:
+        return None
+
+    suffix = ".exe" if sys.platform == "win32" else ""
+    candidate = java_home / "bin" / f"jcmd{suffix}"
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def start_jfr_recording(process_id: int, recording_path: Path, *, name: str = "agentdecompile-tests") -> None:
+    """Start a JFR recording on an already-running JVM via jcmd."""
+    jcmd = resolve_jcmd()
+    if jcmd is None:
+        raise AssertionError("jcmd is not available; Java 21 tooling is required for the profiled E2E fixture")
+
+    recording_path.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [
+            str(jcmd),
+            str(process_id),
+            "JFR.start",
+            f"name={name}",
+            "settings=profile",
+            "disk=true",
+            "dumponexit=true",
+            f"filename={recording_path}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise AssertionError(f"Failed to start JFR recording for PID {process_id}: {detail}")
+
+
+def dump_jfr_recording(process_id: int, recording_path: Path, *, name: str = "agentdecompile-tests") -> Path:
+    """Dump an active JFR recording to disk via jcmd."""
+    jcmd = resolve_jcmd()
+    if jcmd is None:
+        raise AssertionError("jcmd is not available; Java 21 tooling is required for the profiled E2E fixture")
+
+    recording_path.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [
+            str(jcmd),
+            str(process_id),
+            "JFR.dump",
+            f"name={name}",
+            f"filename={recording_path}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise AssertionError(f"Failed to dump JFR recording for PID {process_id}: {detail}")
+    if not recording_path.exists():
+        raise AssertionError(f"Expected JFR dump at {recording_path}")
+    return recording_path
+
+
+def extract_jfr_jcmd_pid(log_path: Path) -> int:
+    """Return the JVM PID advertised in the startup JFR log line."""
+    if not log_path.exists():
+        raise AssertionError(f"Expected server log at {log_path}")
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    match = _JFR_JCMD_PID_RE.search(text)
+    if match is None:
+        raise AssertionError(f"Could not find JFR jcmd PID in {log_path}")
+    return int(match.group(1))
 
 
 def extract_text_content(response: dict[str, Any]) -> str:
@@ -77,7 +192,7 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def build_local_server_env(project_path: Path) -> dict[str, str]:
+def build_local_server_env(project_path: Path, *, extra_env: dict[str, str] | None = None) -> dict[str, str]:
     """Return a clean environment for running a local subprocess MCP server."""
     env = os.environ.copy()
     for key in [
@@ -95,20 +210,44 @@ def build_local_server_env(project_path: Path) -> dict[str, str]:
         "AGENTDECOMPILE_SERVER_REPOSITORY",
     ]:
         env.pop(key, None)
+
+    resolved_java_home = resolve_java_home()
+    if resolved_java_home is not None:
+        java_home = str(resolved_java_home)
+        env["JAVA_HOME"] = java_home
+        env.setdefault("JAVA_HOME_OVERRIDE", java_home)
+        java_bin = str(resolved_java_home / "bin")
+        current_path = str(env.get("PATH", ""))
+        path_parts = [part for part in current_path.split(os.pathsep) if part]
+        normalized_parts = {part.rstrip("\\/").lower() for part in path_parts}
+        if java_bin.rstrip("\\/").lower() not in normalized_parts:
+            env["PATH"] = os.pathsep.join([java_bin, *path_parts])
+
     env["AGENT_DECOMPILE_PROJECT_PATH"] = str(project_path)
     env["PYTHONUNBUFFERED"] = "1"
+    if extra_env:
+        env.update({key: str(value) for key, value in extra_env.items()})
     return env
 
 
-def wait_for_server(base_url: str, process: subprocess.Popen[str], timeout: float = 120.0) -> None:
+def _tail_text(path: Path | None, *, max_chars: int = 800) -> str:
+    if path is None or not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")[-max_chars:]
+
+
+def wait_for_server(base_url: str, process: subprocess.Popen[str], timeout: float = 120.0, log_path: Path | None = None) -> None:
     """Poll the health endpoint until the subprocess server is ready."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             stdout, stderr = process.communicate(timeout=5)
+            stdout_tail = (stdout or "")[-800:]
+            stderr_tail = (stderr or "")[-800:]
+            log_tail = _tail_text(log_path)
             raise AssertionError(
                 "Local subprocess server exited before becoming healthy. "
-                f"stdout={stdout[-800:]} stderr={stderr[-800:]}"
+                f"stdout={stdout_tail} stderr={stderr_tail} log_tail={log_tail}"
             )
         try:
             health_response = httpx.get(f"{base_url}/health", timeout=1.0)
@@ -125,9 +264,12 @@ def wait_for_server(base_url: str, process: subprocess.Popen[str], timeout: floa
     except subprocess.TimeoutExpired:
         process.kill()
         stdout, stderr = process.communicate(timeout=10)
+    stdout_tail = (stdout or "")[-800:]
+    stderr_tail = (stderr or "")[-800:]
+    log_tail = _tail_text(log_path)
     raise AssertionError(
         "Local subprocess server did not become ready within timeout. "
-        f"stdout={stdout[-800:]} stderr={stderr[-800:]}"
+        f"stdout={stdout_tail} stderr={stderr_tail} log_tail={log_tail}"
     )
 
 
@@ -137,14 +279,20 @@ class LocalServerHandle:
     base_url: str
     project_path: Path
     process: subprocess.Popen[str]
+    log_path: Path | None = None
+    _log_handle: TextIO | None = None
 
     def stop(self) -> None:
-        self.process.terminate()
-        try:
-            self.process.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.communicate(timeout=10)
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.communicate(timeout=10)
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
 
 
 class LocalServerPool:
@@ -163,6 +311,8 @@ class LocalServerPool:
         project_name: str,
         host: str = "127.0.0.1",
         timeout: float | None = None,
+        extra_env: dict[str, str] | None = None,
+        log_path: Path | None = None,
     ) -> LocalServerHandle:
         existing = self._handles.get(key)
         if existing is not None and existing.process.poll() is None:
@@ -170,6 +320,14 @@ class LocalServerPool:
 
         project_path.mkdir(parents=True, exist_ok=True)
         port = find_free_port()
+        log_handle: TextIO | None = None
+        stdout_target: Any = subprocess.PIPE
+        stderr_target: Any = subprocess.PIPE
+        if log_path is not None:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_handle = log_path.open("w", encoding="utf-8")
+            stdout_target = log_handle
+            stderr_target = subprocess.STDOUT
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -187,18 +345,20 @@ class LocalServerPool:
                 project_name,
             ],
             cwd=str(self.repo_root),
-            env=build_local_server_env(project_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            env=build_local_server_env(project_path, extra_env=extra_env),
+            stdout=stdout_target,
+            stderr=stderr_target,
             text=True,
         )
         base_url = f"http://{host}:{port}"
-        wait_for_server(base_url, process, timeout=self.default_timeout if timeout is None else timeout)
+        wait_for_server(base_url, process, timeout=self.default_timeout if timeout is None else timeout, log_path=log_path)
         handle = LocalServerHandle(
             key=key,
             base_url=base_url,
             project_path=project_path,
             process=process,
+            log_path=log_path,
+            _log_handle=log_handle,
         )
         self._handles[key] = handle
         return handle

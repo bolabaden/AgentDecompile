@@ -695,42 +695,36 @@ class GetFunctionAioToolProvider(ToolProvider):
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             from agentdecompile_cli.mcp_utils.decompiler_util import (
+                acquire_decompiler_for_program,
                 get_decompiled_function_from_results,
                 open_decompiler_for_program,
-                resolve_decompiler_for_program,
             )
 
             monitor = ConsoleTaskMonitor()
 
             session_decomp = getattr(self.program_info, "decompiler", None)
-            decomp, owns = resolve_decompiler_for_program(session_decomp, program)
+            with acquire_decompiler_for_program(session_decomp, program) as lease:
+                decomp = lease.decompiler
+                dr: GhidraDecompileResults = decomp.decompileFunction(func, timeout or 60, monitor)
+                if dr and dr.decompileCompleted():
+                    df = get_decompiled_function_from_results(dr)
+                    if df is None:
+                        raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
+                    code = df.getC()
+                    if code is not None and code.strip():
+                        return str(code)
 
-            dr: GhidraDecompileResults = decomp.decompileFunction(func, timeout or 60, monitor)
-            if dr and dr.decompileCompleted():
-                df = get_decompiled_function_from_results(dr)
-                if df is None:
-                    raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
-                code = df.getC()
-                if code is not None and code.strip():
-                    if owns:
-                        decomp.dispose()
-                    return str(code)
-
-            # Retry with fresh interface if session decomp failed
-            if session_decomp is not None:
+            # Retry with fresh interface only if the leased decompiler reused session state.
+            if session_decomp is not None and lease.reused_session:
                 retry = open_decompiler_for_program(program)
                 try:
                     retry_dr = retry.decompileFunction(func, timeout or 60, monitor)
                     if retry_dr and retry_dr.decompileCompleted():
                         retry_df = get_decompiled_function_from_results(retry_dr)
                         if retry_df is None:
-                            if owns:
-                                decomp.dispose()
                             raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
                         code = retry_df.getC()
                         if code is not None and code.strip():
-                            if owns:
-                                decomp.dispose()
                             return str(code)
                 finally:
                     try:
@@ -755,8 +749,6 @@ class GetFunctionAioToolProvider(ToolProvider):
                     err_tail = decomp.getLastMessage() or ""
                 except Exception:
                     err_tail = ""
-            if owns:
-                decomp.dispose()
             detail = "; ".join([p for p in [err_tail, " ".join(extras)] if p]) or "no error message from DecompInterface"
             raise RuntimeError(f"Decompilation failed for {func.getName()}: {detail}")
 
