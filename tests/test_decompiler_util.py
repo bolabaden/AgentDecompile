@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import ModuleType
+import sys
 
 import agentdecompile_cli.mcp_utils.decompiler_util as decompiler_util
+from agentdecompile_cli.context import ProgramInfo, PyGhidraContext
 
 
 @dataclass
@@ -17,8 +20,13 @@ class FakeDomainFile:
 class FakeProgram:
     path: str
 
+    name: str | None = None
+
     def getDomainFile(self) -> FakeDomainFile:
         return FakeDomainFile(self.path)
+
+    def getName(self) -> str:
+        return self.name or self.path.rsplit("/", 1)[-1]
 
 
 class FakeDecompiler:
@@ -35,6 +43,18 @@ class FakeDecompiler:
 
     def dispose(self) -> None:
         self.disposed += 1
+
+
+class FakeOptions:
+    def __init__(self) -> None:
+        self.grabbed_program: FakeProgram | None = None
+        self.max_payload: int | None = None
+
+    def grabFromProgram(self, program: FakeProgram) -> None:
+        self.grabbed_program = program
+
+    def setMaxPayloadMBytes(self, value: int) -> None:
+        self.max_payload = value
 
 
 def test_programs_same_decompiler_context_requires_same_program_object() -> None:
@@ -93,3 +113,71 @@ def test_acquire_decompiler_for_program_uses_ephemeral_interface_for_different_p
         assert lease.reused_session is False
 
     assert fresh_decompiler.disposed == 1
+
+
+def test_open_decompiler_for_program_retries_after_initial_launch_failure(monkeypatch) -> None:
+    program = FakeProgram("/same/path")
+    first = FakeDecompiler(program)
+    second = FakeDecompiler(program)
+    attempts = [False, True]
+
+    def open_program(_program: FakeProgram) -> bool:
+        return attempts.pop(0)
+
+    first.openProgram = open_program  # type: ignore[attr-defined]
+    first.getLastMessage = lambda: "Decompiler process failed to launch"  # type: ignore[attr-defined]
+    second.openProgram = lambda _program: True  # type: ignore[attr-defined]
+    second.getLastMessage = lambda: ""  # type: ignore[attr-defined]
+
+    decompilers = [first, second]
+
+    fake_ghidra = ModuleType("ghidra")
+    fake_ghidra_app = ModuleType("ghidra.app")
+    fake_ghidra_decompiler = ModuleType("ghidra.app.decompiler")
+    setattr(fake_ghidra_decompiler, "DecompInterface", lambda: decompilers.pop(0))
+    setattr(fake_ghidra_decompiler, "DecompileOptions", FakeOptions)
+
+    monkeypatch.setitem(sys.modules, "ghidra", fake_ghidra)
+    monkeypatch.setitem(sys.modules, "ghidra.app", fake_ghidra_app)
+    monkeypatch.setitem(sys.modules, "ghidra.app.decompiler", fake_ghidra_decompiler)
+
+    result = decompiler_util.open_decompiler_for_program(program)
+
+    assert result is second
+    assert first.disposed == 1
+    assert second.disposed == 0
+
+
+def test_setup_decompiler_returns_none_when_open_fails(monkeypatch) -> None:
+    context = object.__new__(PyGhidraContext)
+    program = FakeProgram("/same/path", name="demo")
+
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decompiler_util.open_decompiler_for_program",
+        lambda _program: (_ for _ in ()).throw(RuntimeError("launch failed")),
+    )
+
+    result = PyGhidraContext.setup_decompiler(context, program)  # type: ignore[misc]
+
+    assert result is None
+
+
+def test_program_info_get_decompiler_caches_successful_lazy_init(monkeypatch) -> None:
+    program = FakeProgram("/same/path", name="demo")
+    opened = FakeDecompiler(program)
+    info = ProgramInfo(
+        name="demo",
+        program=program,
+        flat_api=None,
+        decompiler=None,
+        metadata={},
+        ghidra_analysis_complete=False,
+    )
+
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decompiler_util.open_decompiler_for_program",
+        lambda _program: opened,
+    )
+
+    assert info.get_decompiler() is opened
+    assert info.get_decompiler() is opened
