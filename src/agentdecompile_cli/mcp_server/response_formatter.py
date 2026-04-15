@@ -1311,13 +1311,33 @@ def _render_search_everything(data: dict[str, Any]) -> str:
     query = data.get("queries", data.get("query", ""))
     search_mode = data.get("searchMode", "auto")
     scopes: list[str] = data.get("scopes", [])
+    target_program_count = data.get("targetProgramCount")
+    requested_program_count = data.get("requestedProgramCount")
+    project_program_count = data.get("projectProgramCount")
+    target_programs: list[str] = [str(item) for item in data.get("targetPrograms", []) if str(item).strip()]
+    skipped_programs: list[dict[str, Any]] = data.get("skippedPrograms", [])
+    warnings: list[str] = [str(item) for item in data.get("warnings", []) if str(item).strip()]
 
     lines.append(_md_bold_kv("Query", _md_code_inline(str(query))))
     lines.append(_md_bold_kv("Mode", search_mode))
     if scopes:
         lines.append(_md_bold_kv("Scopes", ", ".join(str(s) for s in scopes)))
+    if target_program_count is not None:
+        coverage = f"{target_program_count} searched"
+        if project_program_count is not None:
+            coverage += f" / {project_program_count} in project"
+        elif requested_program_count is not None:
+            coverage += f" / {requested_program_count} requested"
+        lines.append(_md_bold_kv("Programs", coverage))
     lines.append(_pagination_footer(data))
     lines.append("")
+
+    if target_programs:
+        shown_targets = ", ".join(target_programs[:5])
+        if len(target_programs) > 5:
+            shown_targets += f", ... (+{len(target_programs) - 5} more)"
+        lines.append(_md_bold_kv("Targets", shown_targets))
+        lines.append("")
 
     results: list[dict[str, Any]] = data.get("results", [])
     if results:
@@ -1332,6 +1352,28 @@ def _render_search_everything(data: dict[str, Any]) -> str:
         lines.append(_md_table(headers, rows))
     else:
         lines.append("*No results found.*")
+
+    if skipped_programs:
+        lines.append("")
+        lines.append(_md_heading(3, "Skipped Programs"))
+        lines.append("")
+        skipped_items: list[str] = []
+        for item in skipped_programs[:10]:
+            program = str(item.get("program", "") or "<unknown>")
+            reason = str(item.get("reason", "") or "not activated")
+            skipped_items.append(f"{program}: {reason}")
+        if len(skipped_programs) > 10:
+            skipped_items.append(f"... and {len(skipped_programs) - 10} more")
+        lines.append(_md_bullet_list(skipped_items))
+
+    if warnings:
+        lines.append("")
+        lines.append(_md_heading(3, "Warnings"))
+        lines.append("")
+        warning_items = warnings[:10]
+        if len(warnings) > 10:
+            warning_items = warning_items + [f"... and {len(warnings) - 10} more"]
+        lines.append(_md_bullet_list(warning_items))
 
     return "\n".join(lines)
 
@@ -2891,9 +2933,12 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         active = project_ctx.get("activeProgram")
         if active:
             ctx_parts.append(f"active: `{active}`")
-        pc = project_ctx.get("programCount")
+        pc = project_ctx.get("projectProgramCount", project_ctx.get("programCount"))
         if pc is not None:
-            ctx_parts.append(f"{pc} program{'s' if pc != 1 else ''}")
+            ctx_parts.append(f"{pc} in project")
+        open_pc = project_ctx.get("openProgramCount")
+        if open_pc is not None:
+            ctx_parts.append(f"{open_pc} open")
         ppath = project_ctx.get("projectPath")
         if ppath:
             ctx_parts.append(f"`{ppath}`")

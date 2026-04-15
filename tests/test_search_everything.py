@@ -91,8 +91,8 @@ async def test_handle_skips_expensive_default_scopes_after_fast_hits(monkeypatch
     provider = SearchEverythingToolProvider()
     calls: list[str] = []
 
-    async def fake_resolve_target_programs(_args: dict[str, object]) -> tuple[list[dict[str, object]], list[str]]:
-        return ([{"programKey": "test.bin", "program": object()}], [])
+    async def fake_resolve_target_programs(_args: dict[str, object]) -> tuple[list[dict[str, object]], list[str], dict[str, object]]:
+        return ([{"programKey": "test.bin", "program": object()}], [], {"requestedProgramCount": 1, "projectProgramCount": 1, "skippedPrograms": []})
 
     def fake_search_scope(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object] | None]:
         scope = str(kwargs["scope"])
@@ -282,3 +282,69 @@ def test_search_decompilation_prefers_target_program_info_decompiler(monkeypatch
     assert diagnostic["reusedSessionDecompiler"] is True
     assert fake_info.get_decompiler_calls == 1
     assert seen_session_decompilers == [fake_info.decompiler]
+
+
+def test_collect_project_program_paths_prefers_session_project_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+
+    monkeypatch.setattr(
+        search_module.SESSION_CONTEXTS,
+        "get_project_binaries",
+        lambda _session_id, fallback_to_latest=False: [
+            {"path": "/Other BioWare Engines/Aurora/nwmain.exe"},
+            {"programPath": "/Other BioWare Engines/Aurora/nwserver.exe"},
+            {"name": "toolset.exe"},
+            {"path": "/Other BioWare Engines/Aurora/nwmain.exe"},
+        ],
+    )
+
+    result = provider._collect_project_program_paths(session_id="session-1")
+
+    assert result == [
+        "/Other BioWare Engines/Aurora/nwmain.exe",
+        "/Other BioWare Engines/Aurora/nwserver.exe",
+        "toolset.exe",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_programs_reports_project_inventory_and_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SearchEverythingToolProvider()
+
+    class FakeManager:
+        def _resolve_project_data(self) -> None:
+            return None
+
+        async def _activate_requested_program(self, _session_id: str, requested_program_key: str) -> object | None:
+            if requested_program_key.endswith("nwserver.exe"):
+                raise RuntimeError("checkout failed")
+            if requested_program_key.endswith("toolset.exe"):
+                return None
+            return SimpleNamespace(program=object())
+
+    provider._manager = cast(Any, FakeManager())
+
+    monkeypatch.setattr(
+        search_module.SESSION_CONTEXTS,
+        "get_project_binaries",
+        lambda _session_id, fallback_to_latest=False: [
+            {"path": "/Other BioWare Engines/Aurora/nwmain.exe"},
+            {"path": "/Other BioWare Engines/Aurora/nwserver.exe"},
+            {"path": "/Other BioWare Engines/Aurora/toolset.exe"},
+        ],
+    )
+    monkeypatch.setattr(search_module.SESSION_CONTEXTS, "get_program_info", lambda _session_id, _key: None)
+    monkeypatch.setattr(search_module.SESSION_CONTEXTS, "get_active_program_info", lambda _session_id: None)
+
+    targets, warnings, resolution = await provider._resolve_target_programs({"query": "Aurora"})
+
+    assert [target["programKey"] for target in targets] == ["/Other BioWare Engines/Aurora/nwmain.exe"]
+    assert resolution["projectProgramCount"] == 3
+    assert resolution["requestedProgramCount"] == 3
+    assert resolution["usedProjectInventory"] is True
+    assert resolution["usedActiveFallback"] is False
+    assert resolution["skippedPrograms"] == [
+        {"program": "/Other BioWare Engines/Aurora/nwserver.exe", "reason": "checkout failed"},
+        {"program": "/Other BioWare Engines/Aurora/toolset.exe", "reason": "not activated"},
+    ]
+    assert warnings == ["program '/Other BioWare Engines/Aurora/nwserver.exe': checkout failed"]
