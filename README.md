@@ -44,7 +44,7 @@ Validated behaviors from these commands:
 - The published Docker image responds correctly in stdio mode.
 - `tool-seq` preserves state inside one CLI invocation.
 - Shared-repository open, project listing, import, and removal flows were exercised from a local checkout.
-- When no explicit backend target is requested, the CLI now treats unreachable default or env-provided MCP URLs as recoverable: it reuses a cached local server when possible, auto-starts a local server when needed, then falls back to in-process local execution.
+- When no explicit backend target is requested, the CLI will treat unreachable default or env-provided MCP URLs as recoverable: it reuses a cached local server when possible, auto-starts a local server when needed, then falls back to in-process local execution.
 - Explicit CLI backend targets such as `--server-url`, `--host`, or `--port` remain strict and still fail fast if the requested backend is unavailable.
 
 ## Field-Proven Operational Patterns
