@@ -525,8 +525,19 @@ def _get_local_backend(ctx: click.Context) -> Any:
         project_name=project_name,
         input_paths=input_paths,
         verbose=verbose,
+        threaded=False,
     )
     return _local_backend_instance
+
+
+def _cleanup_local_backend_instance() -> None:
+    global _local_backend_instance
+    if _local_backend_instance is not None:
+        try:
+            _local_backend_instance.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _local_backend_instance = None
 
 
 def _client(ctx: click.Context, url_override: str | None = None) -> Any:
@@ -5087,15 +5098,9 @@ def cli_entry_point() -> None:
 
     logger.debug("diag.enter %s", "cli.py:cli_entry_point")
 
-    def _cleanup_local_backend() -> None:
-        global _local_backend_instance
-        if _local_backend_instance is not None:
-            try:
-                _local_backend_instance.close()
-            except Exception:  # noqa: BLE001
-                pass
-            _local_backend_instance = None
-
-    atexit.register(_cleanup_local_backend)
+    atexit.register(_cleanup_local_backend_instance)
     _ensure_dynamic_commands_registered()
-    main()
+    try:
+        main()
+    finally:
+        _cleanup_local_backend_instance()
