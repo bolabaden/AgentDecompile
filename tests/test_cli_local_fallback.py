@@ -97,6 +97,32 @@ class TestCliLocalFallbackPolicy:
         mocked_recovery.assert_awaited_once()
         assert "default recovered" in result.output
 
+    @patch("agentdecompile_cli.cli._ensure_local_server_url", new_callable=AsyncMock)
+    @patch("agentdecompile_cli.cli._client")
+    def test_tool_seq_implicit_backend_uses_recovery_client(self, mocked_client_factory: AsyncMock, mocked_ensure_local_server_url: AsyncMock):
+        from unittest.mock import MagicMock
+
+        recovered_client = MagicMock()
+        recovered_client.call_tool = AsyncMock(side_effect=[_success_result("step one"), _success_result("step two")])
+        recovered_client.__aenter__ = AsyncMock(return_value=recovered_client)
+        recovered_client.__aexit__ = AsyncMock(return_value=None)
+
+        mocked_client_factory.side_effect = [_FailingClient(), recovered_client]
+        mocked_ensure_local_server_url.return_value = "http://127.0.0.1:8099/mcp/message"
+
+        steps = (
+            '[{"name":"execute-script","arguments":{"code":"__result__ = 1","responseFormat":"json"}},'
+            '{"name":"execute-script","arguments":{"code":"__result__ = 2","responseFormat":"json"}}]'
+        )
+
+        result = _runner().invoke(main, ["tool-seq", steps])
+
+        assert result.exit_code == 0, result.output
+        mocked_ensure_local_server_url.assert_awaited_once()
+        assert recovered_client.call_tool.await_count == 2
+        assert "step one" in result.output
+        assert "step two" in result.output
+
 
 class TestBackendTargetResolution:
     def test_cached_local_server_beats_implicit_default(self):
@@ -121,3 +147,13 @@ class TestBackendTargetResolution:
 
         assert resolution.source == "cached_local_server"
         assert resolution.url.endswith(":8099/mcp/message")
+
+
+class TestLocalBackendResponseAdapter:
+    def test_text_content_to_response_accepts_plain_text_like_objects(self):
+        from agentdecompile_cli.local_backend import _text_content_to_response
+
+        result = _text_content_to_response([types.SimpleNamespace(text='{"success": true, "value": 7}', type="text")])
+
+        assert result["isError"] is False
+        assert result["content"] == [{"type": "text", "text": '{"success": true, "value": 7}'}]

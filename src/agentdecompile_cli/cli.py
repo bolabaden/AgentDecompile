@@ -1225,13 +1225,7 @@ async def _attempt_local_backend_recovery(
     if resolution.explicit_cli:
         return None
 
-    if resolution.env_provided:
-        click.echo(f"Ignoring unavailable MCP server from environment: {resolution.url}", err=True)
-    elif resolution.source == "implicit_default":
-        click.echo(f"No reachable AgentDecompile server at default local target: {resolution.url}", err=True)
-    elif resolution.source == "cached_local_server":
-        click.echo(f"Cached local AgentDecompile server is unavailable: {resolution.url}", err=True)
-        _clear_local_server_state()
+    _emit_backend_recovery_notice(resolution)
 
     local_url = await _ensure_local_server_url(ctx, "auto-start for CLI fallback")
     if local_url:
@@ -1247,6 +1241,62 @@ async def _attempt_local_backend_recovery(
         err=True,
     )
     return await _call_tool_locally(ctx, call_tool_name, payload)
+
+
+def _emit_backend_recovery_notice(resolution: BackendTargetResolution) -> None:
+    if resolution.env_provided:
+        click.echo(f"Ignoring unavailable MCP server from environment: {resolution.url}", err=True)
+    elif resolution.source == "implicit_default":
+        click.echo(f"No reachable AgentDecompile server at default local target: {resolution.url}", err=True)
+    elif resolution.source == "cached_local_server":
+        click.echo(f"Cached local AgentDecompile server is unavailable: {resolution.url}", err=True)
+        _clear_local_server_state()
+
+
+@contextlib.asynccontextmanager
+async def _tool_sequence_client(ctx: click.Context):
+    if _is_local_mode(ctx):
+        yield None
+        return
+
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    client = _client(ctx)
+    try:
+        async with client:
+            yield client
+            return
+    except ServerNotRunningError as exc:
+        if not _should_attempt_local_recovery(ctx):
+            click.echo(str(exc), err=True)
+            sys.exit(1)
+
+        resolution = _resolve_backend_target(ctx)
+        _emit_backend_recovery_notice(resolution)
+
+        local_url = await _ensure_local_server_url(ctx, "auto-start for tool-seq fallback")
+        if local_url:
+            try:
+                recovered_client = _client(ctx, url_override=local_url)
+                async with recovered_client:
+                    yield recovered_client
+                    return
+            except Exception as recovery_exc:
+                click.echo(
+                    f"Local AgentDecompile server startup did not produce a usable backend: {recovery_exc}",
+                    err=True,
+                )
+
+        click.echo(
+            f"Falling back to in-process local execution after backend connection failure: {exc}",
+            err=True,
+        )
+        yield None
+        return
+
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
 
 
 async def _execute_tool_call(
@@ -4927,8 +4977,6 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
 
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
-        _use_local = _is_local_mode(ctx)
-        client = None if _use_local else _client(ctx)
 
         async def _run_steps(client_override: Any | None) -> None:
             step: dict[str, Any]
@@ -5007,12 +5055,8 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
                     click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
                     sys.exit(1)
 
-        if _use_local:
-            await _run_steps(None)
-        else:
-            assert client is not None
-            async with client:
-                await _run_steps(client)
+        async with _tool_sequence_client(ctx) as client_override:
+            await _run_steps(client_override)
 
         all_ok = all(step["success"] for step in results)
         click.echo(format_output({"success": all_ok, "steps": results}, _fmt(ctx)))

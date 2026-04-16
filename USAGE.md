@@ -30,6 +30,8 @@ Program path: /K1/k1_win_gog_swkotor.exe
 Notes:
 
 - The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
+- When you do not pass an explicit backend target, the CLI treats unreachable default or env-provided MCP URLs as recoverable: it can reuse a cached local server, auto-start a local server, or fall back to in-process local execution.
+- Explicit backend targets passed on the CLI, such as `--server-url`, `--host`, or `--port`, remain authoritative and fail instead of being ignored.
 - The web UI starts automatically alongside `agentdecompile-mcp`, `mcp_agentdecompile`, `mcp-agentdecompile`, `agentdecompile-server`, and `agentdecompile-proxy`. It binds to `http://127.0.0.1:8002/` by default.
 - **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
 - Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.

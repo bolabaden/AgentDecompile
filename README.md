@@ -44,6 +44,8 @@ Validated behaviors from these commands:
 - The published Docker image responds correctly in stdio mode.
 - `tool-seq` preserves state inside one CLI invocation.
 - Shared-repository open, project listing, import, and removal flows were exercised from a local checkout.
+- When no explicit backend target is requested, the CLI now treats unreachable default or env-provided MCP URLs as recoverable: it reuses a cached local server when possible, auto-starts a local server when needed, then falls back to in-process local execution.
+- Explicit CLI backend targets such as `--server-url`, `--host`, or `--port` remain strict and still fail fast if the requested backend is unavailable.
 
 ## Field-Proven Operational Patterns
 
@@ -61,6 +63,7 @@ The validation logs and notebook runs show stable patterns that are useful when 
 - If a command needs loaded-program state, either:
   - include `program_path`/`programPath` so the backend can reopen the target, or
   - use `tool-seq` to preserve open-then-query state in one invocation.
+- If no explicit backend target is provided and the default backend is down, both single-tool calls and `tool-seq` will attempt local recovery automatically.
 
 ### 3) Shared-server auth failures have a recognizable signature
 
