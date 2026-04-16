@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import types
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import click
 import pytest
@@ -184,6 +184,35 @@ class TestCliEntryPointCleanup:
 
         mocked_atexit_register.assert_called_once_with(mocked_cleanup)
         mocked_cleanup.assert_called_once()
+        mocked_main.assert_called_once()
+
+
+class TestLocalBackendCleanup:
+    def test_cleanup_local_backend_closes_backend(self):
+        from agentdecompile_cli.cli import _cleanup_local_backend_instance
+
+        backend = types.SimpleNamespace(close=Mock())
+
+        with patch("agentdecompile_cli.cli._local_backend_instance", backend):
+            _cleanup_local_backend_instance()
+
+        backend.close.assert_called_once()
+
+
+class TestCliEntryPointLocalExit:
+    @patch("atexit.register")
+    @patch("agentdecompile_cli.cli.os._exit")
+    @patch("agentdecompile_cli.cli._cleanup_local_backend_instance")
+    @patch("agentdecompile_cli.cli.main", side_effect=SystemExit(0))
+    def test_cli_entry_point_forces_exit_after_local_backend_use(self, mocked_main, mocked_cleanup, mocked_os_exit, mocked_atexit_register):
+        from agentdecompile_cli.cli import cli_entry_point
+
+        with patch("agentdecompile_cli.cli._local_backend_instance", object()):
+            cli_entry_point()
+
+        mocked_atexit_register.assert_called_once_with(mocked_cleanup)
+        mocked_cleanup.assert_called_once()
+        mocked_os_exit.assert_called_once_with(0)
         mocked_main.assert_called_once()
 
 
