@@ -540,6 +540,14 @@ def _cleanup_local_backend_instance() -> None:
         _local_backend_instance = None
 
 
+def _normalize_system_exit_code(code: object) -> int:
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    return 1
+
+
 def _client(ctx: click.Context, url_override: str | None = None) -> Any:
     """Create an MCP HTTP client connected to the backend.
 
@@ -5100,7 +5108,25 @@ def cli_entry_point() -> None:
 
     atexit.register(_cleanup_local_backend_instance)
     _ensure_dynamic_commands_registered()
+    force_exit_after_cleanup = False
+    exit_code = 0
     try:
-        main()
+        try:
+            main()
+        except SystemExit as exc:
+            if _local_backend_instance is None:
+                raise
+            force_exit_after_cleanup = True
+            exit_code = _normalize_system_exit_code(exc.code)
+        else:
+            if _local_backend_instance is not None:
+                force_exit_after_cleanup = True
     finally:
         _cleanup_local_backend_instance()
+        if force_exit_after_cleanup:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001
+                pass
+            os._exit(exit_code)
