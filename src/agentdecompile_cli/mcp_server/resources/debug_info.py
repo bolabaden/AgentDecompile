@@ -29,6 +29,8 @@ from pydantic import AnyUrl
 from agentdecompile_cli.mcp_server.auth import get_current_auth_context
 from agentdecompile_cli.mcp_server.profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
 from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
+from agentdecompile_cli.mcp_server.resources.programs import ProgramListResource
+from agentdecompile_cli.mcp_server.resources.static_analysis import StaticAnalysisResultsResource
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -36,9 +38,6 @@ from agentdecompile_cli.mcp_server.session_context import (
     is_shared_server_handle,
 )
 from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, Tool
-
-from .programs import ProgramListResource
-from .static_analysis import StaticAnalysisResultsResource
 
 logger = logging.getLogger(__name__)
 

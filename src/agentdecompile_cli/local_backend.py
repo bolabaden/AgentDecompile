@@ -31,14 +31,13 @@ import os
 import sys
 import time
 
-from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mcp import types
 
-    from agentdecompile_cli.context import PyGhidraContext, ProgramInfo
+    from agentdecompile_cli.context import PyGhidraContext
     from agentdecompile_cli.mcp_server.resource_providers import ResourceProviderManager
     from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
@@ -194,7 +193,6 @@ class LocalToolBackend:
         # Seed manager + session with already-open programs from the project
         from agentdecompile_cli.mcp_server.session_context import SESSION_CONTEXTS  # pyright: ignore[reportMissingImports]
 
-        session = SESSION_CONTEXTS.get_or_create(_LOCAL_SESSION_ID)
         if self._context.programs:
             first_key: str | None = None
             for key, prog_info in self._context.programs.items():
@@ -387,8 +385,8 @@ def _text_content_to_response(result: list[Any]) -> dict[str, Any]:
     content: list[dict[str, Any]] = []
     is_error = False
     for item in result or []:
-        text = item.text if isinstance(item, types.TextContent) else None
-        item_type = item.type if isinstance(item, types.TextContent) else "text"
+        text = getattr(item, "text", None)
+        item_type = getattr(item, "type", "text")
         if text is not None:
             content.append({"type": str(item_type), "text": str(text)})
             # Check if the tool returned an error payload
