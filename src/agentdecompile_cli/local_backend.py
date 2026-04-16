@@ -72,6 +72,7 @@ class LocalToolBackend:
         input_paths: list[str | Path] | None = None,
         force_analysis: bool = False,
         verbose: bool = False,
+        threaded: bool = True,
     ) -> None:
         logger.debug("diag.enter %s", "local_backend.py:LocalToolBackend.__init__")
         # Resolve project path from arg > env > default
@@ -94,6 +95,7 @@ class LocalToolBackend:
         self._input_paths: list[Path] = [Path(p) for p in (input_paths or [])]
         self._force_analysis = force_analysis
         self._verbose = verbose
+        self._threaded = threaded
 
         self._initialized: bool = False
         self._context: PyGhidraContext | None = None
@@ -165,6 +167,7 @@ class LocalToolBackend:
             project_path=str(self._project_path),
             force_analysis=self._force_analysis,
             verbose_analysis=self._verbose,
+            threaded=self._threaded,
         )
 
         # --- Import requested input binaries ---

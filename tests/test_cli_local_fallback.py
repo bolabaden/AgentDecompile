@@ -149,6 +149,44 @@ class TestBackendTargetResolution:
         assert resolution.url.endswith(":8099/mcp/message")
 
 
+class TestLocalBackendConstruction:
+    @patch("agentdecompile_cli.local_backend.LocalToolBackend")
+    def test_cli_local_backend_is_non_threaded(self, mocked_local_backend):
+        import click
+        from agentdecompile_cli.cli import _get_local_backend, main
+
+        ctx = click.Context(
+            main,
+            obj={
+                "local_project_path": "c:/GitHub/agentdecompile/agentdecompile.rep",
+                "local_project_name": "agentdecompile",
+                "verbose": False,
+                "cli_default_program_path": None,
+            },
+        )
+
+        with patch("agentdecompile_cli.cli._local_backend_instance", None):
+            _get_local_backend(ctx)
+
+        mocked_local_backend.assert_called_once()
+        assert mocked_local_backend.call_args.kwargs["threaded"] is False
+
+
+class TestCliEntryPointCleanup:
+    @patch("atexit.register")
+    @patch("agentdecompile_cli.cli._cleanup_local_backend_instance")
+    @patch("agentdecompile_cli.cli.main", side_effect=SystemExit(0))
+    def test_cli_entry_point_cleans_up_local_backend_in_finally(self, mocked_main, mocked_cleanup, mocked_atexit_register):
+        from agentdecompile_cli.cli import cli_entry_point
+
+        with pytest.raises(SystemExit):
+            cli_entry_point()
+
+        mocked_atexit_register.assert_called_once_with(mocked_cleanup)
+        mocked_cleanup.assert_called_once()
+        mocked_main.assert_called_once()
+
+
 class TestLocalBackendResponseAdapter:
     def test_text_content_to_response_accepts_plain_text_like_objects(self):
         from agentdecompile_cli.local_backend import _text_content_to_response
