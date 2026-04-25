@@ -91,6 +91,8 @@ def normalize_backend_url(value: str) -> str:
     /mcp or /mcp/message left as-is; other paths get /mcp/message appended.
     """
     logger.debug("diag.enter %s", "executor.py:normalize_backend_url")
+    if value is None:
+        raise ValueError("Backend URL cannot be None")
     raw = value.strip()
     if not raw:
         raise ValueError("Backend URL cannot be empty")
