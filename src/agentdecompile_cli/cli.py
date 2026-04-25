@@ -5062,6 +5062,25 @@ def _run_parsed_tool_sequence(
         click.echo("Steps must be a JSON array of objects.", err=True)
         sys.exit(1)
 
+    def _step_arguments(step: dict[str, Any], index: int) -> dict[str, Any]:
+        aliases = ("arguments", "args", "params", "parameters", "input")
+        present = [key for key in aliases if key in step and step.get(key) is not None]
+        if not present:
+            return {}
+        first_key = present[0]
+        first_value = step[first_key]
+        for key in present[1:]:
+            if step[key] != first_value:
+                click.echo(
+                    f"Step {index}: conflicting argument aliases ({', '.join(present)}); use one of: {', '.join(aliases)}",
+                    err=True,
+                )
+                sys.exit(1)
+        if not isinstance(first_value, dict):
+            click.echo(f"Step {index}: '{first_key}' must be a JSON object", err=True)
+            sys.exit(1)
+        return first_value
+
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
 
@@ -5069,14 +5088,12 @@ def _run_parsed_tool_sequence(
             step: dict[str, Any]
             for index, step in enumerate(parsed_steps, start=1):
                 name = step.get("name")
-                arguments = step.get("arguments", {})
 
                 if not isinstance(name, str) or not name.strip():
                     click.echo(f"Step {index}: missing or invalid 'name'", err=True)
                     sys.exit(1)
-                if not isinstance(arguments, dict):
-                    click.echo(f"Step {index}: 'arguments' must be a JSON object", err=True)
-                    sys.exit(1)
+
+                arguments = _step_arguments(step, index)
 
                 _validate_known_tool(name)
                 prepared_arguments: dict[str, Any] = {k: v for k, v in arguments.items() if v is not None}

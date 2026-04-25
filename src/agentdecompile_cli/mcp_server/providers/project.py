@@ -542,14 +542,14 @@ class ProjectToolProvider(ToolProvider):
     def _infer_requested_shared_repository_name(self, args: dict[str, Any], path: str) -> str | None:
         """Infer the shared repository name from explicit args or a repository-like path."""
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._infer_requested_shared_repository_name")
-        requested_repository = self._get_str(args, "repositoryname", "path")
+        requested_repository = self._get_str(args, "repositoryname", "repository")
         if requested_repository and requested_repository.strip():
             return requested_repository.strip().strip("/")
 
         if not path or not path.strip():
             return None
 
-        normalized_path = path.strip().rstrip("/")
+        normalized_path = path.strip().strip("/")
         if not normalized_path or "/" in normalized_path:
             return None
 
@@ -1434,7 +1434,7 @@ class ProjectToolProvider(ToolProvider):
         # This handles cases where the old code doesn't have the inference fix
         if requested_repository_name is None:
             # Try to get from args directly (normalized keys)
-            repo_from_args = self._get_str(args, "repositoryname", "path", default="")
+            repo_from_args = self._get_str(args, "repositoryname", "repository", default="")
             if repo_from_args and repo_from_args.strip() and "/" not in repo_from_args.strip().rstrip("/"):
                 requested_repository_name = repo_from_args.strip().rstrip("/")
                 logger.info("[connect-shared-project] Using repositoryName/path from args=%r as repository name", requested_repository_name)
