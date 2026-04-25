@@ -82,9 +82,10 @@ class TestCliLocalFallbackPolicy:
         assert "env recovered" in result.output
 
     @patch("agentdecompile_cli.cli._attempt_local_backend_recovery", new_callable=AsyncMock)
+    @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
     @patch("agentdecompile_cli.cli._client", return_value=_FailingClient())
-    def test_default_local_target_triggers_local_recovery(self, _mocked_client: AsyncMock, mocked_recovery: AsyncMock):
-        mocked_recovery.return_value = _success_result("default recovered")
+    def test_default_cli_uses_in_process_local_execution(self, mocked_client: AsyncMock, mocked_local_call: AsyncMock, mocked_recovery: AsyncMock):
+        mocked_local_call.return_value = _success_result("default local")
 
         result = _runner().invoke(
             main,
@@ -96,21 +97,16 @@ class TestCliLocalFallbackPolicy:
         )
 
         assert result.exit_code == 0, result.output
-        mocked_recovery.assert_awaited_once()
-        assert "default recovered" in result.output
+        mocked_client.assert_not_called()
+        mocked_recovery.assert_not_awaited()
+        mocked_local_call.assert_awaited_once()
+        assert "default local" in result.output
 
     @patch("agentdecompile_cli.cli._ensure_local_server_url", new_callable=AsyncMock)
+    @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
     @patch("agentdecompile_cli.cli._client")
-    def test_tool_seq_implicit_backend_uses_recovery_client(self, mocked_client_factory: AsyncMock, mocked_ensure_local_server_url: AsyncMock):
-        from unittest.mock import MagicMock
-
-        recovered_client = MagicMock()
-        recovered_client.call_tool = AsyncMock(side_effect=[_success_result("step one"), _success_result("step two")])
-        recovered_client.__aenter__ = AsyncMock(return_value=recovered_client)
-        recovered_client.__aexit__ = AsyncMock(return_value=None)
-
-        mocked_client_factory.side_effect = [_FailingClient(), recovered_client]
-        mocked_ensure_local_server_url.return_value = "http://127.0.0.1:8099/mcp/message"
+    def test_tool_seq_implicit_backend_uses_in_process_local_execution(self, mocked_client_factory: AsyncMock, mocked_local_call: AsyncMock, mocked_ensure_local_server_url: AsyncMock):
+        mocked_local_call.side_effect = [_success_result("step one"), _success_result("step two")]
 
         steps = (
             '[{"name":"execute-script","arguments":{"code":"__result__ = 1","responseFormat":"json"}},'
@@ -120,10 +116,35 @@ class TestCliLocalFallbackPolicy:
         result = _runner().invoke(main, ["tool-seq", steps])
 
         assert result.exit_code == 0, result.output
-        mocked_ensure_local_server_url.assert_awaited_once()
-        assert recovered_client.call_tool.await_count == 2
+        mocked_client_factory.assert_not_called()
+        mocked_ensure_local_server_url.assert_not_awaited()
+        assert mocked_local_call.await_count == 2
         assert "step one" in result.output
         assert "step two" in result.output
+
+    @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
+    def test_tool_seq_accepts_args_alias_and_normalizes_payload(self, mocked_local_call: AsyncMock):
+        mocked_local_call.return_value = _success_result("script ran")
+        steps = '[{"name":"execute-script","args":{"program_path":"/K1/k1_win_gog_swkotor.exe","code":"__result__ = 7"}}]'
+
+        result = _runner().invoke(main, ["tool-seq", steps])
+
+        assert result.exit_code == 0, result.output
+        mocked_local_call.assert_awaited_once()
+        _ctx, tool_name, payload = mocked_local_call.await_args.args
+        assert tool_name == "execute_script"
+        assert payload["programPath"] == "/K1/k1_win_gog_swkotor.exe"
+        assert payload["code"] == "__result__ = 7"
+
+    @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
+    def test_tool_seq_rejects_conflicting_argument_aliases(self, mocked_local_call: AsyncMock):
+        steps = '[{"name":"execute-script","arguments":{"code":"__result__ = 1"},"args":{"code":"__result__ = 2"}}]'
+
+        result = _runner().invoke(main, ["tool-seq", steps])
+
+        assert result.exit_code != 0
+        mocked_local_call.assert_not_awaited()
+        assert "conflicting argument aliases" in result.output
 
     @patch("agentdecompile_cli.cli._ensure_local_server_url", new_callable=AsyncMock)
     @patch("agentdecompile_cli.cli._client", return_value=_FailingClient())
@@ -259,3 +280,26 @@ class TestLocalBackendResponseAdapter:
 
         assert result["isError"] is False
         assert result["content"] == [{"type": "text", "text": '{"success": true, "value": 7}'}]
+
+
+class TestSharedRepositoryInference:
+    def test_program_path_is_not_repository_name(self):
+        from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
+
+        provider = ProjectToolProvider()
+
+        assert provider._infer_requested_shared_repository_name({"path": "/K1/k1_win_gog_swkotor.exe"}, "/K1/k1_win_gog_swkotor.exe") is None
+
+    def test_explicit_repository_name_wins_over_program_path(self):
+        from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
+
+        provider = ProjectToolProvider()
+
+        assert provider._infer_requested_shared_repository_name({"repositoryname": "Odyssey", "path": "/K1/k1_win_gog_swkotor.exe"}, "/K1/k1_win_gog_swkotor.exe") == "Odyssey"
+
+    def test_single_segment_path_can_still_select_repository(self):
+        from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
+
+        provider = ProjectToolProvider()
+
+        assert provider._infer_requested_shared_repository_name({"path": "Odyssey"}, "Odyssey") == "Odyssey"
