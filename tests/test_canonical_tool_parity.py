@@ -425,6 +425,28 @@ async def test_execute_script_reports_executed_program_in_json() -> None:
     assert '"result": "k2_win_gog_aspyr_swkotor2.exe"' in result[0].text
 
 
+@pytest.mark.asyncio
+async def test_execute_script_ignores_gpr_path_argument_for_program_resolution() -> None:
+    provider: ScriptToolProvider = ScriptToolProvider(
+        program_info=SimpleNamespace(
+            program=cast("ProgramInfo", FakeProgram("k2_win_gog_aspyr_swkotor2.exe")),
+            flat_api=None,
+            decompiler=None,
+            name="k2_win_gog_aspyr_swkotor2.exe",
+            file_path="/TSL/k2_win_gog_aspyr_swkotor2.exe",
+        )
+    )
+
+    result = await provider._handle_execute(
+        {"code": "__result__ = currentProgram.getName()", "path": r"C:\Users\boden\my_project.gpr"}
+    )
+
+    assert len(result) == 1
+    assert '"executedProgram": {"path": "/TSL/k2_win_gog_aspyr_swkotor2.exe", "name": "k2_win_gog_aspyr_swkotor2.exe"}' in result[0].text
+    assert 'my_project.gpr' not in result[0].text
+    assert '"result": "k2_win_gog_aspyr_swkotor2.exe"' in result[0].text
+
+
 def test_render_execute_script_includes_executed_program() -> None:
     rendered: str = _render_execute_script(
         {
@@ -472,6 +494,36 @@ async def test_tool_provider_manager_uses_requested_program_for_provider_dispatc
     result = await manager.call_tool(
         "dummy-requested-program",
         {"programPath": "/K1/k1_win_gog_swkotor.exe", "responseFormat": "json"},
+    )
+
+    assert len(result) == 1
+    assert '"programPath": "/K1/k1_win_gog_swkotor.exe"' in result[0].text
+    assert '"programName": "k1_win_gog_swkotor.exe"' in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_tool_provider_manager_does_not_treat_gpr_path_as_program_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager: ToolProviderManager = ToolProviderManager()
+    provider: DummyRequestedProgramProvider = DummyRequestedProgramProvider()
+    manager._register(provider)
+
+    active_program_info: SimpleNamespace = SimpleNamespace(
+        program=cast("GhidraProgram", FakeProgram("k1_win_gog_swkotor.exe")),
+        flat_api=None,
+        decompiler=None,
+        name="k1_win_gog_swkotor.exe",
+        file_path="/K1/k1_win_gog_swkotor.exe",
+    )
+    manager.set_program_info(active_program_info)
+
+    async def _unexpected_activate(_session_id: str, program_path: str) -> SimpleNamespace:
+        raise AssertionError(f"manager attempted to activate project marker as a program: {program_path}")
+
+    monkeypatch.setattr(manager, "_activate_requested_program", _unexpected_activate)
+
+    result = await manager.call_tool(
+        "dummy-requested-program",
+        {"path": r"C:\Users\boden\my_project.gpr", "responseFormat": "json"},
     )
 
     assert len(result) == 1

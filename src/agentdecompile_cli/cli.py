@@ -1772,6 +1772,26 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
     return cmd
 
 
+def _argv_contains_any_option(option_flags: tuple[str, ...]) -> bool:
+    """Return True when any option flag appears explicitly in ``sys.argv``.
+
+    This is a compatibility fallback for Click versions/environments where
+    ``Context.get_parameter_source`` is unavailable or unreliable.
+    """
+    logger.debug("diag.enter %s", "cli.py:_argv_contains_any_option")
+    if not option_flags:
+        return False
+
+    args = sys.argv[1:]
+    for token in args:
+        if token == "--":
+            break
+        for flag in option_flags:
+            if token == flag or token.startswith(f"{flag}="):
+                return True
+    return False
+
+
 def _set_output_format_option(
     ctx: click.Context,
     _param: click.Parameter,
@@ -2083,26 +2103,32 @@ def main(
     logger.debug("diag.enter %s", "cli.py:main")
     _configure_runtime_logging(verbose)
 
-    def _cli_explicit(name: str) -> bool:
+    def _cli_explicit(name: str, option_flags: tuple[str, ...]) -> bool:
         getter = getattr(ctx, "get_parameter_source", None)
-        if getter is None:
-            return False
-        try:
-            source = getter(name)
-        except Exception:
-            return False
-        return str(source).endswith("COMMANDLINE")
+        if callable(getter):
+            try:
+                source = getter(name)
+            except Exception:
+                source = None
+            if str(source).endswith("COMMANDLINE"):
+                return True
+        return _argv_contains_any_option(option_flags)
 
     existing_obj: dict[str, Any] = ctx.obj if isinstance(ctx.obj, dict) else {}
     effective_server_url: str | None = server_url or mcp_server_url or backend_url or mcp_backend_url
     pp: str | None = (cli_default_program_path or "").strip() or None
     bn: str | None = (cli_default_binary_name or "").strip() or None
     backend_cli_url_explicit: bool = any(
-        _cli_explicit(name)
-        for name in ("server_url", "mcp_server_url", "backend_url", "mcp_backend_url")
+        _cli_explicit(name, flags)
+        for name, flags in (
+            ("server_url", ("--server-url",)),
+            ("mcp_server_url", ("--mcp-server-url",)),
+            ("backend_url", ("--backend-url",)),
+            ("mcp_backend_url", ("--mcp-backend-url",)),
+        )
     )
-    backend_host_explicit: bool = _cli_explicit("host")
-    backend_port_explicit: bool = _cli_explicit("port")
+    backend_host_explicit: bool = _cli_explicit("host", ("--host",))
+    backend_port_explicit: bool = _cli_explicit("port", ("--port",))
     ctx.obj = {
         "host": host,
         "port": port,
