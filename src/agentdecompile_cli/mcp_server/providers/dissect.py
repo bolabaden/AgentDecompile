@@ -11,12 +11,9 @@ from __future__ import annotations
 import logging
 
 from itertools import islice
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
-        DecompileResults as GhidraDecompileResults,
-    )
     from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Address as GhidraAddress,
         AddressSetView as GhidraAddressSetView,
@@ -234,6 +231,7 @@ class GetFunctionAioToolProvider(ToolProvider):
         program = self.program_info.program
         if program is None:
             raise ValueError("No program loaded")
+        program = cast("GhidraProgram", program)
 
         target = self._resolve_function(func_id, program=program)
         if target is None:
@@ -691,69 +689,15 @@ class GetFunctionAioToolProvider(ToolProvider):
 
     def _decompile(self, func: GhidraFunction, program: GhidraProgram, timeout: int | None = None) -> str:
         logger.debug("diag.enter %s", "mcp_server/providers/dissect.py:GetFunctionAioToolProvider._decompile")
-        try:
-            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
+        from agentdecompile_cli.mcp_server.providers.decompiler import DecompilerToolProvider
 
-            from agentdecompile_cli.mcp_utils.decompiler_util import (
-                acquire_decompiler_for_program,
-                get_decompiled_function_from_results,
-                open_decompiler_for_program,
-            )
-
-            monitor = ConsoleTaskMonitor()
-
-            session_decomp = getattr(self.program_info, "decompiler", None)
-            with acquire_decompiler_for_program(session_decomp, program) as lease:
-                decomp = lease.decompiler
-                dr: GhidraDecompileResults = decomp.decompileFunction(func, timeout or 60, monitor)
-                if dr and dr.decompileCompleted():
-                    df = get_decompiled_function_from_results(dr)
-                    if df is None:
-                        raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
-                    code = df.getC()
-                    if code is not None and code.strip():
-                        return str(code)
-
-            # Retry with fresh interface only if the leased decompiler reused session state.
-            if session_decomp is not None and lease.reused_session:
-                retry = open_decompiler_for_program(program)
-                try:
-                    retry_dr = retry.decompileFunction(func, timeout or 60, monitor)
-                    if retry_dr and retry_dr.decompileCompleted():
-                        retry_df = get_decompiled_function_from_results(retry_dr)
-                        if retry_df is None:
-                            raise RuntimeError("Decompilation completed but Ghidra returned no DecompiledFunction")
-                        code = retry_df.getC()
-                        if code is not None and code.strip():
-                            return str(code)
-                finally:
-                    try:
-                        retry.dispose()
-                    except Exception:
-                        pass
-
-            extras: list[str] = []
-            if dr is not None:
-                try:
-                    if not dr.decompileCompleted():
-                        extras.append("decompileCompleted=false")
-                except Exception:
-                    pass
-            err_tail = ""
-            try:
-                err_tail = dr.getErrorMessage() or "" if dr is not None else ""
-            except Exception:
-                err_tail = ""
-            if not err_tail:
-                try:
-                    err_tail = decomp.getLastMessage() or ""
-                except Exception:
-                    err_tail = ""
-            detail = "; ".join([p for p in [err_tail, " ".join(extras)] if p]) or "no error message from DecompInterface"
-            raise RuntimeError(f"Decompilation failed for {func.getName()}: {detail}")
-
-        except ImportError as exc:
-            raise RuntimeError("Ghidra DecompInterface is not available (PyGhidra / Ghidra classpath)") from exc
+        provider = DecompilerToolProvider(cast(Any, self.program_info))
+        response = provider.decompile_function_payload(func, program, timeout or DEFAULT_TIMEOUT_SECONDS)
+        code = str(response.get("decompilation") or response.get("code") or "")
+        if code.strip():
+            return code
+        error = str(response.get("error") or "no decompiled output returned")
+        raise RuntimeError(f"Decompilation failed for {func.getName()}: {error}")
 
     @staticmethod
     def _disassemble(func: GhidraFunction, program: GhidraProgram, max_insns: int | None = None) -> dict[str, Any]:
