@@ -5893,7 +5893,7 @@ class ProjectToolProvider(ToolProvider):
         except Exception as exc:
             load_error = str(exc)
 
-        if self.program_info is None:
+        if self.program_info is None or self.program_info.program is None:
             # Collect available programs for diagnostics
             available: list[str] = []
             try:

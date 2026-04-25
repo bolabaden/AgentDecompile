@@ -411,16 +411,21 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _handle_connect_mode(args: argparse.Namespace) -> None:
-    """Handle connect mode to existing MCP server."""
+def _handle_connect_mode(args: argparse.Namespace, backend_url: str) -> None:
+    """Handle connect mode to existing MCP server.
+    
+    Args:
+        args: Parsed command-line arguments
+        backend_url: Resolved backend URL (from --server-url or env vars)
+    """
     logger.debug("diag.enter %s", "__main__.py:_handle_connect_mode")
     from agentdecompile_cli.webui import launch_webui_sidecar
 
-    webui_sidecar = launch_webui_sidecar(args.server_url, verbose=bool(args.verbose))
+    webui_sidecar = launch_webui_sidecar(backend_url, verbose=bool(args.verbose))
     cli = AgentDecompileCLI(
         launcher=None,
         project_manager=None,
-        backend=args.server_url,
+        backend=backend_url,
         webui_sidecar=webui_sidecar,
     )
     try:
@@ -548,7 +553,7 @@ def main():
             sys.stderr.write(
                 "Note: --config is ignored when connecting to an existing MCP server.\n",
             )
-        _handle_connect_mode(args)
+        _handle_connect_mode(args, backend_url)
         return
 
     # Blocking initialization (before async event loop)
