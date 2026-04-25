@@ -3,7 +3,7 @@ name: Publish Python 🐍 distribution to PyPI
 on:
   push:
     tags:
-      - '*.*.*'
+      - 'v*.*.*'
     branches:
       - 'develop'
   workflow_dispatch:

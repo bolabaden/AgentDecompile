@@ -1,6 +1,6 @@
 [project]
 name = "agentdecompile"
-dynamic = ["version"]
+version = "2.0.0"
 description = "AgentDecompile - Your AI companion for Ghidra. Automate reverse engineering with AI-powered code analysis."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -117,7 +117,7 @@ dev = [
 ]
 
 [tool.setuptools_scm]
-# Extract version from git tags (e.g., 1.0.0 -> 1.0.0)
+# Extract version from git tags (e.g., v2.0.0 -> 2.0.0)
 # Fallback to 0.0.0.dev0 if no tags found
 version_file = "src/agentdecompile_cli/_version.py"
 

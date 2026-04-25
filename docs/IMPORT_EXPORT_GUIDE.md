@@ -122,7 +122,7 @@ agentdecompile-cli tool export '{
       "tool": {
         "driver": {
           "name": "AgentDecompile",
-          "version": "1.0.0",
+          "version": "2.0.0",
           "rules": [
             {
               "id": "undefined-reference",
