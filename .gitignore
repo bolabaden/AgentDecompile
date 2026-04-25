@@ -336,3 +336,10 @@ vendor/
 volumes/
 agentdecompile*/
 .lfg_*/
+.venv*/
+ralphy-spec/
+openspec/
+os/
+lib/
+META-INF/
+test_shared_project/
