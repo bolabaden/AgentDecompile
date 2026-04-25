@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -8,6 +10,7 @@ import pytest
 
 from agentdecompile_cli.bridge import AgentDecompileMcpClient, ClientError
 from agentdecompile_cli.mcp_server.providers.dataflow import DataFlowToolProvider
+from agentdecompile_cli.mcp_server.providers.decompiler import DecompilerToolProvider
 from agentdecompile_cli.mcp_server.providers.dissect import GetFunctionAioToolProvider
 from agentdecompile_cli.mcp_server.providers.script import ScriptToolProvider
 from agentdecompile_cli.mcp_server.providers.search_everything import SearchEverythingToolProvider
@@ -169,6 +172,9 @@ class FakeFunction:
     def getBody(self) -> object:
         return object()
 
+    def getCalledFunctions(self, monitor: object) -> list[object]:
+        return []
+
 
 class FakeFunctionManager:
     def __init__(self, entry: str, func: FakeFunction) -> None:
@@ -323,6 +329,81 @@ async def test_get_function_honors_response_format_json() -> None:
     assert len(result) == 1
     assert result[0].text.startswith('{"tool": "get-function"')
     assert not result[0].text.startswith("## Function:")
+
+
+def test_decompile_function_is_advertised_by_default() -> None:
+    manager = ToolProviderManager()
+    manager.register_all_providers()
+
+    tool_names = {tool.name for tool in manager.list_tools()}
+
+    assert "decompile-function" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_decompile_function_supports_batch_and_rich_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    program = cast("GhidraProgram", FakeProgram("sample"))
+    functions = {
+        "entry": cast("GhidraFunction", FakeFunction("entry", "1000")),
+        "helper": cast("GhidraFunction", FakeFunction("helper", "1010")),
+    }
+    provider = DecompilerToolProvider(program_info=SimpleNamespace(program=program, decompiler=None))  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(provider, "_require_program", lambda: None)
+    monkeypatch.setattr(provider, "_resolve_function", lambda identifier, program=None: functions.get(identifier))
+    monkeypatch.setattr(
+        provider,
+        "_decompile_with_ghidra_api",
+        lambda func, current_program, timeout: create_success_response(
+            {
+                "function": func.getName(),
+                "name": func.getName(),
+                "address": str(func.getEntryPoint()),
+                "signature": str(func.getSignature()),
+                "decompilation": f"void {func.getName()}(void) {{}}",
+            }
+        ),
+    )
+    monkeypatch.setattr(provider, "_collect_callees", lambda func: [{"name": "callee", "address": "1020"}])
+    monkeypatch.setattr(provider, "_collect_referenced_strings", lambda current_program, func: [{"address": "2000", "value": "hello"}])
+    monkeypatch.setattr(provider, "_collect_xrefs", lambda current_program, func: [{"from": "3000", "to": str(func.getEntryPoint()), "type": "CALL"}])
+
+    result = await provider.call_tool(
+        "decompile-function",
+        {
+            "nameOrAddress": ["entry", "helper"],
+            "includeCallees": True,
+            "includeStrings": True,
+            "includeXrefs": True,
+            "timeout": 17,
+        },
+    )
+
+    payload = json.loads(result[0].text)
+    assert payload["count"] == 2
+    assert [row["function"] for row in payload["results"]] == ["entry", "helper"]
+    assert payload["results"][0]["code"] == "void entry(void) {}"
+    assert payload["results"][0]["callees"] == [{"name": "callee", "address": "1020"}]
+    assert payload["results"][0]["referencedStrings"] == [{"address": "2000", "value": "hello"}]
+    assert payload["results"][0]["xrefs"] == [{"from": "3000", "to": "1000", "type": "CALL"}]
+
+
+def test_get_function_decompile_uses_decompile_function_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    program = cast("GhidraProgram", FakeProgram("sample"))
+    func = cast("GhidraFunction", FakeFunction("entry", "1000"))
+    provider = GetFunctionAioToolProvider(program_info=SimpleNamespace(program=program, decompiler=None))  # pyright: ignore[reportArgumentType]
+    captured: dict[str, object] = {}
+
+    def fake_decompile_payload(self, current_func, current_program, timeout, **kwargs):
+        captured["function"] = current_func
+        captured["program"] = current_program
+        captured["timeout"] = timeout
+        return {"decompilation": "void entry(void) {}", "code": "void entry(void) {}"}
+
+    monkeypatch.setattr(DecompilerToolProvider, "decompile_function_payload", fake_decompile_payload)
+
+    assert provider._decompile(func, program, 17) == "void entry(void) {}"
+    assert captured == {"function": func, "program": program, "timeout": 17}
 
 
 @pytest.mark.asyncio

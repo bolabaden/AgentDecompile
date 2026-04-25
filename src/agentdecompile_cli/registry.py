@@ -946,7 +946,6 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
         Tool.ANALYZE_DATA_FLOW,
         Tool.ANALYZE_VTABLES,
         Tool.DELETE_PROJECT_BINARY,
-        Tool.DECOMPILE_FUNCTION,
         Tool.GEN_CALLGRAPH,
         Tool.GET_DATA,
         Tool.GET_CALL_GRAPH,
