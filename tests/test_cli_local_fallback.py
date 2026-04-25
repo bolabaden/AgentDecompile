@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import types
 
+import asyncio
 import sys
 
 from unittest.mock import AsyncMock, Mock, patch
@@ -303,3 +304,31 @@ class TestSharedRepositoryInference:
         provider = ProjectToolProvider()
 
         assert provider._infer_requested_shared_repository_name({"path": "Odyssey"}, "Odyssey") == "Odyssey"
+
+
+class TestProviderAliasExpansion:
+    def test_canonical_path_is_not_fanned_out_to_open_repository_aliases(self):
+        from mcp import types as mcp_types
+
+        from agentdecompile_cli.mcp_server.tool_providers import ToolProvider
+
+
+        class CaptureProvider(ToolProvider):
+            HANDLERS = {"open": "_handle_open"}
+
+            def __init__(self):
+                super().__init__()
+                self.seen_args = None
+
+            async def _handle_open(self, args):
+                self.seen_args = args
+                return [mcp_types.TextContent(type="text", text='{"success": true}')]
+
+        provider = CaptureProvider()
+
+        asyncio.run(provider.call_tool("open", {"path": "/K1/k1_win_gog_swkotor.exe"}))
+
+        assert provider.seen_args["path"] == "/K1/k1_win_gog_swkotor.exe"
+        assert "repositoryname" not in provider.seen_args
+        assert "serverrepository" not in provider.seen_args
+        assert "ghidraserverrepository" not in provider.seen_args

@@ -831,14 +831,6 @@ class ToolProvider:
                 for target in targets:
                     if norm_args.get(target) is None:
                         norm_args[target] = value
-            for alias, canonicals in alias_map.items():
-                if norm_args.get(alias) is not None:
-                    continue
-                for canonical in canonicals:
-                    canonical_value = norm_args.get(canonical)
-                    if canonical_value is not None:
-                        norm_args[alias] = canonical_value
-                        break
 
         try:
             result = await handler(norm_args)
