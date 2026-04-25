@@ -2129,6 +2129,36 @@ def main(
     )
     backend_host_explicit: bool = _cli_explicit("host", ("--host",))
     backend_port_explicit: bool = _cli_explicit("port", ("--port",))
+    backend_cli_explicit: bool = backend_cli_url_explicit or backend_host_explicit or backend_port_explicit
+    backend_env_url_set: bool = _env_value(_BACKEND_ENV_URL_KEYS) is not None
+    backend_env_host_set: bool = _env_value(_BACKEND_ENV_HOST_KEYS) is not None or _env_value(_BACKEND_ENV_PORT_KEYS) is not None
+    # Auto-local mode: if the user did NOT explicitly point us at an MCP backend
+    # (via --server-url / --host / --port / env URL/host), the CLI runs entirely
+    # in-process via PyGhidra. No HTTP listener is started. --server-url, when
+    # provided, is still honoured and forwarded to the remote backend.
+    auto_local_mode: bool = not (backend_cli_explicit or backend_env_url_set or backend_env_host_set)
+
+    # Propagate --ghidra-server-* CLI flags into os.environ so the in-process
+    # tool providers (which read env vars directly) see the same shared-server
+    # configuration that HTTP clients send via X-Ghidra-Server-* headers.
+    _flag_env_pairs: tuple[tuple[str | None, tuple[str, ...]], ...] = (
+        (ghidra_server_host, ("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "AGENTDECOMPILE_GHIDRA_SERVER_HOST")),
+        (str(ghidra_server_port) if ghidra_server_port is not None else None, ("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "AGENTDECOMPILE_GHIDRA_SERVER_PORT")),
+        (ghidra_server_username, ("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME")),
+        (ghidra_server_password, ("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD")),
+        (ghidra_server_repository, ("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")),
+    )
+    for _flag_value, _env_keys in _flag_env_pairs:
+        if _flag_value is None:
+            continue
+        _flag_str = str(_flag_value).strip()
+        if not _flag_str:
+            continue
+        for _env_key in _env_keys:
+            # Don't clobber an existing env value the user already set deliberately.
+            if not os.environ.get(_env_key, "").strip():
+                os.environ[_env_key] = _flag_str
+
     ctx.obj = {
         "host": host,
         "port": port,
@@ -2136,7 +2166,8 @@ def main(
         "backend_cli_url_explicit": backend_cli_url_explicit,
         "backend_host_explicit": backend_host_explicit,
         "backend_port_explicit": backend_port_explicit,
-        "backend_cli_explicit": backend_cli_url_explicit or backend_host_explicit or backend_port_explicit,
+        "backend_cli_explicit": backend_cli_explicit,
+        "auto_local_mode": auto_local_mode,
         "ghidra_server_host": ghidra_server_host,
         "ghidra_server_port": ghidra_server_port,
         "ghidra_server_username": ghidra_server_username,
@@ -2146,7 +2177,7 @@ def main(
         "cli_default_program_path": pp or existing_obj.get("cli_default_program_path"),
         "cli_default_binary_name": bn or existing_obj.get("cli_default_binary_name"),
         "format": existing_obj.get("format", format),
-        "local_mode": local_mode or existing_obj.get("local_mode", False),
+        "local_mode": local_mode or auto_local_mode or existing_obj.get("local_mode", False),
         "local_project_path": (local_project_path or "").strip() or existing_obj.get("local_project_path") or None,
         "local_project_name": (local_project_name or "").strip() or existing_obj.get("local_project_name") or "agentdecompile",
     }
@@ -5015,6 +5046,17 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
     except json.JSONDecodeError as exc:
         click.echo(f"Invalid JSON for steps: {exc}", err=True)
         sys.exit(1)
+    _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
+
+
+def _run_parsed_tool_sequence(
+    ctx: click.Context,
+    parsed_steps: Any,
+    *,
+    continue_on_error: bool = False,
+) -> None:
+    """Core sequence runner shared by tool-seq and tool-seq-file."""
+    logger.debug("diag.enter %s", "cli.py:_run_parsed_tool_sequence")
 
     if not isinstance(parsed_steps, list) or not all(isinstance(s, dict) for s in parsed_steps):
         click.echo("Steps must be a JSON array of objects.", err=True)
@@ -5109,6 +5151,64 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
             sys.exit(1)
 
     _run_async(_run_sequence())
+
+
+@main.command(
+    "tool-seq-file",
+    help=(
+        "Run a sequence of MCP tool calls from a JSON file. "
+        "The file must contain a JSON array of step objects: "
+        '[{"name":"tool-name","arguments":{...}}, ...]. '
+        "Equivalent to `tool-seq` but reads steps from a file path instead of inline JSON — "
+        "avoids shell quoting issues and is convenient for large or reusable payloads."
+    ),
+)
+@click.argument("file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True))
+@click.option(
+    "--continue-on-error",
+    is_flag=True,
+    help="Continue remaining steps after a step failure; exit code is still non-zero if any step failed.",
+)
+@click.option(
+    "--program-path",
+    "--programpath",
+    "--programPath",
+    "--program",
+    "-b",
+    "--binary",
+    expose_value=False,
+    callback=_cli_program_path_option_callback,
+    help="Default programPath for steps that omit it.",
+)
+@click.option(
+    "--binary-name",
+    "--binaryname",
+    "--binaryName",
+    expose_value=False,
+    callback=_cli_binary_name_option_callback,
+    help="Default binaryName for steps that omit it.",
+)
+@click.pass_context
+def tool_seq_file_cmd(ctx: click.Context, file: str, continue_on_error: bool) -> None:
+    """Invoke a sequence of tools defined in a JSON file.
+
+    A step fails if the MCP response has isError, embedded JSON with success:false and error,
+    or markdown text with ## Error (blockquote-style) or ## Modification conflict.
+    Exits with code 1 when any step fails (unless the process already exited on the first failure).
+    """
+    logger.debug("diag.enter %s", "cli.py:tool_seq_file_cmd")
+    file_path = Path(file).expanduser().resolve()
+    try:
+        raw = file_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        click.echo(f"tool-seq-file: cannot read file '{file_path}': {exc}", err=True)
+        sys.exit(1)
+    try:
+        parsed_steps = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        click.echo(f"tool-seq-file: invalid JSON in '{file_path}': {exc}", err=True)
+        sys.exit(1)
+    _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
 
 
 # ---------------------------------------------------------------------------
