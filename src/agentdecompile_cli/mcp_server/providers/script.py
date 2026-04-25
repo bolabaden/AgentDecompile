@@ -318,7 +318,10 @@ class ScriptToolProvider(ToolProvider):
         if timeout is None:
             timeout = 30
 
-        requested_program_path = self._get_str(args, "programpath", "program_path", "path", default="")
+        # execute-script accepts programPath, not a generic project/file path.
+        # Treating "path" as a program alias causes .gpr project markers to be
+        # misclassified as programs during script execution.
+        requested_program_path = self._get_str(args, "programpath", "program_path", default="")
         effective_program_info = self.program_info
         ns: dict[str, Any] = self._build_namespace(effective_program_info)
         executed_program = ns.get("currentProgram")

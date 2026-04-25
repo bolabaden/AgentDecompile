@@ -106,6 +106,12 @@ def _shared_bootstrap_skip_local_project_path(program_key: str) -> bool:
         return False
 
 
+def _is_gpr_project_marker(value: str) -> bool:
+    """Return True when *value* points at a Ghidra project marker rather than a program."""
+    raw = (value or "").replace("\\", "/").strip().lower()
+    return raw.endswith(".gpr")
+
+
 # ---------------------------------------------------------------------------
 # Default limits and constants
 # ---------------------------------------------------------------------------
@@ -2437,6 +2443,14 @@ class ToolProviderManager:
                     continue
                 value_s = str(value).strip()
                 if value_s:
+                    if key == "path" and _is_gpr_project_marker(value_s):
+                        logger.debug(
+                            "program_resolution_skip_gpr_project_marker tool=%s session_id=%s path_tail=%s",
+                            resolved_name,
+                            _sid_hint,
+                            basename_hint(value_s),
+                        )
+                        continue
                     requested_program_key = value_s
                     break
 

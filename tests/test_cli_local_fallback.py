@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import types
 
+import sys
+
 from unittest.mock import AsyncMock, Mock, patch
 
 import click
@@ -122,6 +124,39 @@ class TestCliLocalFallbackPolicy:
         assert recovered_client.call_tool.await_count == 2
         assert "step one" in result.output
         assert "step two" in result.output
+
+    @patch("agentdecompile_cli.cli._ensure_local_server_url", new_callable=AsyncMock)
+    @patch("agentdecompile_cli.cli._client", return_value=_FailingClient())
+    def test_tool_seq_explicit_server_url_does_not_fallback(self, _mocked_client: AsyncMock, mocked_ensure_local_server_url: AsyncMock):
+        steps = '[{"name":"execute-script","arguments":{"code":"__result__ = 1","responseFormat":"json"}}]'
+
+        result = _runner().invoke(
+            main,
+            [
+                "--server-url",
+                "http://127.0.0.1:65500",
+                "tool-seq",
+                steps,
+            ],
+        )
+
+        assert result.exit_code != 0
+        mocked_ensure_local_server_url.assert_not_awaited()
+        assert "Cannot connect to backend" in result.output
+
+
+class TestExplicitBackendDetectionFallback:
+    def test_argv_option_detection_accepts_equals_form(self):
+        from agentdecompile_cli.cli import _argv_contains_any_option
+
+        with patch.object(sys, "argv", ["agentdecompile-cli", "--server-url=http://127.0.0.1:8080", "tool-seq", "[]"]):
+            assert _argv_contains_any_option(("--server-url",)) is True
+
+    def test_argv_option_detection_accepts_split_form(self):
+        from agentdecompile_cli.cli import _argv_contains_any_option
+
+        with patch.object(sys, "argv", ["agentdecompile-cli", "--mcp-server-url", "http://127.0.0.1:8080", "tool-seq", "[]"]):
+            assert _argv_contains_any_option(("--server-url", "--mcp-server-url")) is True
 
 
 class TestBackendTargetResolution:
