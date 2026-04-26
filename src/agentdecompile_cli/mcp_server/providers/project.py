@@ -178,6 +178,28 @@ class ProjectToolProvider(ToolProvider):
         "reintegratefallbackprojects": "_handle_reintegrate_fallback_projects",
     }
 
+    @staticmethod
+    def _apply_shared_server_user_identity(server_username: str | None) -> None:
+        """Make Ghidra/JVM user identity match the authenticated shared-server username."""
+        logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._apply_shared_server_user_identity")
+        username = str(server_username or "").strip()
+        if not username:
+            return
+        try:
+            from java.lang import System as JavaSystem  # pyright: ignore[reportMissingImports]
+
+            JavaSystem.setProperty("user.name", username)
+        except Exception as exc:
+            logger.debug("set user.name failed for shared username %r: %s", username, exc)
+        try:
+            from ghidra.util import SystemUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+            field = SystemUtilities.class_.getDeclaredField("userName")
+            field.setAccessible(True)
+            field.set(None, username)
+        except Exception as exc:
+            logger.debug("set SystemUtilities.userName failed for shared username %r: %s", username, exc)
+
     def list_tools(self) -> list[types.Tool]:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider.list_tools")
         return [
@@ -1605,6 +1627,7 @@ class ProjectToolProvider(ToolProvider):
                 "repository_adapter": repository_adapter,
             },
         )
+        self._apply_shared_server_user_identity(server_username)
         SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
         logger.info(
             "[connect-shared-project] Session %s is now in SHARED-SERVER mode: repository=%s, binaries=%d",
@@ -5048,6 +5071,10 @@ class ProjectToolProvider(ToolProvider):
         from java.lang import Object as JavaObject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
         monitor = GhidraTaskMonitor.DUMMY
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        if handle and is_shared_server_handle(handle):
+            self._apply_shared_server_user_identity(handle.get("server_username"))
 
         # Split program_path into folder + name
         parts: list[str] = program_path.rsplit("/", 1)

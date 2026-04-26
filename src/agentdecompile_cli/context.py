@@ -269,12 +269,26 @@ class PyGhidraContext:
         all_binary_paths: list[str] = self.list_binaries()
         for binary_path_s in all_binary_paths:
             binary_path_str: str = str(binary_path_s)
+            if not binary_path_str.startswith("/"):
+                logger.warning(
+                    "pyghidra_startup_skip_non_domain_path path=%r",
+                    binary_path_str,
+                )
+                continue
             binary_path: Path = Path(binary_path_str)
-            program: GhidraProgram | None = self.project.openProgram(
-                str(binary_path.parent),
-                binary_path.name,
-                False,
-            )
+            try:
+                program: GhidraProgram | None = self.project.openProgram(
+                    str(binary_path.parent),
+                    binary_path.name,
+                    False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_startup_open_program_exc basename=%s exc_type=%s",
+                    basename_hint(binary_path.name),
+                    type(exc).__name__,
+                )
+                continue
             if program is None:
                 logger.warning(
                     "pyghidra_open_program_null basename=%s",
@@ -295,14 +309,53 @@ class PyGhidraContext:
 
         def list_folder_contents(folder: GhidraDomainFolder) -> list[str]:
             names: list[str] = []
-            for subfolder in folder.getFolders():
-                names.extend(list_folder_contents(subfolder))
+            try:
+                subfolders = list(folder.getFolders() or [])
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_list_binaries_skip_subfolders exc_type=%s",
+                    type(exc).__name__,
+                )
+                subfolders = []
+            for subfolder in subfolders:
+                try:
+                    names.extend(list_folder_contents(subfolder))
+                except Exception as exc:
+                    logger.warning(
+                        "pyghidra_list_binaries_skip_subfolder exc_type=%s",
+                        type(exc).__name__,
+                    )
 
-            names.extend([f.getPathname() for f in folder.getFiles()])
+            try:
+                files = list(folder.getFiles() or [])
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_list_binaries_skip_files exc_type=%s",
+                    type(exc).__name__,
+                )
+                files = []
+            for f in files:
+                try:
+                    names.append(f.getPathname())
+                except Exception as exc:
+                    file_name = "<unknown>"
+                    try:
+                        file_name = str(f.getName())
+                    except Exception:
+                        pass
+                    logger.warning(
+                        "pyghidra_list_binaries_skip_pathname basename=%s exc_type=%s",
+                        basename_hint(file_name),
+                        type(exc).__name__,
+                    )
             return names
 
         logger.debug("diag.enter %s", "context.py:PyGhidraContext.list_binaries")
-        return list_folder_contents(self.project.getRootFolder())
+        try:
+            return list_folder_contents(self.project.getRootFolder())
+        except Exception as exc:
+            logger.warning("pyghidra_list_binaries_failed exc_type=%s", type(exc).__name__)
+            return []
 
     def list_binary_domain_files(self) -> list[GhidraDomainFile]:
         """Return a list of DomainFile objects for all binaries in the project.

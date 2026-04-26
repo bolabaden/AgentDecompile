@@ -341,8 +341,16 @@ class GetFunctionToolProvider(ToolProvider):
             from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
             func.setName(new_name, SourceType.USER_DEFINED)
+            try:
+                sym = func.getSymbol()
+                if sym is not None and str(sym.getName()) != new_name:
+                    sym.setName(new_name, SourceType.USER_DEFINED)
+            except Exception:
+                pass
+            self._touch_listing_for_shared_checkin(program)
 
         self._run_program_transaction(program, "rename-function", _rename_function)
+        self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
         return create_success_response(
             {
                 "action": "rename",
@@ -351,6 +359,78 @@ class GetFunctionToolProvider(ToolProvider):
                 "success": True,
             },
         )
+
+    def _notify_versioned_checkout_after_program_edit(self, program: GhidraProgram, program_path: str | None = None) -> None:
+        """Align shared checkout metadata with function edits so versioned checkin can persist updates."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._notify_versioned_checkout_after_program_edit")
+        if program is None:
+            return
+        try:
+            from agentdecompile_cli.mcp_server.providers.import_export import (
+                ImportExportToolProvider as _ImportExport,
+            )
+            from agentdecompile_cli.mcp_server.session_context import (
+                SESSION_CONTEXTS,
+                get_current_mcp_session_id,
+                is_shared_server_handle,
+            )
+
+            sid = get_current_mcp_session_id()
+            sess = SESSION_CONTEXTS.get_or_create(sid)
+            handle = sess.project_handle if isinstance(sess.project_handle, dict) else None
+            if bool(handle and is_shared_server_handle(handle)) and self._manager is not None:
+                iep = None
+                for pr in getattr(self._manager, "providers", None) or []:
+                    if hasattr(pr, "_persist_open_program_for_versioned_checkin"):
+                        iep = pr
+                        break
+                if iep is not None:
+                    if hasattr(iep, "_bump_versioned_checkout_dirty_bookmark"):
+                        iep._bump_versioned_checkout_dirty_bookmark(program)
+                    iep._persist_open_program_for_versioned_checkin(program)
+
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+            df = None
+            try:
+                df = program.getDomainFile()
+            except Exception:
+                df = None
+            if df is not None:
+                if iep is not None and hasattr(iep, "_save_domain_file_before_versioned_checkin"):
+                    try:
+                        iep._save_domain_file_before_versioned_checkin(df, program)
+                    except Exception as flush_exc:
+                        logger.debug("save_domain_file_before_versioned_checkin after edit: %s", flush_exc)
+                _ImportExport._try_mark_versioned_checkout_dirty(df)
+                _ImportExport._notify_domain_file_changed_for_versioned_checkin(df, program)
+                if hasattr(df, "getParent"):
+                    par = df.getParent()
+                    if par is not None and hasattr(par, "fileChanged"):
+                        try:
+                            par.fileChanged()
+                        except Exception:
+                            pass
+
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+        except Exception as exc:
+            logger.debug("notify_versioned_checkout_after_program_edit: %s", exc)
+
+    @staticmethod
+    def _touch_listing_for_shared_checkin(program: GhidraProgram) -> None:
+        """Bookmark bump in the same transaction as function edits so VC sees a listing change."""
+        try:
+            mem = program.getMemory()
+            if mem is None:
+                return
+            addr = mem.getMinAddress()
+            if addr is None:
+                return
+            bmm = program.getBookmarkManager()
+            if bmm is None:
+                return
+            bmm.setBookmark(addr, "Note", "AgentDecompile", "agentdecompile_vc_checkin_bump")
+        except Exception:
+            pass
 
     async def _handle_set_prototype(
         self,
