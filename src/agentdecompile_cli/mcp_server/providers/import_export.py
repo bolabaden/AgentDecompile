@@ -3134,7 +3134,31 @@ class ImportExportToolProvider(ToolProvider):
                 raise err_holder[0]
         except Exception as edt_exc:
             logger.debug("EDT domain_file.save fallback to direct save: %s", edt_exc)
-            domain_file.save(monitor)
+            try:
+                domain_file.save(monitor)
+            except Exception as save_exc:
+                if "Unable to lock due to active transaction" not in str(save_exc):
+                    raise
+                consumers = []
+                try:
+                    consumers = list(domain_file.getConsumers()) if hasattr(domain_file, "getConsumers") else []
+                except Exception:
+                    consumers = []
+                for consumer in consumers:
+                    if consumer is None or not hasattr(consumer, "forceLock"):
+                        continue
+                    try:
+                        consumer.forceLock(False, "agentdecompile-versioned-save")
+                        domain_file.save(monitor)
+                        return
+                    except Exception as force_exc:
+                        logger.debug("forceLock domain_file.save fallback failed: %s", force_exc)
+                    finally:
+                        try:
+                            consumer.unlock()
+                        except Exception:
+                            pass
+                raise save_exc
 
     def _dispose_decompilers_for_domain_file(self, session_id: str, domain_file: GhidraDomainFile) -> None:
         """Release DecompInterface handles that can keep the Program locked for GhidraFile.save (headless MCP)."""
@@ -4318,6 +4342,17 @@ class ImportExportToolProvider(ToolProvider):
             # "not modified" by reopening loads a fresh ProgramDB without in-memory label/symbol edits,
             # so the retry check-in can upload an empty revision (LFG shared search-symbols sees 0 labels).
             handler = GhidraDefaultCheckinHandler(comment, _keep, False)
+            if program_for_ops is not None:
+                try:
+                    program_for_ops.forceLock(False, "agentdecompile-versioned-checkin-save")
+                    checkin_target.save(GhidraTaskMonitor.DUMMY)  # pyright: ignore[reportOptionalMemberAccess]
+                except Exception as force_pre_checkin_save_exc:
+                    logger.debug("versioned checkin force-save immediately before checkin failed: %s", force_pre_checkin_save_exc)
+                finally:
+                    try:
+                        program_for_ops.unlock()
+                    except Exception:
+                        pass
             try:
                 checkin_target.checkin(handler, GhidraTaskMonitor.DUMMY)  # pyright: ignore[reportOptionalMemberAccess]
             except Exception as checkin_exc:
