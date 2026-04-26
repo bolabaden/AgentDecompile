@@ -688,7 +688,22 @@ class PyGhidraContext:
         """List all the binaries within the Ghidra project."""
         logger.debug("diag.enter %s", "launcher.py:PyGhidraContext.list_binaries")
         root_folder = self.project.getRootFolder()
-        return [file_obj.getPathname() for file_obj in _iter_domain_items(root_folder, content_type="Program")]
+        names: list[str] = []
+        for file_obj in _iter_domain_items(root_folder, content_type="Program"):
+            try:
+                names.append(file_obj.getPathname())
+            except Exception as exc:
+                file_name = "<unknown>"
+                try:
+                    file_name = str(file_obj.getName())
+                except Exception:
+                    pass
+                logger.warning(
+                    "pyghidra_list_binaries_skip_pathname basename=%s exc_type=%s",
+                    basename_hint(file_name),
+                    type(exc).__name__,
+                )
+        return names
 
     def list_binary_domain_files(self) -> list[GhidraDomainFile]:
         """Return a list of DomainFile objects for all binaries in the project.
