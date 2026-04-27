@@ -2429,9 +2429,9 @@ class ToolProviderManager:
         # Resolving it here runs shared checkout / local getFile before the import creates the file — breaks
         # LFG (spurious checkout failures, versioned check-in "not modified", search-symbols empty on 02d).
         if norm_name != "importbinary":
-            # open/connect-shared-project use `path` for project/repository selection, not an existing program.
-            # Pre-activating that value as a program causes false "program-resolution-failed" before open runs.
-            resolution_keys = ("programpath", "binary", "binaryname") if norm_name in {"open", "connectsharedproject"} else ("programpath", "binary", "binaryname", "path")
+            # open/connect-shared-project/sync-project use `path` for project/repository selection, not an existing program.
+            # Pre-activating that value as a program causes false "program-resolution-failed" before those tools run.
+            resolution_keys = ("programpath", "binary", "binaryname") if norm_name in {"open", "connectsharedproject", "syncproject"} else ("programpath", "binary", "binaryname", "path")
             for key in resolution_keys:
                 value = norm_args.get(key)
                 if value is None:

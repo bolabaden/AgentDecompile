@@ -5347,30 +5347,146 @@ class ProjectToolProvider(ToolProvider):
                             )
                     else:
                         checkout_type = GhidraCheckoutType.NORMAL
-                    # 4th param is projectPath: absolute path where checked-out file is stored (Java expects absolute)
-                    checkout_project_path: str = program_path
-                    try:
-                        assert ghidra_project is not None
-                        proj = ghidra_project.getProject()
-                        if proj is not None and hasattr(proj, "getProjectLocator"):
-                            locator = proj.getProjectLocator()
-                            if locator is not None and hasattr(locator, "getProjectDir"):
-                                proj_dir = locator.getProjectDir()
-                                if proj_dir is not None:
-                                    abs_dir = str(proj_dir.getAbsolutePath()).replace("\\", "/")
-                                    checkout_project_path = f"{abs_dir}/{item_name}" if not abs_dir.endswith("/") else f"{abs_dir}{item_name}"
-                    except Exception:
-                        pass
-                    status = repository_adapter.checkout(adapter_folder_path, item_name, checkout_type, checkout_project_path)
-                    if status is not None:
+                    # Remove any private (non-versioned, non-checked-out) local copy that would block
+                    # RepositoryAdapter.checkout with "Cannot checkout, private file exists".
+                    # After deletion, the project should expose the server-backed versioned shadow file
+                    # at the same path; call DomainFile.checkout() on that shadow for the full
+                    # two-sided checkout (server RPC + local state update).  Only fall through to the
+                    # RepositoryAdapter.checkout() path if the shadow isn't available.
+                    _adapter_checkout_done = False
+                    if domain_file is not None:
+                        try:
+                            _dv = bool(domain_file.isVersioned())
+                            _dc = bool(domain_file.isCheckedOut())
+                            is_private = not _dv and not _dc
+                        except Exception:
+                            is_private = False
+                        if is_private:
+                            try:
+                                domain_file.delete()
+                                domain_file = None
+                                logger.info(
+                                    "Deleted private local copy of '%s' to allow versioned checkout", program_path
+                                )
+                                # After deletion, re-resolve: project may now expose the server-backed
+                                # versioned file at this path (shared project shadow).
+                                shadow_df = self._resolve_shared_checkout_domain_file(
+                                    project_data, program_path, item_name
+                                )
+                                if shadow_df is not None:
+                                    try:
+                                        if bool(shadow_df.isVersioned()) and not bool(shadow_df.isCheckedOut()):
+                                            shadow_df.checkout(exclusive, monitor)
+                                            domain_file = self._resolve_shared_checkout_domain_file(
+                                                project_data, program_path, item_name
+                                            )
+                                            if domain_file is not None:
+                                                self._ensure_shared_domain_file_registered_for_version_control(
+                                                    domain_file, program_path
+                                                )
+                                                logger.info(
+                                                    "Checked out '%s' via DomainFile.checkout() after private-file deletion",
+                                                    program_path,
+                                                )
+                                                if epoch_env:
+                                                    self._write_shared_checkout_epoch_disk(epoch_env)
+                                                _adapter_checkout_done = True  # Skip RepositoryAdapter.checkout()
+                                    except Exception as co_exc:
+                                        logger.warning(
+                                            "DomainFile.checkout() after private-file deletion failed for %s: %s",
+                                            program_path,
+                                            co_exc,
+                                        )
+                            except Exception as del_exc:
+                                logger.warning(
+                                    "Failed to delete private local copy of '%s' before checkout: %s",
+                                    program_path,
+                                    del_exc,
+                                )
+                        else:
+                            # domain_file is the server shadow (ver=True).  RepositoryAdapter.checkout()
+                            # registers the checkout on the server but does NOT update the local
+                            # private-FS item's checkout state (checkedOut stays False, checkoutVersion
+                            # stays -1).  As a result GhidraFile.modifiedSinceCheckout() always returns
+                            # False and checkin never sees any edits.
+                            # Fix: call LocalDatabaseItem.checkout() directly on the private-FS item to
+                            # sync the local checkout state — this sets checkedOut=True and
+                            # checkoutVersion=currentVersion so that post-edit currentVersion > checkoutVersion.
+                            try:
+                                from java.lang import System as JavaSystemLocal  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                                _co_user: str = ""
+                                try:
+                                    _co_user = str(JavaSystemLocal.getProperty("user.name") or "")
+                                except Exception:
+                                    pass
+                                _pfs = project_data.getPrivateFileSystem() if hasattr(project_data, "getPrivateFileSystem") else None
+                                if _pfs is not None:
+                                    _pfs_folder = str(adapter_folder_path or "/").rstrip("/") or "/"
+                                    _pfs_item = None
+                                    try:
+                                        _pfs_item = _pfs.getItem(_pfs_folder, item_name)
+                                    except Exception as _pfs_get_exc:
+                                        logger.debug("getPrivateFileSystem().getItem failed for %s: %s", program_path, _pfs_get_exc)
+                                    if _pfs_item is not None:
+                                        _ldi_already_co = False
+                                        try:
+                                            _ldi_already_co = bool(_pfs_item.isCheckedOut()) if hasattr(_pfs_item, "isCheckedOut") else bool(_pfs_item.checkedOut)
+                                        except Exception:
+                                            pass
+                                        if not _ldi_already_co:
+                                            try:
+                                                _ldi_status = _pfs_item.checkout(checkout_type, program_path, _co_user)
+                                                logger.info(
+                                                    "LocalDatabaseItem.checkout('%s/%s', user=%r) synced local checkout state for %s; status=%r",
+                                                    _pfs_folder,
+                                                    item_name,
+                                                    _co_user,
+                                                    program_path,
+                                                    _ldi_status,
+                                                )
+                                                _adapter_checkout_done = True
+                                            except Exception as _ldi_exc:
+                                                logger.debug(
+                                                    "LocalDatabaseItem.checkout sync for %s failed: %s",
+                                                    program_path,
+                                                    _ldi_exc,
+                                                )
+                                        else:
+                                            logger.debug(
+                                                "Private FS item for '%s/%s' already checked out locally; skipping LDI.checkout",
+                                                _pfs_folder,
+                                                item_name,
+                                            )
+                            except Exception as _pfs_exc:
+                                logger.debug("getPrivateFileSystem probe for %s: %s", program_path, _pfs_exc)
+                    if not _adapter_checkout_done:
+                        # 4th param is projectPath: absolute path where checked-out file is stored (Java expects absolute)
+                        checkout_project_path: str = program_path
+                        try:
+                            assert ghidra_project is not None
+                            proj = ghidra_project.getProject()
+                            if proj is not None and hasattr(proj, "getProjectLocator"):
+                                locator = proj.getProjectLocator()
+                                if locator is not None and hasattr(locator, "getProjectDir"):
+                                    proj_dir = locator.getProjectDir()
+                                    if proj_dir is not None:
+                                        abs_dir = str(proj_dir.getAbsolutePath()).replace("\\", "/")
+                                        rel_parts = [part for part in str(folder_path or "/").split("/") if part]
+                                        rel_tail = "/".join([*rel_parts, item_name]) if rel_parts else item_name
+                                        checkout_project_path = f"{abs_dir}/{rel_tail}" if not abs_dir.endswith("/") else f"{abs_dir}{rel_tail}"
+                        except Exception:
+                            pass
+                        status = repository_adapter.checkout(adapter_folder_path, item_name, checkout_type, checkout_project_path)
+                        # Ghidra may return null/None on successful checkout. Always re-resolve the local
+                        # DomainFile after checkout to bind to the post-checkout versioned handle.
                         domain_file = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
                         if domain_file is not None:
                             self._ensure_shared_domain_file_registered_for_version_control(domain_file, program_path)
-                            logger.info("Checked out '%s' via RepositoryAdapter.checkout (versioned)", program_path)
-                    # Ghidra may return null/None from checkout on success; still record epoch so the next
-                    # MCP process can detect a JVM restart (LFG step 05).
-                    if epoch_env:
-                        self._write_shared_checkout_epoch_disk(epoch_env)
+                            logger.info("Checked out '%s' via RepositoryAdapter.checkout (versioned; status=%r)", program_path, status)
+                        # Ghidra may return null/None from checkout on success; still record epoch so the next
+                        # MCP process can detect a JVM restart (LFG step 05).
+                        if epoch_env:
+                            self._write_shared_checkout_epoch_disk(epoch_env)
                 except Exception as exc:
                     logger.debug("RepositoryAdapter.checkout for '%s' failed: %s. Trying createFile fallback.", program_path, exc)
                     if needs_adapter_checkout or needs_adapter_refresh:
@@ -5448,17 +5564,32 @@ class ProjectToolProvider(ToolProvider):
                     except Exception:
                         pass
 
-            # RepositoryAdapter.checkout can leave the local GhidraDomainFile not marked checked-out for modify/checkin;
-            # GhidraDomainFile.checkout links the working copy for this JVM.
+            # RepositoryAdapter.checkout can leave the local GhidraDomainFile detached from this JVM's
+            # writable checkout tracking even when server-side checkout already exists. If that happens,
+            # rebuild the local checkout link by undoing and re-checking out in-process.
             if domain_file is not None:
                 try:
-                    if hasattr(domain_file, "isCheckedOut") and not bool(domain_file.isCheckedOut()):
+                    is_versioned = bool(domain_file.isVersioned()) if hasattr(domain_file, "isVersioned") else False
+                    is_checked_out = bool(domain_file.isCheckedOut()) if hasattr(domain_file, "isCheckedOut") else False
+                    can_checkin = bool(domain_file.canCheckin()) if hasattr(domain_file, "canCheckin") else False
+                except Exception:
+                    is_versioned = False
+                    is_checked_out = False
+                    can_checkin = False
+                # Relink only when the checkout is not yet reflected locally (is_checked_out=False).
+                # After a fresh RepositoryAdapter.checkout(), is_checked_out=True and can_checkin=False
+                # is NORMAL (nothing modified yet). Triggering relink here would call undoCheckout()
+                # which removes the server-side checkout we just registered.
+                needs_relink = is_versioned and (not is_checked_out)
+                try:
+                    if needs_relink:
                         domain_file.checkout(exclusive, monitor)
                 except Exception as co_exc:
                     logger.warning(
-                        "domain_file.checkout after shared resolve failed exclusive=%s program=%s: %s",
+                        "domain_file.checkout relink after shared resolve failed exclusive=%s program=%s needs_relink=%s: %s",
                         exclusive,
                         program_path,
+                        needs_relink,
                         co_exc,
                     )
 
@@ -5598,6 +5729,9 @@ class ProjectToolProvider(ToolProvider):
             link_domain_file = None
         if link_domain_file is None:
             link_domain_file = checkout_link_domain_file
+        if link_domain_file is None:
+            link_domain_file = domain_file
+
         if link_domain_file is not None:
             program_info.domain_file = link_domain_file
         if domain_object_consumer is not None:

@@ -4342,9 +4342,27 @@ class ImportExportToolProvider(ToolProvider):
             # "not modified" by reopening loads a fresh ProgramDB without in-memory label/symbol edits,
             # so the retry check-in can upload an empty revision (LFG shared search-symbols sees 0 labels).
             handler = GhidraDefaultCheckinHandler(comment, _keep, False)
+            # For shared repos, ensure pending function renames are saved before checkin
+            has_pending_renames_for_shared = False
+            if repo_shared and program_for_ops is not None:
+                try:
+                    func_snap_pre_checkin = self._snapshot_user_defined_function_names(program_for_ops)
+                    has_pending_renames_for_shared = bool(func_snap_pre_checkin)
+                    if has_pending_renames_for_shared:
+                        logger.info("versioned checkin shared-repo: detected %d pending function renames before save", len(func_snap_pre_checkin))
+                except Exception as e:
+                    logger.debug("versioned checkin shared-repo pre-checkin rename detection failed: %s", e)
             if program_for_ops is not None:
                 try:
                     program_for_ops.forceLock(False, "agentdecompile-versioned-checkin-save")
+                    # If shared repo has pending function renames, mark program as modified to ensure save includes them
+                    if has_pending_renames_for_shared:
+                        try:
+                            pm = program_for_ops.getMetadata()
+                            if pm is not None:
+                                pm.putString("agentdecompile:pending_renames", "1")
+                        except Exception:
+                            pass
                     checkin_target.save(GhidraTaskMonitor.DUMMY)  # pyright: ignore[reportOptionalMemberAccess]
                 except Exception as force_pre_checkin_save_exc:
                     logger.debug("versioned checkin force-save immediately before checkin failed: %s", force_pre_checkin_save_exc)
