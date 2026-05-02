@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING, Any, cast
 from mcp import types
 
 from agentdecompile_cli.mcp_server.tool_providers import (
+    ActionableError,
     ToolProvider,
+    create_error_response,
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
@@ -165,7 +167,18 @@ class MemoryToolProvider(ToolProvider):
         assert length is not None, "length should be set after _require_address_or_symbol()"
         length = min(length, 10000)
         addr: GhidraAddress | None = self._resolve_address(addr_str, program=program)
-        assert addr is not None, "addr should be set after _resolve_address()"
+        if addr is None:
+            return create_error_response(
+                ActionableError(
+                    f"Could not resolve address or symbol: {addr_str!r}",
+                    context={"state": "address-resolution-failed", "input": addr_str},
+                    next_steps=[
+                        "Use a `0x` prefix for hexadecimal addresses when needed (e.g. `0x007b5000`).",
+                        "Unprefixed hex literals containing a–f (e.g. `007b5000`) are accepted.",
+                        "Verify the symbol name matches a label or function in the program.",
+                    ],
+                ),
+            )
 
         import jpype  # noqa: PLC0415
 
@@ -207,7 +220,18 @@ class MemoryToolProvider(ToolProvider):
         addr_str: str | None = self._require_address_or_symbol(args)
         assert addr_str is not None, "addr_str should be set after _require_address_or_symbol()"
         addr: GhidraAddress | None = self._resolve_address(addr_str, program=program)
-        assert addr is not None, "addr should be set after _resolve_address()"
+        if addr is None:
+            return create_error_response(
+                ActionableError(
+                    f"Could not resolve address or symbol: {addr_str!r}",
+                    context={"state": "address-resolution-failed", "input": addr_str},
+                    next_steps=[
+                        "Use a `0x` prefix for hexadecimal addresses when needed (e.g. `0x007b5000`).",
+                        "Unprefixed hex literals containing a–f (e.g. `007b5000`) are accepted.",
+                        "Verify the symbol name matches a label or function in the program.",
+                    ],
+                ),
+            )
 
         listing: GhidraListing | None = self._get_listing(program)
         assert listing is not None, "listing should be set after _get_listing()"

@@ -630,6 +630,18 @@ def _default_error_guidance(msg: str) -> tuple[dict[str, Any] | None, list[str] 
             ),
         )
 
+    if "could not resolve address or symbol" in lowered:
+        return (
+            {"state": "address-resolution-failed"},
+            filter_recommendations(
+                [
+                    "Use a `0x` prefix for hexadecimal addresses when needed (e.g. `0x007b5000`).",
+                    "Unprefixed hex literals containing a–f (e.g. `007b5000`) are accepted.",
+                    "Verify the symbol name matches a label or function in the program.",
+                ],
+            ),
+        )
+
     return None, None
 
 

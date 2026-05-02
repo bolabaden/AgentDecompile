@@ -32,6 +32,20 @@ if TYPE_CHECKING:
     Symbol = GhidraSymbol
 
 
+def _looks_like_unprefixed_hex_literal(s: str) -> bool:
+    """True if ``s`` is only hex digits and contains a–f (any case).
+
+    Used to accept IDA-style addresses like ``007b5000`` without a ``0x`` prefix.
+    Pure-digit strings (e.g. ``100``) are excluded so decimal literals stay decimal;
+    use ``0x`` when an unprefixed value could be ambiguous.
+    """
+    if not s or not s.isascii():
+        return False
+    if not any(c in "abcdefABCDEF" for c in s):
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in s)
+
+
 class AddressUtil:
     """Utility functions for working with Ghidra addresses."""
 
@@ -121,12 +135,17 @@ class AddressUtil:
 
         input_str = address_or_symbol.strip()
 
-        # If input looks like a numeric address (0x-prefix or decimal digits), try parsing first.
+        # If input looks like a numeric address (0x-prefix, decimal digits, or unprefixed hex with a–f), parse first.
         # Ghidra's symbol APIs can throw when given "0x48b17c" (e.g. int() in base 10).
-        if input_str.lower().startswith("0x") or (input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))):
-            addr = AddressUtil.parse_address(program, input_str)
-            if addr is not None:
-                return addr
+        addr_try: GhidraAddress | None = None
+        if input_str.lower().startswith("0x") or (
+            input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))
+        ):
+            addr_try = AddressUtil.parse_address(program, input_str)
+        elif _looks_like_unprefixed_hex_literal(input_str):
+            addr_try = AddressUtil.parse_address(program, f"0x{input_str}")
+        if addr_try is not None:
+            return addr_try
 
         # Try to find it as a symbol
         symbol_table = program.getSymbolTable()
@@ -147,8 +166,10 @@ class AddressUtil:
         except Exception:
             pass
 
-        # If not found as a symbol, try to parse as an address
+        # If not found as a symbol, try to parse as an address (decimal / 0x, then unprefixed hex with a–f)
         final_addr = AddressUtil.parse_address(program, input_str)
+        if final_addr is None and _looks_like_unprefixed_hex_literal(input_str):
+            final_addr = AddressUtil.parse_address(program, f"0x{input_str}")
         if final_addr is None:
             logger.debug(
                 "addr_resolve_unresolved input_len=%s starts_0x=%s",
