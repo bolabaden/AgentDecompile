@@ -207,7 +207,6 @@ def build_local_server_env(project_path: Path, *, extra_env: dict[str, str] | No
         "AGENTDECOMPILE_SERVER_PORT",
         "AGENTDECOMPILE_SERVER_USERNAME",
         "AGENTDECOMPILE_SERVER_PASSWORD",
-        "AGENTDECOMPILE_SERVER_REPOSITORY",
     ]:
         env.pop(key, None)
 
