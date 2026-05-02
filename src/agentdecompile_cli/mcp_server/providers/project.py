@@ -167,6 +167,7 @@ class ProjectToolProvider(ToolProvider):
         "syncproject": "_handle_sync_project",
         "managefiles": "_handle_manage",
         "connectsharedproject": "_handle_connect_shared_project",
+        "deleteprojectbinary": "_handle_remove_program_binary",
         "removeprogrambinary": "_handle_remove_program_binary",
         "getcurrentaddress": "_handle_get_current_address",
         "getcurrentfunction": "_handle_get_current_function",
@@ -375,6 +376,18 @@ class ProjectToolProvider(ToolProvider):
             ),
             types.Tool(
                 name=Tool.REMOVE_PROGRAM_BINARY.value,
+                description="Remove a program from the current Ghidra project (shared repository or local project). This uses Ghidra's DomainFile API and does not delete source binaries from the host filesystem.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Path or name of the active program to remove (e.g. /K1/swkotor.exe or test_x86_64)."},
+                        "confirm": {"type": "boolean", "default": False, "description": "Must be true to confirm removal."},
+                    },
+                    "required": ["confirm"],
+                },
+            ),
+            types.Tool(
+                name=Tool.DELETE_PROJECT_BINARY.value,
                 description="Remove a program from the current Ghidra project (shared repository or local project). This uses Ghidra's DomainFile API and does not delete source binaries from the host filesystem.",
                 inputSchema={
                     "type": "object",

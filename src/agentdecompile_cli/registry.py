@@ -1093,7 +1093,7 @@ def _legacy_tools_advertised() -> bool:
 def _get_tool_surface_profile() -> ToolSurfaceProfile:
     """Return the active tool-surface profile.
 
-    Default remains `curated` to preserve the existing advertisement surface.
+    Default is `full` so clean environments advertise every non-GUI canonical tool.
     Legacy env vars map to the `legacy` profile for backward compatibility.
     """
     logger.debug("diag.enter %s", "registry.py:_get_tool_surface_profile")
@@ -1108,7 +1108,7 @@ def _get_tool_surface_profile() -> ToolSurfaceProfile:
             return ToolSurfaceProfile(value)
     if _legacy_tools_advertised():
         return ToolSurfaceProfile.LEGACY
-    return ToolSurfaceProfile.CURATED
+    return ToolSurfaceProfile.FULL
 
 
 def get_active_tool_surface_profile() -> str:
@@ -1210,8 +1210,8 @@ def _build_advertised_tools() -> list[str]:
     """Build the list of tool names to advertise in MCP tools/list (and CLI).
 
     Priority: AGENTDECOMPILE_ENABLE_TOOLS (if set) → exact list to expose.
-    Otherwise: start from all canonical tools, remove disabled, then either hide
-    _DEFAULT_HIDDEN_TOOLS or include them if legacy env vars are set.
+    Otherwise: start from all canonical tools, remove disabled, and use the
+    requested surface profile. The implicit profile is full.
     """
     logger.debug("diag.enter %s", "registry.py:_build_advertised_tools")
     canonical_visible: list[Tool] = [t for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
@@ -1357,13 +1357,13 @@ def resolve_tool_name(tool_name: str) -> str | None:
         )
         return None
 
-    forwarded: str | None = CANONICAL_TOOL_FORWARDERS.get(norm)
-    if forwarded is not None:
-        return forwarded
-
     direct: str | None = _TOOLS_BY_NORMALIZED.get(norm)
     if direct is not None:
         return direct
+
+    forwarded: str | None = CANONICAL_TOOL_FORWARDERS.get(norm)
+    if forwarded is not None:
+        return forwarded
 
     aliased: str | None = TOOL_ALIASES.get(norm)
     if aliased is not None:

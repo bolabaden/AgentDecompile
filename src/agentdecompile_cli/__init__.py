@@ -21,6 +21,11 @@ except ImportError:
     # Fallback version if not installed or in development without git tags
     __version__ = "0.0.0.dev0"
 
+from agentdecompile_cli.env_compat import sync_agentdecompile_env_aliases
+
+# Keep compact and canonical env prefixes in lockstep for all submodules.
+sync_agentdecompile_env_aliases()
+
 from agentdecompile_cli.bridge import (
     AgentDecompileMcpClient,
     ClientError,

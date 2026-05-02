@@ -9,6 +9,7 @@ import agentdecompile_cli.mcp_server.providers.dissect as dissect_module
 import pytest
 
 from agentdecompile_cli.bridge import AgentDecompileMcpClient, ClientError
+from agentdecompile_cli.registry import DISABLED_GUI_ONLY_TOOLS, Tool, _build_advertised_tools, get_active_tool_surface_profile, resolve_tool_name
 from agentdecompile_cli.mcp_server.providers.dataflow import DataFlowToolProvider
 from agentdecompile_cli.mcp_server.providers.decompiler import DecompilerToolProvider
 from agentdecompile_cli.mcp_server.providers.dissect import GetFunctionAioToolProvider
@@ -338,6 +339,45 @@ def test_decompile_function_is_advertised_by_default() -> None:
     tool_names = {tool.name for tool in manager.list_tools()}
 
     assert "decompile-function" in tool_names
+
+
+def test_default_surface_advertises_all_non_gui_canonical_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "AGENTDECOMPILE_TOOL_SURFACE",
+        "AGENT_DECOMPILE_TOOL_SURFACE",
+        "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
+        "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
+        "AGENTDECOMPILE_ENABLE_TOOLS",
+        "AGENT_DECOMPILE_ENABLE_TOOLS",
+        "AGENTDECOMPILE_DISABLE_TOOLS",
+        "AGENT_DECOMPILE_DISABLE_TOOLS",
+        "AGENTDECOMPILE_AUTO_CHECKIN",
+        "AGENT_DECOMPILE_AUTO_CHECKIN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    advertised = _build_advertised_tools()
+
+    assert get_active_tool_surface_profile() == "full"
+    assert len(advertised) == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS) == 55
+    assert {tool.value for tool in DISABLED_GUI_ONLY_TOOLS}.isdisjoint(advertised)
+    assert "list-functions" in advertised
+    assert "get-functions" in advertised
+    assert "search-code" in advertised
+
+
+def test_canonical_semantic_tool_names_do_not_resolve_to_replacements() -> None:
+    for tool_name in (
+        "decompile-function",
+        "get-call-graph",
+        "get-functions",
+        "gen-callgraph",
+        "search-code",
+        "search-constants",
+        "search-strings",
+        "search-symbols",
+    ):
+        assert resolve_tool_name(tool_name) == tool_name
 
 
 @pytest.mark.asyncio

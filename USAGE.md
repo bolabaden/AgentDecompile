@@ -279,8 +279,8 @@ This is the supported way to keep state inside one CLI invocation.
 
 The contracts below were re-validated against a real `agentdecompile-server -t streamable-http` process using `tests/fixtures/test_x86_64` before the strict E2E assertions were written.
 
-- Default live MCP advertisement is **37 tools**.
-- Hidden-but-callable legacy tools still work through raw MCP and curated CLI commands; for example `manage-comments` is callable even though it is not in the default `tools/list` output.
+- Default live MCP advertisement is **55 tools**: all non-GUI canonical tools.
+- Compatibility aliases remain callable through raw MCP and curated CLI commands, but they are not separately advertised in the default `tools/list` output.
 - `switch-project` remains accepted as a compatibility alias and currently routes to `open`, but it is intentionally not advertised.
 - Local JSON `list-functions` returns a `results` array, not `functions`.
 - Local JSON `open` and `import-binary` are similar but not identical: `open` returns `operation`, while `import-binary` returns `action` plus `success`, `language`, and `compiler` fields.

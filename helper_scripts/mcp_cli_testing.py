@@ -537,9 +537,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # ============================================================================
 
 # Expected advertised tool count (streamable-http default per USAGE.md / test_e2e_local_terminal_contracts).
-# Server may advertise 37 or 38 depending on build/env (e.g. legacy or disabled tools).
-EXPECTED_ADVERTISED_TOOL_COUNT = 37
-EXPECTED_ADVERTISED_TOOL_COUNT_ALT = 38
+# Server advertises all non-GUI canonical tools by default; auto-checkin hides checkin-program.
+EXPECTED_ADVERTISED_TOOL_COUNT = 55
+EXPECTED_ADVERTISED_TOOL_COUNT_ALT = 54
 
 
 def _load_agdec_http_config(mcp_config_path: str | None) -> tuple[str, dict[str, str]]:

@@ -13,7 +13,7 @@ flowchart TD
   B --> D[AgentDecompile runtime]
   C --> D
   D --> E[PyGhidra and Ghidra projects]
-  D --> F[53 canonical tools and 3 resources]
+  D --> F[59 canonical tools and 3 resources]
 ```
 
 ## Session-Validated Commands
@@ -438,10 +438,10 @@ The web UI includes live tool execution with JSON argument editing, canonical to
 
 Environment variables:
 
-- `AGENT_DECOMPILE_WEBUI_PORT` or `AGENTDECOMPILE_WEBUI_PORT`: Web UI bind port. Default `8002`.
-- `AGENT_DECOMPILE_WEBUI_HOST` or `AGENTDECOMPILE_WEBUI_HOST`: Web UI bind host. Default `127.0.0.1`.
-- `AGENT_DECOMPILE_WEBUI_ENABLED` or `AGENTDECOMPILE_WEBUI_ENABLED`: Set to `0`, `false`, `no`, or `off` to disable the sidecar.
-- `AGENT_DECOMPILE_WEBUI_BACKEND_URL` or `AGENTDECOMPILE_WEBUI_BACKEND_URL`: Optional override for the backend URL the sidecar targets.
+- `AGENT_DECOMPILE_WEBUI_PORT`: Web UI bind port. Default `8002`.
+- `AGENT_DECOMPILE_WEBUI_HOST`: Web UI bind host. Default `127.0.0.1`.
+- `AGENT_DECOMPILE_WEBUI_ENABLED`: Set to `0`, `false`, `no`, or `off` to disable the sidecar.
+- `AGENT_DECOMPILE_WEBUI_BACKEND_URL`: Optional override for the backend URL the sidecar targets.
 
 Prefer pointing MCP clients and examples at `http://localhost:8080/mcp`. The CLI also accepts the base server URL and normalizes it for you. `http://localhost:8080/` and `http://localhost:8080/api` are metadata/index routes, not alternate MCP transport paths, and `/api/mcp` is not supported.
 
@@ -503,7 +503,7 @@ Proxy mode (forward to a remote MCP backend; no local Ghidra/JVM). Use the **age
 
 ```bash
 agentdecompile-proxy --backend-url http://***:8080 --transport streamable-http --host 127.0.0.1 --port 8081
-# or set AGENT_DECOMPILE_MCP_SERVER_URL / AGENTDECOMPILE_MCP_SERVER_URL and run: agentdecompile-proxy -t streamable-http
+# or set AGENT_DECOMPILE_MCP_SERVER_URL and run: agentdecompile-proxy -t streamable-http
 ```
 
 This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp` with compatibility at `http://127.0.0.1:8081/mcp/message`, and forwards all tools/resources/prompts to the remote backend. **agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not accept proxy options.
@@ -665,11 +665,11 @@ Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets.
       "args": [
         "run", "--rm", "-i",
         "--add-host", "host.docker.internal:host-gateway",
-        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST=${input:ad-http-ghidra-server-host}",
-        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT=${input:ad-http-ghidra-server-port}",
-        "-e", "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY=${input:ad-http-ghidra-server-repository}",
-        "-e", "AGENTDECOMPILE_GHIDRA_USERNAME=${input:ghidra-username}",
-        "-e", "AGENTDECOMPILE_GHIDRA_PASSWORD=${input:ghidra-password}",
+        "-e", "AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_HOST=${input:ad-http-ghidra-server-host}",
+        "-e", "AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_PORT=${input:ad-http-ghidra-server-port}",
+        "-e", "AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY=${input:ad-http-ghidra-server-repository}",
+        "-e", "AGENT_DECOMPILE_GHIDRA_USERNAME=${input:ghidra-username}",
+        "-e", "AGENT_DECOMPILE_GHIDRA_PASSWORD=${input:ghidra-password}",
         "--entrypoint", "/ghidra/venv/bin/agentdecompile-server",
         "docker.io/bolabaden/agentdecompile-mcp:latest",
         "-t", "stdio"
@@ -695,7 +695,7 @@ Typical entries:
 | `agentdecompile-local` | Local binary analysis — no shared Ghidra server, no credentials needed. |
 | `agentdecompile-shared` | Shared Ghidra project — add environment variables or client prompts for your Ghidra username and password. |
 | `agentdecompile-http` | Connect to an **already-running** HTTP server at `http://127.0.0.1:8080/mcp`. Start it first with `agentdecompile-server -t streamable-http`. |
-| `agentdecompile-proxy` | Forward to a **remote** MCP backend (no local Ghidra). Configure with `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` and run the `agentdecompile-proxy` command (stdio or `-t streamable-http`). |
+| `agentdecompile-proxy` | Forward to a **remote** MCP backend (no local Ghidra). Configure with `AGENT_DECOMPILE_MCP_SERVER_URL` and run the `agentdecompile-proxy` command (stdio or `-t streamable-http`). |
 
 If you add an `inputs` block for `agentdecompile-shared`, VS Code or Cursor can prompt for `${input:ghidra-username}` and `${input:ghidra-password}` at launch time instead of storing credentials in the repo.
 
@@ -750,16 +750,16 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 53 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 59 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- **37 tools** are advertised by default.
-- Compatibility aliases remain callable but are hidden by default; set `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1` or `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` to re-advertise them.
+- **55 tools** are advertised by default: every non-GUI canonical tool.
+- Compatibility aliases remain callable but are hidden by default. Use `AGENT_DECOMPILE_TOOL_SURFACE=curated` for the smaller curated surface.
 - Canonical MCP tool names use **kebab-case** (for example `open`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
 - Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`, `resolve-modification-conflict` (when a modifying tool reports a conflict)
 
-Live local server contract note: the default advertised surface is currently 37 tools. Hidden compatibility tools such as `manage-comments` remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
+Live local server contract note: the default advertised surface is currently 55 tools. Compatibility aliases remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
 
 Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
 
@@ -779,7 +779,7 @@ Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` 
 
 - **Default behavior (local spawn):** starts local PyGhidra/JVM, launches Python MCP server, then bridges stdio to it.
 - **Connect mode (no local runtime startup):** pass `--server-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to connect directly to an already-running Python MCP server (headless Docker or standalone).
-- **Proxy mode:** run **agentdecompile-proxy** with `--backend-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL` / `AGENTDECOMPILE_MCP_SERVER_URL`) to expose local stdio or HTTP that forwards to a remote MCP backend. Do not use agentdecompile-server for proxy; it is local-only.
+- **Proxy mode:** run **agentdecompile-proxy** with `--backend-url http://host:port` (or set `AGENT_DECOMPILE_MCP_SERVER_URL`) to expose local stdio or HTTP that forwards to a remote MCP backend. Do not use agentdecompile-server for proxy; it is local-only.
 
 ### Remote access
 
@@ -794,52 +794,53 @@ The project Dockerfile fetches **Ghidra from the official [NationalSecurityAgenc
 ### Environment variables
 
 The table below is the complete environment-variable surface currently referenced by `src/` and `tests/`.
+Compact-prefix compatibility note: `AGENTDECOMPILE_*` aliases are fully equivalent and are automatically mirrored to the canonical names below.
 
 | Variable(s) | Scope | Purpose |
 |----------|---------|---------|
 | `GHIDRA_INSTALL_DIR` | Runtime/tooling | Path to Ghidra installation (used by local workflows and tests). |
-| `AGENT_DECOMPILE_BACKEND_URL`, `AGENTDECOMPILE_BACKEND_URL` | Runtime | Remote MCP backend URL for proxy flows. |
-| `AGENT_DECOMPILE_MCP_SERVER_URL`, `AGENTDECOMPILE_MCP_SERVER_URL` | Runtime/CLI | MCP server URL for CLI connect mode and proxy backend targeting. |
-| `AGENT_DECOMPILE_SERVER_URL`, `AGENTDECOMPILE_SERVER_URL` | Runtime/CLI | Legacy server URL aliases accepted by launcher/executor paths. |
+| `AGENT_DECOMPILE_BACKEND_URL` | Runtime | Remote MCP backend URL for proxy flows. |
+| `AGENT_DECOMPILE_MCP_SERVER_URL` | Runtime/CLI | MCP server URL for CLI connect mode and proxy backend targeting. |
+| `AGENT_DECOMPILE_SERVER_URL` | Runtime/CLI | Legacy server URL alias accepted by launcher/executor paths. |
 | `AGENT_DECOMPILE_MCP_SERVER_HOST`, `AGENT_DECOMPILE_MCP_SERVER_PORT` | Runtime/CLI | Host/port components used when composing MCP server URLs. |
-| `AGENT_DECOMPILE_HOST`, `AGENTDECOMPILE_HOST` | Runtime | MCP HTTP bind host defaults and launcher alias resolution. |
+| `AGENT_DECOMPILE_HOST` | Runtime | MCP HTTP bind host defaults and launcher alias resolution. |
 | `AGENT_DECOMPILE_PORT` | Runtime | MCP HTTP bind port default. |
-| `AGENT_DECOMPILE_PROJECT_PATH`, `AGENTDECOMPILE_PROJECT_PATH` | Runtime/CLI | Local project path or `.gpr` path selection. |
-| `AGENT_DECOMPILE_PROJECT_NAME`, `AGENTDECOMPILE_PROJECT_NAME` | Runtime/CLI | Local project name override for directory-backed projects. |
+| `AGENT_DECOMPILE_PROJECT_PATH` | Runtime/CLI | Local project path or `.gpr` path selection. |
+| `AGENT_DECOMPILE_PROJECT_NAME` | Runtime/CLI | Local project name override for directory-backed projects. |
 | `AGENT_DECOMPILE_DEFAULT_PROJECT_DIR` | Runtime | Default local project directory when not explicitly set. |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_HOST`, `AGENTDECOMPILE_GHIDRA_SERVER_HOST`, `AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST`, `AGENT_DECOMPILE_SERVER_HOST`, `AGENTDECOMPILE_SERVER_HOST`, `AGENTDECOMPILE_GHIDRA_HOST` | Runtime/CLI | Shared Ghidra server host (canonical and compatibility aliases). |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_PORT`, `AGENTDECOMPILE_GHIDRA_SERVER_PORT`, `AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT`, `AGENT_DECOMPILE_SERVER_PORT`, `AGENTDECOMPILE_SERVER_PORT`, `AGENTDECOMPILE_GHIDRA_PORT` | Runtime/CLI | Shared Ghidra server port (canonical and compatibility aliases). |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME`, `AGENTDECOMPILE_GHIDRA_SERVER_USERNAME`, `AGENT_DECOMPILE_SERVER_USERNAME`, `AGENTDECOMPILE_SERVER_USERNAME`, `AGENTDECOMPILE_GHIDRA_USERNAME` | Runtime/CLI | Shared Ghidra server username sources. |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD`, `AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD`, `AGENT_DECOMPILE_SERVER_PASSWORD`, `AGENTDECOMPILE_SERVER_PASSWORD`, `AGENTDECOMPILE_GHIDRA_PASSWORD` | Runtime/CLI | Shared Ghidra server password sources. |
-| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY`, `AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY`, `AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY`, `AGENT_DECOMPILE_REPOSITORY`, `AGENTDECOMPILE_REPOSITORY`, `AGENTDECOMPILE_GHIDRA_REPOSITORY` | Runtime/CLI | Shared repository name sources and compatibility aliases. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_HOST`, `AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_HOST`, `AGENT_DECOMPILE_SERVER_HOST`, `AGENT_DECOMPILE_GHIDRA_HOST` | Runtime/CLI | Shared Ghidra server host sources. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PORT`, `AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_PORT`, `AGENT_DECOMPILE_SERVER_PORT`, `AGENT_DECOMPILE_GHIDRA_PORT` | Runtime/CLI | Shared Ghidra server port sources. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME`, `AGENT_DECOMPILE_SERVER_USERNAME`, `AGENT_DECOMPILE_GHIDRA_USERNAME` | Runtime/CLI | Shared Ghidra server username sources. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD`, `AGENT_DECOMPILE_SERVER_PASSWORD`, `AGENT_DECOMPILE_GHIDRA_PASSWORD` | Runtime/CLI | Shared Ghidra server password sources. |
+| `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY`, `AGENT_DECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY`, `AGENT_DECOMPILE_REPOSITORY`, `AGENT_DECOMPILE_GHIDRA_REPOSITORY` | Runtime/CLI | Shared repository name sources. |
 | `AGENT_DECOMPILE_AUTH_ENABLED` | Runtime | Enables MCP HTTP auth requirement when running HTTP transports. |
 | `AGENT_DECOMPILE_TLS_CERT`, `AGENT_DECOMPILE_TLS_KEY` | Runtime | TLS certificate/key paths for HTTPS server startup. |
-| `AGENT_DECOMPILE_PYGHIDRA_VMARGS`, `AGENTDECOMPILE_PYGHIDRA_VMARGS` | Runtime/tests | Additional JVM args used by PyGhidra startup. |
-| `AGENT_DECOMPILE_CLI_OP_TIMEOUT`, `AGENTDECOMPILE_CLI_OP_TIMEOUT` | CLI | Per-tool-call timeout override in stdio bridge flows. |
+| `AGENT_DECOMPILE_PYGHIDRA_VMARGS` | Runtime/tests | Additional JVM args used by PyGhidra startup. |
+| `AGENT_DECOMPILE_CLI_OP_TIMEOUT` | CLI | Per-tool-call timeout override in stdio bridge flows. |
 | `AGENT_DECOMPILE_MCP_BIND_TIMEOUT` | Runtime | MCP bind timeout during server initialization. |
-| `AGENTDECOMPILE_SESSION_GRACE_PERIOD` | Runtime | Session cleanup grace-period tuning in session context store. |
+| `AGENT_DECOMPILE_SESSION_GRACE_PERIOD` | Runtime | Session cleanup grace-period tuning in session context store. |
 | `AGENT_DECOMPILE_DEBUG` | Runtime | Enables debug logging in MCP server runtime. |
-| `AGENT_DECOMPILE_TOOL_SURFACE`, `AGENTDECOMPILE_TOOL_SURFACE` | Runtime | Tool advertisement surface selection (canonical/legacy/all). |
-| `AGENT_DECOMPILE_DISABLE_TOOLS`, `AGENTDECOMPILE_DISABLE_TOOLS` | Runtime | Comma-separated list of tools to hide/disable. |
-| `AGENT_DECOMPILE_ENABLE_TOOLS`, `AGENTDECOMPILE_ENABLE_TOOLS` | Runtime | Explicit comma-separated allow-list of advertised tools. |
-| `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS`, `AGENTDECOMPILE_SHOW_LEGACY_TOOLS` | Runtime | Re-advertises compatibility/legacy tool aliases. |
-| `AGENT_DECOMPILE_AUTO_CHECKIN`, `AGENTDECOMPILE_AUTO_CHECKIN` | Runtime | Automatically check in/save after modifying tools succeed. |
-| `AGENTDECOMPILE_AUTO_MATCH_PROPAGATE` | Runtime | Enables automatic post-modification `match-function` propagation. |
-| `AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS` | Runtime | Comma-separated explicit propagation targets for auto-match. |
-| `AGENT_DECOMPILE_JVM_EPOCH`, `AGENTDECOMPILE_JVM_EPOCH` | Runtime | JVM epoch marker used to force shared-session refresh behaviors. |
-| `AGENTDECOMPILE_LOCAL_MODE` | CLI | Forces local-mode behavior in CLI execution paths. |
-| `AGENT_DECOMPILE_PROGRAM_PATH`, `AGENTDECOMPILE_PROGRAM_PATH` | CLI | Default program path when omitted from tool args. |
-| `AGENT_DECOMPILE_PROGRAM`, `AGENTDECOMPILE_PROGRAM` | CLI | Legacy default program alias used for tool arg fallbacks. |
-| `AGENT_DECOMPILE_BINARY_NAME`, `AGENTDECOMPILE_BINARY_NAME` | CLI | Default binary name fallback for commands expecting `binaryName`. |
-| `AGENT_DECOMPILE_WEBUI_ENABLED`, `AGENTDECOMPILE_WEBUI_ENABLED`, `AGENT_DECOMPILE_WEBUI`, `AGENTDECOMPILE_WEBUI` | Runtime | Enables/disables automatic Web UI sidecar startup. |
-| `AGENT_DECOMPILE_WEBUI_HOST`, `AGENTDECOMPILE_WEBUI_HOST` | Runtime | Web UI sidecar bind host. |
-| `AGENT_DECOMPILE_WEBUI_PORT`, `AGENTDECOMPILE_WEBUI_PORT` | Runtime | Web UI sidecar bind port. |
-| `AGENT_DECOMPILE_WEBUI_BACKEND_URL`, `AGENTDECOMPILE_WEBUI_BACKEND_URL` | Runtime | Explicit backend URL override for the Web UI sidecar. |
-| `AGENTDECOMPILE_TEST_SERVER_URL` | Tests | Uses an already-running external server in live/e2e tests. |
-| `AGENTDECOMPILE_STRESS_COPIES_PER_SEED` | Tests | Controls stress fixture corpus expansion in tests. |
-| `AGENTDECOMPILE_PROFILE_DIR` | Tests/profiling | Output directory for search profiling artifacts. |
-| `AGENTDECOMPILE_PROFILE_ANALYZER` | Tests/profiling | Path to analyzer script for search profiling runs. |
-| `AGENTDECOMPILE_PROFILE_SEARCH_EVERYTHING` | Tests/profiling | Enables search-everything profiling capture paths. |
+| `AGENT_DECOMPILE_TOOL_SURFACE` | Runtime | Tool advertisement surface selection (`full`, `curated`, or `legacy`). |
+| `AGENT_DECOMPILE_DISABLE_TOOLS` | Runtime | Comma-separated list of tools to hide/disable. |
+| `AGENT_DECOMPILE_ENABLE_TOOLS` | Runtime | Explicit comma-separated allow-list of advertised tools. |
+| `AGENT_DECOMPILE_ENABLE_LEGACY_TOOLS`, `AGENT_DECOMPILE_SHOW_LEGACY_TOOLS` | Runtime | Re-advertises compatibility/legacy tool aliases. |
+| `AGENT_DECOMPILE_AUTO_CHECKIN` | Runtime | Automatically check in/save after modifying tools succeed. |
+| `AGENT_DECOMPILE_AUTO_MATCH_PROPAGATE` | Runtime | Enables automatic post-modification `match-function` propagation. |
+| `AGENT_DECOMPILE_AUTO_MATCH_TARGET_PATHS` | Runtime | Comma-separated explicit propagation targets for auto-match. |
+| `AGENT_DECOMPILE_JVM_EPOCH` | Runtime | JVM epoch marker used to force shared-session refresh behaviors. |
+| `AGENT_DECOMPILE_LOCAL_MODE` | CLI | Forces local-mode behavior in CLI execution paths. |
+| `AGENT_DECOMPILE_PROGRAM_PATH` | CLI | Default program path when omitted from tool args. |
+| `AGENT_DECOMPILE_PROGRAM` | CLI | Legacy default program alias used for tool arg fallbacks. |
+| `AGENT_DECOMPILE_BINARY_NAME` | CLI | Default binary name fallback for commands expecting `binaryName`. |
+| `AGENT_DECOMPILE_WEBUI_ENABLED`, `AGENT_DECOMPILE_WEBUI` | Runtime | Enables/disables automatic Web UI sidecar startup. |
+| `AGENT_DECOMPILE_WEBUI_HOST` | Runtime | Web UI sidecar bind host. |
+| `AGENT_DECOMPILE_WEBUI_PORT` | Runtime | Web UI sidecar bind port. |
+| `AGENT_DECOMPILE_WEBUI_BACKEND_URL` | Runtime | Explicit backend URL override for the Web UI sidecar. |
+| `AGENT_DECOMPILE_TEST_SERVER_URL` | Tests | Uses an already-running external server in live/e2e tests. |
+| `AGENT_DECOMPILE_STRESS_COPIES_PER_SEED` | Tests | Controls stress fixture corpus expansion in tests. |
+| `AGENT_DECOMPILE_PROFILE_DIR` | Tests/profiling | Output directory for search profiling artifacts. |
+| `AGENT_DECOMPILE_PROFILE_ANALYZER` | Tests/profiling | Path to analyzer script for search profiling runs. |
+| `AGENT_DECOMPILE_PROFILE_SEARCH_EVERYTHING` | Tests/profiling | Enables search-everything profiling capture paths. |
 
 ### Shared project authentication
 
@@ -859,8 +860,8 @@ When you call the HTTP MCP endpoint directly, the shared-server environment vari
 | `AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME` | `X-Agent-Server-Username` | Accepted credential alias header. |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD` | `X-Agent-Server-Password` | Accepted credential alias header. |
 | `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` | `X-Agent-Server-Repository` | Accepted repository alias header. The CLI sends both repository headers. |
-| `AGENTDECOMPILE_AUTO_MATCH_PROPAGATE` | `X-AgentDecompile-Auto-Match-Propagate` | Enable auto match-function propagation for this request. Value: `1`, `true`, or `yes` (case-insensitive). |
-| `AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS` | `X-AgentDecompile-Auto-Match-Target-Paths` | Comma-separated program paths for auto propagation; overrides env and session defaults when sent. |
+| `AGENT_DECOMPILE_AUTO_MATCH_PROPAGATE` | `X-AgentDecompile-Auto-Match-Propagate` | Enable auto match-function propagation for this request. Value: `1`, `true`, or `yes` (case-insensitive). |
+| `AGENT_DECOMPILE_AUTO_MATCH_TARGET_PATHS` | `X-AgentDecompile-Auto-Match-Target-Paths` | Comma-separated program paths for auto propagation; overrides env and session defaults when sent. |
 
 The HTTP client should also send these transport headers:
 
