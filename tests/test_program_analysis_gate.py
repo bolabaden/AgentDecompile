@@ -110,7 +110,7 @@ def test_blocking_ensure_runs_analysis_when_needed(monkeypatch: pytest.MonkeyPat
     state.isDone.side_effect = [False, True]
     program.getAnalysisState.return_value = state
 
-    with patch.object(pa, "program_needs_analysis", return_value=True):
+    with patch.object(pa, "program_needs_analysis", side_effect=[True, False]):
         run_mock = MagicMock()
         monkeypatch.setattr(pa, "run_analysis", run_mock)
         info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
@@ -119,3 +119,22 @@ def test_blocking_ensure_runs_analysis_when_needed(monkeypatch: pytest.MonkeyPat
     assert result.get("ran") is True
     run_mock.assert_called_once_with(program, force_analysis=False)
     assert info.ghidra_analysis_complete is True
+
+
+@pytest.mark.unit
+def test_blocking_ensure_does_not_mark_when_still_needs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/bin.exe"
+    program.getDomainFile.return_value = df
+
+    with patch.object(pa, "program_needs_analysis", return_value=True):
+        run_mock = MagicMock()
+        monkeypatch.setattr(pa, "run_analysis", run_mock)
+        info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+        result = pa.blocking_ensure_analyzed(program, info, program_path="/bin.exe")
+
+    assert result.get("ran") is True
+    assert info.ghidra_analysis_complete is False

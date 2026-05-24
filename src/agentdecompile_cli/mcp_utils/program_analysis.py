@@ -150,7 +150,8 @@ def blocking_ensure_analyzed(
 
         logger.info("program_analysis_start key=%s force=%s", key, force)
         _run_auto_analysis(program, force=force)
-        mark_program_analysis_complete(program_info)
+        if not program_needs_analysis(program):
+            mark_program_analysis_complete(program_info)
         logger.info("program_analysis_done key=%s", key)
         return {"ran": True, "programKey": key, "force": force}
 
