@@ -2567,8 +2567,8 @@ class ToolProviderManager:
                     pathname = str(df.getPathname()).strip()
                     if pathname:
                         prog_path = pathname
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Unable to resolve program path from DomainFile; using fallback program key/path: %s", e)
             try:
                 await asyncio.to_thread(
                     wait_for_program_analysis_ready,

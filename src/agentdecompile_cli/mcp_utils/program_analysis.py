@@ -52,7 +52,9 @@ def _program_lock_key(program: GhidraProgram, program_path: str | None = None) -
         if df is not None:
             return str(df.getPathname()).strip().replace("\\", "/").lower()
     except Exception:
-        pass
+        # Best-effort lookup: some Program implementations may not expose a domain file.
+        # Fall back to program_path/hashCode/id below to keep lock-key generation robust.
+        logger.debug("Unable to derive lock key from program domain file; using fallback key", exc_info=True)
     if program_path:
         return program_path.strip().replace("\\", "/").lower()
     try:
@@ -75,8 +77,8 @@ def _analysis_state_done(program: GhidraProgram) -> bool | None:
         st = program.getAnalysisState()
         if st is not None and hasattr(st, "isDone"):
             return bool(st.isDone())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Unable to read analysis state; treating as unknown", exc_info=exc)
     return None
 
 

@@ -1487,7 +1487,7 @@ class ImportExportToolProvider(ToolProvider):
                         try:
                             _dec = open_decompiler_for_program(program)
                         except Exception:
-                            pass
+                            logger.debug("Failed to open decompiler for imported program '%s'; continuing without decompiler.", final_name, exc_info=True)
                         _pi = _ProgramInfo(
                             name=final_name,
                             program=program,
@@ -2061,8 +2061,9 @@ class ImportExportToolProvider(ToolProvider):
                 df = program.getDomainFile() if program is not None else None
                 if df is not None:
                     program_path_hint = str(df.getPathname())
-            except Exception:
-                pass
+            except Exception as exc:
+                # Best-effort hint only: auto-analysis can proceed without a path.
+                logger.debug("Unable to resolve program path hint for analysis: %s", exc)
 
             def _run_auto_analysis() -> None:
                 blocking_ensure_analyzed(
