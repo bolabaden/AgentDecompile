@@ -238,7 +238,7 @@ jobs:
 
       - name: "Extract Docker metadata"
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ${{ env.GHCR_IMAGE }}
@@ -285,7 +285,7 @@ jobs:
 
       - name: "Upload artifact ref-${{ matrix.arch }}"
         if: success() && github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ref-${{ matrix.image_key }}-${{ matrix.arch }}
           path: refs/

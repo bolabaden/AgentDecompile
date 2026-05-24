@@ -1,6 +1,11 @@
-"""Strings Tool Provider - manage-strings.
+"""Strings Tool Provider - manage-strings, list-strings, search-strings, search-code.
 
-Modes: list, search, count.
+  - manage-strings: mode = list (enumerate strings), search (query/regex), count.
+  - list-strings: Enumerate all defined strings (minLength, pagination, optional includeReferencingFunctions).
+  - search-strings: Search strings by query; delegates to manage-strings or list logic.
+  - search-code: Search in decompiled/source-like code (different from raw string listing).
+
+Uses _collectors.collect_strings for listing; optional xref lookup for referencing functions.
 """
 
 from __future__ import annotations
@@ -9,7 +14,7 @@ import difflib
 import logging
 import re
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import types
 
@@ -19,6 +24,12 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
     n,
 )
+from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.address import Address as GhidraAddress  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import ReferenceManager as GhidraReferenceManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +43,10 @@ class StringToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider.list_tools")
         return [
             types.Tool(
-                name="manage-strings",
+                name=Tool.MANAGE_STRINGS.value,
                 description="Search, filter, list, and measure literal text strings embedded in the compiled program's data segments.",
                 inputSchema={
                     "type": "object",
@@ -43,7 +55,7 @@ class StringToolProvider(ToolProvider):
                         "mode": {"type": "string", "description": "What operation to perform on the text data.", "enum": ["list", "search", "count"], "default": "list"},
                         "query": {"type": "string", "description": "Search query or regex pattern to look for in the program strings."},
                         "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
-                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default, only set if you need a different page size."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of strings to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset; omit unless fetching beyond the first page."},
                         "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "If true, also looks up what exact function uses this string (can be slow)."},
                     },
@@ -51,14 +63,14 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="list-strings",
+                name=Tool.LIST_STRINGS.value,
                 description="Dump all recognized text strings found in the current program's memory.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
                         "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
-                        "limit": {"type": "integer", "default": 100, "description": "Max results; omit to use default."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of strings to return. Typical values are 100\u2013500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset; omit unless fetching beyond the first page."},
                         "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "If true, identifies exactly which function references the text."},
                     },
@@ -66,7 +78,7 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="search-strings",
+                name=Tool.SEARCH_STRINGS.value,
                 description="Search the program's defined strings for a specific text pattern.",
                 inputSchema={
                     "type": "object",
@@ -74,7 +86,7 @@ class StringToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The active program project."},
                         "query": {"type": "string", "description": "The exact text or regex to find."},
                         "mode": {"type": "string", "description": "Internal routing fallback logic.", "enum": ["search", "list"], "default": "list"},
-                        "limit": {"type": "integer", "default": 100, "description": "Omit and do not specify this in most cases."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of strings to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                         "includeReferencingFunctions": {"type": "boolean", "default": False, "description": "Find referencing functions."},
                     },
@@ -82,7 +94,7 @@ class StringToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="search-code",
+                name=Tool.SEARCH_CODE.value,
                 description="Scan all function names across the entire program looking for a specific text string.",
                 inputSchema={
                     "type": "object",
@@ -91,7 +103,7 @@ class StringToolProvider(ToolProvider):
                         "binaryName": {"type": "string", "description": "Alternative parameter for programPath."},
                         "query": {"type": "string", "description": "The function name fragment to hunt for."},
                         "searchMode": {"type": "string", "description": "How to match the text against functions.", "enum": ["semantic", "literal"], "default": "semantic"},
-                        "limit": {"type": "integer", "default": 10, "description": "Max results; omit to use default."},
+                        "limit": {"type": "integer", "default": 100, "description": "Number of results to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                     },
                     "required": ["query"],
@@ -100,17 +112,20 @@ class StringToolProvider(ToolProvider):
         ]
 
     async def _handle_list_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_list_strings")
         updated = dict(args)
         updated["mode"] = "list"
         return await self._handle(updated)
 
     async def _handle_search_strings(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search_strings")
         updated = dict(args)
         if not self._get_str(updated, "mode"):
             updated["mode"] = "search"
         return await self._handle(updated)
 
     async def _handle_search_code(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search_code")
         self._require_program()
         query: str = self._require_str(args, "query", "pattern", "text", name="query")
         offset, limit = self._get_pagination_params(args, default_limit=10)
@@ -132,7 +147,7 @@ class StringToolProvider(ToolProvider):
                     return create_success_response(results.model_dump())
                 return create_success_response({"query": query, "results": results})
             except Exception as e:
-                logger.warning(f"search-code semantic/literal backend unavailable, using fallback search: {e}")
+                logger.warning("search-code semantic/literal backend unavailable, using fallback search: %s", e)
 
         assert self.program_info is not None, "Program info is required for search-code"
         program = self.program_info.program
@@ -170,6 +185,7 @@ class StringToolProvider(ToolProvider):
         )
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="list")
         pattern = self._get_str(args, "pattern", "query", "search", "text", "regex", "searchstring", "filter")
@@ -204,6 +220,7 @@ class StringToolProvider(ToolProvider):
         Returns empty list if string enumeration is unavailable in the current context
         (e.g., shared-server checkout without iterator support). Diagnostics are logged.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._collect_strings")
         assert self.program_info is not None, "Program info is required to collect strings"
         program = self.program_info.program
         strings = collect_strings(
@@ -214,16 +231,45 @@ class StringToolProvider(ToolProvider):
 
         # Add diagnostic if no strings were found - could indicate collection failure
         if not strings:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.debug(
-                "String collection returned empty results. This may indicate: "
-                "(1) binary contains no strings, or (2) string iterators unavailable "
-                "in current program context (shared-server/proxy mode)."
+            logging.getLogger(__name__).debug(
+                "String collection returned empty results. This may indicate: (1) binary contains no strings, or (2) string iterators unavailable in current program context (shared-server/proxy mode).",
             )
 
         return strings
+
+    def _attach_references_to_string_results(self, strings: list[dict[str, Any]], ref_limit: int = 25) -> None:
+        """Attach referencesTo (get-references style) to each string result."""
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._attach_references_to_string_results")
+        if not strings or not self.program_info:
+            return
+        try:
+            program: GhidraProgram = self.program_info.program
+            ref_mgr: GhidraReferenceManager = program.getReferenceManager()
+            fm = self._get_function_manager(program)
+            for s in strings:
+                try:
+                    addr: GhidraAddress = self._resolve_address(s.get("address"), program=program)
+                    if addr is None:
+                        continue
+                    refs_to: list[dict[str, Any]] = []
+                    for ref in ref_mgr.getReferencesTo(addr):
+                        if len(refs_to) >= ref_limit:
+                            break
+                        from_addr = ref.getFromAddress()
+                        func = fm.getFunctionContaining(from_addr)
+                        refs_to.append(
+                            {
+                                "fromAddress": str(from_addr),
+                                "toAddress": str(ref.getToAddress()),
+                                "type": str(ref.getReferenceType()),
+                                "function": func.getName() if func else None,
+                            }
+                        )
+                    s["referencesTo"] = refs_to
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     async def _handle_list(
         self,
@@ -235,6 +281,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_list")
         return self._filter_strings(strings, "list", "", min_len, max_results, offset, include_refs)
 
     async def _handle_regex(
@@ -247,6 +294,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_regex")
         return self._filter_strings(strings, "regex", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_search(
@@ -259,6 +307,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_search")
         return self._filter_strings(strings, "search", pattern, min_len, max_results, offset, include_refs)
 
     async def _handle_count(
@@ -271,6 +320,7 @@ class StringToolProvider(ToolProvider):
         max_results: int,
         include_refs: bool,
     ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_count")
         return self._filter_strings(strings, "count", pattern, min_len, max_results, offset, include_refs)
 
     def _filter_strings(
@@ -317,11 +367,12 @@ class StringToolProvider(ToolProvider):
         include_refs : bool
             Whether to add referencing functions to each string result
 
-        Returns
+        Returns:
         -------
         list[TextContent]
             Paginated response with filtered results
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._filter_strings")
         mode_n: str = n(mode)
         total: int = len(strings)
 
@@ -337,7 +388,8 @@ class StringToolProvider(ToolProvider):
                     strings = [s for s in strings if pat.search(s.get("value", ""))]
                     total = len(strings)
                     strings, has_more = self._paginate_results(strings, offset, max_results)
-                    return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+                    self._attach_references_to_string_results(strings)
+                    return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, query=pattern)
                 except re.error:
                     pass
 
@@ -357,7 +409,8 @@ class StringToolProvider(ToolProvider):
             total = len(scored)
             strings = [s for _, s in scored]
             strings, has_more = self._paginate_results(strings, offset, max_results)
-            return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+            self._attach_references_to_string_results(strings)
+            return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, query=pattern)
 
         if mode_n == "regex" and pattern:
             try:
@@ -397,4 +450,8 @@ class StringToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode)
+        self._attach_references_to_string_results(strings)
+        extra: dict[str, Any] = {}
+        if pattern:
+            extra["query"] = pattern
+        return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, **extra)

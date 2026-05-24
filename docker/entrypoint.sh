@@ -8,6 +8,18 @@ MAXMEM="${AGENT_DECOMPILE_MAXMEM:=${MAXMEM:=2G}}"
 VMARG_LIST="${AGENT_DECOMPILE_VMARG_LIST:=${VMARG_LIST:=-Djava.awt.headless=true}}"
 export MAXMEM VMARG_LIST
 
+set_conf_value() {
+	local key="$1"
+	local value="$2"
+	local conf_path="$3"
+
+	if grep -q "^${key}=" "${conf_path}"; then
+		sed -i "s|^${key}=.*|${key}=${value}|" "${conf_path}"
+	else
+		echo "${key}=${value}" >> "${conf_path}"
+	fi
+}
+
 CONFIG_FILE="${AGENT_DECOMPILE_CONFIG_FILE:-}"
 PROJECT_DIR="${AGENT_DECOMPILE_PROJECT_DIR:=/projects}"
 PROJECT_NAME="${AGENT_DECOMPILE_PROJECT_NAME:=agentdecompile}"
@@ -44,23 +56,15 @@ fi
 
 mkdir -p "${PROJECT_DIR}" /work "${GHIDRA_REPOS_DIR}"
 
-if [[ -n "${GHIDRA_IP}" ]]; then
-	echo "[supervisor] Using GHIDRA_IP=${GHIDRA_IP} for repository server remote address"
-	SERVER_CONF="${GHIDRA_HOME}/server/server.conf"
-	if [[ -f "${SERVER_CONF}" ]]; then
-		sed -i 's|^wrapper.app.parameter.1=.*|wrapper.app.parameter.1=-a0|' "${SERVER_CONF}"
-		sed -i 's|^wrapper.app.parameter.2=.*|wrapper.app.parameter.2=-ip|' "${SERVER_CONF}"
-		if grep -q '^wrapper.app.parameter.3=' "${SERVER_CONF}"; then
-			sed -i "s|^wrapper.app.parameter.3=.*|wrapper.app.parameter.3=${GHIDRA_IP}|" "${SERVER_CONF}"
-		else
-			echo "wrapper.app.parameter.3=${GHIDRA_IP}" >> "${SERVER_CONF}"
-		fi
-		if grep -q '^wrapper.app.parameter.4=' "${SERVER_CONF}"; then
-			sed -i 's|^wrapper.app.parameter.4=.*|wrapper.app.parameter.4=${ghidra.repositories.dir}|' "${SERVER_CONF}"
-		else
-			echo 'wrapper.app.parameter.4=${ghidra.repositories.dir}' >> "${SERVER_CONF}"
-		fi
+SERVER_CONF="${GHIDRA_HOME}/server/server.conf"
+if [[ -f "${SERVER_CONF}" ]]; then
+	if [[ -n "${GHIDRA_IP}" ]]; then
+		echo "[supervisor] GHIDRA_IP=${GHIDRA_IP} is set, but startup no longer rewrites wrapper.app.parameter.*; configure -ip directly in ${SERVER_CONF} if you need a non-default advertised address."
 	fi
+
+	# Keep container-specific wrapper settings without changing Ghidra's auth or port arguments.
+	set_conf_value "wrapper.logfile" "/tmp/wrapper.log" "${SERVER_CONF}"
+	set_conf_value "wrapper.startup.timeout" "300" "${SERVER_CONF}"
 fi
 
 # Avoid "tail: can't open '.../ghidra_*/application.log': No such file or directory" if any

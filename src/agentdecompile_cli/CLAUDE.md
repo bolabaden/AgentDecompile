@@ -104,9 +104,9 @@ When touching bridge/server forwarding paths:
 ## 12) Testing Priorities in This Package
 
 Primary confidence tests after behavior changes:
-- `tests/test_normalization_combinatorial.py`
-- Provider-specific tests for modified domain
-- Parity/advertisement tests (schema/canonical alignment)
+- Provider-specific tests under `tests/test_provider_*.py` for the area you touched
+- Broader MCP smoke: `tests/test_e2e_standalone_proxy_cli.py`, `tests/test_e2e_tool_sweep.py`
+- Full tool contracts against a fixture binary: `tests/test_e2e_exhaustive_tool_contracts.py` (when available in your environment)
 
 ## 13) Safe Change Strategy
 
@@ -136,9 +136,9 @@ Normalization and canonical routing are the compatibility backbone for both.
 
 Typical local checks:
 
-- `python -m pytest tests/test_normalization_combinatorial.py -v`
-- `python -m pytest tests/test_provider_symbols.py -v`
-- `python -m pytest tests/test_provider_functions.py -v`
+- `uv run pytest tests/test_provider_symbols.py -v`
+- `uv run pytest tests/test_provider_functions.py -v`
+- `uv run pytest tests/test_e2e_standalone_proxy_cli.py -v`
 
 Use narrower test scopes first, then broader suites.
 

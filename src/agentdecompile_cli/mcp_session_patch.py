@@ -15,6 +15,10 @@ No monkeypatching - we edit the installed source once.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import importlib.util
 
 from pathlib import Path
@@ -22,6 +26,7 @@ from pathlib import Path
 
 def _apply_mcp_session_fix() -> None:
     """Patch installed MCP session.py to use list() for _response_streams iteration."""
+    logger.debug("diag.enter %s", "mcp_session_patch.py:_apply_mcp_session_fix")
     try:
         spec = importlib.util.find_spec("mcp")
         if not spec or not spec.origin:

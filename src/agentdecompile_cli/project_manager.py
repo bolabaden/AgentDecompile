@@ -1,13 +1,20 @@
-"""Compatibility module mirrored in launcher.py as the primary implementation.
-This file is kept for backward-compatibility.
-Prefer importing from agentdecompile_cli.launcher.
+"""Project management for AgentDecompile CLI.
 
-Project management for AgentDecompile CLI.
-Handles creation and management of Ghidra projects in .agentdecompile/projects/
-within the current working directory, similar to how .git or .vscode work.
+Single implementation of ProjectManager. Handles creation and management of
+Ghidra projects in .agentdecompile/projects/ within the current working
+directory, similar to how .git or .vscode work.
+
+Launcher re-exports ProjectManager from here for backward compatibility;
+prefer importing from agentdecompile_cli.project_manager.
 """
 
 from __future__ import annotations
+
+import logging
+
+from agentdecompile_cli.app_logger import basename_hint
+
+logger = logging.getLogger(__name__)
 
 import sys
 
@@ -31,6 +38,7 @@ class ProjectManager:
         Args:
             projects_dir: Custom projects directory, defaults to .agentdecompile/projects/ in current directory
         """
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.__init__")
         if projects_dir is None:
             self.projects_dir = Path.cwd() / ".agentdecompile" / "projects"
         else:
@@ -47,6 +55,7 @@ class ProjectManager:
         This implements lazy initialization - the .agentdecompile directory and Ghidra project
         are only created when first needed (e.g., when importing a binary).
         """
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager._ensure_initialized")
         if self._initialized:
             return
 
@@ -54,7 +63,7 @@ class ProjectManager:
         self.projects_dir.mkdir(parents=True, exist_ok=True)
 
         # Open/create the Ghidra project
-        self.open_project()
+        self.open()
 
         self._initialized = True
 
@@ -64,6 +73,7 @@ class ProjectManager:
         Returns:
             Project name derived from current directory name
         """
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.get_project_name")
         cwd: Path = Path.cwd()
         # Use current directory name as project name
         project_name: str = cwd.name.strip()
@@ -84,6 +94,7 @@ class ProjectManager:
         Returns:
             Tuple of (project_name, project_directory_path)
         """
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.get_or_create_project")
         project_name: str = self.get_project_name()
         project_path: Path = self.projects_dir / project_name
 
@@ -92,7 +103,7 @@ class ProjectManager:
 
         return project_name, project_path
 
-    def open_project(self) -> GhidraProject:
+    def open(self) -> GhidraProject:
         """Open or create Ghidra project using PyGhidra.
 
         Returns:
@@ -103,21 +114,25 @@ class ProjectManager:
         ------
             ImportError: If Ghidra/PyGhidra not available
         """
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.open")
         from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        from ghidra.framework.model import ProjectLocator as GhidraProjectLocator
 
         project_name, project_path = self.get_or_create_project()
 
         # Use GhidraProject (PyGhidra's approach) - handles protected constructor properly
-        project_locator = ProjectLocator(str(project_path), project_name)
+        project_locator = GhidraProjectLocator(str(project_path), project_name)
 
         # Try to open existing project or create new one
         if project_locator.getProjectDir().exists() and project_locator.getMarkerFile().exists():
             sys.stderr.write(f"Opening existing project: {project_name}\n")
+            from agentdecompile_cli.launcher import _patch_project_owner
+
+            _patch_project_owner(str(project_path), project_name)
             self.project = GhidraProject.openProject(
                 str(project_path),
                 project_name,
-                False,
+                False,  # readOnly=False: allow write operations (rename, comment, checkin, etc.)
             )
         else:
             sys.stderr.write(f"Creating new project: {project_name} at {project_path}\n")
@@ -147,9 +162,14 @@ class ProjectManager:
             Imported GhidraProgram instance, or None if import fails
         """
         # Ensure project is initialized (lazy initialization on first use)
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.import_binary")
         self._ensure_initialized()
 
         if not binary_path.exists() or not binary_path.is_file():
+            logger.warning(
+                "import_binary_outcome failed reason=missing_file program_tail=%s",
+                basename_hint(str(binary_path)),
+            )
             sys.stderr.write(f"Warning: Binary not found: {binary_path}\n")
             return None
 
@@ -158,10 +178,10 @@ class ProjectManager:
 
         try:
             sys.stderr.write(f"Importing binary: '{binary_path}' as '{program_name}'\n")
-            from java.io import File  # pyright: ignore[reportMissingImports]
+            from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
 
             # Use GhidraProject's importProgram method (auto-detects language/loader)
-            program: GhidraProgram = self.project.importProgram(File(str(binary_path)))  # pyright: ignore[reportOptionalMemberAccess, reportArgumentType, reportUnknownLambdaType]
+            program: GhidraProgram = self.project.importProgram(JavaFile(str(binary_path)))  # pyright: ignore[reportOptionalMemberAccess, reportArgumentType, reportUnknownLambdaType]
 
             # Save with custom name if specified
             if program_name.lower().strip() != binary_path.name.lower().strip():
@@ -170,6 +190,11 @@ class ProjectManager:
             self._opened_programs.append(program)
 
         except Exception as e:
+            logger.warning(
+                "import_binary_outcome failed reason=exception program_tail=%s exc_type=%s",
+                basename_hint(str(binary_path)),
+                e.__class__.__name__,
+            )
             sys.stderr.write(f"Error importing binary '{binary_path}': {e.__class__.__name__}: {e}\n")
             import traceback
 
@@ -177,17 +202,26 @@ class ProjectManager:
             return None
 
         else:
+            logger.info(
+                "import_binary_outcome ok program_tail=%s",
+                basename_hint(program_name or binary_path.name),
+            )
             sys.stderr.write(f"Successfully imported: '{program_name}'\n")
             return program
 
     def cleanup(self):
         """Clean up opened programs and close project."""
         # Release opened programs
+        logger.debug("diag.enter %s", "project_manager.py:ProjectManager.cleanup")
         for program in self._opened_programs:
             try:
                 if program is not None and not program.isClosed():
                     program.release(None)
             except Exception as e:
+                logger.warning(
+                    "pyghidra_project_cleanup_fail stage=release exc_type=%s",
+                    e.__class__.__name__,
+                )
                 sys.stderr.write(f"Error releasing program: {e.__class__.__name__}: {e}\n")
 
         self._opened_programs.clear()
@@ -197,6 +231,10 @@ class ProjectManager:
             try:
                 self.project.close()
             except Exception as e:
+                logger.warning(
+                    "pyghidra_project_cleanup_fail stage=close exc_type=%s",
+                    e.__class__.__name__,
+                )
                 sys.stderr.write(f"Error closing project: {e.__class__.__name__}: {e}\n")
             finally:
                 self.project = None

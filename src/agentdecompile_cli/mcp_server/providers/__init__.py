@@ -1,4 +1,9 @@
-"""MCP Tool Providers - Python implementations  providers."""
+"""MCP tool providers – Python implementations of MCP tools.
+
+Each provider registers HANDLERS (normalized tool name → method) and list_tools();
+ToolProviderManager dispatches tools/call to the appropriate provider. Import
+order here does not affect registration; all are collected by the manager.
+"""
 
 from .decompiler import DecompilerToolProvider
 from .functions import FunctionToolProvider
@@ -9,6 +14,7 @@ from .strings import StringToolProvider
 from .structures import StructureToolProvider
 from .xrefs import CrossReferencesToolProvider
 from .comments import CommentToolProvider
+from .conflict_resolution import ConflictResolutionToolProvider
 from .bookmarks import BookmarkToolProvider
 from .project import ProjectToolProvider
 from .callgraph import CallGraphToolProvider
@@ -21,11 +27,14 @@ from .script import ScriptToolProvider
 from .search_everything import SearchEverythingToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
+from .dissect import GetFunctionAioToolProvider
+from .prompts import PromptToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
     "CallGraphToolProvider",
     "CommentToolProvider",
+    "ConflictResolutionToolProvider",
     "ConstantSearchToolProvider",
     "CrossReferencesToolProvider",
     "DataFlowToolProvider",
@@ -33,11 +42,13 @@ __all__ = [
     "DataTypeToolProvider",
     "DecompilerToolProvider",
     "FunctionToolProvider",
+    "GetFunctionAioToolProvider",
     "GetFunctionToolProvider",
     "ImportExportToolProvider",
     "MemoryToolProvider",
     "ProjectToolProvider",
     "ScriptToolProvider",
+    "PromptToolProvider",
     "SearchEverythingToolProvider",
     "StringToolProvider",
     "StructureToolProvider",

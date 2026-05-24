@@ -9,7 +9,10 @@ Provides a single, consistent interface for callgraph generation.
 
 from __future__ import annotations
 
-import argparse
+import logging
+
+logger = logging.getLogger(__name__)
+
 import base64
 import re
 import sys
@@ -24,15 +27,16 @@ from agentdecompile_cli.models import (
 )
 
 if TYPE_CHECKING:
+    import argparse
+
     from agentdecompile_cli.launcher import ProgramInfo
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Function as GhidraFunction,
     )
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
 
-    # Type alias for convenience
     Symbol = GhidraSymbol
 
 
@@ -45,17 +49,14 @@ class CallGraphTool:
     """Unified CallGraph tool handling both MCP and CLI interfaces."""
 
     def __init__(self, program_info: ProgramInfo | None = None):
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.__init__")
         self.program_info = program_info
-        self.program = (
-            getattr(program_info, "current_program", None)
-            or getattr(program_info, "program", None)
-            if program_info
-            else None
-        )
+        self.program = getattr(program_info, "current_program", None) or getattr(program_info, "program", None) if program_info else None
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Add callgraph arguments to CLI parser."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.add_cli_args")
         group = parser.add_argument_group("Callgraph Options")
         group.add_argument(
             "--callgraphs",
@@ -144,6 +145,7 @@ class CallGraphTool:
         Returns:
             CallGraphResult with graph data and mermaid URL
         """
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.generate_for_mcp")
         if not self.program:
             raise ValueError("No program loaded")
 
@@ -190,6 +192,7 @@ class CallGraphTool:
         Returns:
             Dictionary with callgraph results
         """
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool.generate_for_cli")
         if not self.program:
             raise ValueError("No program loaded")
 
@@ -227,24 +230,29 @@ class CallGraphTool:
         return results
 
     def _resolve_function(self, name_or_address: str) -> GhidraFunction | None:
-        """Resolve function by name or address."""
+        """Resolve function by name or address. Supports both thunk and IAT addresses."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._resolve_function")
         if not self.program:
             return None
 
-        # Try to find by address first
-        try:
-            addr = self.program.getAddressFactory().getAddress(name_or_address)
-            func = self.program.getFunctionManager().getFunctionAt(addr)
-            if func:
-                return func
-        except:
-            pass
+        from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 
-        # Try to find by name
-        funcs = list(self.program.getFunctionManager().getFunctions(True))
-        for func in funcs:
-            if func.getName(True) == name_or_address:
+        # Resolve to address (symbol or hex); prefer thunk when given an IAT slot
+        addr = AddressUtil.resolve_address_or_symbol_prefer_thunk(self.program, name_or_address)
+        if addr is not None:
+            fm = self.program.getFunctionManager()
+            func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+            if func is not None:
                 return func
+
+        # Try by name (e.g. "CreateFileA")
+        try:
+            funcs = list(self.program.getFunctionManager().getFunctions(True))
+            for func in funcs:
+                if func.getName(True) == name_or_address:
+                    return func
+        except Exception:
+            pass
 
         return None
 
@@ -262,6 +270,7 @@ class CallGraphTool:
         wrap_mermaid: bool = False,
     ) -> dict[str, Any]:
         """Core callgraph generation logic."""
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._gen_callgraph")
         if name is None:
             name = f"{func.getName()[:MAX_PATH_LEN]}-{func.entryPoint}"
 
@@ -329,6 +338,7 @@ class CallGraphTool:
         """Get calling callgraph for function."""
         # Implementation would use Ghidra's callgraph analysis
         # This is a placeholder - actual implementation would be complex
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._get_calling")
         return None
 
     def _get_called(
@@ -340,4 +350,5 @@ class CallGraphTool:
         """Get called callgraph for function."""
         # Implementation would use Ghidra's callgraph analysis
         # This is a placeholder - actual implementation would be complex
+        logger.debug("diag.enter %s", "tools/callgraph_tool.py:CallGraphTool._get_called")
         return None

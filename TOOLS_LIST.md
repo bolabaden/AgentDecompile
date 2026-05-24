@@ -1,34 +1,64 @@
 # Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
 
-This document provides an exhaustive, consolidated reference for all 42 canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+This document provides an exhaustive, consolidated reference for all canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
 
 **Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
 **GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
 
+## Server Configuration
+
+### Local project
+
+Control which Ghidra project the server uses via environment variable or CLI argument:
+
+| What | Env var | CLI arg | Notes |
+|------|---------|---------|-------|
+| Project directory or `.gpr` file | `AGENT_DECOMPILE_PROJECT_PATH` (alias: `AGENTDECOMPILE_PROJECT_PATH`) | `--project-path <path>` | Directory for a new/existing directory-backed project, or path to a `.gpr` file for an existing project. Default: `agentdecompile_projects/` in cwd. |
+| Project name | `AGENT_DECOMPILE_PROJECT_NAME` (alias: `AGENTDECOMPILE_PROJECT_NAME`) | `--project-name <name>` | Ignored when pointing to a `.gpr` file. Default: current working directory name. |
+
+```bash
+# Directory-backed project (creates if absent)
+agentdecompile-server -t streamable-http \
+  --project-path /my/projects/analysis \
+  --project-name analysis
+
+# Existing Ghidra .gpr file (name inferred from filename)
+agentdecompile-server -t streamable-http \
+  --project-path /my/projects/analysis.gpr
+
+# Via environment variable (stdio, e.g. Claude Desktop / VS Code MCP)
+AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
+```
+
 ## Table of Contents
 
 - [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
+  - [Server Configuration](#server-configuration)
+    - [Local project](#local-project)
   - [Table of Contents](#table-of-contents)
   - [Canonical Tool Docs](#canonical-tool-docs)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
     - [`analyze-vtables`](#analyze-vtables)
     - [`apply-data-type`](#apply-data-type)
-    - [`capture-agentdecompile-debug-info`](#capture-agentdecompile-debug-info)
     - [`change-processor`](#change-processor)
     - [`checkin-program`](#checkin-program)
+    - [`checkout-program`](#checkout-program)
+    - [`checkout-status`](#checkout-status)
     - [`create-label`](#create-label)
     - [`decompile-function`](#decompile-function)
+    - [`delete-project-binary`](#delete-project-binary)
     - [`sync-project`](#sync-project)
     - [`export`](#export)
-    - [`delete-project-binary`](#delete-project-binary)
     - [`gen-callgraph`](#gen-callgraph)
     - [`get-call-graph`](#get-call-graph)
+    - [`remove-program-binary`](#remove-program-binary)
     - [`get-current-address`](#get-current-address)
     - [`get-current-function`](#get-current-function)
     - [`get-current-program`](#get-current-program)
     - [`get-data`](#get-data)
+    - [`get-function`](#get-function)
     - [`get-functions`](#get-functions)
     - [`get-references`](#get-references)
     - [`import-binary`](#import-binary)
@@ -37,11 +67,9 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`list-exports`](#list-exports)
     - [`list-functions`](#list-functions)
     - [`list-imports`](#list-imports)
-    - [`list-open-programs`](#list-open-programs)
-    - [`list-project-binaries`](#list-project-binaries)
-    - [`list-project-binary-metadata`](#list-project-binary-metadata)
     - [`list-project-files`](#list-project-files)
     - [`list-processors`](#list-processors)
+    - [`list-prompts`](#list-prompts)
     - [`list-strings`](#list-strings)
     - [`manage-bookmarks`](#manage-bookmarks)
     - [`manage-comments`](#manage-comments)
@@ -53,47 +81,20 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
     - [`manage-structures`](#manage-structures)
     - [`manage-symbols`](#manage-symbols)
     - [`match-function`](#match-function)
+    - [`migrate-metadata`](#migrate-metadata)
     - [`execute-script`](#execute-script)
     - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser)
     - [`open-program-in-code-browser`](#open-program-in-code-browser)
     - [`open`](#open)
     - [`read-bytes`](#read-bytes)
+    - [`resolve-modification-conflict`](#resolve-modification-conflict)
     - [`search-code`](#search-code)
     - [`search-constants`](#search-constants)
     - [`search-everything`](#search-everything)
     - [`search-strings`](#search-strings)
     - [`search-symbols`](#search-symbols)
-    - [`search-symbols-by-name`](#search-symbols-by-name)
+    - [`svr-admin`](#svr-admin)
     - [`suggest`](#suggest)
-  - [Legacy Tool Name Forwards](#legacy-tool-name-forwards)
-    - [`import-file` (forwards to `import-binary`)](#import-file-forwards-to-import-binary)
-    - [`read-bytes` (forwards to `inspect-memory`)](#read-bytes-forwards-to-inspect-memory)
-    - [`list-classes` (forwards to `manage-symbols`)](#list-classes-forwards-to-manage-symbols)
-    - [`list-namespaces` (forwards to `manage-symbols`)](#list-namespaces-forwards-to-manage-symbols)
-    - [`rename-data` (forwards to `manage-symbols`)](#rename-data-forwards-to-manage-symbols)
-    - [`search-functions-by-name` (forwards to `search-symbols`)](#search-functions-by-name-forwards-to-search-symbols)
-    - [`get-function-by-address` (forwards to `get-functions`)](#get-function-by-address-forwards-to-get-functions)
-    - [`find-function` (forwards to `get-functions`)](#find-function-forwards-to-get-functions)
-    - [`rename-function` (forwards to `manage-function`)](#rename-function-forwards-to-manage-function)
-    - [`rename-function-by-address` (forwards to `manage-function`)](#rename-function-by-address-forwards-to-manage-function)
-    - [`set-function-prototype` (forwards to `manage-function`)](#set-function-prototype-forwards-to-manage-function)
-    - [`set-local-variable-type` (forwards to `manage-function`)](#set-local-variable-type-forwards-to-manage-function)
-    - [`rename-variable` (forwards to `manage-function`)](#rename-variable-forwards-to-manage-function)
-    - [`list-methods` (forwards to `list-functions`)](#list-methods-forwards-to-list-functions)
-    - [`get-all-functions` (forwards to `list-functions`)](#get-all-functions-forwards-to-list-functions)
-    - [`get-decompilation` (forwards to `decompile-function`)](#get-decompilation-forwards-to-decompile-function)
-    - [`set-comment` (forwards to `manage-comments`)](#set-comment-forwards-to-manage-comments)
-    - [`get-comments` (forwards to `manage-comments`)](#get-comments-forwards-to-manage-comments)
-    - [`search-comments` (forwards to `manage-comments`)](#search-comments-forwards-to-manage-comments)
-    - [`get-call-tree` (forwards to `get-call-graph`)](#get-call-tree-forwards-to-get-call-graph)
-    - [`find-common-callers` (forwards to `get-call-graph`)](#find-common-callers-forwards-to-get-call-graph)
-    - [`set-bookmark` (forwards to `manage-bookmarks`)](#set-bookmark-forwards-to-manage-bookmarks)
-    - [`get-bookmarks` (forwards to `manage-bookmarks`)](#get-bookmarks-forwards-to-manage-bookmarks)
-    - [`remove-bookmark` (forwards to `manage-bookmarks`)](#remove-bookmark-forwards-to-manage-bookmarks)
-    - [`search-bookmarks` (forwards to `manage-bookmarks`)](#search-bookmarks-forwards-to-manage-bookmarks)
-    - [`list-bookmark-categories` (forwards to `manage-bookmarks`)](#list-bookmark-categories-forwards-to-manage-bookmarks)
-  - [Parameter Normalization Notes (Applies to All Tools)](#parameter-normalization-notes-applies-to-all-tools)
-  - [Tool Consolidation Summary](#tool-consolidation-summary)
   - [Usage Tips](#usage-tips)
     - [Start with High-Level Analysis](#start-with-high-level-analysis)
     - [Trace Data Flow](#trace-data-flow)
@@ -160,58 +161,6 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
       - [GOT/PLT Overwrite](#gotplt-overwrite)
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
-  - [Canonical Tools](#canonical-tools)
-    - [`analyze-data-flow`](#analyze-data-flow-1)
-    - [`analyze-program`](#analyze-program-1)
-    - [`analyze-vtables`](#analyze-vtables-1)
-    - [`apply-data-type`](#apply-data-type-1)
-    - [`change-processor`](#change-processor-1)
-    - [`checkin-program`](#checkin-program-1)
-    - [`checkout-program`](#checkout-program)
-    - [`checkout-status`](#checkout-status)
-    - [`create-label`](#create-label-1)
-    - [`decompile-function`](#decompile-function-1)
-    - [`sync-project`](#sync-project-1)
-    - [`export`](#export-1)
-    - [`delete-project-binary`](#delete-project-binary-1)
-    - [`gen-callgraph`](#gen-callgraph-1)
-    - [`get-call-graph`](#get-call-graph-1)
-    - [`get-current-address`](#get-current-address-1)
-    - [`get-current-function`](#get-current-function-1)
-    - [`get-current-program`](#get-current-program-1)
-    - [`get-data`](#get-data-1)
-    - [`get-functions`](#get-functions-1)
-    - [`get-references`](#get-references-1)
-    - [`import-binary`](#import-binary-1)
-    - [`inspect-memory`](#inspect-memory-1)
-    - [`list-cross-references`](#list-cross-references-1)
-    - [`list-exports`](#list-exports-1)
-    - [`list-functions`](#list-functions-1)
-    - [`list-imports`](#list-imports-1)
-    - [`list-project-files`](#list-project-files-1)
-    - [`list-processors`](#list-processors-1)
-    - [`list-strings`](#list-strings-1)
-    - [`manage-bookmarks`](#manage-bookmarks-1)
-    - [`manage-comments`](#manage-comments-1)
-    - [`manage-data-types`](#manage-data-types-1)
-    - [`manage-files`](#manage-files-1)
-    - [`manage-function-tags`](#manage-function-tags-1)
-    - [`manage-function`](#manage-function-1)
-    - [`manage-strings`](#manage-strings-1)
-    - [`manage-structures`](#manage-structures-1)
-    - [`manage-symbols`](#manage-symbols-1)
-    - [`match-function`](#match-function-1)
-    - [`execute-script`](#execute-script-1)
-    - [`open-all-programs-in-code-browser`](#open-all-programs-in-code-browser-1)
-    - [`open-program-in-code-browser`](#open-program-in-code-browser-1)
-    - [`open-project`](#open-project)
-    - [`read-bytes`](#read-bytes-1)
-    - [`search-code`](#search-code-1)
-    - [`search-constants`](#search-constants-1)
-    - [`search-everything`](#search-everything-1)
-    - [`search-strings`](#search-strings-1)
-    - [`search-symbols`](#search-symbols-1)
-    - [`suggest`](#suggest-1)
 
 ## Canonical Tool Docs
 
@@ -220,7 +169,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: This tool performs precise data flow analysis using Ghidra's decompiler P-code for backward/forward slicing and variable access tracking within a function. It enables taint analysis, value tracking, and algorithm reverse engineering by tracing data origins (backward), propagations (forward), or all reads/writes (variable_accesses). Outputs JSON paths with P-code operations, variables, and addresses, supporting pagination for large flows. All operations are transaction-safe and read-only unless explicitly modifying annotations. Ideal for understanding variable lifecycles in complex functions, debugging data dependencies, or identifying sources/sinks in security analysis.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `functionAddress` (string, required): Address of the function to analyze.
   - Synonyms: `functionAddress`, `functiona`, `function`, `funcAddr`, `address`, `entryAddress`, `functionIdentifier`.
@@ -254,35 +203,23 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - **Community**: [GitHub Discussion: "High P-code Normalization strategies for Cross-Arch Analysis"](https://github.com/NationalSecurityAgency/ghidra/discussions/8874) | [RE.SE: "Ghidra Python - Get Decompile Line Text by RVA"](https://reverseengineering.stackexchange.com/questions/24685/ghidra-python-get-decompile-line-text-by-rva)
 ### `analyze-program`
 
-**Description**: Initiates or manages Ghidra's full program analysis pipeline, including auto-analysis for functions, data types, references, and decompilation preparation. This tool triggers analyzers for disassembly, function discovery, reference creation, and advanced features like constant propagation or call graph building. It supports forcing re-analysis, verbose logging, and custom analyzer options (e.g., via program_options for symbols or GDTs). Useful for initial binary loading, updating analysis after manual changes, or applying PDB symbols. The process is resource-intensive and may run in threaded mode for performance, with options to wait for completion.
+**Description**: Initiates Ghidra's full program analysis pipeline for the active program. This is a heavy operation and should normally be run only once per binary. If Ghidra already marked the program as analyzed, the tool returns an error unless `force=true` is supplied for a deliberate reanalysis.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `forceAnalysis` (boolean, optional): Force re-analysis even if already done (default: false).
-  - Synonyms: `forceAnalysis`, `forcea`.
-- `verbose` (boolean, optional): Enable detailed logging during analysis (default: false).
-  - Synonyms: `verbose`
-- `noSymbols` (boolean, optional): Disable symbol loading (default: false).
-  - Synonyms: `noSymbols`, `nos`.
-- `gdts` (array, optional): List of GDT file paths to apply.
-  - Synonyms: `gdts`
-- `programOptions` (object, optional): Custom analyzer settings (e.g., {"DecompilerParameterAnalyzer.useCPlusPlus": true}).
-  - Synonyms: `programOptions`, `programo`.
-- `threaded` (boolean, optional): Use multi-threading (default: true).
-  - Synonyms: `threaded`
-- `maxWorkers` (integer, optional): Number of worker threads (default: CPU count).
-  - Synonyms: `maxWorkers`, `maxw`.
-- `waitForAnalysis` (boolean, optional): Block until analysis completes (default: false).
-  - Synonyms: `binaryPath`, `program`, `force`, `verboseAnalysis`, `no_symbols`, `gdtFiles`, `options`, `useThreading`, `workers`, `wait`, `waitForAnalysis`
+- `analyzers` (array, optional): Specific analyzer names to target instead of the default analyzer set.
+  - Synonyms: `analyzers`.
+- `force` (boolean, optional): Force re-analysis even if Ghidra already marked the program as analyzed (default: false). This should be rare.
+  - Synonyms: `force`, `forceAnalysis`, `forcea`.
 **Overloads**:
 - `analyze-program(programPath)` → forwards to `analyze-program`.
 
 **Synonyms**: `analyze-program`, `tool_analyze_program`, `analyze_program_tool`, `cmd_analyze_program`, `run_analyze_program`, `do_analyze_program`, `api_analyze_program`, `mcp_analyze_program`, `ghidra_analyze_program`, `agentdecompile_analyze_program`, `analyze_program_command`, `analyze_program_action`, `analyze_program_op`, `analyze_program_task`, `execute_analyze_program`
 
 **Examples**:
-- Analyze a program: `analyze-program programPath="/bin.exe" forceAnalysis=true verbose=true`.
-- With custom options: `analyze-program programPath="/bin.exe" programOptions={"PDBAnalyzer.useRemote": true}`.
+- Analyze a program: `analyze-program programPath="/bin.exe"`.
+- Force a deliberate re-analysis: `analyze-program programPath="/bin.exe" force=true`.
 
 **API References**:
 - **`ghidra.program.flatapi.FlatProgramAPI`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/program/flatapi/FlatProgramAPI.html) | [GitHub source (v12)](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/Base/src/main/java/ghidra/program/flatapi/FlatProgramAPI.java)
@@ -301,7 +238,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Analyzes virtual tables (vtables) in C++ binaries, extracting virtual function entries, finding callers of specific virtual methods, or identifying vtables containing a given function. This tool is essential for reverse engineering object-oriented code, understanding class hierarchies, and tracing polymorphic behavior. Modes include full vtable analysis (entries and pointers), caller discovery (with limits for large binaries), and containment checks. Outputs structured JSON with addresses, function pointers, and metadata. Supports pagination and limits to handle complex vtables without overwhelming resources.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `mode` (string, required): Analysis mode (`analyze`, `callers`, `containing`).
   - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`.
@@ -342,7 +279,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Applies a specified data type to a memory location or symbol in the program, enabling better disassembly and decompilation by defining structures, arrays, enums, or primitives at addresses. This tool is crucial for fixing undefined data, creating typed views of buffers (e.g., uint8_t arrays for strings), and propagating types through references. It supports archive-specified types and handles conflicts with existing definitions. Transaction-safe, it improves code readability and analysis accuracy, especially for custom structures or imported data types.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `addressOrSymbol` (string, required): Address or symbol to apply the type to.
   - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
@@ -370,39 +307,14 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - `getAddress(String addrString)` → `Address`
 - **PyGhidra**: `dtm = currentProgram.getDataTypeManager(); dt = dtm.getDataType('/myStruct'); DataUtilities.createData(currentProgram, addr, dt, -1, False, ClearDataMode.CLEAR_ALL_CONFLICT_DATA)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 - **Community**: [RE.SE: "ghidra-python: create struct with big endian field"](https://reverseengineering.stackexchange.com/questions/23330/ghidra-python-create-struct-with-big-endian-field)
-### `capture-agentdecompile-debug-info`
+> Note: `capture-agentdecompile-debug-info` is not an advertised MCP tool name in the Python registry. Use the debug resource URI `ghidra://agentdecompile-debug-info`.
 
-**Description**: Captures a comprehensive debug information bundle for AgentDecompile issues, including system configuration, status logs, environment details, and recent analysis artifacts. This tool creates a ZIP archive suitable for submission to developers, optionally including a user-provided issue summary. It is non-destructive and read-only, focusing on diagnostic data without altering the project or programs. Useful for troubleshooting analysis failures, decompiler crashes, or unexpected behaviors in MCP tools.
-
-**Parameters**:
-- `message` (string, optional): Optional summary of the issue being debugged.
-  - Synonyms: `description`, `issueSummary`, `message`
-**Overloads**: None.
-
-**Synonyms**: `capture-agentdecompile-debug-info`, `tool_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_tool`, `cmd_capture_agentdecompile_debug_info`, `run_capture_agentdecompile_debug_info`, `do_capture_agentdecompile_debug_info`, `api_capture_agentdecompile_debug_info`, `mcp_capture_agentdecompile_debug_info`, `ghidra_capture_agentdecompile_debug_info`, `agentdecompile_capture_agentdecompile_debug_info`, `capture_agentdecompile_debug_info_command`, `capture_agentdecompile_debug_info_action`, `capture_agentdecompile_debug_info_op`, `capture_agentdecompile_debug_info_task`, `execute_capture_agentdecompile_debug_info`
-
-**Examples**:
-- Capture debug info: `capture-agentdecompile-debug-info message="Decompiler crash on function 0x401000"`.
-
-**API References**:
-- **`ghidra.framework.Application`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/framework/Application.html)
-  - `getApplicationVersion()` → `ApplicationVersion`
-  - `getApplicationLayout()` → `ApplicationLayout`
-  - `getUserSettingsDirectory()` → `ResourceFile`
-- **`ghidra.framework.model.Project`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/framework/model/Project.html)
-  - `getName()` → `String`
-  - `getProjectLocator()` → `ProjectLocator`
-  - `getProjectData()` → `ProjectData`
-- **`ghidra.util.Msg`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/util/Msg.html)
-  - `info(Object originator, Object message)` → `void`
-  - `error(Object originator, Object message)` → `void`
-- **PyGhidra**: `import pyghidra; pyghidra.started()` → `bool`; `pyghidra.open_project(name, create=False)` → `Project` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
 ### `change-processor`
 
 **Description**: Changes the processor language and compiler specification for a program, allowing re-analysis with different architecture settings (e.g., switching from x86 to ARM). This tool is vital for handling multi-architecture binaries or correcting initial import assumptions. It triggers re-disassembly and re-analysis, supporting options for endianness, variant, and compiler ID. Use with caution as it may invalidate existing annotations; best paired with `analyze-program` afterward.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `processor` (string, required): Processor name (e.g., "x86", "ARM").
   - Synonyms: `processor`
@@ -436,7 +348,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Checks in a program to the project repository, committing changes like annotations, types, and analysis results for version control. This tool supports comments for the check-in and handles conflicts in shared projects. It is essential for collaborative reverse engineering, ensuring changes are persisted and trackable. Operates in transaction-safe mode and can be used after major improvements to save progress.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `comment` (string, optional): Check-in comment describing changes.
   - Synonyms: `comment`
@@ -460,10 +372,41 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - **`ghidra.framework.model.ProjectData`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/framework/model/ProjectData.html)
   - `getFile(String path)` → `DomainFile`
   - `getFolder(String path)` → `DomainFolder`
-- **PyGhidra**: `with pyghidra.open_project(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
+- **PyGhidra**: `with pyghidra.open(projName) as proj: f = proj.getProjectData().getFile('/myBin'); f.checkin(handler, monitor)` — [README](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.0_build/Ghidra/Features/PyGhidra/src/main/py/README.md)
+### `checkout-program`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exclusive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `checkout-program(programPath, exclusive)` canonical signature.
+
+**Synonyms**: `checkout-program`
+
+**Examples**:
+- `checkout-program`
+
+### `checkout-status`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `checkout-status(programPath)` canonical signature.
+
+**Synonyms**: `checkout-status`
+
+**Examples**:
+- `checkout-status`
+
 ### `create-label`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="create_label"`.
+**Description**: Legacy compatibility forward. Use `create-label`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -477,7 +420,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Decompiles a specific function to high-level C-like pseudocode, supporting line limits, offset starting, and inclusion of comments or references. This tool leverages Ghidra's decompiler for readable code views, aiding in understanding logic without assembly. It handles timeouts, simplification options, and batch decompilation for multiple functions. Essential for algorithm reverse engineering, with options to include caller/callee context for broader insight.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
 - `functionIdentifier` (string or array, required): Function name(s) or address(es).
   - Synonyms: `functionIdentifier`, `functioni`, `function`, `functionId`, `identifier`, `functionAddress`, `functionNameOrAddress`, `name`, `name_or_address`, `address`
@@ -512,6 +455,22 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Decompile function: `decompile-function programPath="/bin.exe" functionIdentifier="0x401000" limit=50 includeComments=true`.
 
+### `delete-project-binary`
+
+**Description**: Deletes a binary file from the project, including all associated analysis data and versions. This tool is used for cleaning up projects, removing obsolete imports, or managing storage. It requires confirmation for safety and handles dependencies like open programs. Non-reversible, so use with caution in versioned projects.
+
+**Parameters**:
+- `programPath` (string, required): Path to the binary to delete.
+  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
+- `confirm` (boolean, optional): Confirm deletion (default: false).
+  - Synonyms: `binaryPath`, `force`, `confirm`
+**Overloads**:
+- `delete_project_binary(binary_name)` → forwards to `delete-project-binary`.
+
+**Synonyms**: `delete-project-binary`, `tool_delete_project_binary`, `delete_project_binary_tool`, `cmd_delete_project_binary`, `run_delete_project_binary`, `do_delete_project_binary`, `api_delete_project_binary`, `mcp_delete_project_binary`, `ghidra_delete_project_binary`, `agentdecompile_delete_project_binary`, `delete_project_binary_command`, `delete_project_binary_action`, `delete_project_binary_op`, `delete_project_binary_task`, `execute_delete_project_binary`, `delete_project_binary`
+
+**Examples**:
+- Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `sync-project`
 
 **Description**: Transfers and synchronizes content between local and/or shared Ghidra projects. Supports pull, push, and bidirectional modes with source scoping, destination remapping, recursion, max-item limits, overwrite policy, and dry-run planning. Works with shared repository sessions (shared↔local) and local-only projects.
@@ -577,31 +536,15 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - **`ghidra.app.util.exporter.GzfExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/GzfExporter)
 - **`ghidra.app.util.exporter.CppExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/CppExporter)
 
-### `delete-project-binary`
-
-**Description**: Deletes a binary file from the project, including all associated analysis data and versions. This tool is used for cleaning up projects, removing obsolete imports, or managing storage. It requires confirmation for safety and handles dependencies like open programs. Non-reversible, so use with caution in versioned projects.
-
-**Parameters**:
-- `programPath` (string, required): Path to the binary to delete.
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-- `confirm` (boolean, optional): Confirm deletion (default: false).
-  - Synonyms: `binaryPath`, `force`, `confirm`
-**Overloads**:
-- `delete_project_binary(binary_name)` → forwards to `delete-project-binary`.
-
-**Synonyms**: `delete-project-binary`, `tool_delete_project_binary`, `delete_project_binary_tool`, `cmd_delete_project_binary`, `run_delete_project_binary`, `do_delete_project_binary`, `api_delete_project_binary`, `mcp_delete_project_binary`, `ghidra_delete_project_binary`, `agentdecompile_delete_project_binary`, `delete_project_binary_command`, `delete_project_binary_action`, `delete_project_binary_op`, `delete_project_binary_task`, `execute_delete_project_binary`, `delete_project_binary`
-
-**Examples**:
-- Delete binary: `delete-project-binary programPath="/oldbin.exe" confirm=true`.
 ### `gen-callgraph`
 
-**Description**: Legacy compatibility alias.
+**Description**: Legacy compatibility alias (non-advertised by default). Use `get-call-graph`.
 
 **Parameters**: Same as `get-call-graph`.
   - Synonyms: All from `get-call-graph`.
 
 **Overloads**:
-- `gen_callgraph(binary_name, function_name, direction, display_type, condense_threshold, top_layers, bottom_layers, max_run_time)` → forwards to `gen-callgraph`.
+- `gen_callgraph(binary_name, function_name, direction, display_type, condense_threshold, top_layers, bottom_layers, max_run_time)` → forwards to `get-call-graph`.
 
 **Examples**: `gen-callgraph programPath="/bin.exe" mode="graph" functionIdentifier="main"`.
 ### `get-call-graph`
@@ -609,7 +552,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Retrieves caller/callee relationships as graphs, trees, sets, decompiled callers, or common callers for functions. Modes support visualization (graph/tree), listing (callers/callees), or advanced queries (common_callers). This tool is indispensable for navigation, dependency analysis, and bottleneck identification in call chains. Outputs JSON structures with addresses and optional decompilation context, with pagination for large results.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `functionIdentifier` (string, required): Function name or address.
   - Synonyms: `functionIdentifier`, `functioni`, `function`, `functionId`, `identifier`, `functionAddress`, `functionNameOrAddress`.
@@ -640,9 +583,25 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Get caller tree: `get-call-graph programPath="/bin.exe" functionIdentifier="0x401000" mode="tree" direction="callers" maxDepth=5`.
 
+### `remove-program-binary`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `confirm` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `remove-program-binary(programPath, confirm)` canonical signature.
+
+**Synonyms**: `remove-program-binary`
+
+**Examples**:
+- `remove-program-binary`
+
 ### `get-current-address`
 
-**Description**: Retrieves the current cursor address in the active CodeBrowser tool (GUI mode only). This tool is useful for scripting interactions with the GUI, capturing user-selected locations, or synchronizing analysis with visual inspection. It returns the address as a string and requires an active program view.
+**Description**: GUI-only tool that retrieves the current cursor address in the active CodeBrowser tool. This tool is not advertised in headless/server mode.
 
 **Parameters**:
 - `programPath` (string, optional): Path to the program (uses current if omitted).
@@ -656,7 +615,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - Get current address: `get-current-address`.
 ### `get-current-function`
 
-**Description**: Returns the function containing the current cursor address in the CodeBrowser (GUI mode only). This tool provides function metadata like name, entry point, and boundaries, aiding in context-aware scripting or quick lookups during manual analysis.
+**Description**: GUI-only tool that returns the function containing the current cursor address in the CodeBrowser. This tool is not advertised in headless/server mode.
 
 **Parameters**:
 - `programPath` (string, optional): Path to the program (uses current if omitted).
@@ -687,7 +646,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Fetches data at a specific address or symbol, returning bytes, disassembled instructions, or typed values. This tool supports various views (hex, ASCII, structured) and is key for inspecting constants, strings, or structures without full memory reads.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `addressOrSymbol` (string, required): Target address or symbol.
   - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
@@ -700,12 +659,41 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**:
 - Get data at address: `get-data programPath="/bin.exe" addressOrSymbol="0x404000" view="hex"`.
+### `get-function`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functionIdentifier` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `timeout` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxInstructions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRefs` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCallers` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCallees` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `callerDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `calleeDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `callerBranching` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `calleeBranching` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRelatedCallers` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxRelatedCallees` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `get-function(programPath, function, addressOrSymbol, functionIdentifier, timeout, maxInstructions, maxRefs, maxCallers, maxCallees, callerDepth, calleeDepth, callerBranching, calleeBranching, maxRelatedCallers, maxRelatedCallees)` canonical signature.
+
+**Synonyms**: `get-function`
+
+**Examples**:
+- `get-function`
+
 ### `get-functions`
 
 **Description**: Retrieves decompilation, disassembly, info, or call details for one or more functions, supporting batch processing and pagination. This tool is central for function-level analysis, with options for callers/callees, comments, and references. It resolves identifiers by address or name, handling arrays for multi-function queries, and limits output for large decompilations.
 
 **Parameters**:
-- `programPath` (string or array, optional): Source program path(s) (optional in GUI mode).
+- `programPath` (string or array, optional): Source program path(s).
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `identifier` (string or array, optional): Function identifier(s) (omit for all).
   - Synonyms: `identifier`, `overrideMaxFunctionsLimit`, `address`.
@@ -748,7 +736,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Lists references to or from a target address/symbol, including code, data, or external refs, with optional context and pagination. This tool is critical for tracing data flow, finding usages, and understanding dependencies. Modes filter by type/direction, and it supports library-specific queries for imports/exports.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `target` (string, required): Address or symbol.
   - Synonyms: `target`, `address`, `location`, `name`
@@ -791,7 +779,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - Get references to: `get-references programPath="/bin.exe" target="0x401000" direction="to" limit=50 includeRefContext=true`.
 ### `import-binary`
 
-**Description**: Imports a binary file into the Ghidra project, supporting recursive directory imports, analysis after import, and version control options. This tool handles file discovery, folder mirroring, and post-import analysis, making it the entry point for loading new binaries. It supports depth limits, stripping paths, and enabling version tracking for collaborative work.
+**Description**: Imports a binary file into the Ghidra project, supporting recursive directory imports, analysis after import, and optional shared-project version-control requests. This tool handles file discovery, folder mirroring, and post-import analysis. If `enableVersionControl=true` is requested for a local-only import, the tool fails explicitly instead of pretending shared versioning is available.
 
 **Parameters**:
 - `path` (string, required): File or directory path to import.
@@ -802,7 +790,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `recursive`
 - `maxDepth` (integer, optional): Recursion depth (default: unlimited).
   - Synonyms: `maxDepth`, `maxd`, `depth`, `level`, `treeDepth`, `maxLevel`, `depthLimit`.
-- `analyzeAfterImport` (boolean, optional): Run analysis post-import (default: true).
+- `analyzeAfterImport` (boolean, optional): Legacy hint for headless/shared import paths (default: true). Local `open` / `import-binary` always run incremental Ghidra analysis when needed; other program-scoped tools block until analysis completes.
   - Synonyms: `analyzeAfterImport`, `analyzeai`.
 - `stripLeadingPath` (boolean, optional): Strip leading paths (default: false).
   - Synonyms: `stripLeadingPath`, `striplp`.
@@ -810,7 +798,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `stripAllContainerPath`, `stripacp`.
 - `mirrorFs` (boolean, optional): Mirror filesystem structure (default: false).
   - Synonyms: `mirrorFs`, `mirrorf`.
-- `enableVersionControl` (boolean, optional): Enable versioning (default: false).
+- `enableVersionControl` (boolean, optional): Request import into shared-project version control (default: false). Local-only imports cannot satisfy this request and fail explicitly.
   - Synonyms: `filePath`, `destFolder`, `recurse`, `depth`, `autoAnalyze`, `stripPath`, `stripContainer`, `mirror`, `versioning`, `enableVersionControl`
 **Overloads**:
 - `import_binary(binary_path)` → forwards to `import-binary`.
@@ -821,13 +809,14 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - Import file: `import-binary path="/path/to/bin.exe" destinationFolder="/imports" analyzeAfterImport=true`.
 - Recursive import: `import-binary path="/dir" recursive=true maxDepth=3 mirrorFs=true`.
+- Shared version-control request on a local import fails explicitly: `import-binary path="/path/to/bin.exe" enableVersionControl=true`.
 
 ### `inspect-memory`
 
 **Description**: Inspects memory at a given address, returning bytes, disassembly, or data in various modes with length limits. This tool is useful for quick memory dumps, verifying constants, or analyzing segments without full program reads. Modes include hex, ascii, or structured views, with pagination for large regions.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `mode` (string, required): Inspection mode (`bytes`, `disasm`, `data`).
   - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`, `format`.
@@ -862,7 +851,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**: `list-cross-references programPath="/bin.exe" target="0x401000"`.
 ### `list-exports`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="exports"`.
+**Description**: Legacy compatibility forward. Use `list-exports`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -878,7 +867,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Description**: Lists all or filtered functions in the program, with options for tagging, reference counts, and verbose metadata. This tool supports querying by name, tag, or reference count, making it ideal for overviewing program structure or finding untagged functions for further analysis.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
+- `programPath` (string, optional): Path to the program in the project.
   - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
 - `mode` (string, optional): Listing mode (default: all).
   - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`.
@@ -922,7 +911,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 ### `list-imports`
 
-**Description**: Legacy compatibility forward. Use `manage-symbols` with `mode="imports"`.
+**Description**: Legacy compatibility forward. Use `list-imports`.
 
 **Parameters**: Same as `manage-symbols`.
   - Synonyms: All from `manage-symbols`.
@@ -933,50 +922,6 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `list-imports(programPath, libraryFilter, maxResults, startIndex, groupByLibrary)` → forwards to `list-imports`.
 
 **Examples**: `list-imports programPath="/bin.exe"`.
-### `list-open-programs`
-
-**Description**: Lists all currently open programs in the Ghidra tool (GUI mode), including paths and status. This tool is useful for managing multiple open binaries during sessions.
-
-**Parameters**:
-- None (GUI context implied).
-  - Synonyms: N/A.
-
-**Overloads**:
-- `list-open-programs()` → forwards to `list-open-programs`.
-
-**Synonyms**: `list-open-programs`, `tool_list_open_programs`, `list_open_programs_tool`, `cmd_list_open_programs`, `run_list_open_programs`, `do_list_open_programs`, `api_list_open_programs`, `mcp_list_open_programs`, `ghidra_list_open_programs`, `agentdecompile_list_open_programs`, `list_open_programs_command`, `list_open_programs_action`, `list_open_programs_op`, `list_open_programs_task`, `execute_list_open_programs`
-
-**Examples**:
-- List open: `list-open-programs`.
-### `list-project-binaries`
-
-**Description**: Lists all binaries in the project, including metadata like size and import time. This tool provides an overview of project contents for management.
-
-**Parameters**:
-- None (project-wide).
-  - Synonyms: N/A.
-
-**Overloads**:
-- `list_project_binaries()` → forwards to `list-project-binaries`.
-
-**Synonyms**: `list-project-binaries`, `tool_list_project_binaries`, `list_project_binaries_tool`, `cmd_list_project_binaries`, `run_list_project_binaries`, `do_list_project_binaries`, `api_list_project_binaries`, `mcp_list_project_binaries`, `ghidra_list_project_binaries`, `agentdecompile_list_project_binaries`, `list_project_binaries_command`, `list_project_binaries_action`, `list_project_binaries_op`, `list_project_binaries_task`, `execute_list_project_binaries`, `list_project_binaries`
-
-**Examples**:
-- List binaries: `list-project-binaries`.
-### `list-project-binary-metadata`
-
-**Description**: Retrieves detailed metadata for project binaries, such as language, compiler, and analysis info. This tool aids in auditing project state.
-
-**Parameters**:
-- `programPath` (string, required): Binary path.
-  - Synonyms: `path`, `programPath`, `programp`, `program`, `binaryPath`, `filePath`, `targetProgram`, `binary_name`
-**Overloads**:
-- `list_project_binary_metadata(binary_name)` → forwards to `list-project-binary-metadata`.
-
-**Synonyms**: `list-project-binary-metadata`, `tool_list_project_binary_metadata`, `list_project_binary_metadata_tool`, `cmd_list_project_binary_metadata`, `run_list_project_binary_metadata`, `do_list_project_binary_metadata`, `api_list_project_binary_metadata`, `mcp_list_project_binary_metadata`, `ghidra_list_project_binary_metadata`, `agentdecompile_list_project_binary_metadata`, `list_project_binary_metadata_command`, `list_project_binary_metadata_action`, `list_project_binary_metadata_op`, `list_project_binary_metadata_task`, `execute_list_project_binary_metadata`, `list_project_binary_metadata`
-
-**Examples**:
-- Get metadata: `list-project-binary-metadata programPath="/bin.exe"`.
 ### `list-project-files`
 
 **Description**: Lists all files in the project, including folders and non-binary files. This tool is for project navigation and cleanup.
@@ -1006,6 +951,18 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Examples**:
 - List all processors: `list-processors`.
 - Filter to x86 processors: `list-processors filter="x86"`.
+### `list-prompts`
+
+**Description**: List all available MCP prompts (reverse-engineering workflows such as Scout Broad Sweep, Diver Deep Dive, Bottom-Up Analyst, Convergence Orchestrator).
+
+**Parameters**: None.
+
+**Overloads**:
+- `list-prompts()` canonical signature.
+
+
+**Examples**: Call `list-prompts` to discover prompt names (e.g. `re-scout-broad-sweep`, `re-diver-deep-dive`).
+
 ### `list-strings`
 
 **Description**: Legacy compatibility forward. Use `manage-strings` with `mode="list"`.
@@ -1017,411 +974,284 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `list_strings(offset, limit, filter)` → forwards to `list-strings`.
 
 **Examples**: `list-strings programPath="/bin.exe"`.
+
 ### `manage-bookmarks`
 
-**Description**: Manages bookmarks for addresses or symbols, supporting creation, listing, removal, and searching by type, category, or text. This tool organizes findings with categories like "Note", "Warning", or "Analysis", enabling collaborative tagging and quick navigation. Batch operations allow multiple bookmarks in one call, with transaction safety for consistency.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`create`, `list`, `remove`, `search`, `removeAll`).
-  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `addressOrSymbol` (string, optional): Bookmark target.
-  - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
-- `category` (string, optional): Category.
-  - Synonyms: `category`
-- `comment` (string, optional): Bookmark text.
-  - Synonyms: `comment`
-- `bookmarks` (array, optional): Batch bookmark objects.
-  - Synonyms: `bookmarks`
-- `searchText` (string, optional): Search text.
-  - Synonyms: `searchText`, `searcht`.
-- `maxResults` (integer, optional): Result cap (default: 100).
-  - Synonyms: `maxResults`, `maxr`.
-- `removeAll` (boolean, optional): Confirm remove all.
-  - Synonyms: `mode`, `address`, `bookmarkType`, `cat`, `text`, `batch`, `query`, `limit`, `clearAll`, `removeAll`
-- `addressRange` (string, optional): Address range filter (e.g., "0x400000-0x401000").
-  - Synonyms: `addressRange`, `range`, `addrRange`.
-- `categories` (array, optional): Array of categories to filter by.
-  - Synonyms: `categories`, `cats`.
-- `types` (array, optional): Array of bookmark types to filter by.
-  - Synonyms: `types`, `bookmarkTypes`.
-**Overloads**:
-- `get-bookmarks(programPath, addressOrSymbol, addressRange, type, category)` → forwards to `manage-bookmarks`.
-- `list-bookmark-categories(programPath, type)` → forwards to `manage-bookmarks`.
-- `remove-bookmark(programPath, addressOrSymbol, type, category)` → forwards to `manage-bookmarks`.
-- `search-bookmarks(programPath, searchText, types, categories, addressRange, maxResults)` → forwards to `manage-bookmarks`.
-- `set-bookmark(programPath, addressOrSymbol, type, category, comment)` → forwards to `manage-bookmarks`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `type` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `category` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `bookmarks` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchText` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `removeAll` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressRange` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `categories` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `types` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `set-bookmark`, `get-bookmarks`, `remove-bookmark`, `search-bookmarks`, `list-bookmark-categories`, `manage-bookmarks`, `tool_manage_bookmarks`, `manage_bookmarks_tool`, `cmd_manage_bookmarks`, `run_manage_bookmarks`, `do_manage_bookmarks`, `api_manage_bookmarks`, `mcp_manage_bookmarks`, `ghidra_manage_bookmarks`, `agentdecompile_manage_bookmarks`
+**Overloads**:
+- `manage-bookmarks(programPath, mode, addressOrSymbol, type, category, comment, bookmarks, searchText, maxResults, removeAll, addressRange, categories, types)` canonical signature.
+
+**Synonyms**: `manage-bookmarks`
 
 **Examples**:
-- Create bookmark: `manage-bookmarks programPath="/bin.exe" mode="create" addressOrSymbol="0x401000" type="Analysis" comment="Crypto function"`.
-- Search bookmarks: `manage-bookmarks programPath="/bin.exe" mode="search" searchText="crypto" maxResults=20`.
+- `manage-bookmarks`
 
 ### `manage-comments`
 
-**Description**: Manages code comments at addresses, functions, or lines, supporting creation, listing, removal, and searching by type or text. This tool enhances documentation with pre/post/plate/eol/repeatable types, aiding in code explanation and collaboration. Batch operations and case-sensitive searches make it versatile for large-scale annotation.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`set`, `get`, `remove`, `search`).
-  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `addressOrSymbol` (string, optional): Comment location.
-  - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
-- `function` (string, optional): Function for function-level comments.
-  - Synonyms: `function`, `functionNameOrAddress`.
-- `lineNumber` (integer, optional): Decompilation line number.
-  - Synonyms: `lineNumber`, `linen`.
-- `comment` (string, optional): Comment text.
-  - Synonyms: `comment`
-- `commentType` (string, optional): Type (`pre`, `post`, `plate`, `eol`, `repeatable`).
-  - Synonyms: `commentType`, `commentt`.
-- `comments` (array, optional): Batch comments.
-  - Synonyms: `comments`
-- `start` (string, optional): Range start address.
-  - Synonyms: `start`
-- `end` (string, optional): Range end address.
-  - Synonyms: `end`
-- `commentTypes` (array, optional): Types to filter.
-  - Synonyms: `commentTypes`, `commentt`.
-- `searchText` (string, optional): Search text.
-  - Synonyms: `searchText`, `searcht`.
-- `pattern` (string, optional): Regex pattern.
-  - Synonyms: `pattern`
-- `caseSensitive` (boolean, optional): Case sensitivity (default: false).
-  - Synonyms: `caseSensitive`, `cases`.
-- `maxResults` (integer, optional): Max results (default: 100).
-  - Synonyms: `maxResults`, `maxr`.
-- `overrideMaxFunctionsLimit` (boolean, optional): Override function limits (default: false).
-  - Synonyms: `mode`, `address`, `func`, `line`, `text`, `type`, `batch`, `from`, `to`, `types`, `query`, `regex`.
-- `addressRange` (string, optional): Address range filter (e.g., "0x400000-0x401000").
-  - Synonyms: `addressRange`, `range`, `addrRange`.
-**Overloads**:
-- `set_decompiler_comment(address, comment)` → forwards to `manage-comments`.
-- `set_disassembly_comment(address, comment)` → forwards to `manage-comments`.
-- `get-comments(programPath, addressOrSymbol, addressRange, commentTypes)` → forwards to `manage-comments`.
-- `remove-comment(programPath, addressOrSymbol, commentType)` → forwards to `manage-comments`.
-- `search-comments(programPath, searchText, caseSensitive, commentTypes, maxResults)` → forwards to `manage-comments`.
-- `set-comment(programPath, addressOrSymbol, commentType, comment)` → forwards to `manage-comments`.
-- `set-decompilation-comment(programPath, functionNameOrAddress, lineNumber, commentType, comment)` → forwards to `manage-comments`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `lineNumber` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `commentType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `start` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `end` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `commentTypes` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchText` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `pattern` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `caseSensitive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `overrideMaxFunctionsLimit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressRange` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `set-comment`, `get-comments`, `search-comments`, `manage-comments`, `tool_manage_comments`, `manage_comments_tool`, `cmd_manage_comments`, `run_manage_comments`, `do_manage_comments`, `api_manage_comments`, `mcp_manage_comments`, `ghidra_manage_comments`, `agentdecompile_manage_comments`, `manage_comments_command`, `manage_comments_action`, `set_decompiler_comment`, `set_disassembly_comment`, `remove-comment`, `set-decompilation-comment`
+**Overloads**:
+- `manage-comments(programPath, mode, addressOrSymbol, function, lineNumber, comment, commentType, comments, start, end, commentTypes, searchText, pattern, caseSensitive, maxResults, overrideMaxFunctionsLimit, addressRange)` canonical signature.
+
+**Synonyms**: `manage-comments`
 
 **Examples**:
-- Set comment: `manage-comments programPath="/bin.exe" mode="set" addressOrSymbol="0x401000" commentType="pre" comment="Entry point"`.
-- Search comments: `manage-comments programPath="/bin.exe" mode="search" searchText="crypto" caseSensitive=false`.
+- `manage-comments`
 
 ### `manage-data-types`
 
-**Description**: Manages data types in the program or archives, including listing, applying, or creating types from categories. This tool handles built-in and custom types, subcategories, and archives for structured data analysis. It is key for type propagation and improving decompilation accuracy.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`list`, `apply`, `create`).
-  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `archiveName` (string, optional): Archive name.
-  - Synonyms: `archiveName`, `archiven`.
-- `categoryPath` (string, optional): Category path.
-  - Synonyms: `categoryPath`, `categoryp`.
-- `includeSubcategories` (boolean, optional): Include subs (default: false).
-  - Synonyms: `includeSubcategories`, `includes`.
-- `startIndex` (integer, optional): Start index.
-  - Synonyms: `startIndex`, `starti`.
-- `maxCount` (integer, optional): Max types (default: 100).
-  - Synonyms: `maxCount`, `maxc`.
-- `dataTypeString` (string, optional): Type string for apply/create.
-  - Synonyms: `dataTypeString`, `datats`.
-- `addressOrSymbol` (string, optional): Apply location.
-  - Synonyms: `mode`, `archive`, `category`, `subs`, `offset`, `limit`, `type`, `address`, `addressOrSymbol`
-**Overloads**:
-- `get-data-type-archives(programPath)` → forwards to `manage-data-types`.
-- `get-data-type-by-string(programPath, dataTypeString, archiveName)` → forwards to `manage-data-types`.
-- `get-data-types(programPath, archiveName, categoryPath, includeSubcategories, startIndex, maxCount)` → forwards to `manage-data-types`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `archiveName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `categoryPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeSubcategories` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dataTypeString` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `manage-data-types`, `tool_manage_data_types`, `manage_data_types_tool`, `cmd_manage_data_types`, `run_manage_data_types`, `do_manage_data_types`, `api_manage_data_types`, `mcp_manage_data_types`, `ghidra_manage_data_types`, `agentdecompile_manage_data_types`, `manage_data_types_command`, `manage_data_types_action`, `manage_data_types_op`, `manage_data_types_task`, `execute_manage_data_types`, `get-data-type-archives`, `get-data-type-by-string`, `get-data-types`
+**Overloads**:
+- `manage-data-types(programPath, mode, archiveName, categoryPath, includeSubcategories, startIndex, maxCount, offset, limit, dataTypeString, addressOrSymbol)` canonical signature.
+
+**Synonyms**: `manage-data-types`
 
 **Examples**:
-- List types: `manage-data-types programPath="/bin.exe" mode="list" categoryPath="/structs" includeSubcategories=true`.
+- `manage-data-types`
+
 ### `manage-files`
 
-**Description**: Manages project files and shared-repository workflow with strict filesystem limits. Physical filesystem access is limited to `list`, `import`, and `export`. Project-domain mutation operations (`rename`, `move`, `delete`) target Ghidra project/repository paths (for example `/K1/swkotor.exe`) rather than raw host filesystem paths.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `mode` (string, optional): File operation selector and shared-sync direction (`change-processor`, `rename`, `delete`, `move`, `list`, `import`, `export`, `download-shared`, `pull-shared`, `push-shared`, `sync-shared`, `checkout`, `uncheckout`, `unhijack`, `pull`, `push`, `bidirectional`).
-  - Synonyms: `mode`, `direction`, `syncMode`, `syncDirection`.
-- `filePath` (string, optional): Source path for `import`, output path for `export`, or project-domain source path for `rename`/`move`/`delete`.
-  - Synonyms: `filePath`, `filep`.
-- `path` (string, optional): Primary source/scope path.
-  - Synonyms: `path`, `sourcePath`, `folder`.
-- `destination` (string, optional): Project destination.
-  - Synonyms: `destination`
-- `recursive` (boolean, optional): Recursive (default: false).
-  - Synonyms: `recurse`, `recursive`
-- `dryRun` (boolean, optional): Plan changes without mutating project/shared data.
-  - Synonyms: `dryRun`, `planOnly`, `preview`.
-- `processor` (string, optional): Processor name or full language ID when using `mode="change-processor"`.
-  - Synonyms: `processor`.
-- `languageId` (string, optional): Full Ghidra language ID used by `mode="change-processor"`.
-  - Synonyms: `languageId`, `language`, `lang`.
-- `compilerSpecId` (string, optional): Compiler specification ID override for `mode="change-processor"`.
-  - Synonyms: `compilerSpecId`, `compilerSpec`, `compiler`.
-- `endian` (string, optional): Optional endianness hint (`little`/`big`) retained for compatibility.
-  - Synonyms: `endian`, `byteOrder`.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `path` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `sourcePath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filePath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `content` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `encoding` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `createParents` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `keep` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `force` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exclusive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dryRun` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxResults` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationFolder` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `recursive` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxDepth` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `stripLeadingPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `stripAllContainerPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mirrorFs` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `enableVersionControl` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `exportType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `format` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeParameters` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeVariables` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeComments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `processor` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `languageId` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `compilerSpecId` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `endian` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
 **Overloads**:
-- `manage-files(mode, filePath, path, destination, recursive, dryRun)` canonical signature.
+- `manage-files(mode, path, sourcePath, filePath, programPath, newPath, destinationPath, newName, content, encoding, createParents, keep, force, exclusive, dryRun, maxResults, destinationFolder, recursive, maxDepth, analyzeAfterImport, stripLeadingPath, stripAllContainerPath, mirrorFs, enableVersionControl, exportType, format, includeParameters, includeVariables, includeComments, processor, languageId, compilerSpecId, endian)` canonical signature.
 
-
-**Synonyms**: `manage-files`, `tool_manage_files`, `manage_files_tool`, `cmd_manage_files`, `run_manage_files`, `do_manage_files`, `api_manage_files`, `mcp_manage_files`, `ghidra_manage_files`, `agentdecompile_manage_files`, `manage_files_command`, `manage_files_action`, `manage_files_op`, `manage_files_task`, `execute_manage_files`
+**Synonyms**: `manage-files`
 
 **Examples**:
-- Manage import: `manage-files action="import" filePath="/newfile.exe" destination="/imports"`.
-- List filesystem directory: `manage-files mode="list" path="/work"`.
-- Rename project-domain binary: `manage-files mode="rename" path="/K1/swkotor.exe" newName="k1_win_gog_swkotor.exe"`.
-- Move project-domain binary: `manage-files mode="move" path="/K1/swkotor.exe" newPath="/K1/archive/swkotor.exe"`.
-- Change processor/language: `manage-files mode="change-processor" languageId="x86:LE:64:default" compilerSpecId="gcc"`.
-- Pull shared scope via manage-files: `manage-files action="pull-shared" mode="pull" path="/K1" newPath="/K1" recursive=true`.
-- Push local changes via manage-files: `manage-files action="push-shared" mode="push" path="/K1" recursive=true`.
-- Plan bidirectional sync via manage-files: `manage-files action="sync-shared" mode="bidirectional" path="/K1" dryRun=true`.
+- `manage-files`
+
 ### `manage-function-tags`
 
-**Description**: Manages tags on functions for categorization, such as "crypto" or "network". This tool supports adding, removing, or listing tags, aiding in organization and querying.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `function` (string, required): Function identifier.
-  - Synonyms: `function`
-- `mode` (string, required): Mode (`add`, `remove`, `list`).
-  - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`.
-- `tags` (array or string, optional): Tags to manage.
-  - Synonyms: `identifier`, `action`, `labels`, `tags`
-**Overloads**:
-- `function-tags(programPath, function, mode, tags)` → forwards to `manage-function-tags`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `function` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `tags` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `manage-function-tags`, `tool_manage_function_tags`, `manage_function_tags_tool`, `cmd_manage_function_tags`, `run_manage_function_tags`, `do_manage_function_tags`, `api_manage_function_tags`, `mcp_manage_function_tags`, `ghidra_manage_function_tags`, `agentdecompile_manage_function_tags`, `manage_function_tags_command`, `manage_function_tags_action`, `manage_function_tags_op`, `manage_function_tags_task`, `execute_manage_function_tags`, `function-tags`
+**Overloads**:
+- `manage-function-tags(programPath, function, mode, tags)` canonical signature.
+
+**Synonyms**: `manage-function-tags`
 
 **Examples**:
-- Add tag: `manage-function-tags programPath="/bin.exe" function="0x401000" mode="add" tags=["crypto"]`.
+- `manage-function-tags`
+
 ### `manage-function`
 
-**Description**: Manages function properties, including renaming, setting prototypes, variable types, and propagation across binaries. This tool supports batch operations and creation if missing, essential for cleaning up analysis.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`rename`, `setPrototype`, `setVarType`, `create`).
-  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `address` (string, optional): Function address.
-  - Synonyms: `address`, `addr`, `startAddress`, `targetAddress`, `location`, `offsetAddress`, `addressValue`, `memAddress`, `va`.
-- `functionIdentifier` (string, optional): Identifier.
-  - Synonyms: `functionIdentifier`, `functioni`, `function`, `functionId`, `identifier`, `functionAddress`, `functionNameOrAddress`, `function_name`, `function_address`
-- `name` (string, optional): New name.
-  - Synonyms: `name`
-- `functions` (array, optional): Batch functions.
-  - Synonyms: `functions`
-- `oldName` (string, optional): Old name for rename.
-  - Synonyms: `oldName`, `oldn`.
-- `newName` (string, optional): New name.
-  - Synonyms: `newName`, `newn`, `new_name`.
-- `variableMappings` (object, optional): Var renames.
-  - Synonyms: `variableMappings`, `variablem`.
-- `prototype` (string, optional): Signature.
-  - Synonyms: `prototype`
-- `variableName` (string, optional): Var name.
-  - Synonyms: `variableName`, `variablen`, `variable_name`.
-- `newType` (string, optional): New type.
-  - Synonyms: `newType`, `newt`, `new_type`.
-- `datatypeMappings` (object, optional): Type maps.
-  - Synonyms: `datatypeMappings`, `datatypem`.
-- `archiveName` (string, optional): Archive.
-  - Synonyms: `archiveName`, `archiven`.
-- `createIfNotExists` (boolean, optional): Create if missing (default: false).
-  - Synonyms: `createIfNotExists`, `createine`.
-- `propagate` (boolean, optional): Propagate changes (default: false).
-  - Synonyms: `propagate`
-- `propagateProgramPaths` (array, optional): Target paths.
-  - Synonyms: `propagateProgramPaths`, `propagatepp`.
-- `propagateMaxCandidates` (integer, optional): Max candidates.
-  - Synonyms: `propagateMaxCandidates`, `propagatemc`.
-- `propagateMaxInstructions` (integer, optional): Max instructions.
-  - Synonyms: `mode`, `funcAddr`, `identifier`, `new_name`, `batch`, `old_name`, `vars`, `signature`, `varName`, `type`, `types`, `archive`.
-**Overloads**:
-- `rename_function(old_name, new_name)` → forwards to `manage-function`.
-- `rename_function_by_address(function_address, new_name)` → forwards to `manage-function`.
-- `rename_variable(function_name, old_name, new_name)` → forwards to `manage-function`.
-- `set_function_prototype(function_address, prototype)` → forwards to `manage-function`.
-- `set_local_variable_type(function_address, variable_name, new_type)` → forwards to `manage-function`.
-- `change-variable-datatypes(programPath, functionNameOrAddress, datatypeMappings, archiveName)` → forwards to `manage-function`.
-- `create-function(programPath, address, name)` → forwards to `manage-function`.
-- `rename-variables(programPath, functionNameOrAddress, variableMappings)` → forwards to `manage-function`.
-- `set-function-prototype(programPath, location, signature, createIfNotExists)` → forwards to `manage-function`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `address` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functionIdentifier` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `name` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `functions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `oldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `variableMappings` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `prototype` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `variableName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `datatypeMappings` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `archiveName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `createIfNotExists` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagate` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateProgramPaths` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateMaxCandidates` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateMaxInstructions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `rename-function`, `rename-function-by-address`, `set-function-prototype`, `set-local-variable-type`, `rename-variable`, `manage-function`, `tool_manage_function`, `manage_function_tool`, `cmd_manage_function`, `run_manage_function`, `do_manage_function`, `api_manage_function`, `mcp_manage_function`, `ghidra_manage_function`, `agentdecompile_manage_function`, `change-variable-datatypes`, `create-function`, `rename-variables`, `rename_function`, `rename_function_by_address`, `set_function_prototype`, `set_local_variable_type`, `rename_variable`
+**Overloads**:
+- `manage-function(programPath, mode, address, functionIdentifier, name, functions, oldName, newName, variableMappings, prototype, variableName, newType, datatypeMappings, archiveName, createIfNotExists, propagate, propagateProgramPaths, propagateMaxCandidates, propagateMaxInstructions)` canonical signature.
+
+**Synonyms**: `manage-function`
 
 **Examples**:
-- Rename function: `manage-function programPath="/bin.exe" mode="rename" functionIdentifier="0x401000" newName="main"`.
+- `manage-function`
 
 ### `manage-strings`
 
-**Description**: Manages string definitions, searching, and filtering, including referencing functions. This tool extracts and annotates strings for analysis.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`list`, `search`).
-  - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`.
-- `pattern` (string, optional): Pattern.
-  - Synonyms: `pattern`, `regexPattern`
-- `searchString` (string, optional): Search string.
-  - Synonyms: `searchString`, `searchs`.
-- `filter` (string, optional): Filter.
-  - Synonyms: `filter`
-- `startIndex` (integer, optional): Start.
-  - Synonyms: `startIndex`, `starti`.
-- `maxCount` (integer, optional): Max.
-  - Synonyms: `maxCount`, `maxc`.
-- `offset` (integer, optional): Offset.
-  - Synonyms: `offset`, `startIndex`, `start`, `index`, `from`, `skip`, `cursor`, `begin`, `position`.
-- `limit` (integer, optional): Limit.
-  - Synonyms: `limit`, `maxResults`, `maxCount`, `count`, `size`, `max`, `take`, `cap`, `pageSize`.
-- `includeReferencingFunctions` (boolean, optional): Include refs (default: false).
-  - Synonyms: `action`, `query`, `str`, `pat`, `index`, `count`, `start`, `max`, `refs`, `includeReferencingFunctions`
-**Overloads**:
-- `get-strings(programPath, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
-- `get-strings-by-similarity(programPath, searchString, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
-- `get-strings-count(programPath)` → forwards to `manage-strings`.
-- `search-strings-regex(programPath, regexPattern, startIndex, maxCount, includeReferencingFunctions)` → forwards to `manage-strings`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `pattern` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `searchString` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `query` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeReferencingFunctions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `manage-strings`, `tool_manage_strings`, `manage_strings_tool`, `cmd_manage_strings`, `run_manage_strings`, `do_manage_strings`, `api_manage_strings`, `mcp_manage_strings`, `ghidra_manage_strings`, `agentdecompile_manage_strings`, `manage_strings_command`, `manage_strings_action`, `manage_strings_op`, `manage_strings_task`, `execute_manage_strings`, `get-strings`, `get-strings-by-similarity`, `get-strings-count`, `search-strings-regex`
+**Overloads**:
+- `manage-strings(programPath, mode, pattern, searchString, filter, query, startIndex, maxCount, offset, limit, includeReferencingFunctions)` canonical signature.
+
+**Synonyms**: `manage-strings`
 
 **Examples**:
-- Search strings: `manage-strings programPath="/bin.exe" mode="search" pattern="http" maxResults=50`.
+- `manage-strings`
+
 ### `manage-structures`
 
-**Description**: Manages data structures, parsing C definitions, creating, editing, or applying them. This tool is vital for defining custom structs.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`create`, `apply`, `list`).
-  - Synonyms: `mode`, `action`, `operation`, `command`, `op`, `task`, `intent`, `actionType`, `verb`.
-- `cDefinition` (string, optional): C struct definition.
-  - Synonyms: `cDefinition`, `cd`.
-- `headerContent` (string, optional): Header content.
-  - Synonyms: `headerContent`, `headerc`.
-- `structureName` (string, optional): Name.
-  - Synonyms: `structureName`, `structuren`.
-- `name` (string, optional): Alias.
-  - Synonyms: `name`
-- `size` (integer, optional): Size.
-  - Synonyms: `size`
-- `category` (string, optional): Category.
-  - Synonyms: `category`
-- `packed` (boolean, optional): Packed (default: false).
-  - Synonyms: `packed`
-- `description` (string, optional): Desc.
-  - Synonyms: `description`
-- `fields` (array, optional): Fields.
-  - Synonyms: `fields`
-- `addressOrSymbol` (string, optional): Apply location.
-  - Synonyms: `addressOrSymbol`, `addressos`, `address`, `symbol`, `target`, `nameOrAddress`, `addrOrSym`.
-- `clearExisting` (boolean, optional): Clear existing (default: false).
-  - Synonyms: `clearExisting`, `cleare`.
-- `force` (boolean, optional): Force (default: false).
-  - Synonyms: `force`
-- `nameFilter` (string, optional): Filter.
-  - Synonyms: `nameFilter`, `namef`.
-- `query` (string, optional): Alias for structure-name filter in `mode="list"` (case-insensitive substring).
-  - Synonyms: `query`, `filter`, `search`, `pattern`.
-- `includeBuiltIn` (boolean, optional): Include built-ins (default: false).
-  - Synonyms: `mode`, `cDef`, `header`, `structName`, `sz`, `tp`, `cat`, `pack`, `desc`, `flds`, `addr`, `clear`, `includeBuiltIn`, `query`, `filter`.
-- `fieldName` (string, optional): Field name for add/modify field operations.
-  - Synonyms: `fieldName`, `field`.
-- `dataType` (string, optional): Data type string for field operations.
-  - Synonyms: `dataType`, `fieldType`, `dt`.
-- `offset` (integer, optional): Byte offset for field placement in structure.
-  - Synonyms: `offset`, `fieldOffset`, `byteOffset`.
-- `comment` (string, optional): Comment for structure or field.
-  - Synonyms: `comment`, `fieldComment`.
-- `bitfield` (boolean, optional): Mark field as bitfield (default: false).
-  - Synonyms: `bitfield`, `isBitfield`.
-- `newDataType` (string, optional): New data type for modify-field.
-  - Synonyms: `newDataType`, `newType`.
-- `newFieldName` (string, optional): New name for modify-field.
-  - Synonyms: `newFieldName`, `renameTo`.
-- `newComment` (string, optional): New comment for modify-field.
-  - Synonyms: `newComment`, `updatedComment`.
-- `newLength` (integer, optional): New length for modify-field.
-  - Synonyms: `newLength`, `newSize`.
-**Overloads**:
-- `add-structure-field(programPath, structureName, fieldName, dataType, offset, comment, bitfield)` → forwards to `manage-structures`.
-- `apply-structure(programPath, structureName, addressOrSymbol, clearExisting)` → forwards to `manage-structures`.
-- `create-structure(programPath, name, size, type, category, packed, description)` → forwards to `manage-structures`.
-- `delete-structure(programPath, structureName, force)` → forwards to `manage-structures`.
-- `get-structure-info(programPath, structureName)` → forwards to `manage-structures`.
-- `list-structures(programPath, category, nameFilter, includeBuiltIn)` → forwards to `manage-structures`.
-- `modify-structure-field(programPath, structureName, fieldName, offset, newDataType, newFieldName, newComment, newLength)` → forwards to `manage-structures`.
-- `modify-structure-from-c(programPath, cDefinition)` → forwards to `manage-structures`.
-- `parse-c-header(programPath, headerContent, category)` → forwards to `manage-structures`.
-- `parse-c-structure(programPath, cDefinition, category)` → forwards to `manage-structures`.
-- `validate-c-structure(cDefinition)` → forwards to `manage-structures`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `cDefinition` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `headerContent` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `structureName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `name` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `size` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `type` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `category` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `packed` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `description` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `fields` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `addressOrSymbol` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `clearExisting` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `force` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `nameFilter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeBuiltIn` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `fieldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `dataType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `comment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `bitfield` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newDataType` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newFieldName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newComment` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newLength` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `manage-structures`, `tool_manage_structures`, `manage_structures_tool`, `cmd_manage_structures`, `run_manage_structures`, `do_manage_structures`, `api_manage_structures`, `mcp_manage_structures`, `ghidra_manage_structures`, `agentdecompile_manage_structures`, `manage_structures_command`, `manage_structures_action`, `manage_structures_op`, `manage_structures_task`, `execute_manage_structures`, `add-structure-field`, `apply-structure`, `create-structure`, `delete-structure`, `get-structure-info`, `list-structures`, `modify-structure-field`, `modify-structure-from-c`, `parse-c-header`, `parse-c-structure`, `validate-c-structure`
+**Overloads**:
+- `manage-structures(programPath, mode, cDefinition, headerContent, structureName, name, size, type, category, packed, description, fields, addressOrSymbol, clearExisting, force, nameFilter, includeBuiltIn, fieldName, dataType, offset, comment, bitfield, newDataType, newFieldName, newComment, newLength)` canonical signature.
+
+**Synonyms**: `manage-structures`
 
 **Examples**:
-- Create struct: `manage-structures programPath="/bin.exe" mode="create" cDefinition="struct MyStruct { int x; char y; };"`.
-- List only save-related structures: `manage-structures programPath="/K1/k1_win_gog_swkotor.exe" mode="list" query="Save" limit=30`.
+- `manage-structures`
+
 ### `manage-symbols`
 
-**Description**: Manages symbols, including listing classes/namespaces/imports/exports, renaming, creating labels, and demangling. This tool groups by library, filters defaults, and supports pagination for large symbol tables.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, optional): Path to the program in the project (optional in GUI mode).
-  - Synonyms: `programPath`, `programp`, `program`, `path`, `binaryPath`, `filePath`, `targetProgram`.
-- `mode` (string, required): Mode (`list`, `rename`, `create`, `demangle`).
-  - Synonyms: `mode`, `analysisMode`, `action`, `view`, `operation`, `type`, `kind`, `strategy`, `behaviorMode`.
-- `address` (string, optional): Address.
-  - Synonyms: `address`, `addr`, `startAddress`, `targetAddress`, `location`, `offsetAddress`, `addressValue`, `memAddress`, `va`.
-- `labelName` (string, optional): Label.
-  - Synonyms: `labelName`, `labeln`.
-- `newName` (string, optional): New name.
-  - Synonyms: `newName`, `newn`, `new_name`.
-- `libraryFilter` (string, optional): Library filter.
-  - Synonyms: `libraryFilter`, `libraryf`.
-- `startIndex` (integer, optional): Start.
-  - Synonyms: `startIndex`, `starti`.
-- `offset` (integer, optional): Offset.
-  - Synonyms: `offset`, `startIndex`, `start`, `index`, `from`, `skip`, `cursor`, `begin`, `position`.
-- `limit` (integer, optional): Limit.
-  - Synonyms: `limit`, `maxResults`, `maxCount`, `count`, `size`, `max`, `take`, `cap`, `pageSize`.
-- `groupByLibrary` (boolean, optional): Group by library (default: false).
-  - Synonyms: `groupByLibrary`, `groupbl`.
-- `includeExternal` (boolean, optional): Include externals (default: false).
-  - Synonyms: `includeExternal`, `includee`.
-- `maxCount` (integer, optional): Max count.
-  - Synonyms: `maxCount`, `maxc`.
-- `filterDefaultNames` (boolean, optional): Filter defaults (default: false).
-  - Synonyms: `filterDefaultNames`, `filterdn`.
-- `demangleAll` (boolean, optional): Demangle all (default: false).
-  - Synonyms: `action`, `addr`, `name`, `renameTo`, `library`, `max`, `index`, `start`, `count`, `group`, `extern`, `defaults`.
-**Overloads**:
-- `list_classes(offset, limit)` → forwards to `manage-symbols`.
-- `list_namespaces(offset, limit)` → forwards to `manage-symbols`.
-- `rename_data(address, new_name)` → forwards to `manage-symbols`.
-- `get-symbols(programPath, includeExternal, startIndex, maxCount, filterDefaultNames)` → forwards to `manage-symbols`.
-- `get-symbols-count(programPath, includeExternal, filterDefaultNames)` → forwards to `manage-symbols`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `mode` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `address` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `labelName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `newName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `libraryFilter` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `startIndex` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `maxCount` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `offset` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `groupByLibrary` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeExternal` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `filterDefaultNames` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `demangleAll` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
-**Synonyms**: `list-classes`, `list-namespaces`, `rename-data`, `manage-symbols`, `tool_manage_symbols`, `manage_symbols_tool`, `cmd_manage_symbols`, `run_manage_symbols`, `do_manage_symbols`, `api_manage_symbols`, `mcp_manage_symbols`, `ghidra_manage_symbols`, `agentdecompile_manage_symbols`, `manage_symbols_command`, `manage_symbols_action`, `get-symbols`, `get-symbols-count`, `list_classes`, `list_namespaces`, `rename_data`
+**Overloads**:
+- `manage-symbols(programPath, mode, address, labelName, newName, libraryFilter, startIndex, maxCount, offset, limit, groupByLibrary, includeExternal, filterDefaultNames, demangleAll)` canonical signature.
+
+**Synonyms**: `manage-symbols`
 
 **Examples**:
-- List imports: `manage-symbols programPath="/bin.exe" mode="list" libraryFilter="kernel32"`.
+- `manage-symbols`
 
 ### `match-function`
 
-**Description**: Matches functions across binaries using fingerprints, with similarity thresholds and propagation of names/tags/comments. This tool uses ChromaDB for efficient matching and batch processing.
+**Description**: Matches functions across different builds or binaries (cross-program matching) by **signature** (parameter count and return type), **name**, and **call-graph** (caller/callee names). Does not use byte-level or instruction-level comparison, so it works when addresses, registers, and stack layout differ (e.g. KOTOR 1 vs KOTOR 2). Supports similarity thresholds and propagation of names, tags, comments, prototype, and bookmarks. When multiple target functions share the same signature, candidates are ranked by name match then by call-graph overlap (shared callees/callers). Single-program modes: similar, callers, callees, signature.
 
 **Parameters**:
 - `programPath` (string, optional): Source program.
@@ -1432,7 +1262,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
   - Synonyms: `targetProgramPaths`, `targetpp`.
 - `maxInstructions` (integer, optional): Max instrs.
   - Synonyms: `maxInstructions`, `maxi`.
-- `minSimilarity` (number, optional): Min similarity (default: 0.8).
+- `minSimilarity` (number, optional): Min similarity 0–1 or 0–100 (default: 0.7). Name match = 1.0; same signature only = 0.7; call-graph used to disambiguate.
   - Synonyms: `minSimilarity`, `mins`.
 - `propagateNames` (boolean, optional): Prop names (default: false).
   - Synonyms: `propagateNames`, `propagaten`.
@@ -1456,6 +1286,30 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**:
 - Match function: `match-function programPath="/bin1.exe" functionIdentifier="main" targetProgramPaths=["/bin2.exe"] minSimilarity=0.9 propagateNames=true`.
+### `migrate-metadata`
+
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
+
+**Parameters**:
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `targetProgramPaths` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `minSimilarity` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `limit` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `includeExternals` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateNames` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateTags` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateComments` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagatePrototype` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `propagateBookmarks` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
+**Overloads**:
+- `migrate-metadata(programPath, targetProgramPaths, minSimilarity, limit, includeExternals, propagateNames, propagateTags, propagateComments, propagatePrototype, propagateBookmarks)` canonical signature.
+
+**Synonyms**: `migrate-metadata`
+
+**Examples**:
+- `migrate-metadata`
+
 ### `execute-script`
 
 **Description**: Auto-generated placeholder section from `agentdecompile_cli/registry.py`.
@@ -1473,7 +1327,7 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 ### `open-all-programs-in-code-browser`
 
-**Description**: Opens all project programs in the CodeBrowser tool (GUI mode), for bulk viewing.
+**Description**: GUI-only tool that opens all project programs in the CodeBrowser for bulk viewing. This tool is not advertised in headless/server mode.
 
 **Parameters**:
 - None.
@@ -1489,34 +1343,45 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - Open all: `open-all-programs-in-code-browser`.
 ### `open-program-in-code-browser`
 
-**Description**: Opens a specific program in the CodeBrowser (GUI mode).
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, required): Path.
-  - Synonyms: `path`, `programPath`, `programp`, `program`, `binaryPath`, `filePath`, `targetProgram`.
+- `programPath` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
 **Overloads**:
 - `open-program-in-code-browser(programPath)` canonical signature.
 
-
-**Synonyms**: `open-program-in-code-browser`, `tool_open_program_in_code_browser`, `open_program_in_code_browser_tool`, `cmd_open_program_in_code_browser`, `run_open_program_in_code_browser`, `do_open_program_in_code_browser`, `api_open_program_in_code_browser`, `mcp_open_program_in_code_browser`, `ghidra_open_program_in_code_browser`, `agentdecompile_open_program_in_code_browser`, `open_program_in_code_browser_command`, `open_program_in_code_browser_action`, `open_program_in_code_browser_op`, `open_program_in_code_browser_task`, `execute_open_program_in_code_browser`
+**Synonyms**: `open-program-in-code-browser`
 
 **Examples**:
-- Open program: `open-program-in-code-browser programPath="/bin.exe"`.
+- `open-program-in-code-browser`
+
 ### `open`
 
-**Description**: Opens a program from the project for analysis, supporting GUI integration.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
 **Parameters**:
-- `programPath` (string, required): Path.
-  - Synonyms: `path`, `programPath`, `programp`, `program`, `binaryPath`, `filePath`, `targetProgram`.
+- `path` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `shared` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `extensions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `openAllPrograms` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `destinationFolder` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS. Server always runs incremental analysis on `open` / `import-binary` when Ghidra reports it is needed; program-scoped tools wait on the analysis gate until complete.
+- `enableVersionControl` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverUsername` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverPassword` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverHost` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `serverPort` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `repositoryName` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+
 **Overloads**:
-- `open(programPath)` canonical signature.
+- `open(path, shared, extensions, openAllPrograms, destinationFolder, analyzeAfterImport, enableVersionControl, serverUsername, serverPassword, serverHost, serverPort, repositoryName)` canonical signature.
 
-
-**Synonyms**: `open`, `tool_open`, `open_tool`, `cmd_open`, `run_open`, `do_open`, `api_open`, `mcp_open`, `ghidra_open`, `agentdecompile_open`, `open_command`, `open_action`, `open_op`, `open_task`, `execute_open`, `open_alias_18`
+**Synonyms**: `open`
 
 **Examples**:
-- Open: `open programPath="/bin.exe"`.
+- `open`
+
 ### `read-bytes`
 
 **Description**: Legacy compatibility forward for byte reads. Prefer `inspect-memory` with `mode="read"`.
@@ -1528,6 +1393,22 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 - `read_bytes(binary_name, address, size)` → forwards to `read-bytes`.
 
 **Examples**: `read-bytes programPath="/bin.exe" address="0x404000" length=256`.
+
+### `resolve-modification-conflict`
+
+**Description**: Resolve a modification conflict reported by another tool. Call only when a tool returned a `conflictId` because the change would overwrite custom data; use `resolution=overwrite` to apply the change or `resolution=skip` to discard.
+
+**Parameters**:
+- `conflictId` (string, required): The GUID returned in the conflict response from the modifying tool.
+- `resolution` (string, required): `overwrite` = apply the stored modification; `skip` = discard and remove from store.
+- `programPath` (string, optional): Optional override for program context when resolving.
+
+**Overloads**:
+- `resolve-modification-conflict(conflictId, resolution, programPath)` canonical signature.
+
+
+**Examples**: After `manage-symbols` (rename) returns a conflict, call `resolve-modification-conflict conflictId="<uuid>" resolution=overwrite` to apply, or `resolution=skip` to discard.
+
 ### `search-code`
 
 **Description**: Searches code for patterns in disassembly or pcode.
@@ -1663,20 +1544,26 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 
 **Examples**: `search-symbols programPath="/bin.exe" query="main"`.
 
-### `search-symbols-by-name`
+### `svr-admin`
 
-**Description**: Legacy compatibility forward for name-focused symbol search.
+**Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.
 
-**Parameters**: Same as `manage-symbols`.
-  - Synonyms: All from `manage-symbols`.
+**Parameters**:
+- `args` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `command` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `timeoutSeconds` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 
 **Overloads**:
-- `search_symbols_by_name(binary_name, query, offset, limit)` → forwards to `search-symbols-by-name`.
+- `svr-admin(args, command, timeoutSeconds)` canonical signature.
 
-**Examples**: `search-symbols-by-name programPath="/bin.exe" query="entry"`.
+**Synonyms**: `svr-admin`
+
+**Examples**:
+- `svr-admin`
+
 ### `suggest`
 
-**Description**: Suggests improvements like names, types, or comments based on context.
+**Description**: Legacy hidden tool (not advertised by default). Enable with `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
 
 **Parameters**:
 - `programPath` (string, optional): Path.
@@ -1694,359 +1581,8 @@ This document provides an exhaustive, consolidated reference for all 42 canonica
 **Overloads**:
 - `suggest(programPath, suggestionType, address, function, dataType, variableAddress)` canonical signature.
 
-
-**Synonyms**: `suggest`, `tool_suggest`, `suggest_tool`, `cmd_suggest`, `run_suggest`, `do_suggest`, `api_suggest`, `mcp_suggest`, `ghidra_suggest`, `agentdecompile_suggest`, `suggest_command`, `suggest_action`, `suggest_op`, `suggest_task`, `execute_suggest`, `suggest_alias_18`
-
 **Examples**:
 - Suggest name: `suggest programPath="/bin.exe" suggestionType="name" address="0x401000"`.
-## Legacy Tool Name Forwards
-
-All names in this section are legacy compatibility forwards.
-
-### `import-file` (forwards to `import-binary`)
-
-**Description**: Forwards to `import-binary` for file import logic.
-
-**Parameters**: Same as `import-binary`.
-  - Synonyms: All from `import-binary`.
-
-**Overloads**:
-- `import-file(...)` alias entry → forwards to `import-binary` with the same supported parameters.
-
-**Examples**: Same as `import-binary`.
-
-### `read-bytes` (forwards to `inspect-memory`)
-
-**Description**: Forwards to `inspect-memory` for raw byte reading (`mode="read"`).
-
-**Parameters**: Same as `inspect-memory` read-mode semantics.
-  - Synonyms: All compatible forms from `read-bytes` and `inspect-memory`.
-
-**Overloads**:
-- `read-bytes(...)` alias entry → forwards to `inspect-memory` with the same supported parameters.
-
-
-**Examples**: Same as `inspect-memory` read mode.
-
-### `list-classes` (forwards to `manage-symbols`)
-
-**Description**: Forwards to `manage-symbols` with mode for classes.
-
-**Parameters**: Same as `manage-symbols`, with `mode` preset to classes.
-  - Synonyms: All from `manage-symbols`, plus `classes` for mode.
-
-**Overloads**:
-- `list-classes(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
-
-
-**Examples**: `list-classes programPath="/bin.exe" maxResults=50`.
-
-### `list-namespaces` (forwards to `manage-symbols`)
-
-**Description**: Forwards to `manage-symbols` with mode for namespaces.
-
-**Parameters**: Same as `manage-symbols`, with `mode` preset to namespaces.
-  - Synonyms: All from `manage-symbols`, plus `namespaces` for mode.
-
-**Overloads**:
-- `list-namespaces(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
-
-
-**Examples**: `list-namespaces programPath="/bin.exe"`.
-
-### `rename-data` (forwards to `manage-symbols`)
-
-**Description**: Forwards to `manage-symbols` for data renaming.
-
-**Parameters**: Same as `manage-symbols`, with `mode` preset to rename_data.
-  - Synonyms: All from `manage-symbols`, plus `rename_data` for mode.
-
-**Overloads**:
-- `rename-data(...)` alias entry → forwards to `manage-symbols` with the same supported parameters.
-
-
-**Examples**: `rename-data programPath="/bin.exe" address="0x404000" newName="sbox"`.
-
-### `search-functions-by-name` (forwards to `search-symbols`)
-
-**Description**: Forwards to `search-symbols` for function subset.
-
-**Parameters**: Same as `search-symbols`.
-  - Synonyms: All from `search-symbols`.
-
-**Overloads**:
-- `search-functions-by-name(...)` alias entry → forwards to `search-symbols` with the same supported parameters.
-
-
-**Examples**: Same as `search-symbols`.
-
-### `get-function-by-address` (forwards to `get-functions`)
-
-**Description**: Forwards to `get-functions` for single function by address.
-
-**Parameters**: Same as `get-functions`.
-  - Synonyms: All from `get-functions`.
-
-**Overloads**:
-- `get-function-by-address(...)` alias entry → forwards to `get-functions` with the same supported parameters.
-
-
-**Examples**: Same as `get-functions`.
-
-### `find-function` (forwards to `get-functions`)
-
-**Description**: Forwards to `get-functions`.
-
-**Parameters**: Same as `get-functions`.
-  - Synonyms: All from `get-functions`.
-
-**Overloads**:
-- `find-function(...)` alias entry → forwards to `get-functions` with the same supported parameters.
-
-
-**Examples**: Same as `get-functions`.
-
-### `rename-function` (forwards to `manage-function`)
-
-**Description**: Forwards to `manage-function` for rename.
-
-**Parameters**: Same as `manage-function`, with `action` preset to rename.
-  - Synonyms: All from `manage-function`.
-
-**Overloads**:
-- `rename-function(...)` alias entry → forwards to `manage-function` with the same supported parameters.
-
-
-**Examples**: Same as `manage-function`.
-
-### `rename-function-by-address` (forwards to `manage-function`)
-
-**Description**: Forwards to `manage-function` for rename by address.
-
-**Parameters**: Same as `manage-function`.
-  - Synonyms: All from `manage-function`.
-
-**Overloads**:
-- `rename-function-by-address(...)` alias entry → forwards to `manage-function` with the same supported parameters.
-
-
-**Examples**: Same as `manage-function`.
-
-### `set-function-prototype` (forwards to `manage-function`)
-
-**Description**: Forwards to `manage-function` for prototype setting.
-
-**Parameters**: Same as `manage-function`, with `action` preset to setPrototype.
-  - Synonyms: All from `manage-function`.
-
-**Overloads**:
-- `set-function-prototype(...)` alias entry → forwards to `manage-function` with the same supported parameters.
-
-
-**Examples**: Same as `manage-function`.
-
-### `set-local-variable-type` (forwards to `manage-function`)
-
-**Description**: Forwards to `manage-function` for local var type.
-
-**Parameters**: Same as `manage-function`.
-  - Synonyms: All from `manage-function`.
-
-**Overloads**:
-- `set-local-variable-type(...)` alias entry → forwards to `manage-function` with the same supported parameters.
-
-
-**Examples**: Same as `manage-function`.
-
-### `rename-variable` (forwards to `manage-function`)
-
-**Description**: Forwards to `manage-function` for var rename.
-
-**Parameters**: Same as `manage-function`.
-  - Synonyms: All from `manage-function`.
-
-**Overloads**:
-- `rename-variable(...)` alias entry → forwards to `manage-function` with the same supported parameters.
-
-
-**Examples**: Same as `manage-function`.
-
-### `list-methods` (forwards to `list-functions`)
-
-**Description**: Forwards to `list-functions` for methods.
-
-**Parameters**: Same as `list-functions`.
-  - Synonyms: All from `list-functions`.
-
-**Overloads**:
-- `list-methods(...)` alias entry → forwards to `list-functions` with the same supported parameters.
-
-
-**Examples**: Same as `list-functions`.
-
-### `get-all-functions` (forwards to `list-functions`)
-
-**Description**: Forwards to `list-functions` for all.
-
-**Parameters**: Same as `list-functions`.
-  - Synonyms: All from `list-functions`.
-
-**Overloads**:
-- `get-all-functions(...)` alias entry → forwards to `list-functions` with the same supported parameters.
-
-
-**Examples**: Same as `list-functions`.
-
-### `get-decompilation` (forwards to `decompile-function`)
-
-**Description**: Forwards to `decompile-function`.
-
-**Parameters**: Same as `decompile-function`.
-  - Synonyms: All from `decompile-function`.
-
-**Overloads**:
-- `get-decompilation(...)` alias entry → forwards to `decompile-function` with the same supported parameters.
-
-
-**Examples**: Same as `decompile-function`.
-
-### `set-comment` (forwards to `manage-comments`)
-
-**Description**: Forwards to `manage-comments` for set.
-
-**Parameters**: Same as `manage-comments`, with `action` preset to set.
-  - Synonyms: All from `manage-comments`.
-
-**Overloads**:
-- `set-comment(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
-
-
-**Examples**: Same as `manage-comments`.
-
-### `get-comments` (forwards to `manage-comments`)
-
-**Description**: Forwards to `manage-comments` for get.
-
-**Parameters**: Same as `manage-comments`, with `action` preset to get.
-  - Synonyms: All from `manage-comments`.
-
-**Overloads**:
-- `get-comments(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
-
-
-**Examples**: Same as `manage-comments`.
-
-### `search-comments` (forwards to `manage-comments`)
-
-**Description**: Forwards to `manage-comments` for search.
-
-**Parameters**: Same as `manage-comments`, with `action` preset to search.
-  - Synonyms: All from `manage-comments`.
-
-**Overloads**:
-- `search-comments(...)` alias entry → forwards to `manage-comments` with the same supported parameters.
-
-
-**Examples**: Same as `manage-comments`.
-
-### `get-call-tree` (forwards to `get-call-graph`)
-
-**Description**: Forwards to `get-call-graph` for tree mode.
-
-**Parameters**: Same as `get-call-graph`, with `mode` preset to tree.
-  - Synonyms: All from `get-call-graph`.
-
-**Overloads**:
-- `get-call-tree(...)` alias entry → forwards to `get-call-graph` with the same supported parameters.
-
-
-**Examples**: Same as `get-call-graph`.
-
-### `find-common-callers` (forwards to `get-call-graph`)
-
-**Description**: Forwards to `get-call-graph` for common_callers.
-
-**Parameters**: Same as `get-call-graph`, with `mode` preset to common_callers.
-  - Synonyms: All from `get-call-graph`.
-
-**Overloads**:
-- `find-common-callers(...)` alias entry → forwards to `get-call-graph` with the same supported parameters.
-
-
-**Examples**: Same as `get-call-graph`.
-
-### `set-bookmark` (forwards to `manage-bookmarks`)
-
-**Description**: Forwards to `manage-bookmarks` for create.
-
-**Parameters**: Same as `manage-bookmarks`, with `action` preset to create.
-  - Synonyms: All from `manage-bookmarks`.
-
-**Overloads**:
-- `set-bookmark(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
-
-
-**Examples**: Same as `manage-bookmarks`.
-
-### `get-bookmarks` (forwards to `manage-bookmarks`)
-
-**Description**: Forwards to `manage-bookmarks` for list.
-
-**Parameters**: Same as `manage-bookmarks`, with `action` preset to list.
-  - Synonyms: All from `manage-bookmarks`.
-
-**Overloads**:
-- `get-bookmarks(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
-
-
-**Examples**: Same as `manage-bookmarks`.
-
-### `remove-bookmark` (forwards to `manage-bookmarks`)
-
-**Description**: Forwards to `manage-bookmarks` for remove.
-
-**Parameters**: Same as `manage-bookmarks`, with `action` preset to remove.
-  - Synonyms: All from `manage-bookmarks`.
-
-**Overloads**:
-- `remove-bookmark(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
-
-
-**Examples**: Same as `manage-bookmarks`.
-
-### `search-bookmarks` (forwards to `manage-bookmarks`)
-
-**Description**: Forwards to `manage-bookmarks` for search.
-
-**Parameters**: Same as `manage-bookmarks`, with `action` preset to search.
-  - Synonyms: All from `manage-bookmarks`.
-
-**Overloads**:
-- `search-bookmarks(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
-
-
-**Examples**: Same as `manage-bookmarks`.
-
-### `list-bookmark-categories` (forwards to `manage-bookmarks`)
-
-**Description**: Forwards to `manage-bookmarks` for category listing.
-
-**Parameters**: Same as `manage-bookmarks`.
-  - Synonyms: All from `manage-bookmarks`.
-
-**Overloads**:
-- `list-bookmark-categories(...)` alias entry → forwards to `manage-bookmarks` with the same supported parameters.
-
-
-**Examples**: `list-bookmark-categories programPath="/bin.exe" type="Analysis"`.
-
-## Parameter Normalization Notes (Applies to All Tools)
-
-Parameters are normalized via `normalize_identifier()`: casing-insensitive, separators ignored (e.g., `programPath` = `program_path` = `program-path`). Common synonyms include `programPath/binaryName/binary/program`, `mode/action/type`, `address/addressOrSymbol/symbol/target`, `limit/maxResults/maxCount/count`, `offset/startIndex/start`, `query/searchString/pattern/filter/q`.
-
-## Tool Consolidation Summary
-
-Consolidated groups: Symbols (`manage-symbols`), Strings (`manage-strings`), Functions (`list-functions`, `manage-function`, etc.), Memory (`inspect-memory`), Project/GUI (`open`, `list-project-files`, etc.), References (`get-references`), Types (`manage-data-types`, `manage-structures`), Annotations (`manage-comments`, `manage-bookmarks`), Flow/Graph (`analyze-data-flow`, `get-call-graph`, etc.).
 
 ## Usage Tips
 
@@ -2072,7 +1608,7 @@ Consolidated groups: Symbols (`manage-symbols`), Strings (`manage-strings`), Fun
 
 ### Manage Functions and Variables
 
-`manage-function` to rename and set prototype.
+`rename-function` and `set-function-prototype` to rename and set prototype.
 
 ### Transfer Analysis Across Similar Binaries
 
@@ -2122,7 +1658,7 @@ Follow this workflow using AgentDecompile MCP tools:
   - **Suspicious Keywords**: admin, password, credential, token, crypto, encrypt, decrypt, download, execute, inject, shellcode, payload
 
 #### 4. Survey Symbols and Imports
-- Use `manage-symbols` with `mode='imports'` to list external symbols
+- Use `list-imports` to list external symbols
 - Use `list-imports` for library-specific imports
 - Focus on external symbols (imports from libraries)
 - Flag interesting/suspicious imports by category:
@@ -2203,9 +1739,9 @@ Ask yourself:
 #### 3. IMPROVE - Make Small Database Changes (1-3 tool calls)
 Prioritize clarity improvements:
 ```
-manage-function with mode='rename_variable': var_1 → encryption_key, iVar2 → buffer_size
-manage-function with mode='set_variable_type': local_10 from undefined4 to uint32_t
-manage-function with mode='set_prototype': void FUN_00401234(uint8_t* data, size_t len)
+rename-variable: var_1 → encryption_key, iVar2 → buffer_size
+set-local-variable-type: local_10 from undefined4 to uint32_t
+set-function-prototype: void FUN_00401234(uint8_t* data, size_t len)
 apply-data-type: Apply uint8_t[256] to S-box constant
 manage-comments with mode='set': Document key findings in code
 ```
@@ -2248,8 +1784,8 @@ Every 3-5 tool calls, ask:
 **Investigation:**
 3. Identify key operations (loops, conditionals, API calls)
 4. Check strings/constants referenced: `get-data`, `inspect-memory`
-5. Use `manage-function` to rename variables based on usage patterns
-6. Use `manage-function` to fix variable types where evident from operations
+5. Use `rename-variable` to rename variables based on usage patterns
+6. Use `set-local-variable-type` to fix variable types where evident from operations
 7. Use `manage-comments` to document behavior
 
 **Synthesis:**
@@ -2738,213 +2274,7 @@ Calculate jump address to shellcode
 
 ---
 
-*These skills leverage the AgentDecompile MCP tools to provide systematic, evidence-based approaches to various reverse engineering challenges. Refer to the canonical tool entries above for detailed parameter documentation.*
-## Canonical Tools
-
-### `analyze-data-flow`
-**Overloads**:
-- `analyze-data-flow()` canonical signature.
-
-### `analyze-program`
-**Overloads**:
-- `analyze-program()` canonical signature.
-
-### `analyze-vtables`
-**Overloads**:
-- `analyze-vtables()` canonical signature.
-
-### `apply-data-type`
-**Overloads**:
-- `apply-data-type()` canonical signature.
-
-### `change-processor`
-**Overloads**:
-- `change-processor()` canonical signature.
-
-### `checkin-program`
-**Overloads**:
-- `checkin-program()` canonical signature.
-
-### `checkout-program`
-**Overloads**:
-- `checkout-program()` canonical signature.
-
-### `checkout-status`
-**Overloads**:
-- `checkout-status()` canonical signature.
-
-### `create-label`
-**Overloads**:
-- `create-label()` canonical signature.
-
-### `decompile-function`
-**Overloads**:
-- `decompile-function()` canonical signature.
-
-### `sync-project`
-**Overloads**:
-- `sync-project()` canonical signature.
-
-### `export`
-**Overloads**:
-- `export()` canonical signature.
-
-### `delete-project-binary`
-**Overloads**:
-- `delete-project-binary()` canonical signature.
-
-### `gen-callgraph`
-**Overloads**:
-- `gen-callgraph()` canonical signature.
-
-### `get-call-graph`
-**Overloads**:
-- `get-call-graph()` canonical signature.
-
-### `get-current-address`
-**Overloads**:
-- `get-current-address()` canonical signature.
-
-### `get-current-function`
-**Overloads**:
-- `get-current-function()` canonical signature.
-
-### `get-current-program`
-**Overloads**:
-- `get-current-program()` canonical signature.
-
-### `get-data`
-**Overloads**:
-- `get-data()` canonical signature.
-
-### `get-functions`
-**Overloads**:
-- `get-functions()` canonical signature.
-
-### `get-references`
-**Overloads**:
-- `get-references()` canonical signature.
-
-### `import-binary`
-**Overloads**:
-- `import-binary()` canonical signature.
-
-### `inspect-memory`
-**Overloads**:
-- `inspect-memory()` canonical signature.
-
-### `list-cross-references`
-**Overloads**:
-- `list-cross-references()` canonical signature.
-
-### `list-exports`
-**Overloads**:
-- `list-exports()` canonical signature.
-
-### `list-functions`
-**Overloads**:
-- `list-functions()` canonical signature.
-
-### `list-imports`
-**Overloads**:
-- `list-imports()` canonical signature.
-
-### `list-project-files`
-**Overloads**:
-- `list-project-files()` canonical signature.
-
-### `list-processors`
-**Overloads**:
-- `list-processors()` canonical signature.
-
-### `list-strings`
-**Overloads**:
-- `list-strings()` canonical signature.
-
-### `manage-bookmarks`
-**Overloads**:
-- `manage-bookmarks()` canonical signature.
-
-### `manage-comments`
-**Overloads**:
-- `manage-comments()` canonical signature.
-
-### `manage-data-types`
-**Overloads**:
-- `manage-data-types()` canonical signature.
-
-### `manage-files`
-**Overloads**:
-- `manage-files()` canonical signature.
-
-### `manage-function-tags`
-**Overloads**:
-- `manage-function-tags()` canonical signature.
-
-### `manage-function`
-**Overloads**:
-- `manage-function()` canonical signature.
-
-### `manage-strings`
-**Overloads**:
-- `manage-strings()` canonical signature.
-
-### `manage-structures`
-**Overloads**:
-- `manage-structures()` canonical signature.
-
-### `manage-symbols`
-**Overloads**:
-- `manage-symbols()` canonical signature.
-
-### `match-function`
-**Overloads**:
-- `match-function()` canonical signature.
-
-### `execute-script`
-**Overloads**:
-- `execute-script()` canonical signature.
-
-### `open-all-programs-in-code-browser`
-**Overloads**:
-- `open-all-programs-in-code-browser()` canonical signature.
-
-### `open-program-in-code-browser`
-**Overloads**:
-- `open-program-in-code-browser()` canonical signature.
-
-### `open-project`
-**Overloads**:
-- `open-project()` canonical signature.
-
-### `read-bytes`
-**Overloads**:
-- `read-bytes()` canonical signature.
-
-### `search-code`
-**Overloads**:
-- `search-code()` canonical signature.
-
-### `search-constants`
-**Overloads**:
-- `search-constants()` canonical signature.
-
-### `search-everything`
-**Overloads**:
-- `search-everything()` canonical signature.
-
-### `search-strings`
-**Overloads**:
-- `search-strings()` canonical signature.
-
-### `search-symbols`
-**Overloads**:
-- `search-symbols()` canonical signature.
-
-### `suggest`
-**Overloads**:
-- `suggest()` canonical signature.
-
-
 **Examples**:
 - `checkout-status`
+
+

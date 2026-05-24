@@ -1,75 +1,620 @@
-"""Debug Info Resource Provider - Python MCP implementation."""
+"""Debug Info Resource Provider - Python MCP implementation.
+
+Exposes MCP resources that clients can read via resources/read:
+  - agentdecompile://debug-info: Combined debug/session info (server uptime, session ID,
+    open programs, auth context, version control workflow docs, profiling paths, etc.).
+  - ghidra://programs: List of open programs (delegates to ProgramListResource).
+  - ghidra://static-analysis-results: Static analysis summary (delegates to StaticAnalysisResultsResource).
+
+Used by IDEs and agents to show "current state" without calling a tool. Legacy URIs
+(ghidra://agentdecompile-debug-info, etc.) are supported for backward compatibility.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 
-from mcp import types
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
-from ..resource_providers import ResourceProvider
+from mcp import types
+from pydantic import AnyUrl
+
+from agentdecompile_cli.mcp_server.auth import get_current_auth_context
+from agentdecompile_cli.mcp_server.profiling import get_profile_analyzer_path, get_profile_storage_dir, list_recent_profiles
+from agentdecompile_cli.mcp_server.resource_providers import ResourceProvider
+from agentdecompile_cli.mcp_server.resources.programs import ProgramListResource
+from agentdecompile_cli.mcp_server.resources.static_analysis import StaticAnalysisResultsResource
+from agentdecompile_cli.mcp_server.session_context import (
+    SESSION_CONTEXTS,
+    get_current_mcp_session_id,
+    get_current_request_project_path_override,
+    is_shared_server_handle,
+)
+from agentdecompile_cli.registry import RESOURCE_URI_DEBUG_INFO, Tool
 
 logger = logging.getLogger(__name__)
 
+# Legacy URIs still accepted so existing clients keep working; read_resource dispatches by URI to the right payload
+_LEGACY_PROGRAMS_URI = "ghidra://programs"
+_LEGACY_STATIC_ANALYSIS_URI = "ghidra://static-analysis-results"
+_LEGACY_DEBUG_INFO_URI = "ghidra://agentdecompile-debug-info"
+_SUPPORTED_URIS = frozenset(
+    {
+        RESOURCE_URI_DEBUG_INFO,
+        _LEGACY_PROGRAMS_URI,
+        _LEGACY_STATIC_ANALYSIS_URI,
+        _LEGACY_DEBUG_INFO_URI,
+    },
+)
+
+_VERSION_CONTROL_TOOLS_DOC = {
+    "summary": "Checkout and checkin apply when the project is connected to a shared Ghidra Server repository. Use checkout before modifying a program; use checkin to commit changes.",
+    "tools": [
+        {
+            "name": "checkout-program",
+            "description": "Check out a versioned program from the shared repository so it can be modified. Required before making changes when using a version-controlled project.",
+            "parameters": ["program_path", "exclusive"],
+            "when": "Before editing (rename, comments, tags, prototype, etc.) a program that lives in the shared repo.",
+        },
+        {
+            "name": "checkin-program",
+            "description": "Commit local changes to the shared repository, creating a new version. Use after checkout and edits.",
+            "parameters": ["program_path", "comment", "keep_checked_out"],
+            "when": "After making changes to a checked-out program; comment is the commit message.",
+        },
+        {
+            "name": "checkout-status",
+            "description": "Query whether a program is versioned, checked out, by whom, and if it has local modifications.",
+            "parameters": ["program_path"],
+            "when": "To see if a program is checked out before editing or to confirm state after checkout/checkin.",
+        },
+        {
+            "name": Tool.MANAGE_FILES.value,
+            "description": "Unified file operations; use mode=checkout or mode=uncheckout as alternatives to checkout-program / checkin-program.",
+            "parameters": ["mode", "programPath", "path", "exclusive", "keep", "force"],
+            "modesRelevantToVersionControl": ["checkout", "uncheckout", "unhijack"],
+        },
+    ],
+    "workflow": '1. open (with shared server). 2. checkout-program program_path=<path>. 3. Make changes (rename-function, manage-comments, etc.). 4. checkin-program program_path=<path> comment="Description of changes".',
+}
+
 
 class DebugInfoResource(ResourceProvider):
-    """MCP resource provider for comprehensive debug information."""
+    """MCP resource provider for comprehensive debug information.
+
+    Serves agentdecompile://debug-info (and legacy URIs) with session state, open programs,
+    auth context, version-control workflow docs, and profiling info. Delegates programs
+    and static-analysis sub-resources to ProgramListResource and StaticAnalysisResultsResource.
+    """
 
     def __init__(self, *args, **kwargs):
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.__init__")
         super().__init__(*args, **kwargs)
         self._start_time: float = time.time()
         self._resource_read_count: int = 0
+        self._programs_resource: ProgramListResource = ProgramListResource()
+        self._static_analysis_resource: StaticAnalysisResultsResource = StaticAnalysisResultsResource()
+
+    def set_program_info(self, program_info) -> None:
+        """Forward program_info to sub-resources so ghidra://programs and ghidra://static-analysis-results see the same program."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_program_info")
+        super().set_program_info(program_info)
+        self._programs_resource.set_program_info(program_info)
+        self._static_analysis_resource.set_program_info(program_info)
+
+    def set_tool_provider_manager(self, tool_provider_manager: Any) -> None:
+        """Forward manager to sub-resources so list-project-files / get-current-program and programs/static-analysis can call tools."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_tool_provider_manager")
+        super().set_tool_provider_manager(tool_provider_manager)
+        self._programs_resource.set_tool_provider_manager(tool_provider_manager)
+        self._static_analysis_resource.set_tool_provider_manager(tool_provider_manager)
+
+    def set_runtime_context(self, runtime_context: dict[str, Any]) -> None:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.set_runtime_context")
+        super().set_runtime_context(runtime_context)
+        self._programs_resource.set_runtime_context(runtime_context)
+        self._static_analysis_resource.set_runtime_context(runtime_context)
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of debug info resources."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.list_resources")
         return [
             types.Resource(
-                uri="ghidra://agentdecompile-debug-info",
+                uri=AnyUrl(url=RESOURCE_URI_DEBUG_INFO),
                 name="AgentDecompile Debug Info",
-                description="Comprehensive debug information for AgentDecompile including server state, program analysis, and resource metrics",
+                description="Unified AgentDecompile resource with forced open diagnostics, project inventory, program state, and profiling details",
                 mimeType="application/json",
             ),
         ]
 
     async def read_resource(self, uri: str) -> str:
         """Read the debug info resource with comprehensive state information."""
-        if uri != "ghidra://agentdecompile-debug-info":
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource.read_resource")
+        uri_text = str(uri)
+        if uri_text not in _SUPPORTED_URIS:
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        logger.info(f"DebugInfoResource: reading resource for URI {uri}")
+        logger.info("DebugInfoResource: reading resource for URI %s", uri_text)
         self._resource_read_count += 1
+        open_project_attempt = await self._force_open_project(uri_text)
+
+        if uri_text == _LEGACY_PROGRAMS_URI:
+            logger.info("DebugInfoResource: serving legacy programs alias after open attempt")
+            return await self._programs_resource.read_resource(uri_text)
+
+        if uri_text == _LEGACY_STATIC_ANALYSIS_URI:
+            logger.info("DebugInfoResource: serving legacy static-analysis alias after open attempt")
+            return await self._static_analysis_resource.read_resource(uri_text)
 
         try:
-            # Build comprehensive debug info
+            list_project_files = await self._safe_tool_call(
+                Tool.LIST_PROJECT_FILES.value,
+                {"folder": "/", "maxResults": 250, "format": "json"},
+            )
+            current_program = await self._safe_tool_call(
+                Tool.GET_CURRENT_PROGRAM.value,
+                {"format": "json"},
+            )
+            legacy_programs = await self._safe_load_json_resource(self._programs_resource, _LEGACY_PROGRAMS_URI)
+            legacy_static_analysis = await self._safe_load_json_resource(self._static_analysis_resource, _LEGACY_STATIC_ANALYSIS_URI)
+            version_control = await self._get_version_control_state(current_program, list_project_files)
+
             debug_info = {
                 "metadata": self._get_metadata(),
+                "request": self._get_request_state(uri_text),
+                "openProject": open_project_attempt,
                 "server": self._get_server_state(),
-                "program": self._get_program_state(),
-                "analysis": self._get_analysis_state(),
+                "runtime": self._get_runtime_state(),
+                "session": self._get_session_state(),
+                "project": self._get_project_state(list_project_files),
+                "versionControl": version_control,
+                "programCatalog": legacy_programs,
+                "program": self._get_program_state(current_program),
+                "analysis": self._get_analysis_state(legacy_static_analysis),
+                "profiling": self._get_profiling_state(),
                 "resources": self._get_resource_metrics(),
             }
 
             result = json.dumps(debug_info, indent=2)
-            logger.info(f"DebugInfoResource: successfully generated debug info, {len(result)} bytes")
+            logger.info("DebugInfoResource: successfully generated debug info, %d bytes", len(result))
             return result
         except Exception as e:
-            logger.error(f"DebugInfoResource: Error generating debug info: {e}", exc_info=True)
+            logger.error("DebugInfoResource: Error generating debug info: %s", e, exc_info=True)
             # Return minimal debug info on error
             fallback_info = {
                 "metadata": self._get_metadata(),
+                "request": self._get_request_state(uri_text),
+                "openProject": open_project_attempt,
                 "server": {"status": "error", "error": str(e)},
+                "runtime": self._get_runtime_state(),
+                "session": self._get_session_state(),
+                "project": {"status": "error"},
+                "versionControl": {"status": "error", "error": str(e), "toolsDocumentation": _VERSION_CONTROL_TOOLS_DOC},
                 "program": {"status": "error"},
                 "analysis": {"status": "error"},
+                "profiling": {"status": "error"},
                 "resources": {"read_count": self._resource_read_count},
             }
             return json.dumps(fallback_info, indent=2)
 
+    async def _safe_load_json_resource(self, provider: ResourceProvider, uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._safe_load_json_resource")
+        try:
+            raw = await provider.read_resource(uri)
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {"value": parsed}
+        except Exception as exc:
+            logger.warning("DebugInfoResource: failed to load resource %s: %s", uri, exc)
+            return {"status": "error", "uri": uri, "error": str(exc)}
+
+    async def _safe_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._safe_tool_call")
+        if self.tool_provider_manager is None:
+            return {
+                "tool": tool_name,
+                "attempted": False,
+                "success": False,
+                "error": "tool_provider_manager unavailable",
+                "attemptedAt": self._iso_now(),
+            }
+
+        start_epoch = time.time()
+        attempted_at = self._iso_from_epoch(start_epoch)
+        payload = dict(arguments or {})
+        payload.setdefault("format", "json")
+        sanitized_payload = self._sanitize_sensitive(payload)
+        logger.info("DebugInfoResource: calling %s with args=%s", tool_name, sanitized_payload)
+        try:
+            response = await self.tool_provider_manager.call_tool(tool_name, payload)
+            raw_response_text = self._extract_tool_response_text(response)
+            parsed = self._parse_tool_response(response)
+            success = self._tool_response_succeeded(parsed)
+            completed_epoch = time.time()
+            elapsed = round(completed_epoch - start_epoch, 3)
+            logger.info(
+                "DebugInfoResource: tool %s completed success=%s in %.3fs",
+                tool_name,
+                success,
+                elapsed,
+            )
+            return {
+                "tool": tool_name,
+                "attempted": True,
+                "success": success,
+                "attemptedAt": attempted_at,
+                "completedAt": self._iso_from_epoch(completed_epoch),
+                "durationSeconds": elapsed,
+                "arguments": sanitized_payload,
+                "rawResponseText": raw_response_text,
+                "response": parsed,
+                "failureDetails": self._build_failure_details(parsed) if not success else None,
+            }
+        except Exception as exc:
+            completed_epoch = time.time()
+            elapsed = round(completed_epoch - start_epoch, 3)
+            logger.error("DebugInfoResource: tool %s failed after %.3fs: %s", tool_name, elapsed, exc, exc_info=True)
+            return {
+                "tool": tool_name,
+                "attempted": True,
+                "success": False,
+                "attemptedAt": attempted_at,
+                "completedAt": self._iso_from_epoch(completed_epoch),
+                "durationSeconds": elapsed,
+                "arguments": sanitized_payload,
+                "error": str(exc),
+                "failureDetails": {
+                    "summary": str(exc),
+                    "location": {
+                        "tool": tool_name,
+                        "resource": RESOURCE_URI_DEBUG_INFO,
+                    },
+                },
+            }
+
+    async def _force_open_project(self, requested_uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._force_open_project")
+        open_args, source = self._build_open_project_arguments()
+        logger.info(
+            "DebugInfoResource: forcing open for resource=%s source=%s args=%s",
+            requested_uri,
+            source,
+            self._sanitize_sensitive(open_args),
+        )
+        result = await self._safe_tool_call(Tool.OPEN.value, open_args)
+        result["requestedResourceUri"] = requested_uri
+        result["argumentSource"] = source
+        try:
+            parsed_uri = urlparse(requested_uri)
+            uri_scheme = (parsed_uri.scheme or "path").strip() or "path"
+        except Exception:
+            uri_scheme = "unknown"
+        logger.info(
+            "debug_info_open_project ok=%s uri_scheme=%s",
+            bool(result.get("success")),
+            uri_scheme[:48],
+        )
+        return result
+
+    def _build_open_project_arguments(self) -> tuple[dict[str, Any], str]:
+        # Per-request override from proxy (X-AgentDecompile-Project-Path) so proxy env takes effect
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._build_open_project_arguments")
+        request_gpr = get_current_request_project_path_override()
+        if request_gpr:
+            return ({"path": request_gpr}, "request-header:gpr")
+
+        session_id = get_current_mcp_session_id()
+        session_snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=10, tool_history_limit=5)
+        project_handle = session_snapshot.get("projectHandle")
+
+        if isinstance(project_handle, dict):
+            mode = str(project_handle.get("mode") or "")
+            active_program_key = session_snapshot.get("activeProgramKey")
+            if mode == "shared-server":
+                repository_name = str(project_handle.get("repository_name") or "").strip()
+                shared_path = str(active_program_key or repository_name).strip()
+                return (
+                    {
+                        "shared": True,
+                        "serverHost": project_handle.get("server_host"),
+                        "serverPort": project_handle.get("server_port"),
+                        "serverUsername": project_handle.get("server_username"),
+                        "serverPassword": project_handle.get("server_password"),
+                        "repositoryName": repository_name or None,
+                        "path": shared_path or repository_name,
+                    },
+                    "session-project-handle:shared-server",
+                )
+            if mode == "local-gpr":
+                project_path = str(project_handle.get("path") or "").strip()
+                return ({"path": project_path}, "session-project-handle:local-gpr")
+
+        auth_ctx = get_current_auth_context()
+        if auth_ctx is not None and auth_ctx.server_host:
+            shared_path = (session_snapshot.get("activeProgramKey") or auth_ctx.repository or "").strip()
+            return (
+                {
+                    "shared": True,
+                    "serverHost": auth_ctx.server_host,
+                    "serverPort": auth_ctx.server_port,
+                    "serverUsername": auth_ctx.username or None,
+                    "serverPassword": auth_ctx.password,
+                    "repositoryName": auth_ctx.repository or None,
+                    "path": shared_path or auth_ctx.repository,
+                },
+                "auth-context:shared-server",
+            )
+
+        env_host = self._get_env_value(
+            "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+            "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST",
+            "AGENTDECOMPILE_GHIDRA_SERVER_HOST",
+            "AGENT_DECOMPILE_SERVER_HOST",
+            "AGENTDECOMPILE_SERVER_HOST",
+        )
+        if env_host:
+            env_repo = self._get_env_value(
+                "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY",
+                "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                "AGENT_DECOMPILE_REPOSITORY",
+                "AGENTDECOMPILE_REPOSITORY",
+            )
+            shared_path = str(session_snapshot.get("activeProgramKey") or env_repo or "").strip()
+            return (
+                {
+                    "shared": True,
+                    "serverHost": env_host,
+                    "serverPort": self._get_env_value(
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+                        "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT",
+                        "AGENT_DECOMPILE_SERVER_PORT",
+                        "AGENTDECOMPILE_SERVER_PORT",
+                    )
+                    or "13100",
+                    "serverUsername": self._get_env_value(
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                        "AGENT_DECOMPILE_SERVER_USERNAME",
+                        "AGENTDECOMPILE_SERVER_USERNAME",
+                    ),
+                    "serverPassword": self._get_env_value(
+                        "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                        "AGENT_DECOMPILE_SERVER_PASSWORD",
+                        "AGENTDECOMPILE_SERVER_PASSWORD",
+                    ),
+                    "repositoryName": env_repo or None,
+                    "path": shared_path or env_repo,
+                },
+                "environment:shared-server",
+            )
+
+        runtime_gpr = str(self.runtime_context.get("projectPathGpr") or "").strip()
+        if runtime_gpr:
+            return ({"path": runtime_gpr}, "runtime-context:gpr")
+
+        runtime_dir = str(self.runtime_context.get("projectDirectory") or "").strip()
+        runtime_name = str(self.runtime_context.get("projectName") or "").strip()
+        if runtime_dir and runtime_name:
+            synthesized_gpr = str(Path(runtime_dir) / f"{runtime_name}.gpr")
+            return ({"path": synthesized_gpr}, "runtime-context:directory")
+
+        if self.program_info is not None and self.program_info.file_path is not None:
+            return ({"path": str(self.program_info.file_path)}, "program-info:file-path")
+
+        return ({}, "unresolved")
+
+    @staticmethod
+    def _get_env_value(*names: str) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_env_value")
+        for name in names:
+            value = os.getenv(name, "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _parse_tool_response(response: Any) -> Any:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._parse_tool_response")
+        if not isinstance(response, list):
+            return response
+
+        text_parts: list[str] = []
+        for item in response:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                text_parts.append(text)
+
+        if not text_parts:
+            return []
+
+        merged = "\n".join(text_parts)
+        try:
+            return json.loads(merged)
+        except Exception:
+            return {"rawText": merged}
+
+    @staticmethod
+    def _extract_tool_response_text(response: Any) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._extract_tool_response_text")
+        if not isinstance(response, list):
+            return str(response)
+
+        text_parts: list[str] = []
+        for item in response:
+            text = getattr(item, "text", None)
+            if isinstance(text, str) and text:
+                text_parts.append(text)
+        return "\n".join(text_parts)
+
+    @staticmethod
+    def _tool_response_succeeded(parsed: Any) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._tool_response_succeeded")
+        if isinstance(parsed, dict):
+            if parsed.get("success") is False:
+                return False
+            if parsed.get("error"):
+                return False
+        return True
+
+    @staticmethod
+    def _iso_now() -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._iso_now")
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _iso_from_epoch(timestamp: float) -> str:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._iso_from_epoch")
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+    @classmethod
+    def _build_failure_details(cls, parsed: Any) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._build_failure_details")
+        if not isinstance(parsed, dict):
+            return None
+
+        raw_context = parsed.get("context")
+        context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+        summary = parsed.get("error") or parsed.get("message") or "tool call failed"
+        return {
+            "summary": summary,
+            "where": {
+                "provider": context.get("provider") or parsed.get("provider"),
+                "handler": context.get("handler") or parsed.get("handler"),
+                "tool": context.get("canonicalTool") or context.get("tool") or parsed.get("tool"),
+                "connectionStage": context.get("connectionStage") or parsed.get("connectionStage"),
+                "mode": context.get("mode") or parsed.get("mode"),
+                "requestedPath": context.get("requestedPath") or parsed.get("requestedPath"),
+            },
+            "returned": cls._sanitize_sensitive(parsed),
+        }
+
+    @classmethod
+    def _sanitize_sensitive(cls, value: Any) -> Any:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._sanitize_sensitive")
+        if isinstance(value, dict):
+            sanitized: dict[str, Any] = {}
+            for key, item in value.items():
+                lowered = str(key).lower()
+                if "password" in lowered:
+                    sanitized[key] = "***"
+                elif lowered.endswith("adapter"):
+                    sanitized[key] = type(item).__name__ if item is not None else None
+                else:
+                    sanitized[key] = cls._sanitize_sensitive(item)
+            return sanitized
+        if isinstance(value, list):
+            return [cls._sanitize_sensitive(item) for item in value]
+        if isinstance(value, tuple):
+            return [cls._sanitize_sensitive(item) for item in value]
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    async def _get_version_control_state(
+        self,
+        current_program_probe: dict[str, Any] | None,
+        list_project_files: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build version-control (checkout/checkin) section for debug-info: tools doc + status probe.
+
+        Checkout/checkin state is expressed completely here so that reading agentdecompile://debug-info
+        gives full visibility: whether version control applies, current program's checkout state,
+        and which tools to call (checkout-program, checkin-program, checkout-status).
+        """
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_version_control_state")
+        session_id = get_current_mcp_session_id()
+        snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=5, tool_history_limit=5)
+        project_handle = snapshot.get("projectHandle")
+        active_key = snapshot.get("activeProgramKey")
+        is_shared = is_shared_server_handle(project_handle)
+
+        result: dict[str, Any] = {
+            "resourceUri": RESOURCE_URI_DEBUG_INFO,
+            "toolsDocumentation": _VERSION_CONTROL_TOOLS_DOC,
+            "toolNames": {
+                "checkout": "checkout-program",
+                "checkin": "checkin-program",
+                "status": "checkout-status",
+                "manageFilesAlias": "manage-files (mode=checkout | mode=uncheckout)",
+            },
+            "applicable": is_shared,
+            "note": "Checkout/checkin apply only when connected to a shared Ghidra Server repository (open with serverHost/serverPort). Local projects do not use version control." if not is_shared else None,
+            "currentCheckoutState": None,
+            "checkoutStatusProbe": None,
+        }
+
+        program_path: str | None = None
+        if active_key and str(active_key).strip():
+            program_path = str(active_key).strip()
+        if not program_path and isinstance(current_program_probe, dict):
+            resp = current_program_probe.get("response") if isinstance(current_program_probe.get("response"), dict) else None
+            if resp and resp.get("success") is not False:
+                name = resp.get("name") or resp.get("programName")
+                path = resp.get("path") or resp.get("programPath") or resp.get("filePath")
+                if path and str(path).strip():
+                    program_path = str(path).strip()
+                elif name and is_shared and isinstance(list_project_files, dict):
+                    raw_response = list_project_files.get("response")
+                    listing = raw_response if isinstance(raw_response, dict) else list_project_files
+                    files = (listing.get("files") or (listing.get("projectListing") or {}).get("files") or []) if isinstance(listing, dict) else []
+                    for item in files if isinstance(files, list) else []:
+                        if not isinstance(item, dict):
+                            continue
+                        if str(item.get("name") or item.get("path") or "").strip() == str(name).strip():
+                            program_path = str(item.get("path") or item.get("name") or "").strip()
+                            break
+
+        if program_path and is_shared:
+            probe = await self._safe_tool_call(
+                Tool.CHECKOUT_STATUS.value,
+                {"programPath": program_path, "format": "json"},
+            )
+            result["checkoutStatusProbe"] = {
+                "programPath": program_path,
+                "attempted": probe.get("attempted"),
+                "success": probe.get("success"),
+                "response": probe.get("response"),
+                "error": probe.get("error"),
+            }
+            # Express checkout/checkin state completely at top level for agentdecompile://debug-info consumers
+            resp = probe.get("response") if isinstance(probe.get("response"), dict) else None
+            if probe.get("success") and resp and resp.get("action") == "checkout_status":
+                result["currentCheckoutState"] = {
+                    "programPath": program_path,
+                    "program": resp.get("program"),
+                    "is_versioned": resp.get("is_versioned"),
+                    "is_checked_out": resp.get("is_checked_out"),
+                    "is_exclusive": resp.get("is_exclusive"),
+                    "modified_since_checkout": resp.get("modified_since_checkout"),
+                    "can_checkout": resp.get("can_checkout"),
+                    "can_checkin": resp.get("can_checkin"),
+                    "latest_version": resp.get("latest_version"),
+                    "current_version": resp.get("current_version"),
+                    "checkout_status": resp.get("checkout_status"),
+                    "versionControlEnabled": resp.get("versionControlEnabled"),
+                    "note": resp.get("note"),
+                }
+            elif not probe.get("success") or probe.get("error"):
+                result["currentCheckoutState"] = {
+                    "programPath": program_path,
+                    "error": probe.get("error"),
+                    "probeSuccess": probe.get("success"),
+                }
+        return result
+
     def _get_metadata(self) -> dict:
         """Get metadata about the debug info itself."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_metadata")
         return {
-            "version": "2.0.0",
+            "version": "3.0.0",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "agent_decompile_version": "1.1.0",
             "python_version": sys.version,
@@ -78,8 +623,24 @@ class DebugInfoResource(ResourceProvider):
             "encoding": sys.getdefaultencoding(),
         }
 
+    def _get_request_state(self, requested_uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_request_state")
+        session_id = get_current_mcp_session_id()
+        return {
+            "requestedUri": requested_uri,
+            "canonicalUri": RESOURCE_URI_DEBUG_INFO,
+            "legacyCompatibilityUris": [
+                _LEGACY_PROGRAMS_URI,
+                _LEGACY_STATIC_ANALYSIS_URI,
+                _LEGACY_DEBUG_INFO_URI,
+            ],
+            "sessionId": session_id,
+            "resourceReadCount": self._resource_read_count,
+        }
+
     def _get_server_state(self) -> dict:
         """Get server runtime state information."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_server_state")
         uptime_seconds = time.time() - self._start_time
         uptime_hours = uptime_seconds / 3600
         uptime_minutes = (uptime_seconds % 3600) / 60
@@ -91,15 +652,131 @@ class DebugInfoResource(ResourceProvider):
                 "formatted": f"{int(uptime_hours)}h {int(uptime_minutes)}m",
             },
             "resource_reads": self._resource_read_count,
+            "runtimeContextAvailable": bool(self.runtime_context),
         }
 
-    def _get_program_state(self) -> dict | None:
+    def _get_runtime_state(self) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_runtime_state")
+        auth_ctx = get_current_auth_context()
+        auth_state = None
+        if auth_ctx is not None:
+            auth_state = self._sanitize_sensitive(
+                {
+                    "serverHost": auth_ctx.server_host,
+                    "serverPort": auth_ctx.server_port,
+                    "username": auth_ctx.username,
+                    "password": auth_ctx.password,
+                    "repository": auth_ctx.repository,
+                },
+            )
+
+        env_state = self._sanitize_sensitive(
+            {
+                "projectPath": self._get_env_value("AGENT_DECOMPILE_PROJECT_PATH", "AGENTDECOMPILE_PROJECT_PATH"),
+                "sharedServerHost": self._get_env_value(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_HOST",
+                    "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST",
+                    "AGENTDECOMPILE_GHIDRA_SERVER_HOST",
+                    "AGENT_DECOMPILE_SERVER_HOST",
+                    "AGENTDECOMPILE_SERVER_HOST",
+                ),
+                "sharedServerPort": self._get_env_value(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_PORT",
+                    "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT",
+                    "AGENT_DECOMPILE_SERVER_PORT",
+                    "AGENTDECOMPILE_SERVER_PORT",
+                ),
+                "sharedServerRepository": self._get_env_value(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                    "AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY",
+                    "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY",
+                    "AGENT_DECOMPILE_REPOSITORY",
+                    "AGENTDECOMPILE_REPOSITORY",
+                ),
+                "sharedServerUsername": self._get_env_value(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME",
+                    "AGENT_DECOMPILE_SERVER_USERNAME",
+                    "AGENTDECOMPILE_SERVER_USERNAME",
+                ),
+                "sharedServerPassword": self._get_env_value(
+                    "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD",
+                    "AGENT_DECOMPILE_SERVER_PASSWORD",
+                    "AGENTDECOMPILE_SERVER_PASSWORD",
+                ),
+            },
+        )
+
+        return {
+            "startup": self._sanitize_sensitive(self.runtime_context),
+            "authContext": auth_state,
+            "environment": env_state,
+        }
+
+    def _get_session_state(self) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_session_state")
+        session_id = get_current_mcp_session_id()
+        snapshot = SESSION_CONTEXTS.get_session_snapshot(session_id, project_binary_limit=250, tool_history_limit=50)
+        return self._sanitize_sensitive(snapshot)
+
+    def _get_project_state(self, list_project_files: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_project_state")
+        session_id = get_current_mcp_session_id()
+        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
+        runtime_dir = str(self.runtime_context.get("projectDirectory") or "").strip()
+        return {
+            "status": "available",
+            "sessionBinaryCount": len(binaries),
+            "sessionBinariesPreview": self._sanitize_sensitive(binaries[:100]),
+            "projectListing": list_project_files,
+            "localFilesystemPreview": self._list_local_project_filesystem(runtime_dir),
+        }
+
+    @staticmethod
+    def _list_local_project_filesystem(project_dir: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._list_local_project_filesystem")
+        if not project_dir:
+            return {"status": "unavailable", "reason": "runtime project directory not set"}
+
+        root = Path(project_dir)
+        if not root.exists():
+            return {"status": "missing", "path": str(root)}
+
+        entries: list[dict[str, Any]] = []
+        for item in sorted(root.iterdir(), key=lambda path: (not path.is_dir(), path.name.lower()))[:200]:
+            try:
+                entries.append(
+                    {
+                        "name": item.name,
+                        "path": str(item),
+                        "isDirectory": item.is_dir(),
+                        "size": None if item.is_dir() else item.stat().st_size,
+                    },
+                )
+            except Exception as exc:
+                entries.append(
+                    {
+                        "name": item.name,
+                        "path": str(item),
+                        "error": str(exc),
+                    },
+                )
+
+        return {
+            "status": "available",
+            "path": str(root),
+            "entries": entries,
+            "count": len(entries),
+        }
+
+    def _get_program_state(self, current_program_probe: dict[str, Any] | None = None) -> dict | None:
         """Get information about the currently loaded program."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_program_state")
         if not self.program_info or not self.program_info.current_program:
             return {
                 "status": "no_program_loaded",
                 "current_program": None,
                 "programs_available": 0,
+                "currentProgramProbe": current_program_probe,
             }
 
         try:
@@ -118,16 +795,19 @@ class DebugInfoResource(ResourceProvider):
                 "compiler_spec": metadata.get("compiler_spec", "unknown"),
                 "image_base": metadata.get("image_base", None),
                 "analysis_complete": self.program_info.analysis_complete,
+                "currentProgramProbe": current_program_probe,
             }
         except Exception as e:
-            logger.warning(f"Error gathering program state: {e}")
+            logger.warning("Error gathering program state: %s", e)
             return {
                 "status": "error",
                 "error": str(e),
+                "currentProgramProbe": current_program_probe,
             }
 
-    def _get_analysis_state(self) -> dict:
+    def _get_analysis_state(self, static_analysis_report: dict[str, Any] | None = None) -> dict:
         """Get information about current program analysis."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_analysis_state")
         if not self.program_info or not self.program_info.current_program:
             return {
                 "status": "no_program",
@@ -135,23 +815,26 @@ class DebugInfoResource(ResourceProvider):
                 "strings_count": 0,
                 "symbols_count": 0,
                 "data_types_count": 0,
+                "staticAnalysisReport": static_analysis_report,
             }
 
         try:
             prog = self.program_info.current_program
-            listing = prog.getListing() if prog else None
-
-            # Gather analysis metrics
+            # Gather analysis metrics (function count from FunctionManager, not Listing)
             functions_count = 0
-            if listing:
-                functions_count = listing.getNumFunctions()
+            if prog:
+                fm = getattr(prog, "getFunctionManager", None)
+                if fm is not None:
+                    fm = fm()
+                    if fm is not None and hasattr(fm, "getFunctionCount"):
+                        functions_count = int(fm.getFunctionCount())
 
             # Get strings
             strings_count = 0
             if self.program_info.strings_collection:
                 try:
                     strings_count = len(list(self.program_info.strings_collection))
-                except:
+                except Exception:
                     strings_count = -1
 
             # Get symbols count
@@ -160,7 +843,7 @@ class DebugInfoResource(ResourceProvider):
                 try:
                     symbol_table = prog.getSymbolTable()
                     symbols_count = symbol_table.getGlobalSymbolCount()
-                except:
+                except Exception:
                     symbols_count = -1
 
             # Get data types count
@@ -170,7 +853,7 @@ class DebugInfoResource(ResourceProvider):
                     dtm = prog.getDataTypeManager()
                     # Count user-defined types (not built-ins)
                     data_types_count = len([dt for dt in dtm.getAllDataTypes() if not dt.isBuiltIn()])
-                except:
+                except Exception:
                     data_types_count = -1
 
             return {
@@ -179,22 +862,40 @@ class DebugInfoResource(ResourceProvider):
                 "strings_count": strings_count,
                 "symbols_count": symbols_count,
                 "data_types_count": data_types_count,
+                "staticAnalysisReport": static_analysis_report,
             }
         except Exception as e:
-            logger.warning(f"Error gathering analysis state: {e}")
+            logger.warning("Error gathering analysis state: %s", e)
             return {
                 "status": "error",
                 "error": str(e),
+                "staticAnalysisReport": static_analysis_report,
             }
 
     def _get_resource_metrics(self) -> dict:
         """Get metrics about MCP resources and caching."""
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_resource_metrics")
         return {
             "resources_served": [
-                "ghidra://programs",
-                "ghidra://static-analysis-results",
-                "ghidra://agentdecompile-debug-info",
+                RESOURCE_URI_DEBUG_INFO,
+            ],
+            "legacy_compatibility_aliases": [
+                _LEGACY_PROGRAMS_URI,
+                _LEGACY_STATIC_ANALYSIS_URI,
+                _LEGACY_DEBUG_INFO_URI,
             ],
             "cache_status": "enabled",
             "debug_info_reads": self._resource_read_count,
+        }
+
+    def _get_profiling_state(self) -> dict:
+        logger.debug("diag.enter %s", "mcp_server/resources/debug_info.py:DebugInfoResource._get_profiling_state")
+        analyzer_path = get_profile_analyzer_path()
+        recent_runs = list_recent_profiles()
+        return {
+            "status": "available",
+            "storage_dir": str(get_profile_storage_dir()),
+            "analyzer_path": str(analyzer_path) if analyzer_path is not None else None,
+            "recent_runs": recent_runs,
+            "run_count": len(recent_runs),
         }

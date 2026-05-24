@@ -1,10 +1,16 @@
-"""Program List Resource Provider - Python MCP resource implementation."""
+"""Program List Resource Provider - ghidra://programs.
+
+Reads the current session's project binaries (from SessionContext) and returns
+a JSON list of program paths/names. Used by DebugInfoResource and by clients
+that need to see open programs without calling list-project-files or get-current-program.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 
+from typing import Any
 from urllib.parse import urlsplit
 
 from mcp import types
@@ -24,6 +30,8 @@ class ProgramListResource(ResourceProvider):
 
     @staticmethod
     def _is_programs_uri(uri: str) -> bool:
+        """Return True if URI is ghidra://programs (scheme ghidra, path/netloc 'programs')."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource._is_programs_uri")
         parsed = urlsplit(uri)
         if parsed.scheme.lower() != "ghidra":
             return False
@@ -32,9 +40,10 @@ class ProgramListResource(ResourceProvider):
 
     def list_resources(self) -> list[types.Resource]:
         """Return list of program resources."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource.list_resources")
         return [
             types.Resource(
-                uri="ghidra://programs", # pyright: ignore[reportArgumentType]
+                uri="ghidra://programs",  # pyright: ignore[reportArgumentType]
                 name="Program List",
                 description="List of all programs in the current project",
                 mimeType="application/json",
@@ -43,15 +52,17 @@ class ProgramListResource(ResourceProvider):
 
     async def read_resource(self, uri: str) -> str:
         """Read the program list resource."""
+        logger.debug("diag.enter %s", "mcp_server/resources/programs.py:ProgramListResource.read_resource")
         uri_text = str(uri)
         if not self._is_programs_uri(uri_text):
             raise NotImplementedError(f"Unknown resource: {uri}")
 
-        logger.info(f"ProgramListResource: reading resource for URI {uri}")
+        logger.info("ProgramListResource: reading resource for URI %s", uri)
 
         try:
             session_id = get_current_mcp_session_id()
-            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=True)
+            # Session-scoped only: binaries from open / list-project-files in this session
+            session_binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
             if session_binaries:
                 programs = [
                     {
@@ -64,6 +75,30 @@ class ProgramListResource(ResourceProvider):
                 result = json.dumps({"programs": programs})
                 logger.info(f"ProgramListResource: found {len(programs)} programs from session context")
                 return result
+
+            ghidra_project = getattr(self.tool_provider_manager, "ghidra_project", None) if self.tool_provider_manager else None
+            if ghidra_project is not None:
+                from agentdecompile_cli.mcp_server.domain_folder_listing import list_project_tree_from_ghidra
+
+                tree = list_project_tree_from_ghidra(ghidra_project, normalized_folder="/", max_results=500)
+                programs_from_tree: list[dict[str, Any]] = []
+                for item in tree:
+                    if str(item.get("type", "")).strip() != "Program":
+                        continue
+                    pth = item.get("path") or item.get("name")
+                    programs_from_tree.append(
+                        {
+                            "programPath": pth,
+                            "name": item.get("name"),
+                            "type": "Program",
+                        },
+                    )
+                if programs_from_tree:
+                    logger.info(
+                        "ProgramListResource: found %s programs from local ghidra project",
+                        len(programs_from_tree),
+                    )
+                    return json.dumps({"programs": programs_from_tree})
 
             if self.program_info is None:
                 logger.info("ProgramListResource: no program_info, returning empty list")
@@ -99,6 +134,6 @@ class ProgramListResource(ResourceProvider):
 
             return json.dumps({"programs": programs})
         except Exception as e:
-            logger.error(f"ProgramListResource: Error reading resource: {e}", exc_info=True)
-            # Return empty list on error instead of raising
+            logger.error("ProgramListResource: Error reading resource: %s", e, exc_info=True)
+            # Return empty list + error message so clients get a valid JSON response instead of a raised exception
             return json.dumps({"programs": [], "error": str(e)})

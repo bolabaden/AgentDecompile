@@ -1,26 +1,39 @@
 """Structure Tool Provider - manage-structures.
 
-Actions: parse, validate, create, add_field, modify_field, modify_from_c,
-         info, list, apply, delete, parse_header.
+Single tool, mode = parse (C header text → struct), validate, create, add_field,
+modify_field, modify_from_c, info, list, apply (apply struct at address), delete,
+parse_header. Uses _collectors collect_structures / collect_structure_fields.
+Structures define memory layout so the decompiler can show field names instead of offsets.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp import types
 
-from agentdecompile_cli.mcp_server.tool_providers import (
-    ToolProvider,
-    create_success_response,
-    n,
-)
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structure_fields,
     collect_structures,
 )
+from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
+    ToolProvider,
+    create_conflict_response,
+    create_success_response,
+    n,
+)
+from agentdecompile_cli.registry import Tool
+
+if TYPE_CHECKING:
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DataTypeManager as GhidraDataTypeManager,
+        Structure as GhidraStructure,
+    )
+    from ghidra.util.data import DataTypeParser as GhidraDataTypeParser  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +41,13 @@ logger = logging.getLogger(__name__)
 class StructureToolProvider(ToolProvider):
     HANDLERS = {"managestructures": "_handle"}
 
-    def _find_structure(self, dtm: Any, name: str) -> Any:
+    def _find_structure(self, dtm: GhidraDataTypeManager, name: str) -> GhidraStructure | None:
         """Return a structure by exact name, or ``None`` when not found.
-        
+
         **Performance**: O(n) where n = number of structures in the data type manager.
         For programs with many structures, this may be slow. Consider caching if needed.
         """
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._find_structure")
         assert self.program_info is not None
         for row in collect_structures(self.program_info.program):
             struct = row.get("structure")
@@ -42,16 +56,18 @@ class StructureToolProvider(ToolProvider):
         return None
 
     @staticmethod
-    def _new_data_type_parser(dtm: Any) -> Any:
+    def _new_data_type_parser(dtm: GhidraDataTypeManager) -> GhidraDataTypeParser:
         """Create a ``DataTypeParser`` configured for broad type support."""
-        from ghidra.util.data import DataTypeParser # pyright: ignore[reportMissingModuleSource]
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._new_data_type_parser")
+        from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
-        return DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        return DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider.list_tools")
         return [
             types.Tool(
-                name="manage-structures",
+                name=Tool.MANAGE_STRUCTURES.value,
                 description="Create, list, apply, parse, and edit complex data structures (like C structs and unions) to map out memory layouts.",
                 inputSchema={
                     "type": "object",
@@ -89,7 +105,7 @@ class StructureToolProvider(ToolProvider):
                         "nameFilter": {"type": "string", "description": "Case-insensitive text to filter the struct list by."},
                         "query": {"type": "string", "description": "Alternative parameter for nameFilter."},
                         "filter": {"type": "string", "description": "Alternative parameter for nameFilter."},
-                        "maxResults": {"type": "integer", "default": 100, "description": "Max results; omit to use default."},
+                        "maxResults": {"type": "integer", "default": 100, "description": "Number of structure results to return. Typical values are 100–500."},
                     },
                     "required": [],
                 },
@@ -97,6 +113,7 @@ class StructureToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._handle")
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
 
@@ -118,6 +135,7 @@ class StructureToolProvider(ToolProvider):
         return await handler(args)
 
     async def _list(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._list")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
         max_results = self._get_int(args, "maxresults", "limit", default=100)
@@ -144,6 +162,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "list", "structures": results, "count": len(results)})
 
     async def _info(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._info")
         name = self._require_str(args, "name", "structurename", "structure", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -170,6 +189,7 @@ class StructureToolProvider(ToolProvider):
         )
 
     async def _create(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._create")
         name = self._require_str(args, "name", "structurename", name="name")
         size = self._get_int(args, "size", default=0)
         cat_path = self._get_str(args, "categorypath", "category", default="/")
@@ -179,11 +199,33 @@ class StructureToolProvider(ToolProvider):
         program = self.program_info.program
         dtm = program.getDataTypeManager()
 
-        from ghidra.program.model.data import CategoryPath # pyright: ignore[reportMissingModuleSource]
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            existing = self._find_structure(dtm, name)
+            if existing is not None:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = f"Create structure would overwrite existing structure with the same name:\n\nStructure **{name}** already exists."
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                store_args = dict(args)
+                store_args["mode"] = "create"
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_STRUCTURES.value,
+                    arguments=store_args,
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_STRUCTURES.value, conflict_summary, next_step)
+
+        from ghidra.program.model.data import CategoryPath  # pyright: ignore[reportMissingModuleSource]
 
         def _create_structure() -> None:
             if is_union:
-                from ghidra.program.model.data import UnionDataType # pyright: ignore[reportMissingModuleSource]
+                from ghidra.program.model.data import UnionDataType  # pyright: ignore[reportMissingModuleSource]
 
                 dt = UnionDataType(CategoryPath(cat_path), name, dtm)
             else:
@@ -197,6 +239,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "create", "name": name, "size": size, "isUnion": is_union, "success": True})
 
     async def _add_field(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._add_field")
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -242,6 +285,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "add_field", "structure": struct_name, "field": field_name, "type": field_type, "success": True})
 
     async def _modify_field(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._modify_field")
         struct_name = self._require_str(args, "name", "structurename", name="name")
         field_offset = self._get_int(args, "fieldoffset", "offset")
         field_name = self._get_str(args, "fieldname", "field")
@@ -275,6 +319,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "modify_field", "structure": struct_name, "offset": field_offset, "success": True})
 
     async def _modify_from_c(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._modify_from_c")
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", "c", name="cDefinition")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -302,12 +347,15 @@ class StructureToolProvider(ToolProvider):
             raise ValueError("CParser not available in this environment")
 
     async def _parse(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._parse")
         return await self._modify_from_c(args)
 
     async def _parse_header(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._parse_header")
         return await self._modify_from_c(args)
 
     async def _validate(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._validate")
         c_def = self._require_str(args, "cdefinition", "headercontent", "definition", "code", name="cDefinition")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program
@@ -323,6 +371,7 @@ class StructureToolProvider(ToolProvider):
             return create_success_response({"action": "validate", "valid": False, "error": str(e)})
 
     async def _apply(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._apply")
         struct_name = self._require_str(args, "name", "structurename", "structure", name="name")
         addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
         assert self.program_info is not None  # for type checker
@@ -353,9 +402,33 @@ class StructureToolProvider(ToolProvider):
             return create_success_response({"action": "apply", "batch": True, "results": results})
 
         addr = self._resolve_address(addr_str, program=program)
+        listing = self._get_listing(program)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            existing_data = listing.getDataAt(addr)
+            if existing_data is not None:
+                existing_type = str(existing_data.getDataType() or "")
+                if existing_type.strip():
+                    from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+                    from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+                    conflict_id = str(uuid.uuid4())
+                    conflict_summary = f"Apply structure would overwrite existing data at address:\n\n```diff\n- (existing) {existing_type}\n+ {struct_name}\n```"
+                    next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                    program_path = args.get(n("programPath")) or getattr(self.program_info, "path", None) or getattr(self.program_info, "file_path", None)
+                    store_args = dict(args)
+                    store_args["mode"] = "apply"
+                    conflict_store_store(
+                        get_current_mcp_session_id(),
+                        conflict_id,
+                        tool=Tool.MANAGE_STRUCTURES.value,
+                        arguments=store_args,
+                        program_path=str(program_path) if program_path else None,
+                        summary=conflict_summary,
+                    )
+                    return create_conflict_response(conflict_id, Tool.MANAGE_STRUCTURES.value, conflict_summary, next_step)
 
         def _apply_struct() -> None:
-            listing = self._get_listing(program)
             listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
             listing.createData(addr, dt)
 
@@ -363,6 +436,7 @@ class StructureToolProvider(ToolProvider):
         return create_success_response({"action": "apply", "structure": struct_name, "address": str(addr), "success": True})
 
     async def _delete(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/structures.py:StructureToolProvider._delete")
         name = self._require_str(args, "name", "structurename", name="name")
         assert self.program_info is not None  # for type checker
         program = self.program_info.program

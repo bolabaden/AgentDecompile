@@ -22,6 +22,9 @@ _apply_mcp_session_fix()
 import os
 import subprocess
 import importlib.util
+import shutil
+import sys
+import httpx
 
 from collections.abc import AsyncGenerator, Generator, Mapping
 from pathlib import Path
@@ -32,10 +35,9 @@ import pytest_asyncio
 
 from tests.helpers import (
     assert_bool_invariants,
-    assert_int_invariants,
-    assert_mapping_invariants,
     assert_text_block_invariants,
 )
+from tests.e2e_project_lifecycle_helpers import JsonRpcMcpSession, LocalServerHandle, LocalServerPool, get_local_ghidra_runtime
 
 if TYPE_CHECKING:
     from agentdecompile_cli.launcher import AgentDecompileLauncher
@@ -142,51 +144,6 @@ def _assert_node_invariants(node: pytest.Item) -> None:
     assert all(name == name.strip() for name in node.fixturenames)
     assert all(name.isascii() for name in node.fixturenames)
     assert_bool_invariants(node.get_closest_marker("slow") is not None or node.get_closest_marker("slow") is None)
-
-
-@pytest.fixture(autouse=True)
-def force_json_tool_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force direct provider/unit test calls to request JSON payloads.
-
-    Runtime default for MCP tools is markdown. Unit tests primarily validate
-    structured payload semantics, so this fixture injects format=json when
-    tests call ToolProvider.call_tool() without an explicit format.
-    """
-    from agentdecompile_cli.mcp_server.tool_providers import ToolProvider
-
-    original_call_tool = ToolProvider.call_tool
-
-    async def _call_tool_with_json_default(self, name: str, arguments: dict[str, Any] | None):
-        args = dict(arguments or {})
-        args.setdefault("format", "json")
-        return await original_call_tool(self, name, args)
-
-    monkeypatch.setattr(ToolProvider, "call_tool", _call_tool_with_json_default)
-
-
-@pytest.fixture(autouse=True)
-def strict_assertions(request: pytest.FixtureRequest) -> None:
-    """Apply strict generic invariants for every test to ensure high assertion count."""
-    _assert_node_invariants(request.node)
-
-    for name, value in request.node.funcargs.items():
-        if isinstance(value, bool):
-            assert_bool_invariants(value)
-        if isinstance(value, int):
-            assert_int_invariants(value)
-        if isinstance(value, str):
-            if value == "":
-                assert value == ""
-            else:
-                assert_text_block_invariants(value)
-        if isinstance(value, dict):
-            assert_mapping_invariants(value)
-        if isinstance(value, list):
-            assert isinstance(value, list)
-            assert len(value) >= 0
-            assert all(item == item for item in value)
-            assert all(item is not None for item in value)
-            assert all(isinstance(item, type(item)) for item in value)
 
 
 @pytest.fixture(scope="session")
@@ -322,7 +279,7 @@ async def mcp_client(
     import asyncio
 
     from mcp.client.session import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 
     port = server.getPort()
     url = f"http://localhost:{port}/mcp/message"
@@ -331,8 +288,9 @@ async def mcp_client(
 
     try:
         # Use the streamable HTTP client from MCP SDK
+        http_client = httpx.AsyncClient(timeout=30.0)
         async with (
-            streamablehttp_client(url, timeout=30.0) as (
+            streamable_http_client(url, http_client=http_client) as (
                 read_stream,
                 write_stream,
                 get_session_id,
@@ -413,6 +371,179 @@ def test_binary(isolated_workspace: Path) -> Path:
     print(f"[Fixture] Created test binary: {binary_path} ({binary_path.stat().st_size} bytes)")
 
     return binary_path
+
+
+@pytest.fixture
+def public_sample_binary(isolated_workspace: Path) -> Path:
+    """Create the vendored public-domain sample binary in the isolated workspace.
+
+    This fixture is intended for strict end-to-end tests that need a binary with
+    auditable provenance and deterministic contents rather than the tiny fallback
+    ELF used by generic import smoke tests.
+    """
+    from tests.helpers import create_public_sample_binary, get_public_sample_binary
+
+    sample = get_public_sample_binary()
+    binary_path = isolated_workspace / sample.output_name
+    create_public_sample_binary(binary_path)
+
+    print(f"[Fixture] Created public sample binary: {binary_path} ({binary_path.stat().st_size} bytes)")
+
+    return binary_path
+
+
+@pytest.fixture(scope="module")
+def stress_binary_corpus(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
+    """Create a deterministic multi-binary corpus from repo-local fixtures.
+
+    The corpus deliberately duplicates the existing fixture binaries under
+    unique file names so project-wide searches have to traverse many imports
+    without depending on external assets.
+    """
+    workspace = tmp_path_factory.mktemp("cancelled-stress-corpus")
+    fixture_root = Path(__file__).resolve().parent / "fixtures"
+    seed_binaries = [
+        fixture_root / "test_x86_64",
+        fixture_root / "test_arm64",
+        fixture_root / "test_fat_binary",
+    ]
+    copies_per_seed = max(1, int(os.environ.get("AGENTDECOMPILE_STRESS_COPIES_PER_SEED", "4")))
+    corpus: list[Path] = []
+    for seed in seed_binaries:
+        assert seed.exists(), f"Missing stress-corpus seed binary: {seed}"
+        for index in range(copies_per_seed):
+            target = workspace / f"{seed.name}_stress_{index:02d}"
+            shutil.copy2(seed, target)
+            target.chmod(0o755)
+            corpus.append(target)
+    return corpus
+
+
+@pytest.fixture(scope="module")
+def profiled_live_artifacts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Allocate an artifact directory for the profiled live E2E suite."""
+    root = tmp_path_factory.mktemp("cancelled-profile-artifacts")
+    return {
+        "root": root,
+        "profile_dir": root / "profiles",
+        "server_log": root / "server.log",
+        "jfr_path": root / "server-recording.jfr",
+        "jfr_dump_path": root / "server-recording.snapshot.jfr",
+    }
+
+
+@pytest.fixture(scope="session")
+def local_live_server_pool(tmp_path_factory: pytest.TempPathFactory) -> Generator[LocalServerPool, None, None]:
+    """Create a reusable pool of subprocess MCP servers for live local E2E suites.
+
+    When ``AGENTDECOMPILE_TEST_SERVER_URL`` is set the pool is still created
+    but no subprocess will be spawned — ``local_group_server`` short-circuits
+    before calling ``get_or_start``.
+    """
+    external = os.environ.get("AGENTDECOMPILE_TEST_SERVER_URL", "").strip()
+    if not external and get_local_ghidra_runtime() is None:
+        pytest.skip("GHIDRA_INSTALL_DIR is not set to a valid local installation; skipping live local MCP server fixtures.")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pool = LocalServerPool(repo_root)
+    tmp_path_factory.mktemp("live-server-pool")
+    yield pool
+    pool.close_all()
+
+
+@pytest.fixture(scope="module")
+def local_group_server(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    local_live_server_pool: LocalServerPool,
+) -> Generator[str, None, None]:
+    """Start or reuse one local MCP server per test module/group.
+
+    If AGENTDECOMPILE_TEST_SERVER_URL is set, use the pre-existing server
+    instead of spawning a new subprocess (avoids JVM conflicts on Windows).
+    """
+    external = os.environ.get("AGENTDECOMPILE_TEST_SERVER_URL", "").strip()
+    if external:
+        yield external
+        return
+    module_name = request.module.__name__.rsplit(".", 1)[-1].replace("_", "-")
+    workspace = tmp_path_factory.mktemp(f"{module_name}-workspace")
+    project_path = workspace / "runtime_project"
+    handle = local_live_server_pool.get_or_start(
+        module_name,
+        project_path=project_path,
+        project_name=module_name,
+    )
+    yield handle.base_url
+
+
+@pytest.fixture(scope="module")
+def profiled_group_server(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    local_live_server_pool: LocalServerPool,
+    profiled_live_artifacts: dict[str, Path],
+) -> Generator[LocalServerHandle, None, None]:
+    """Start one profiling-enabled local MCP server for the cancelled-profile E2E module."""
+    external = os.environ.get("AGENTDECOMPILE_TEST_SERVER_URL", "").strip()
+    if external:
+        pytest.skip("Profiled live server fixture requires a managed local subprocess; unset AGENTDECOMPILE_TEST_SERVER_URL.")
+
+    module_name = request.module.__name__.rsplit(".", 1)[-1].replace("_", "-")
+    workspace = tmp_path_factory.mktemp(f"{module_name}-profiled-workspace")
+    project_path = workspace / "runtime_project"
+    analyzer_path = Path(__file__).resolve().parents[1] / "scripts" / "analyze_profile.py"
+    jfr_vmarg = (
+        "-XX:StartFlightRecording="
+        f"name=agentdecompile-tests,settings=profile,disk=true,dumponexit=true,filename={profiled_live_artifacts['jfr_path'].as_posix()}"
+    )
+    env_overrides = {
+        "AGENTDECOMPILE_PROFILE_DIR": str(profiled_live_artifacts["profile_dir"]),
+        "AGENTDECOMPILE_PROFILE_ANALYZER": str(analyzer_path),
+        "AGENTDECOMPILE_PROFILE_SEARCH_EVERYTHING": "1",
+        "AGENTDECOMPILE_PYGHIDRA_VMARGS": jfr_vmarg,
+    }
+    handle = local_live_server_pool.get_or_start(
+        f"{module_name}-profiled",
+        project_path=project_path,
+        project_name=f"{module_name}-profiled",
+        extra_env=env_overrides,
+        log_path=profiled_live_artifacts["server_log"],
+        timeout=180.0,
+    )
+    yield handle
+
+
+@pytest.fixture(scope="module")
+def profiled_server_base_url(profiled_group_server: LocalServerHandle) -> str:
+    """Expose the profiling-enabled live server base URL."""
+    return profiled_group_server.base_url
+
+
+@pytest.fixture(scope="module")
+def profiled_server_pid(profiled_group_server: LocalServerHandle) -> int:
+    """Expose the profiling-enabled server subprocess PID."""
+    return int(profiled_group_server.process.pid)
+
+
+@pytest.fixture(scope="module")
+def profiled_http_session(profiled_server_base_url: str) -> Generator[JsonRpcMcpSession, None, None]:
+    """Create a synchronous JSON-RPC session against the profiling-enabled server."""
+    with JsonRpcMcpSession(profiled_server_base_url, timeout=300.0) as session:
+        yield session
+
+
+@pytest.fixture
+def local_server_base_url(local_group_server: str) -> str:
+    """Expose the grouped local live-server base URL to function-scoped tests."""
+    return local_group_server
+
+
+@pytest.fixture
+def local_http_session(local_server_base_url: str) -> Generator[JsonRpcMcpSession, None, None]:
+    """Create a synchronous JSON-RPC MCP session against the grouped live server."""
+    with JsonRpcMcpSession(local_server_base_url, timeout=120.0) as session:
+        yield session
 
 
 @pytest.fixture

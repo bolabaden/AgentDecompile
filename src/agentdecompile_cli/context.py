@@ -1,8 +1,17 @@
-"""Compatibility module mirrored in launcher.py as the primary implementation.
-This file is kept for backward-compatibility.
-Prefer importing from agentdecompile_cli.launcher.
+"""Ghidra project context (ProgramInfo, PyGhidraContext).
 
-Original context: Ghidra project context (ProgramInfo, PyGhidraContext).
+``ProgramInfo`` is defined only in this module. ``launcher`` re-exports it for
+call sites that import from the merged launcher entrypoint.
+
+What lives here:
+  - ProgramInfo: Dataclass holding a loaded program, its FlatProgramAPI, decompiler,
+    metadata, and Chroma collections (code/strings) when available.
+  - PyGhidraContext: Manages a Ghidra project (create/open), program import/analysis,
+    symbol setup, GDT application, and Chroma semantic collections. Used by the
+    headless analysis workflow; the MCP server uses ProjectManager + launcher instead.
+
+A parallel ``PyGhidraContext`` implementation also exists in ``launcher.py`` for
+the MCP/launcher stack; keep behavior aligned when changing either copy.
 """
 
 from __future__ import annotations
@@ -18,29 +27,38 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-try:
-    import chromadb
+from agentdecompile_cli.app_logger import basename_hint
 
-    from chromadb.config import Settings
+try:
+    import chromadb  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+    from chromadb.api import ClientAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from chromadb.config import Settings  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+    from chromadb.api.models.Collection import Collection  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 except Exception:
-    chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment]
+    if not TYPE_CHECKING:
+        chromadb = None
+        Settings = None
 
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 if TYPE_CHECKING:
-    from ghidra.app.decompiler import (
-        DecompInterface,  # pyright: ignore[reportMissingImports]
-        DecompiledFunction,  # pyright: ignore[reportMissingImports]
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DecompInterface as GhidraDecompInterface,
+        DecompiledFunction as GhidraDecompiledFunction,
     )
-    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports]
-    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports]
-        DomainFile,
-        DomainFolder,
+    from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        DomainFile as GhidraDomainFile,
+        DomainFolder as GhidraDomainFolder,
     )
-    from ghidra.framework.options import ToolOptions  # pyright: ignore[reportMissingImports]
-    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-    from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+    from ghidra.framework.options import ToolOptions as GhidraToolOptions  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.framework.options import OptionType as GhidraOptionType  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        Program as GhidraProgram,
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,29 +70,64 @@ class ProgramInfo:
     """Information about a loaded program"""
 
     name: str
-    program: Program
-    flat_api: FlatProgramAPI | None
-    decompiler: DecompInterface
+    program: GhidraProgram
+    flat_api: GhidraFlatProgramAPI | None
+    decompiler: GhidraDecompInterface
     metadata: dict[str, Any]  # Ghidra program metadata
     ghidra_analysis_complete: bool
     file_path: Path | None = None
     load_time: float | None = None
-    code_collection: Any | None = None
-    strings_collection: Any | None = None
+    code_collection: Collection | None = None
+    strings_collection: Collection | None = None
+    # Ghidra consumer passed to Program.release() for shared/versioned opens (see ProjectToolProvider).
+    domain_object_consumer: Any | None = None
+    # Resolved DomainFile for shared checkout / version-control flows (see ProjectToolProvider).
+    domain_file: GhidraDomainFile | None = None
+
+    def get_decompiler(self) -> GhidraDecompInterface | None:
+        """Return the decompiler, lazily initializing it on first access if needed.
+
+        When programs are eagerly opened at project-open time, the decompiler is
+        stored as None to save ~15-30 MB of JVM memory per unused program.  The
+        first call to ``get_decompiler()`` creates and caches the interface.
+        """
+        if self.decompiler is not None:
+            return self.decompiler
+        if self.program is None:
+            return None
+        try:
+            from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
+
+            self.decompiler = open_decompiler_for_program(self.program)
+            logger.info(
+                "lazy_decompiler_init program=%s",
+                self.name or "unknown",
+            )
+        except Exception as exc:
+            logger.warning(
+                "lazy_decompiler_init_failed program=%s exc_type=%s",
+                self.name or "unknown",
+                type(exc).__name__,
+            )
+            return None
+        return self.decompiler
 
     @property
     def analysis_complete(self) -> bool:
         """Check if Ghidra analysis is complete."""
+        logger.debug("diag.enter %s", "context.py:ProgramInfo.analysis_complete")
         return self.ghidra_analysis_complete
 
     @property
-    def current_program(self) -> Program | None:
+    def current_program(self) -> GhidraProgram | None:
         """Get the current program."""
+        logger.debug("diag.enter %s", "context.py:ProgramInfo.current_program")
         return self.program
 
     @current_program.setter
-    def current_program(self, program: Program) -> None:
+    def current_program(self, program: GhidraProgram) -> None:
         """Set the current program."""
+        logger.debug("diag.enter %s", "context.py:ProgramInfo.current_program")
         self.program = program
 
 
@@ -115,6 +168,7 @@ class PyGhidraContext:
             symbols_path: Path to local symbol store.
             sym_file_path: Path to a specific PDB file.
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.__init__")
         self.project_name: str = project_name
         self.project_path: Path = Path(project_path)
         self.project: GhidraProject = self._get_or_create_project()
@@ -122,11 +176,9 @@ class PyGhidraContext:
         self.programs: dict[str, ProgramInfo] = {}
         self._init_project_programs()
 
-        self.agentdecompile_dir = (
-            self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
-        )
+        self.agentdecompile_dir: Path = self.project_path / "agentdecompile" if agentdecompile_dir is None else Path(agentdecompile_dir)
 
-        self.chroma_client: Any | None = None
+        self.chroma_client: ClientAPI | None = None
         if chromadb is not None and Settings is not None:
             chromadb_path: Path = self.agentdecompile_dir / "chromadb"
             chromadb_path.mkdir(parents=True, exist_ok=True)
@@ -163,8 +215,9 @@ class PyGhidraContext:
 
     def close(self, save: bool = True):
         """Saves changes to all open programs and closes the project."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.close")
         for _program_name, program_info in self.programs.items():
-            program: Program = program_info.program
+            program: GhidraProgram = program_info.program
             self.project.close(program)
 
         if self.executor is not None:
@@ -182,8 +235,9 @@ class PyGhidraContext:
         Returns:
             The Ghidra project object.
         """
-        from ghidra.base.project import GhidraProject
-        from ghidra.framework.model import ProjectLocator
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._get_or_create_project")
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.framework.model import ProjectLocator  # pyright: ignore[reportMissingModuleSource]
 
         # For standard Ghidra projects, use directory containing .gpr file
         project_dir: Path = self.project_path
@@ -192,55 +246,126 @@ class PyGhidraContext:
 
         locator = ProjectLocator(project_dir_str, self.project_name)
 
-        if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
-            logger.info(f"Opening existing project: {self.project_name}")
-            return GhidraProject.openProject(project_dir_str, self.project_name, False)
-        logger.info(f"Creating new project: {self.project_name}")
-        return GhidraProject.createProject(
-            project_dir_str,
-            self.project_name,
-            False,
-        )
+        try:
+            if locator.getProjectDir().exists() and locator.getMarkerFile().exists():
+                logger.info(f"Opening existing project: {self.project_name}")
+                from agentdecompile_cli.launcher import _patch_project_owner
+
+                _patch_project_owner(project_dir_str, self.project_name)
+                return GhidraProject.openProject(project_dir_str, self.project_name, False)
+            logger.info(f"Creating new project: {self.project_name}")
+            return GhidraProject.createProject(
+                project_dir_str,
+                self.project_name,
+                False,
+            )
+        except Exception as e:
+            logger.warning("pyghidra_project_create_open_exc exc_type=%s", type(e).__name__)
+            raise
 
     def _init_project_programs(self):
         """Initializes the programs dictionary with existing programs in the project."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_project_programs")
         all_binary_paths: list[str] = self.list_binaries()
         for binary_path_s in all_binary_paths:
             binary_path_str: str = str(binary_path_s)
-            binary_path: Path = Path(binary_path_str)
-            program: Program | None = self.project.openProgram(
-                str(binary_path.parent),
-                binary_path.name,
-                False,
-            )
-            if program is None:
-                logger.error(f"Failed to init program: {binary_path_s} during the open process")
+            if not binary_path_str.startswith("/"):
+                logger.warning(
+                    "pyghidra_startup_skip_non_domain_path path=%r",
+                    binary_path_str,
+                )
                 continue
-            program_info: ProgramInfo = self._init_program_info(program)
+            binary_path: Path = Path(binary_path_str)
+            try:
+                program: GhidraProgram | None = self.project.openProgram(
+                    str(binary_path.parent),
+                    binary_path.name,
+                    False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_startup_open_program_exc basename=%s exc_type=%s",
+                    basename_hint(binary_path.name),
+                    type(exc).__name__,
+                )
+                continue
+            if program is None:
+                logger.warning(
+                    "pyghidra_open_program_null basename=%s",
+                    basename_hint(binary_path.name),
+                )
+                continue
+            program_info: ProgramInfo | None = self._init_program_info(program)
+            if program_info is None:
+                logger.warning(
+                    "pyghidra_program_info_init_failed basename=%s",
+                    basename_hint(binary_path.name),
+                )
+                continue
             self.programs[str(binary_path)] = program_info
 
     def list_binaries(self) -> list[str]:
         """List all the binaries within the Ghidra project."""
 
-        def list_folder_contents(folder: DomainFolder) -> list[str]:
+        def list_folder_contents(folder: GhidraDomainFolder) -> list[str]:
             names: list[str] = []
-            for subfolder in folder.getFolders():
-                names.extend(list_folder_contents(subfolder))
+            try:
+                subfolders = list(folder.getFolders() or [])
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_list_binaries_skip_subfolders exc_type=%s",
+                    type(exc).__name__,
+                )
+                subfolders = []
+            for subfolder in subfolders:
+                try:
+                    names.extend(list_folder_contents(subfolder))
+                except Exception as exc:
+                    logger.warning(
+                        "pyghidra_list_binaries_skip_subfolder exc_type=%s",
+                        type(exc).__name__,
+                    )
 
-            names.extend([f.getPathname() for f in folder.getFiles()])
+            try:
+                files = list(folder.getFiles() or [])
+            except Exception as exc:
+                logger.warning(
+                    "pyghidra_list_binaries_skip_files exc_type=%s",
+                    type(exc).__name__,
+                )
+                files = []
+            for f in files:
+                try:
+                    names.append(f.getPathname())
+                except Exception as exc:
+                    file_name = "<unknown>"
+                    try:
+                        file_name = str(f.getName())
+                    except Exception:
+                        pass
+                    logger.warning(
+                        "pyghidra_list_binaries_skip_pathname basename=%s exc_type=%s",
+                        basename_hint(file_name),
+                        type(exc).__name__,
+                    )
             return names
 
-        return list_folder_contents(self.project.getRootFolder())
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.list_binaries")
+        try:
+            return list_folder_contents(self.project.getRootFolder())
+        except Exception as exc:
+            logger.warning("pyghidra_list_binaries_failed exc_type=%s", type(exc).__name__)
+            return []
 
-    def list_binary_domain_files(self) -> list[DomainFile]:
+    def list_binary_domain_files(self) -> list[GhidraDomainFile]:
         """Return a list of DomainFile objects for all binaries in the project.
 
         This mirrors `list_binaries` but returns the DomainFile objects themselves
         (filtered by content type == "Program").
         """
 
-        def list_folder_domain_files(folder: DomainFolder) -> list[DomainFile]:
-            files: list[DomainFile] = []
+        def list_folder_domain_files(folder: GhidraDomainFolder) -> list[GhidraDomainFile]:
+            files: list[GhidraDomainFile] = []
             for subfolder in folder.getFolders():
                 files.extend(list_folder_domain_files(subfolder))
 
@@ -249,6 +374,7 @@ class PyGhidraContext:
             )
             return files
 
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.list_binary_domain_files")
         return list_folder_domain_files(self.project.getRootFolder())
 
     def delete_program(self, program_name: str) -> bool:
@@ -260,17 +386,18 @@ class PyGhidraContext:
         Returns:
             True if the program was deleted successfully, False otherwise.
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.delete_program")
         program_info: ProgramInfo | None = self.programs.get(program_name)
         if program_info is None:
             available_progs: list[str] = list(self.programs.keys())
             raise ValueError(f"Binary {program_name} not found. Available binaries: {available_progs}")
-        logger.info(f"Deleting program: {program_name}")
+        logger.info("Deleting program: %s", program_name)
         try:
             assert isinstance(program_info, ProgramInfo), "Program info is not a ProgramInfo object"
-            program_to_delete: Program = program_info.program
-            assert isinstance(program_to_delete, Program), "Program is not a Program object"
-            program_to_delete_df: DomainFile = program_to_delete.getDomainFile()
-            assert isinstance(program_to_delete_df, DomainFile), "Domain file is not a DomainFile object"
+            program_to_delete: GhidraProgram = program_info.program
+            assert isinstance(program_to_delete, GhidraProgram), "Program is not a Program object"
+            program_to_delete_df: GhidraDomainFile = program_to_delete.getDomainFile()
+            assert isinstance(program_to_delete_df, GhidraDomainFile), "Domain file is not a DomainFile object"
             self.project.close(program_to_delete)
             program_to_delete_df.delete()
             # clean up program reference
@@ -296,13 +423,14 @@ class PyGhidraContext:
         Returns:
             None
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.import_binary")
         binary_path = Path(binary_path)
         if binary_path.is_dir():
             return self.import_binaries([binary_path], analyze=analyze)
 
         program_name = PyGhidraContext._gen_unique_bin_name(binary_path)
 
-        program: Program | None = None
+        program: GhidraProgram | None = None
         root_folder = self.project.getRootFolder()
 
         # Create folder hierarchy if relative_path is provided
@@ -314,13 +442,13 @@ class PyGhidraContext:
         # Check if program already exists at this location
         full_path: str = str(Path(ghidra_folder.pathname) / program_name)
         if self.programs.get(full_path) is not None:
-            logger.info(f"Opening existing program: {program_name}")
+            logger.info("Opening existing program: %s", program_name)
             program = self.programs[full_path].program
             program_info = self.programs[full_path]
         else:
-            logger.info(f"Importing new program: {program_name}")
+            logger.info("Importing new program: %s", program_name)
             program = self.project.importProgram(binary_path)
-            assert isinstance(program, Program), "Program is not a Program object"
+            assert isinstance(program, GhidraProgram), "Program is not a Program object"
             program.name = program_name
             if program:
                 self.project.saveAs(program, ghidra_folder.pathname, program_name, True)
@@ -336,10 +464,10 @@ class PyGhidraContext:
             self.analyze_program(program_info.program)
             self._init_chroma_collections_for_program(program_info)
 
-        logger.info(f"Program {program_name} is ready for use.")
+        logger.info("Program %s is ready for use.", program_name)
 
     @staticmethod
-    def _create_folder_hierarchy(root_folder: DomainFolder, relative_path: Path) -> DomainFolder:
+    def _create_folder_hierarchy(root_folder: GhidraDomainFolder, relative_path: Path) -> GhidraDomainFolder:
         """Recursively creates folder hierarchy in Ghidra project.
 
         Args:
@@ -349,17 +477,18 @@ class PyGhidraContext:
         Returns:
             The folder object at the end of the hierarchy.
         """
-        current_folder: DomainFolder = root_folder
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._create_folder_hierarchy")
+        current_folder: GhidraDomainFolder = root_folder
 
         # Split the path into parts and iterate through them
         for part in relative_path.parts:
-            existing_folder: DomainFolder | None = current_folder.getFolder(part)
+            existing_folder: GhidraDomainFolder | None = current_folder.getFolder(part)
             if existing_folder is not None:
                 current_folder = existing_folder
-                logger.debug(f"Using existing folder: {part}")
+                logger.debug("Using existing folder: %s", part)
             else:
                 current_folder = current_folder.createFolder(part)
-                logger.debug(f"Created folder: {part}")
+                logger.debug("Created folder: %s", part)
 
         return current_folder
 
@@ -378,6 +507,7 @@ class PyGhidraContext:
             binary_paths: A list of paths to the binary files or directories.
             analyze: Whether to analyze the imported binaries.
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.import_binaries")
         resolved_paths: list[Path] = [Path(p) for p in binary_paths]
 
         # Tuple of (full system path, relative path from provided path)
@@ -385,7 +515,7 @@ class PyGhidraContext:
         for p in resolved_paths:
             assert isinstance(p, Path), "Path is not a Path object"
             if p.exists() and p.is_dir():
-                logger.info(f"Discovering files in directory: {p}")
+                logger.info("Discovering files in directory: %s", p)
                 for f in p.rglob("*"):
                     if f.is_file() and self._is_binary_file(f):
                         # Store the relative path (e.g., "bin" or "lib/subfolder")
@@ -407,11 +537,12 @@ class PyGhidraContext:
                     relative_path=relative_path,
                 )
             except Exception as e:
-                logger.error(f"Failed to import {bin_path}: {e}")
+                logger.error("Failed to import %s: %s", bin_path, e)
                 # continue importing remaining files
 
     def _is_binary_file(self, path: Path) -> bool:
         # return self._detect_binary_format(path) is not None
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._is_binary_file")
         return True
 
     def _detect_binary_format(self, path: Path) -> str | None:
@@ -424,6 +555,7 @@ class PyGhidraContext:
         # except Exception:
         #     return None
 
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._detect_binary_format")
         magic_table: dict[bytes, str] = {
             b"\x7fELF": "ELF",
             b"MZ": "PE",
@@ -455,10 +587,11 @@ class PyGhidraContext:
 
     def _import_callback(self, future: concurrent.futures.Future) -> None:
         """A callback function to handle results or exceptions from the import task."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._import_callback")
         try:
             result: concurrent.futures.Future | None = future.result()
             if result is not None:
-                logger.info(f"Background import task completed successfully. Result: {result}")
+                logger.info("Background import task completed successfully. Result: %s", result)
         except Exception as e:
             logger.error(
                 f"FATAL ERROR during background binary import: {e.__class__.__name__}: {e}",
@@ -473,6 +606,7 @@ class PyGhidraContext:
         Args:
             binary_path: The path of the binary to import.
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.import_binary_backgrounded")
         if not Path(binary_path).exists():
             raise FileNotFoundError(f"The file {binary_path} cannot be found")
 
@@ -489,6 +623,7 @@ class PyGhidraContext:
 
     def get_program_info(self, binary_name: str) -> ProgramInfo | None:
         """Get program info or raise ValueError if not found."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.get_program_info")
         program_info: ProgramInfo | None = self.programs.get(binary_name)
         if program_info is None:
             # Exact program name not in the list
@@ -519,8 +654,9 @@ class PyGhidraContext:
             )
         return program_info
 
-    def _init_program_info(self, program: Program | None) -> ProgramInfo | None:
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
+    def _init_program_info(self, program: GhidraProgram | None) -> ProgramInfo | None:
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_program_info")
+        from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         if program is None:
             logger.error("Program is None")
@@ -531,7 +667,7 @@ class PyGhidraContext:
         program_info: ProgramInfo = ProgramInfo(
             name=program.name,
             program=program,
-            flat_api=FlatProgramAPI(program),
+            flat_api=GhidraFlatProgramAPI(program),
             decompiler=self.setup_decompiler(program),
             metadata=metadata,
             ghidra_analysis_complete=False,
@@ -546,6 +682,7 @@ class PyGhidraContext:
     @staticmethod
     def _gen_unique_bin_name(path: Path) -> str:
         """Generate unique program name from binary for Ghidra Project"""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._gen_unique_bin_name")
         path = Path(path)
 
         def _sha1_file(local_bind_for_path: Path) -> str:
@@ -561,8 +698,7 @@ class PyGhidraContext:
 
     def _init_chroma_code_collection_for_program(self, program_info: ProgramInfo):
         """Initialize Chroma code collection for a single program."""
-        from ghidra.program.model.listing import Function  # pyright: ignore[reportMissingImports]
-
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_chroma_code_collection_for_program")
         if self.chroma_client is None:
             return
 
@@ -580,11 +716,11 @@ class PyGhidraContext:
             metadatas: list[dict[str, Any]] = []
 
             for i, func in enumerate(functions):
-                func: Function
+                func: GhidraFunction
                 try:
                     if i % 10 == 0:
                         logger.debug(f"Decompiling {i}/{len(functions)}")
-                    decompiled: DecompiledFunction = tools.decompile_function(func)
+                    decompiled: GhidraDecompiledFunction = tools.decompile_function(func)  # pyright: ignore[reportAssignmentType]
                     decompiles.append(decompiled.code)
                     ids.append(decompiled.name)
                     metadatas.append(
@@ -612,20 +748,22 @@ class PyGhidraContext:
 
     def _init_chroma_strings_collection_for_program(self, program_info: ProgramInfo):
         """Initialize Chroma strings collection for a single program."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_chroma_strings_collection_for_program")
         if self.chroma_client is None:
             return
 
         collection_name: str = f"{program_info.name}_strings"
         logger.info(f"Initializing Chroma strings collection for {program_info.name}")
+        strings_collection: Collection | None = None
         try:
             strings_collection = self.chroma_client.get_collection(name=collection_name)
-            logger.info(f"Collection '{collection_name}' exists; skipping strings ingest.")
+            logger.info("Collection '%s' exists; skipping strings ingest.", collection_name)
             program_info.strings_collection = strings_collection
         except Exception:
-            logger.info(f"Creating new strings collection '{collection_name}'")
+            logger.info("Creating new strings collection '%s'", collection_name)
             tools = GhidraTools(program_info)
 
-            strings: list[String] = tools.get_all_strings()
+            strings: list[Any] = tools.get_all_strings()
             metadatas: list[dict[str, Any]] = [{"address": str(s.address)} for s in strings]
             ids: list[str] = [str(s.address) for s in strings]
             strings_values: list[str] = [s.value for s in strings]
@@ -641,11 +779,12 @@ class PyGhidraContext:
             except Exception as e:
                 logger.error(f"Failed to add strings to collection: {e.__class__.__name__}: {e}")
 
-            logger.info(f"Strings analysis complete for collection '{collection_name}'")
+            logger.info("Strings analysis complete for collection '%s'", collection_name)
             program_info.strings_collection = strings_collection
 
     def _init_chroma_collections_for_program(self, program_info: ProgramInfo):
         """Initializes all Chroma collections (code and strings) for a single program."""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_chroma_collections_for_program")
         self._init_chroma_code_collection_for_program(program_info)
         self._init_chroma_strings_collection_for_program(program_info)
 
@@ -655,6 +794,7 @@ class PyGhidraContext:
         If an executor is available, tasks are submitted asynchronously.
         Otherwise, initialization runs in the main thread.
         """
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._init_all_chroma_collections")
         if self.chroma_client is None:
             logger.info("Skipping Chroma collection initialization; chromadb unavailable")
             return
@@ -675,11 +815,12 @@ class PyGhidraContext:
 
     # Callback function that runs when the future is done to catch any exceptions
     def _analysis_done_callback(self, future: concurrent.futures.Future) -> None:
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._analysis_done_callback")
         try:
             future.result()
             logging.info("Asynchronous analysis finished successfully.")
         except Exception as e:
-            logging.exception(f"Asynchronous analysis failed with exception: {e}")
+            logging.exception("Asynchronous analysis failed with exception: %s", e)
             raise e
 
     def analyze_project(
@@ -688,6 +829,7 @@ class PyGhidraContext:
         force_analysis: bool = False,
         verbose_analysis: bool = False,
     ) -> concurrent.futures.Future | None:
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.analyze_project")
         if self.executor is not None:
             future = self.executor.submit(
                 self._analyze_project,
@@ -704,7 +846,7 @@ class PyGhidraContext:
                     future.result()
                     logger.info("Analysis complete.")
                 except Exception as e:
-                    logger.error(f"Analysis completed with an exception: {e}")
+                    logger.error("Analysis completed with an exception: %s", e)
                 return None
             return future
         # No executor: just run synchronously
@@ -718,7 +860,8 @@ class PyGhidraContext:
         verbose_analysis: bool = False,
     ) -> None:
         """Analyzes all files found within the Ghidra project"""
-        domain_files: list[DomainFile] = self.list_binary_domain_files()
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext._analyze_project")
+        domain_files: list[GhidraDomainFile] = self.list_binary_domain_files()
 
         logger.info(f"Starting analysis for {len(domain_files)} binaries")
 
@@ -726,7 +869,7 @@ class PyGhidraContext:
         completed_count: int = 0
 
         if self.executor is not None:
-            futures: list[concurrent.futures.Future[DomainFile | Program | None]] = [
+            futures: list[concurrent.futures.Future[GhidraDomainFile | GhidraProgram | None]] = [
                 self.executor.submit(
                     self.analyze_program,
                     domainFile,
@@ -737,20 +880,27 @@ class PyGhidraContext:
                 for domainFile in domain_files
             ]
 
+            from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+                DomainFile as GhidraDomainFile,
+            )
+            from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+                Program as GhidraProgram,
+            )
+
             for future in concurrent.futures.as_completed(futures):
-                result: DomainFile | Program | None = future.result()
+                result: GhidraDomainFile | GhidraProgram | None = future.result()
                 if result is None:
                     logger.error("Analysis result is None, expected DomainFile or Program?")
                     continue
-                if isinstance(result, DomainFile):
+                if isinstance(result, GhidraDomainFile):
                     logger.info(f"Analysis complete for {result.getName()}")
-                elif isinstance(result, Program):
+                elif isinstance(result, GhidraProgram):
                     logger.info(f"Analysis complete for {result.name}")
                 else:
                     logger.error(f"Analysis result is {type(result)}, expected DomainFile or Program?")
                     continue
                 completed_count += 1
-                logger.info(f"Completed {completed_count}/{prog_count} programs")
+                logger.info("Completed %s/%s programs", completed_count, prog_count)
         else:
             for domain_file in domain_files:
                 self.analyze_program(
@@ -760,7 +910,7 @@ class PyGhidraContext:
                     verbose_analysis,
                 )
                 completed_count += 1
-                logger.info(f"Completed {completed_count}/{prog_count} programs")
+                logger.info("Completed %s/%s programs", completed_count, prog_count)
 
         logger.info("All programs analyzed.")
         # The chroma collections need to be initialized after analysis is complete
@@ -769,30 +919,40 @@ class PyGhidraContext:
 
     def analyze_program(  # noqa C901
         self,
-        df_or_prog: DomainFile | Program,
+        df_or_prog: GhidraDomainFile | GhidraProgram,
         require_symbols: bool = True,
         force_analysis: bool = False,
         verbose_analysis: bool = False,
     ):
-        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports]
-        from ghidra.framework.model import DomainFile  # pyright: ignore[reportMissingImports]
-        from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
-        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.analyze_program")
+        from ghidra.app.script import GhidraScriptUtil  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.framework.model import DomainFile as GhidraDomainFile  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.flatapi import FlatProgramAPI as GhidraFlatProgramAPI  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.util import GhidraProgramUtilities as GhidraProgramUtilities  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
 
-        # Import symbol utilities from ghidrecomp
-        from agentdecompile_cli.ghidrecomp.utility import (
+        # Import symbol utilities from ghidrecomp (disable_headless_unsafe_analyzers may be missing in some builds)
+        from ghidrecomp.utility import (
             get_pdb,
             set_pdb,
             set_remote_pdbs,
             setup_symbol_server,
         )
 
-        df: DomainFile | None = None
-        if isinstance(df_or_prog, DomainFile):
+        try:
+            if not TYPE_CHECKING:
+                from ghidrecomp.utility import disable_headless_unsafe_analyzers
+        except (ImportError, AttributeError):
+
+            def disable_headless_unsafe_analyzers(program: GhidraProgram) -> None:
+                """No-op when ghidrecomp does not export this (e.g. older or different build)."""
+
+        df: GhidraDomainFile | None = None
+        if isinstance(df_or_prog, GhidraDomainFile):
             df = df_or_prog
-        elif isinstance(df_or_prog, Program):
+        elif isinstance(df_or_prog, GhidraProgram):
             df = df_or_prog.getDomainFile()
         else:
             raise ValueError(f"Invalid domain file or program: {df_or_prog}")
@@ -808,32 +968,32 @@ class PyGhidraContext:
                 df_or_prog.getName(),
                 False,
             )
-            self.programs[df_or_prog.getName() if df is None else df.pathname] = self._init_program_info(program)
+            self.programs[df_or_prog.getName() if df is None else df.pathname] = self._init_program_info(program)  # pyright: ignore[reportArgumentType]
 
-        logger.info(f"Analyzing program: {program}")
+        logger.info("Analyzing program: %s", program)
 
-        assert isinstance(program, Program), "Program is not a Program object"
+        assert isinstance(program, GhidraProgram), "Program is not a Program object"
 
         for gdt in self.gdts:
-            logger.info(f"Loading GDT: {gdt}")
+            logger.info("Loading GDT: %s", gdt)
             if not Path(gdt).exists():
                 raise FileNotFoundError(f"GDT Path not found {gdt}")
             self.apply_gdt(program, gdt)
 
         gdt_names: list[str] = [name for name in program.getDataTypeManager().getSourceArchives()]
         if len(gdt_names) > 0:
-            logger.debug(f"Using file gdts: {gdt_names}")
+            logger.debug("Using file gdts: %s", gdt_names)
 
         if verbose_analysis or self.verbose_analysis:
-            monitor = ConsoleTaskMonitor()
-            flat_api = FlatProgramAPI(program, monitor)
+            monitor = GhidraConsoleTaskMonitor()
+            flat_api = GhidraFlatProgramAPI(program, monitor)
         else:
-            flat_api = FlatProgramAPI(program)
+            flat_api = GhidraFlatProgramAPI(program)
 
         if GhidraProgramUtilities.shouldAskToAnalyze(program) or force_analysis or self.force_analysis:
             GhidraScriptUtil.acquireBundleHostReference()
 
-            program_options = self.program_options.get("program_options", {})
+            program_options: dict[str, Any] = self.program_options.get("program_options", {})
             if program is not None and program.getFunctionManager().getFunctionCount() > 1000:
                 # Force Decomp Param ID is not set
                 analyzers_options = program_options.get("Analyzers", {})
@@ -850,7 +1010,7 @@ class PyGhidraContext:
                     or {}
                 )
                 for k, v in analyzer_options.items():
-                    logger.info(f"Setting prog option:{k} with value:{v}")
+                    logger.info("Setting prog option:%s with value:%s", k, v)
                     self.set_analysis_option(program, k, v)
 
             if self.no_symbols:
@@ -870,13 +1030,15 @@ class PyGhidraContext:
                     logger.warning("No symbols path provided, skipping symbol server setup")
 
                 # Verify PDB loaded
-                pdb: File | None = get_pdb(program)
+                pdb: JavaFile | None = get_pdb(program)
                 if pdb is None:
                     logger.warning(f"Failed to find PDB for {program.name}")
                 else:
                     logger.info(f"Loaded PDB: {'None' if pdb is None else pdb.getName()}")
 
-            logger.info(f"Starting Ghidra analysis of {program}...")
+            # Disable analyzers that NPE in headless (GhidraScriptUtil.bundleHost is null)
+            disable_headless_unsafe_analyzers(program)
+            logger.info("Starting Ghidra analysis of %s...", program)
             try:
                 flat_api.analyzeAll(program)
                 if hasattr(GhidraProgramUtilities, "setAnalyzedFlag"):
@@ -889,14 +1051,14 @@ class PyGhidraContext:
                 GhidraScriptUtil.releaseBundleHostReference()
                 self.project.save(program)
         else:
-            logger.info(f"Analysis already complete.. skipping {program}!")
+            logger.info("Analysis already complete.. skipping %s!", program)
 
         # Save program as gzfs
         if self.gzfs_path is not None:
             from java.io import File  # type: ignore
 
-            pathname = df.pathname.replace("/", "_")
-            gzf_file = self.gzfs_path / f"{pathname}.gzf"
+            pathname: str = df.pathname.replace("/", "_")
+            gzf_file: Path = self.gzfs_path / f"{pathname}.gzf"
             self.project.saveAsPackedFile(program, File(str(gzf_file.absolute())), True)
 
         logger.info(f"Analysis for {df_or_prog.getName()} complete")
@@ -905,7 +1067,7 @@ class PyGhidraContext:
 
     def set_analysis_option(  # noqa: C901
         self,
-        prog: Program,
+        prog: GhidraProgram,
         option_name: str,
         value: Any,
     ) -> None:
@@ -913,63 +1075,64 @@ class PyGhidraContext:
 
         Inspired by: Ghidra/Features/Base/src/main/java/ghidra/app/script/GhidraScript.java#L1272
         """
-        from ghidra.program.model.listing import Program  # pyright: ignore[reportMissingImports]
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.set_analysis_option")
+        from ghidra.program.model.listing import Program as GhidraProgram  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
-        prog_options: ToolOptions = prog.getOptions(Program.ANALYSIS_PROPERTIES)
-        option_type = prog_options.getType(option_name)
+        prog_options: GhidraToolOptions = prog.getOptions(GhidraProgram.ANALYSIS_PROPERTIES)
+        option_type: GhidraOptionType = prog_options.getType(option_name)
 
-        match str(option_type):
-            case "INT_TYPE":
-                logger.debug("Setting type: INT")
-                prog_options.setInt(option_name, int(value))
-            case "LONG_TYPE":
-                logger.debug("Setting type: LONG")
-                prog_options.setLong(option_name, int(value))
-            case "STRING_TYPE":
-                logger.debug("Setting type: STRING")
-                prog_options.setString(option_name, value)
-            case "DOUBLE_TYPE":
-                logger.debug("Setting type: DOUBLE")
-                prog_options.setDouble(option_name, float(value))
-            case "FLOAT_TYPE":
-                logger.debug("Setting type: FLOAT")
-                prog_options.setFloat(option_name, float(value))
-            case "BOOLEAN_TYPE":
-                logger.debug("Setting type: BOOLEAN")
-                if isinstance(value, str):
-                    temp_bool = value.lower()
-                    if temp_bool in {"true", "false"}:
-                        prog_options.setBoolean(option_name, temp_bool == "true")
-                elif isinstance(value, bool):
-                    prog_options.setBoolean(option_name, value)
-                else:
-                    raise ValueError(
-                        f"Failed to setBoolean on {option_name} {option_type}",
-                    )
-            case "ENUM_TYPE":
-                logger.debug("Setting type: ENUM")
-                from java.lang import Enum  # type: ignore
+        option_type_str: str = str(option_type)
+        if option_type_str == "INT_TYPE":
+            logger.debug("Setting type: INT")
+            prog_options.setInt(option_name, int(value))
+        elif option_type_str == "LONG_TYPE":
+            logger.debug("Setting type: LONG")
+            prog_options.setLong(option_name, int(value))
+        elif option_type_str == "STRING_TYPE":
+            logger.debug("Setting type: STRING")
+            prog_options.setString(option_name, value)
+        elif option_type_str == "DOUBLE_TYPE":
+            logger.debug("Setting type: DOUBLE")
+            prog_options.setDouble(option_name, float(value))
+        elif option_type_str == "FLOAT_TYPE":
+            logger.debug("Setting type: FLOAT")
+            prog_options.setFloat(option_name, float(value))
+        elif option_type_str == "BOOLEAN_TYPE":
+            logger.debug("Setting type: BOOLEAN")
+            if isinstance(value, str):
+                temp_bool = value.lower()
+                if temp_bool in {"true", "false"}:
+                    prog_options.setBoolean(option_name, temp_bool == "true")
+            elif isinstance(value, bool):
+                prog_options.setBoolean(option_name, value)
+            else:
+                raise ValueError(
+                    f"Failed to setBoolean on {option_name} {option_type}",
+                )
+        elif option_type_str == "ENUM_TYPE":
+            logger.debug("Setting type: ENUM")
+            from java.lang import Enum as JavaEnum  # pyright: ignore[reportMissingImports]
 
-                enum_for_option = prog_options.getEnum(option_name, None)
-                if enum_for_option is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                new_enum = None
-                try:
-                    new_enum = Enum.valueOf(enum_for_option.getClass(), value)
-                except Exception:
-                    for enum_value in enum_for_option.values():  # type: ignore
-                        if value == enum_value.toString():
-                            new_enum = enum_value
-                            break
-                if new_enum is None:
-                    raise ValueError(
-                        f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
-                    )
-                prog_options.setEnum(option_name, new_enum)
-            case _:
-                logger.warning(f"option {option_type} set not supported, ignoring")
+            enum_for_option = prog_options.getEnum(option_name, None)
+            if enum_for_option is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            new_enum = None
+            try:
+                new_enum = JavaEnum.valueOf(enum_for_option.getClass(), value)
+            except Exception:
+                for enum_value in enum_for_option.values():  # type: ignore
+                    if value == enum_value.toString():
+                        new_enum = enum_value
+                        break
+            if new_enum is None:
+                raise ValueError(
+                    f"Attempted to set an Enum option {option_name} without an existing enum value alreday set.",
+                )
+            prog_options.setEnum(option_name, new_enum)
+        else:
+            logger.warning("option %s set not supported, ignoring", option_type)
 
     def configure_symbols(
         self,
@@ -978,18 +1141,19 @@ class PyGhidraContext:
         allow_remote: bool = True,
     ):
         """Configures symbol servers and attempts to load PDBs for programs."""
-        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports]
-            PdbAnalyzer,
-            PdbUniversalAnalyzer,
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.configure_symbols")
+        from ghidra.app.plugin.core.analysis import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+            PdbAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
+            PdbUniversalAnalyzer,  # pyright: ignore[reportAttributeAccessIssue]
         )
-        from ghidra.app.util.pdb import PdbProgramAttributes  # pyright: ignore[reportMissingImports]
+        from ghidra.app.util.pdb import PdbProgramAttributes  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         logger.info("Configuring symbol search paths...")
         # This is a simplification. A real implementation would need to configure the symbol server
         # which is more involved. For now, we'll focus on enabling the analyzers.
 
         for program_name, program in self.programs.items():
-            logger.info(f"Configuring symbols for {program_name}")
+            logger.info("Configuring symbols for %s", program_name)
             try:
                 if hasattr(
                     PdbUniversalAnalyzer,
@@ -1004,66 +1168,57 @@ class PyGhidraContext:
                 # The following is a placeholder for actual symbol loading logic
                 pdb_attr = PdbProgramAttributes(program)
                 if not pdb_attr.pdbLoaded:
-                    logger.warning(f"PDB not loaded for {program_name}. Manual loading might be required.")
+                    logger.warning("PDB not loaded for %s. Manual loading might be required.", program_name)
 
             except Exception as e:
-                logger.error(f"Failed to configure symbols for {program_name}: {e}")
+                logger.error("Failed to configure symbols for %s: %s", program_name, e)
 
     def apply_gdt(
         self,
-        program: Program,
+        program: GhidraProgram,
         gdt_path: str | Path,
         verbose: bool = False,
     ):
         """Apply GDT to program"""
-        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.data import FileDataTypeManager  # pyright: ignore[reportMissingImports]
-        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingImports]
-        from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports]
-        from java.io import File  # pyright: ignore[reportMissingImports]
-        from java.util import List  # pyright: ignore[reportMissingImports]
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.apply_gdt")
+        from ghidra.app.cmd.function import ApplyFunctionDataTypesCmd as GhidraApplyFunctionDataTypesCmd  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.address import AddressSetView as GhidraAddressSetView  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.data import FileDataTypeManager as GhidraFileDataTypeManager  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType as GhidraSourceType  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        from java.io import File as JavaFile  # pyright: ignore[reportMissingImports]
+        from java.util import List as JavaList  # pyright: ignore[reportMissingImports]
 
         gdt_path = Path(gdt_path)
 
         if verbose:
-            monitor = ConsoleTaskMonitor()
+            monitor = GhidraConsoleTaskMonitor()
         else:
-            monitor = ConsoleTaskMonitor().DUMMY_MONITOR
+            monitor = GhidraConsoleTaskMonitor().DUMMY_MONITOR
 
-        archive_gdt = File(str(gdt_path))
-        archive_dtm: FileDataTypeManager | None = FileDataTypeManager.openFileArchive(archive_gdt, False)
+        archive_gdt = JavaFile(str(gdt_path))
+        archive_dtm: GhidraFileDataTypeManager | None = GhidraFileDataTypeManager.openFileArchive(archive_gdt, False)
         if archive_dtm is None:
             raise ValueError(f"Failed to open file archive {gdt_path}")
         always_replace = True
         create_bookmarks_enabled = True
-        cmd: ApplyFunctionDataTypesCmd = ApplyFunctionDataTypesCmd(
-            List.of(archive_dtm),
-            None,
-            SourceType.USER_DEFINED,
+        cmd = GhidraApplyFunctionDataTypesCmd(
+            JavaList.of(archive_dtm),
+            GhidraAddressSetView.EMPTY_SET,
+            GhidraSourceType.USER_DEFINED,
             always_replace,
             create_bookmarks_enabled,
         )
         cmd.applyTo(program, monitor)
 
-    def get_metadata(self, prog: Program) -> dict[str, Any]:
+    def get_metadata(self, prog: GhidraProgram) -> dict[str, Any]:
         """Generate dict from program metadata"""
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.get_metadata")
         meta: dict[str, Any] = prog.getMetadata()
         return dict(meta)
 
-    def setup_decompiler(self, program: Program) -> DecompInterface:
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports]
+    def setup_decompiler(self, program: GhidraProgram) -> GhidraDecompInterface:
+        logger.debug("diag.enter %s", "context.py:PyGhidraContext.setup_decompiler")
+        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
 
-        prog_options = DecompileOptions()
-
-        decomp = DecompInterface()
-
-        # grab default options from program
-        prog_options.grabFromProgram(program)
-
-        # increase maxpayload size to 100MB (default 50MB)
-        prog_options.setMaxPayloadMBytes(100)
-
-        decomp.setOptions(prog_options)
-        decomp.openProgram(program)
-
-        return decomp
+        return open_decompiler_for_program(program)

@@ -1,6 +1,8 @@
-"""Suggestion Tool Provider - get-suggestions.
+"""Suggestion Tool Provider - get-suggestions (tool name 'suggest').
 
-Provides analysis suggestions based on current function context.
+- suggestionType: comment_type, comment_text, function_name, function_tags, variable_name, data_type.
+- addressOrSymbol / functionIdentifier define the context; variableName used for variable_name suggestions.
+- maxContext, includeCallers, includeCallees control how much surrounding context is fed to the suggestion engine. Suggestions are advisory only (no automatic edits).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ class SuggestionToolProvider(ToolProvider):
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/suggestions.py:SuggestionToolProvider.list_tools")
         return [
             types.Tool(
                 name="suggest",
@@ -60,9 +63,26 @@ class SuggestionToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
-        program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
-        suggestion_type_raw = self._require_str(args, "suggestiontype", "type", name="suggestion_type")
+        logger.debug("diag.enter %s", "mcp_server/providers/suggestions.py:SuggestionToolProvider._handle")
+        suggestion_type_raw = self._get_str(args, "suggestiontype", "type", default="")
 
+        if not suggestion_type_raw:
+            # Resource / no-args mode: return available suggestion types
+            return create_success_response(
+                {
+                    "availableSuggestionTypes": [
+                        "comment_type",
+                        "comment_text",
+                        "function_name",
+                        "function_tags",
+                        "variable_name",
+                        "data_type",
+                    ],
+                    "note": "Pass suggestionType and addressOrSymbol to request a suggestion for a specific function.",
+                }
+            )
+
+        program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
         suggestion_type = n(suggestion_type_raw)
         valid_suggestion_types: set[str] = {
             "commenttype",

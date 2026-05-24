@@ -19,10 +19,18 @@ All rendering is purely a presentation layer — zero changes to handler logic.
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any, Callable, cast
 
-from agentdecompile_cli.registry import is_tool_advertised, normalize_identifier
+from typing import TYPE_CHECKING, Any, cast
+
+from agentdecompile_cli.app_logger import norm_arg_keys
+from agentdecompile_cli.registry import Tool, is_tool_advertised, normalize_identifier
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Markdown building helpers
@@ -30,22 +38,27 @@ from agentdecompile_cli.registry import is_tool_advertised, normalize_identifier
 
 
 def _md_heading(level: int, text: str) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_heading")
     return f"{'#' * level} {text}"
 
 
 def _md_bold_kv(key: str, value: Any) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_bold_kv")
     return f"**{key}:** {value}"
 
 
 def _md_code_inline(text: str) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_code_inline")
     return f"`{text}`"
 
 
 def _md_code_block(code: str, lang: str = "") -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_code_block")
     return f"```{lang}\n{code}\n```"
 
 
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_table")
     if not headers:
         return ""
     header_row: str = "| " + " | ".join(headers) + " |"
@@ -55,16 +68,56 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _md_bullet_list(items: list[str]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_md_bullet_list")
     return "\n".join(f"- {item}" for item in items)
 
 
 def _truncate(s: str, max_len: int = 120) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_truncate")
     if len(s) <= max_len:
         return s
     return s[: max_len - 3] + "..."
 
 
+def _extract_searchable_ascii_token(text: str, min_len: int = 4) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_extract_searchable_ascii_token")
+    if not text:
+        return ""
+    match = re.search(rf"[A-Za-z0-9_.$@/-]{{{min_len},}}", text)
+    return match.group(0) if match else ""
+
+
+def _looks_like_pointer_type(data_type: str) -> bool:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_looks_like_pointer_type")
+    lowered = data_type.lower()
+    return "pointer" in lowered or "ptr" in lowered or "*" in data_type
+
+
+def _is_address_like(value: str) -> bool:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_is_address_like")
+    return bool(re.fullmatch(r"(?:0x)?[0-9A-Fa-f]+", value.strip()))
+
+
+def _prefer_function_target(entry: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_prefer_function_target")
+    address = str(entry.get("address", "") or "")
+    name = str(entry.get("name", "") or "")
+    return address or name
+
+
+def _decompilation_text_embeds_disassembly(decomp: str) -> bool:
+    """True when the decompilation string already carries a disassembly listing (skip duplicate ### Disassembly)."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_decompilation_text_embeds_disassembly")
+    if not (decomp and isinstance(decomp, str)):
+        return False
+    d = decomp.strip()
+    if "/* Disassembly */" in d:
+        return True
+    return False
+
+
 def _pagination_footer(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_pagination_footer")
     parts: list[str] = []
     count: int = data.get("count", 0)
     total: int = data.get("total", count)
@@ -77,21 +130,29 @@ def _pagination_footer(data: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+# Tools that may be disabled via AGENTDECOMPILE_DISABLE_TOOLS etc.; if disabled,
+# we omit "Suggested Next Steps" lines that mention them so the client isn't told to use unavailable tools.
 _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
-    normalize_identifier("get-functions"),
-    normalize_identifier("manage-bookmarks"),
-    normalize_identifier("manage-comments"),
-    normalize_identifier("manage-data-types"),
-    normalize_identifier("manage-files"),
-    normalize_identifier("manage-function"),
-    normalize_identifier("manage-strings"),
-    normalize_identifier("manage-structures"),
-    normalize_identifier("manage-symbols"),
+    normalize_identifier("annotate-function"),
+    Tool.GET_FUNCTIONS.normalized,
+    Tool.LIST_STRINGS.normalized,
+    Tool.MANAGE_BOOKMARKS.normalized,
+    Tool.MANAGE_COMMENTS.normalized,
+    Tool.MANAGE_DATA_TYPES.normalized,
+    Tool.MANAGE_FILES.normalized,
+    Tool.MANAGE_FUNCTION.normalized,
+    Tool.MANAGE_STRUCTURES.normalized,
+    Tool.MANAGE_SYMBOLS.normalized,
+    Tool.SEARCH_STRINGS.normalized,
 }
 
 
 def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
-    """Drop recommendation lines that reference tools disabled via env configuration."""
+    """Drop recommendation lines that reference tools disabled via env configuration.
+    Also drops steps that mention get-functions (e.g. `get-functions address=...`)
+    when that tool is not advertised (legacy mode off).
+    """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_filter_disabled_tool_recommendations")
     filtered: list[str] = []
     for step in steps:
         mentioned = re.findall(r"`([A-Za-z0-9_-]+)`", step)
@@ -101,6 +162,10 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
             if token_norm in _DISABLABLE_RECOMMENDATION_TOOLS and not is_tool_advertised(token):
                 blocked = True
                 break
+        # Steps like "Decompile/disassemble/inspect containing function: `get-function address=...`"
+        # have the tool name inside a longer backticked phrase; the regex above won't match.
+        if not blocked and "get-functions" in step and not is_tool_advertised("get-functions"):
+            blocked = True
         if not blocked:
             filtered.append(step)
     return filtered
@@ -113,19 +178,21 @@ def _filter_disabled_tool_recommendations(steps: list[str]) -> list[str]:
 
 
 def _next_steps_execute_script(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_execute_script")
     steps: list[str] = []
     has_error = bool(data.get("stderr"))
     has_output = bool(data.get("stdout") or data.get("result"))
     if has_error and not has_output:
         steps.append("Review the traceback above and fix the script, then call `execute-script` again.")
     if has_output:
-        steps.append("If the script retrieved function/address data, use `get-functions mode=decompile` to inspect specific functions.")
+        steps.append("If the script retrieved function/address data, use `get-function address=...` to inspect specific functions.")
         steps.append("Use `manage-comments` or `manage-bookmarks` to annotate interesting findings.")
     steps.append("For batch analysis across many functions, combine `list-functions` output with `execute-script` loops.")
     return steps
 
 
 def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_decompile")
     func_name: str = data.get("function", "")
     addr: str = data.get("address", "")
     steps: list[str] = []
@@ -134,12 +201,15 @@ def _next_steps_decompile(data: dict[str, Any]) -> list[str]:
     if addr:
         steps.append(f'Call `manage-comments address={addr} mode=set comment="..."` to annotate your findings.')
         steps.append(f"Call `get-references address={addr}` to find all cross-references to/from this function.")
-    steps.append("If the function calls suspicious subroutines, use `get-functions mode=decompile` on those next.")
-    steps.append("Use `manage-function mode=rename` to give this function a meaningful name if auto-named.")
+    steps.append("If the function calls suspicious subroutines, use `get-function` on those next.")
+    steps.append("Use `annotate-function mode=rename` to give this function a meaningful name if auto-named.")
     return steps
 
 
 def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
+    # Prefer get-function and get-current-program; decompile-function is legacy and regression
+    # often reintroduces it in suggested next steps — do not suggest get-function here.
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_list_functions")
     total: int = data.get("total", data.get("count", 0))
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -147,43 +217,40 @@ def _next_steps_list_functions(data: dict[str, Any]) -> list[str]:
         first: dict[str, Any] = results[0]
         name: str = first.get("name", "")
         if name:
-            steps.append(f"Call `get-functions mode=decompile function={name}` to read the pseudocode of a specific function.")
-            steps.append(f"Call `get-functions function={name} view=info` for detailed metadata (params, return type).")
+            steps.append(f"Call `get-function` with `functionIdentifier={name}` to read the pseudocode of a specific function.")
+            steps.append(f"Call `get-call-graph` with `function={name}` and `mode=graph` for caller/callee metadata.")
     if total > len(results):
-        steps.append(f"Use `offset` + `limit` to paginate through all {total} functions.")
-    steps.append("Use `namePattern` regex to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals).")
-    steps.append("Call `manage-symbols mode=count` for a quick symbol count overview without listing.")
+        steps.append(f"Use `offset` and `limit` with `list-functions` to paginate through all {total} functions.")
+    steps.append("Use `namePattern` with `list-functions` to filter (e.g. `^sub_` for unnamed, `^_` for C++ internals).")
+    steps.append("Call `get-current-program` for a quick symbol/function count overview without listing.")
     return steps
 
 
 def _next_steps_get_functions(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_get_functions")
     view: str = data.get("view", "info")
     name: str = data.get("name", "")
     addr: str = data.get("address", "")
     steps: list[str] = []
     if view == "info":
-        steps.append(f"Call `get-functions mode=decompile function={name}` to see the C pseudocode.")
-        steps.append(f"Call `get-call-graph function={name} mode=graph` to map call relationships.")
-        steps.append(f"Call `get-functions function={name} view=disassemble` for raw assembly instructions.")
+        steps.append(f"Call `get-function function={name}` to get c pseudocode, disassembly, call graph, and other details.")
     elif view == "calls":
         callers: list[dict[str, Any]] = data.get("callers", [])
         callees: list[dict[str, Any]] = data.get("callees", [])
         if callees:
-            steps.append(f"Decompile called functions: try `get-functions mode=decompile function={callees[0].get('name', '')}`.")
+            steps.append(f"Decompile/disassemble/inspect called functions: try `get-function functionIdentifier={callees[0].get('name', '')}`.")
         if callers:
-            steps.append(f"Trace callers: try `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append(f"For a full call tree, use `get-call-graph function={name} mode=tree depth=3`.")
+            steps.append(f"Trace callers: try `get-function functionIdentifier={callers[0].get('name', '')}`.")
     elif view == "decompile":
-        steps.append(f"Call `get-call-graph function={name} mode=graph` to see call relationships.")
         steps.append(f"Call `manage-comments address={addr} mode=set` to annotate your analysis.")
     elif view == "disassemble":
         steps.append("Look for interesting patterns: `CALL`, `JMP` targets, or unusual `MOV` operands.")
-        steps.append(f"Call `get-functions mode=decompile function={name}` for a higher-level C view of this assembly.")
-        steps.append(f"Call `get-references address={addr}` to trace cross-references from specific instructions.")
+        steps.append(f"Call `get-function function={name}` for a higher-level C view of this assembly, disassembly, call graph, and other details.")
     return steps
 
 
 def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_symbols")
     mode: str = data.get("mode", "symbols")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
@@ -192,7 +259,7 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
             first_name: str = results[0].get("name", "")
             first_addr: str = results[0].get("address", "")
             if first_name:
-                steps.append(f"Decompile a symbol: `get-functions mode=decompile function={first_name}`.")
+                steps.append(f"Decompile a symbol: `get-function function={first_name}`.")
             if first_addr:
                 steps.append(f"Get cross-references: `get-references address={first_addr}`.")
         steps.append("Use `query` to filter symbols by pattern (supports regex).")
@@ -204,144 +271,272 @@ def _next_steps_symbols(data: dict[str, Any]) -> list[str]:
         steps.append("Call `search-everything query=<import_name>` to find all uses in decompiled code.")
     elif mode == "exports":
         if results:
-            steps.append(f"Decompile an export: `get-functions mode=decompile function={results[0].get('name', '')}`.")
+            steps.append(f"Decompile an export: `get-function function={results[0].get('name', '')}`.")
         steps.append("Exports are the binary's public API — start analysis from these entry points.")
     elif mode == "classes":
         if results:
-            steps.append(f"Explore class symbols: `manage-symbols mode=symbols query={results[0].get('name', '')}`.")
+            steps.append(f"Explore class symbols: `search-symbols query={results[0].get('name', '')}`.")
         steps.append("Look for vtable addresses with `analyze-vtables` to map virtual method tables.")
     elif mode == "create_label":
         steps.append("Labels improve readability. Continue annotating with `manage-comments` and `manage-bookmarks`.")
     elif mode == "count":
-        steps.append("For a full listing, use `manage-symbols mode=symbols` or `list-functions`.")
+        steps.append("For a full listing, use `search-symbols query=.*` or `list-functions`.")
     return steps
 
 
 def _next_steps_search_everything(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_search_everything")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
     if results:
         first: dict[str, Any] = results[0]
         rt: str = first.get("resultType", "")
         next_tools: list[dict[str, Any]] = first.get("nextTools", [])
+        suggested_tool_names: set[str] = {str(nt.get("tool", "")) for nt in next_tools}
         if next_tools:
-            nt: dict[str, dict[str, Any]]
+            nt: dict[str, Any]
             for nt in next_tools[:2]:
                 tool: str = nt.get("tool", "")
                 args_str: str = " ".join(f"{k}={v}" for k, v in nt.get("args", {}).items())
                 steps.append(f"Follow up: `{tool} {args_str}`")
         if not next_tools:
             if rt == "function":
-                steps.append(f"Decompile: `get-functions mode=decompile function={first.get('name', first.get('function', ''))}`.")
+                steps.append(f"Decompile: `get-function function={first.get('name', first.get('function', ''))}`.")
             elif rt in ("symbol", "export", "import"):
                 steps.append(f"Cross-refs: `get-references address={first.get('address', '')}`.")
+        class_like_results: list[dict[str, Any]] = [row for row in results if str(row.get("resultType", "")) in {"class", "namespace"}]
+        addressful_results: list[dict[str, Any]] = [
+            row for row in results if str(row.get("functionAddress") or row.get("address") or "")
+        ]
+        if class_like_results:
+            steps.append(
+                "If `get-functions` or `analyze-vtables` surfaces relevant methods, open the most interesting caller/callee with `get-function addressOrSymbol=<address_or_name>` for full context."
+            )
+        elif addressful_results:
+            focus_address: str = str(addressful_results[0].get("functionAddress") or addressful_results[0].get("address") or "")
+            if focus_address and Tool.ANALYZE_DATA_FLOW.value not in suggested_tool_names:
+                steps.append(f"Trace the surrounding state with `analyze-data-flow addressOrSymbol={focus_address}` if this hit looks central to the behavior you are following.")
+            steps.append(
+                "After `get-function`, drill into any relevant caller/callee it reveals with `get-function addressOrSymbol=<address_or_name>`."
+            )
+        steps.append('Narrow results with `scopes` param (e.g. `scopes=["functions","strings"]`).')
+        return steps
     steps.append('Narrow results with `scopes` param (e.g. `scopes=["functions","strings"]`).')
     steps.append("Try `searchMode=regex` for pattern matching or `searchMode=fuzzy` for approximate matches.")
     return steps
 
 
 def _next_steps_memory(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_memory")
     mode: str = data.get("mode", "blocks")
     steps: list[str] = []
     if mode == "blocks":
         blocks: list[dict[str, Any]] = data.get("blocks", [])
-        text_block: dict[str, Any] | None = next((b for b in blocks if str(b.get("permissions", "")).endswith("x")), None)
-        data_block: dict[str, Any] | None = next((b for b in blocks if "data" in str(b.get("name", "")).lower()), None)
-        if text_block:
-            steps.append(f"Read code section: `inspect-memory mode=read address={text_block['start']} length=256`.")
-        if data_block:
-            steps.append(f"Inspect data section: `inspect-memory mode=read address={data_block['start']} length=256`.")
-        steps.append("Memory blocks reveal the binary's layout — `.text` is code, `.data`/`.rdata` hold globals/constants.")
-        steps.append("Call `list-functions` to see what functions exist in the executable sections.")
+        exec_block: dict[str, Any] | None = next((b for b in blocks if "x" in str(b.get("permissions", ""))), None)
+        rodata_block: dict[str, Any] | None = next(
+            (
+                b
+                for b in blocks
+                if any(token in str(b.get("name", "")).lower() for token in ("rdata", "rodata", "cstring", "const", "literal"))
+                or (str(b.get("permissions", "")) == "r--" and bool(b.get("initialized", True)))
+            ),
+            None,
+        )
+        writable_block: dict[str, Any] | None = next(
+            (b for b in blocks if "w" in str(b.get("permissions", "")) and bool(b.get("initialized", True))),
+            None,
+        )
+        if exec_block:
+            steps.append(f"Sample the executable region first: `inspect-memory mode=read addressOrSymbol={exec_block['start']} length=64` to confirm code bytes before pivoting into `list-functions` or `get-function`.")
+        if rodata_block and rodata_block != exec_block:
+            steps.append(f"Probe the likely string/constant region: `inspect-memory mode=read addressOrSymbol={rodata_block['start']} length=128` and follow any printable data with `search-strings`.")
+        if writable_block:
+            steps.append("Review typed globals next with `inspect-memory mode=data_items`; writable initialized blocks usually hold state, tables, and struct instances worth naming early.")
+        steps.append("Best practice: prioritize executable blocks, then read-only strings/constants, then writable globals. Ignore uninitialized regions until code or xrefs force you there.")
     elif mode == "read":
         addr: str = data.get("address", "")
-        steps.append(f"Interpret this data: `inspect-memory mode=data_at address={addr}` to see if Ghidra has typed it.")
-        steps.append("Look for ASCII strings in the hex dump — they often reveal string literals or format strings.")
-        steps.append("Use `manage-strings` to find all defined strings, or `search-strings query=...` for specific ones.")
+        ascii_token = _extract_searchable_ascii_token(str(data.get("ascii", "") or ""))
+        steps.append(f"Ask Ghidra for the typed view of these bytes: `get-data addressOrSymbol={addr}`.")
+        if ascii_token:
+            steps.append(f"Search for the same literal elsewhere with `search-strings query={ascii_token}` to find sibling tables, format strings, or nearby state names.")
+        steps.append(f"If this looks like a pointer table or embedded structure, follow up with `inspect-memory mode=data_at addressOrSymbol={addr}` and then pivot to `get-function` for code targets or `get-data` for data targets.")
     elif mode == "data_at":
-        steps.append("If the data type is a pointer, follow it with another `inspect-memory mode=data_at`.")
-        steps.append("Apply a different type with `apply-data-type` if the current interpretation is wrong.")
+        addr = str(data.get("address", "") or "")
+        data_type = str(data.get("dataType", "") or "")
+        value = str(data.get("value", "") or "")
+        note = str(data.get("note", "") or "")
+        if note:
+            steps.append(f"No typed data is defined here yet. Inspect raw bytes with `get-data addressOrSymbol={addr}` before you commit to a type.")
+            steps.append("If the bytes resolve into a table, string, or struct field layout, apply a type with `apply-data-type` or model the aggregate in `manage-structures`.")
+            return steps
+        steps.append(f"Find the code and data that reference this location: `get-references address={addr}`.")
+        if data_type and _looks_like_pointer_type(data_type) and value and _is_address_like(value):
+            steps.append(f"Follow the pointed-to target with `get-data addressOrSymbol={value}`; if it resolves to code, switch to `get-function addressOrSymbol={value}`.")
+        steps.append("If the current type is too coarse, refine it with `apply-data-type` or define a struct in `manage-structures` before revisiting the decompiler.")
     elif mode == "data_items":
-        steps.append("Defined data items show Ghidra's interpretation of memory regions.")
-        steps.append("Use `apply-data-type` to retype items, or `manage-structures` to create custom struct types.")
+        items: list[dict[str, Any]] = data.get("results", [])
+        if items:
+            first_addr = str(items[0].get("address", "") or "")
+            if first_addr:
+                steps.append(f"Inspect one concrete item in depth with `get-data addressOrSymbol={first_addr}`.")
+                steps.append(f"Trace who uses that global or table with `get-references address={first_addr}`.")
+        steps.append("Prioritize larger or named items first; they usually anchor struct recovery, string tables, and persistent global state.")
+        steps.append("Retype noisy byte arrays with `apply-data-type`, and graduate recurring layouts into `manage-structures` once you see repeated field patterns.")
     return steps
 
 
 def _next_steps_callgraph(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_callgraph")
     mode: str = data.get("mode", "graph")
     func_name: str = data.get("function", data.get("functionName", ""))
     steps: list[str] = []
-    if mode in ("graph", "tree"):
+    if mode == "overview":
+        functions: list[dict[str, Any]] = data.get("functions", [])
+        entry_points = [row for row in functions if bool(row.get("isEntryPoint"))]
+        hubs = sorted(functions, key=lambda row: int(row.get("callerCount", 0)), reverse=True)
+        if entry_points:
+            entry_target = _prefer_function_target(entry_points[0])
+            steps.append(f"Start from a root path, not a utility hub: `get-call-graph function={entry_target} mode=tree` to walk from an entry-point into real behavior.")
+        if hubs:
+            hub_target = _prefer_function_target(hubs[0])
+            steps.append(f"Use the hottest hub as a router map, then inspect it with `get-function addressOrSymbol={hub_target}` to decide which branch is worth following.")
+        steps.append("Best practice: use entry points to orient architecture, then descend into callees until you hit leaf functions that actually transform data or enforce logic.")
+    elif mode in ("graph", "tree"):
         callees: list[dict[str, Any]] = data.get("callees", [])
         callers: list[dict[str, Any]] = data.get("callers", [])
         if callees:
-            steps.append(f"Decompile a callee: `get-functions mode=decompile function={callees[0].get('name', '')}`.")
+            callee_target = _prefer_function_target(callees[0])
+            steps.append(f"Walk downward into behavior next with `get-function addressOrSymbol={callee_target}`; direct callees usually beat wrappers for understanding intent.")
         if callers:
-            steps.append(f"Trace a caller: `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append("Look for leaf functions (no callees) — they often implement core logic.")
-        steps.append("Look for hub functions (many callers) — they're likely utility/API wrappers.")
+            caller_target = _prefer_function_target(callers[0])
+            steps.append(f"Walk upward to recover purpose and reachability with `get-function addressOrSymbol={caller_target}`.")
+        steps.append("Best practice: use the caller side to learn how execution reaches this code, and the callee side to find where the real work or state mutation happens.")
     elif mode == "callers":
         callers = data.get("callers", data.get("commonCallers", []))
+        second_function = str(data.get("secondFunction", "") or "")
         if callers:
-            steps.append(f"Decompile caller: `get-functions mode=decompile function={callers[0].get('name', '')}`.")
-        steps.append(f"Get full graph: `get-call-graph function={func_name} mode=graph`.")
+            caller_target = _prefer_function_target(callers[0])
+            steps.append(f"Open the nearest caller in full context with `get-function addressOrSymbol={caller_target}`.")
+        elif func_name:
+            steps.append(f"No callers usually means a root entry, callback target, or dead code. Switch direction with `get-call-graph function={func_name} mode=callees` to see what it can reach.")
+        if second_function:
+            steps.append("Common callers are high-value orchestration sites; inspect one shared caller first before chasing the two target functions separately.")
+        elif func_name:
+            steps.append(f"Once you identify the important parent, widen the view with `get-call-graph function={func_name} mode=graph`.")
     elif mode == "callees":
         callees = data.get("callees", [])
         if callees:
-            steps.append(f"Decompile callee: `get-functions mode=decompile function={callees[0].get('name', '')}`.")
-    if func_name:
-        steps.append('Annotate: `manage-comments address=<addr> mode=set comment="analyzed call graph"`.')
+            callee_target = _prefer_function_target(callees[0])
+            steps.append(f"Inspect the first downstream target with `get-function addressOrSymbol={callee_target}` and keep descending until you hit a leaf or stateful helper.")
+            steps.append("Best practice: prefer callees that touch strings, globals, or external APIs over thin wrappers with dozens of pass-through calls.")
+        elif func_name:
+            steps.append(f"No callees means this is likely a leaf. Open it directly with `get-function addressOrSymbol={func_name}` and inspect constants, strings, and data accesses inside the body.")
+    if func_name and mode != "overview":
+        steps.append('Once the path is clear, leave a short note with `manage-comments address=<addr> mode=set comment="call path verified"` so the traversal decision persists.')
     return steps
 
 
 def _next_steps_comments(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_comments")
     action: str = data.get("action", data.get("mode", ""))
     steps: list[str] = []
     if action == "set":
         addr: str = data.get("address", "")
-        steps.append("Comment added. Continue annotating nearby addresses or use `manage-bookmarks` to flag the location.")
+        comment_type: str = str(data.get("type", "") or "eol")
+        steps.append("Verify the note in full context before adding more prose; comments are most useful when they capture a proven fact, not a guess.")
         if addr:
-            steps.append(f"Call `get-functions mode=decompile address={addr}` to verify the comment in context.")
+            steps.append(f"Open the containing function with `get-function addressOrSymbol={addr}` to confirm the comment still matches the code path, data use, and nearby labels.")
+        if comment_type == "eol":
+            steps.append(f"If this insight should survive every xref, promote it to a `repeatable` comment or add a durable marker with `manage-bookmarks addressOrSymbol={addr} mode=set`.")
+        elif comment_type == "plate":
+            steps.append("Plate comments are best for stable function summaries. Once the purpose is clear, follow up by naming the function or tagging it so the summary is backed by structure, not text alone.")
+        else:
+            steps.append("Use pre/post comments for local reasoning and reserve repeatable comments for facts that should travel with the address across references.")
     elif action == "get":
         addr = data.get("address", "")
+        comments: dict[str, str] = data.get("comments", {})
+        if comments:
+            steps.append(f"Re-open the surrounding function with `get-function addressOrSymbol={addr}` before editing; make sure the note still matches the latest analysis state.")
+            if "repeatable" in comments:
+                steps.append("Repeatable comments usually mark durable facts about data or APIs. If the fact is settled, consider adding a bookmark or better symbol/type so the meaning is encoded structurally too.")
+        else:
+            steps.append("No comments are present here yet. Add one only if you have a concrete finding worth preserving across sessions.")
         steps.append(f'To modify: `manage-comments address={addr} mode=set type=eol comment="new text"`.')
         steps.append(f"To remove: `manage-comments address={addr} mode=remove type=eol`.")
+    elif action == "remove":
+        addr = str(data.get("address", "") or "")
+        if addr:
+            steps.append(f"Verify the cleanup with `manage-comments address={addr} mode=get` so you do not leave stale reasoning behind.")
+            steps.append(f"If the removed note captured a still-valid finding, preserve it structurally with `manage-bookmarks addressOrSymbol={addr} mode=set` or a better symbol/type instead of deleting the knowledge outright.")
     elif action == "search":
-        steps.append("Comment search results show previously annotated locations — useful for resuming analysis.")
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
-            steps.append(f"Decompile annotated function: `get-functions mode=decompile address={results[0].get('address', '')}`.")
+            first_addr = str(results[0].get("address", "") or "")
+            first_type = str(results[0].get("type", "") or "")
+            steps.append(f"Resume from the first annotated site with `get-function addressOrSymbol={first_addr}` and verify whether the comment still reflects current understanding.")
+            if first_type:
+                steps.append(f"Use the comment type (`{first_type}`) to judge scope: repeatable comments usually capture reusable facts, while eol/pre/post comments often need nearby-code review before reuse.")
+        steps.append("Best practice: comment search is a resume tool. Use it to reopen prior conclusions, then convert stable insights into names, types, tags, or bookmarks where possible.")
     elif action == "search_decomp":
-        steps.append("Decompilation search found pattern matches in C pseudocode.")
         results = data.get("results", [])
         if results:
-            steps.append(f"Read full decompilation: `get-functions mode=decompile function={results[0].get('function', '')}`.")
+            first_func = str(results[0].get("function", "") or "")
+            first_addr = str(results[0].get("address", "") or "")
+            steps.append(f"Open the matched function in full context with `get-function addressOrSymbol={first_addr or first_func}` instead of relying on the snippet alone.")
+        steps.append("Decompiler comment search is best for reconnecting themes across functions. After opening a hit, leave a precise address-level comment only where the code actually justifies it.")
     return steps
 
 
 def _next_steps_bookmarks(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_bookmarks")
     action: str = data.get("action", data.get("mode", ""))
+    if not action and data.get("categories"):
+        action = "categories"
     steps: list[str] = []
     if action in ("set", "add_batch"):
-        steps.append("Bookmark set. Use `manage-bookmarks mode=get` to list all bookmarks.")
-        steps.append("Bookmarks persist across sessions — use them to track analysis progress.")
+        addr = str(data.get("address", "") or "")
+        bm_type = str(data.get("type", "") or "")
+        category = str(data.get("category", "") or "")
+        if addr:
+            steps.append(f"Re-open the bookmarked location with `get-function addressOrSymbol={addr}` before you add more markers; each bookmark should correspond to a real next investigation step.")
+        if category:
+            steps.append(f"Keep the triage queue coherent by grouping similar findings under `category={category}` so you can reopen a whole analysis thread later.")
+        if bm_type in {"TODO", "Analysis", "Warning", "Bug"}:
+            steps.append("Use bookmark types to represent work state, not prose. Once the issue is understood, convert the bookmark into a better name, type, tag, or precise comment.")
+        else:
+            steps.append("Bookmarks persist across sessions; use them as a lightweight work queue, then promote durable conclusions into comments, symbols, tags, or data types.")
     elif action == "remove":
-        steps.append("Bookmark removed. Use `manage-bookmarks mode=get` to verify.")
+        addr = str(data.get("address", "") or "")
+        if addr:
+            steps.append(f"Verify cleanup with `manage-bookmarks addressOrSymbol={addr} mode=get` so stale queue items do not survive your review.")
+            steps.append(f"If the bookmark marked a still-relevant fact, preserve it structurally with `manage-comments address={addr} mode=set` or a better symbol/type before dropping the marker.")
+        else:
+            steps.append("Verify cleanup with `manage-bookmarks mode=get` so stale queue items do not survive your review.")
+    elif action == "remove_all":
+        steps.append("Clear-all is a reset operation. Recreate only the bookmarks that still map to active analysis threads, not everything you used during exploration.")
     elif action in ("get", "search"):
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
             first_addr: str = results[0].get("address", "")
-            steps.append(f"Resume analysis: `get-functions mode=decompile address={first_addr}`.")
-            steps.append(f"Read comments: `manage-comments address={first_addr} mode=get`.")
-        steps.append("Filter bookmarks with `query` or `category` parameters.")
+            first_category: str = str(results[0].get("category", "") or "")
+            first_type: str = str(results[0].get("type", "") or "")
+            steps.append(f"Resume from the first queued site with `get-function addressOrSymbol={first_addr}` so you recover call context, nearby comments, and data use in one step.")
+            steps.append(f"Pull any existing notes before acting with `manage-comments address={first_addr} mode=get`.")
+            if first_category:
+                steps.append(f"Use the category (`{first_category}`) as a workstream boundary; finish one bookmark cluster before jumping to unrelated findings.")
+            if first_type:
+                steps.append(f"Let the bookmark type (`{first_type}`) drive priority: Warning/Bug should be resolved or disproved first, while Note/Analysis can wait behind execution-critical paths.")
+        steps.append("Filter bookmark queues with `query`, `type`, or `category` so you review one subsystem or question at a time instead of reopening random addresses.")
     elif action == "categories":
         categories: list[str] = data.get("categories", [])
         if categories:
-            steps.append(f"List bookmarks in category: `manage-bookmarks mode=get category={categories[0]}`.")
+            steps.append(f"Open one bookmark lane at a time with `manage-bookmarks mode=get category={categories[0]}`.")
+        steps.append("Treat categories as analysis workstreams such as loader, UI, network, or save/load. If categories are noisy, consolidate them before adding more bookmarks.")
     return steps
 
 
 def _next_steps_structures(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_structures")
     action: str = data.get("action", "")
     steps: list[str] = []
     if action == "list":
@@ -354,7 +549,7 @@ def _next_steps_structures(data: dict[str, Any]) -> list[str]:
         name = data.get("name", "")
         steps.append(f"Apply to memory: `manage-structures mode=apply structure={name} address=0x...`.")
         steps.append(f"Add fields: `manage-structures mode=add_field structure={name} field=newField type=int offset=0`.")
-        steps.append("Use `manage-symbols mode=symbols query=<name>` to find where this struct type is used.")
+        steps.append("Use `search-symbols query=<name>` to find where this struct type is used.")
     elif action == "create":
         name = data.get("name", "")
         steps.append(f"Add fields: `manage-structures mode=add_field structure={name} field=firstField type=int offset=0`.")
@@ -367,22 +562,38 @@ def _next_steps_structures(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_constants(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_constants")
     mode: str = data.get("mode", "")
     results: list[dict[str, Any]] = data.get("results", [])
     steps: list[str] = []
     if results:
-        first_addr: str = results[0].get("address", "") if results else ""
+        first = results[0]
+        first_addr: str = str(first.get("address", "") or "")
+        first_func: str = str(first.get("function", "") or "")
+        first_value = first.get("value")
         if first_addr:
-            steps.append(f"Decompile containing function: `get-functions mode=decompile address={first_addr}`.")
-            steps.append(f"Cross-references: `get-references address={first_addr}`.")
+            steps.append(f"Open the first hit in full context with `get-function addressOrSymbol={first_addr}` before deciding whether this constant is a flag, size, sentinel, or table index.")
+        if first_func:
+            steps.append(f"Use `get-call-graph function={first_func} mode=graph` to see whether this constant sits in a leaf implementation, a dispatcher, or a shared utility wrapper.")
+        if mode == "specific" and first_value is not None:
+            steps.append(f"Compare all uses of `{first_value}` before renaming anything; the same literal can be reused as a syscall number, loop bound, or protocol marker in different functions.")
+        elif mode == "range":
+            steps.append("Range hits are best treated as candidate families. Split them into pointer-like values, sizes, and bitmasks before chasing every occurrence individually.")
     if mode == "common":
-        steps.append("Common constants often include buffer sizes, error codes, Windows API flags, and crypto constants.")
-    steps.append("Search for specific values: `search-constants mode=specific value=0xDEADBEEF`.")
-    steps.append("Search ranges: `search-constants mode=range minValue=0x400000 maxValue=0x500000` for pointer-like values.")
+        steps.append("Common-constant scans are triage tools. Separate obvious buffer sizes and API flags from true magic values before you infer an algorithm from one familiar number.")
+    if not results:
+        if mode == "specific":
+            steps.append("No exact hit found. Broaden slightly with a small range if you suspect sign extension, masking, or nearby sentinel values in the same code path.")
+        elif mode == "range":
+            steps.append("No range hits found. Revisit the bounds; many binaries mix decimal sizes, page-aligned values, and sign-extended immediates that fall just outside a guessed window.")
+        elif mode == "common":
+            steps.append("No obvious common constants surfaced. Pivot to strings, imports, or a known literal from the protocol/format you are chasing, then come back with `mode=specific`.")
+    steps.append("After confirming a constant's role, encode the finding structurally: rename the function, add a precise comment, or tag the routine instead of relying on the number alone.")
     return steps
 
 
 def _next_steps_dataflow(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_dataflow")
     direction: str = data.get("direction", "")
     steps: list[str] = []
     if direction == "backward":
@@ -400,6 +611,7 @@ def _next_steps_dataflow(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_datatypes(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_datatypes")
     action: str = data.get("action", "")
     steps: list[str] = []
     if action == "list":
@@ -421,6 +633,7 @@ def _next_steps_datatypes(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_vtable")
     mode: str = data.get("mode", "")
     steps: list[str] = []
     if mode == "containing":
@@ -433,35 +646,77 @@ def _next_steps_vtable(data: dict[str, Any]) -> list[str]:
         if entries:
             first_target = entries[0].get("function", entries[0].get("target", ""))
             if first_target:
-                steps.append(f"Decompile virtual method: `get-functions mode=decompile function={first_target}`.")
+                steps.append(f"Decompile/disassemble/inspect virtual method: `get-function function={first_target}`.")
         steps.append("Each vtable entry is a function pointer — decompile targets to understand the class interface.")
     elif mode == "callers":
         steps.append("Vtable callers show where virtual dispatch happens — these are polymorphic call sites.")
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
-            steps.append(f"Decompile call site: `get-functions mode=decompile address={results[0].get('fromAddress', '')}`.")
+            steps.append(f"Decompile/disassemble/inspect call site: `get-function function={results[0].get('fromAddress', '')}`.")
+    return steps
+
+
+def _strings_no_results_suggestions(query: str) -> list[str]:
+    """Build context-aware next-step suggestions when a string search returns no results."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_strings_no_results_suggestions")
+    steps: list[str] = []
+    q = (query or "").strip()
+    # Partial / shorter query: try first word or first token (e.g. "patching complete" -> "patching")
+    if q:
+        tokens = [t for t in re.split(r"\s+", q) if len(t) > 1]
+        if len(tokens) > 1:
+            partial = tokens[0]
+            steps.append(f'Try a shorter or partial query: `search-strings query={partial}` (e.g. first word of "{q}").')
+        elif len(q) > 6:
+            # Single long word: suggest substring
+            steps.append(f"Try a shorter substring: `search-strings query={q[: min(8, len(q))]}` to see if the string is split or abbreviated.")
+    # Related terms for status/completion messages (patcher, installer, UI feedback)
+    status_like = [
+        ("complete", ["done", "success", "finished", "ok", "ready"]),
+        ("patching", ["patch", "patched", "install", "update"]),
+        ("success", ["complete", "done", "finished", "ok"]),
+        ("error", ["fail", "failed", "warning", "invalid"]),
+        ("done", ["complete", "success", "finished"]),
+    ]
+    q_lower = q.lower()
+    for keyword, related in status_like:
+        if keyword in q_lower:
+            for r in related[:2]:  # at most 2 related suggestions
+                steps.append(f"Try a related term: `search-strings query={r}`.")
+            break
+    # Broader discovery
+    steps.append("Use `list-strings` to see what strings exist in the binary (they may be worded differently or encoded).")
+    steps.append("Use `search-code query=<your term>` to find the phrase in decompiled function names or code, in case it is built at runtime.")
+    steps.append("If the binary is packed or obfuscated, strings may be decoded at runtime or stored in non-default encodings (e.g. UTF-16); consider running the program and tracing, or try `search-strings` with a regex pattern.")
     return steps
 
 
 def _next_steps_strings(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_strings")
     mode: str = data.get("mode", "")
     results: list[dict[str, Any]] = data.get("results", [])
+    query: str = (data.get("query") or data.get("pattern") or "").strip()
     steps: list[str] = []
     if mode == "count":
-        steps.append("Use `manage-strings mode=list` to see actual string values.")
+        steps.append("Use `list-strings` to see actual string values.")
     elif results:
         first: dict[str, Any] = results[0]
         addr = first.get("address", "")
-        val = first.get("value", "")  # noqa: F841
         if addr:
-            steps.append(f"Find references to this string: `get-references address={addr}`.")
-            steps.append(f"Decompile containing function: `get-functions mode=decompile address={addr}`.")
-        steps.append("Strings are goldmines for RE: error messages reveal logic, format strings reveal data structures.")
-    steps.append("Search for keywords: `search-strings query=password` or `search-strings query=error`.")
+            steps.append(f"Decompile/disassemble/inspect containing function: `get-function function={addr}`.")
+        steps.append("Try other keywords with `search-strings query=<word>`, or use `list-strings` to browse all strings.")
+    else:
+        # No results: context-aware suggestions when the user ran a search with a query
+        if query:
+            steps.extend(_strings_no_results_suggestions(query))
+        else:
+            steps.append("Use `list-strings` to see what strings exist; use a smaller minLength if the binary has few or short strings.")
+            steps.append("If you expected a specific phrase, try `search-strings query=<keyword>` or `search-code query=<keyword>` (code search finds names and decompiled text).")
     return steps
 
 
 def _next_steps_import_export(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_import_export")
     action = data.get("action", data.get("operation", ""))
     steps: list[str] = []
     if action == "import":
@@ -473,17 +728,18 @@ def _next_steps_import_export(data: dict[str, Any]) -> list[str]:
     elif action == "export":
         steps.append("Export complete. The file is saved to the specified output path.")
     elif action == "analyze":
-        steps.append("Analysis complete. Use `list-functions` and `manage-symbols` to explore results.")
+        steps.append("Analysis complete. Use `list-functions`, `search-symbols`, `list-imports`, and `list-exports` to explore results.")
     elif action == "checkin":
         steps.append("Program checked in to shared repository. Other users can now access it.")
     return steps
 
 
 def _next_steps_project(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_project")
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     steps: list[str] = []
-    if action == "open-project":
+    if action == Tool.OPEN.value:
         steps.append("Project opened. Call `list-project-files` to see available programs in the project.")
         steps.append("Start with `list-functions` for function overview or `inspect-memory mode=blocks` for memory layout.")
     elif loaded is True:
@@ -495,23 +751,26 @@ def _next_steps_project(data: dict[str, Any]) -> list[str]:
     elif action == "list":
         files: list[dict[str, Any]] = data.get("files", data.get("entries", []))
         if files:
-            steps.append(f"Open a file: `open-project path={files[0].get('path', files[0].get('name', ''))}`.")
+            steps.append(f"Open a project/repository entry: `open path={files[0].get('path', files[0].get('name', ''))}`.")
+            steps.append("If the target is a local binary outside a project, use `import-binary path=<binary>` instead.")
     return steps
 
 
 def _next_steps_search_code(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_search_code")
     results = data.get("results", [])
     steps: list[str] = []
     if results:
         first: dict[str, Any] = results[0]
         func_name = first.get("function", "")
         if func_name:
-            steps.append(f"Decompile matching function: `get-functions mode=decompile function={func_name}`.")
+            steps.append(f"Decompile/disassemble/inspect matching function: `get-function function={func_name}`.")
     steps.append("Use `searchMode=regex` for pattern matching, or `searchMode=literal` for exact text.")
     return steps
 
 
 def _next_steps_data(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_data")
     steps: list[str] = []
     if "definedType" in data:
         steps.append("Use `apply-data-type` to change the interpretation if the type is wrong.")
@@ -523,10 +782,43 @@ def _next_steps_data(data: dict[str, Any]) -> list[str]:
 
 
 def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_suggestions")
     return [
-        "The suggest tool provides AI-suggested names/types — review and apply with `manage-function mode=rename`.",
+        "The suggest tool provides AI-suggested names/types — review and apply with `rename-function` or `set-function-prototype`.",
         "Use `manage-comments` to document your naming decisions.",
     ]
+
+
+def _next_steps_match_function(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_match_function")
+    steps: list[str] = []
+    error: str = data.get("error", "")
+    mode: str = data.get("mode", "")
+
+    results: list[dict[str, Any]] = data.get("results", [])
+    if mode == "cross-program-bulk":
+        summary = data.get("summary") or {}
+        steps.append(f"Bulk run processed {summary.get('processed', 0)} functions; see resultsByFunction and summary.matchesPerTarget.")
+        steps.append("Each result entry may include functionDetails (get-function output) for the matched target function.")
+        return steps
+
+    # If function not found, suggest searching first
+    if "not found" in error.lower() or "not exist" in error.lower():
+        steps.append("The function wasn't found. Use `search-everything` or `list-functions` to locate it, then retry `match-function` with the correct functionIdentifier or address.")
+    # Cross-program success: suggest verifying matches and propagating further
+    elif mode == "cross-program" and results:
+        steps.append("Use `decompile-function` with `programPath` set to each target and `functionIdentifier` set to the matched function to compare implementations.")
+        steps.append("To propagate more annotations, re-run `match-function` with `propagateNames`, `propagateTags`, `propagateComments`, `propagatePrototype`, or `propagateBookmarks` set to true.")
+        steps.append("Use `manage-function-tags` on matched functions to group them by subsystem or purpose.")
+    # Single-program successful matches
+    elif results:
+        steps.append("Use `decompile-function` on matched function names to compare implementations in detail.")
+        steps.append("Tag matched functions with `manage-function-tags` to group them by library or purpose.")
+    # Generic case
+    else:
+        steps.append("For cross-program matching: call `match-function` with `functionIdentifier`, `programPath` (source), and `targetProgramPaths` (one or more target binaries).")
+        steps.append("Use `search-everything` or `list-functions` to find the function to match if needed.")
+    return steps
 
 
 # ---------------------------------------------------------------------------
@@ -535,45 +827,31 @@ def _next_steps_suggestions(data: dict[str, Any]) -> list[str]:
 
 TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     "decompile": (
-        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. "
-        "The decompiled output shows control flow, variable usage, function calls, and data access patterns. "
-        "Read the signature line first to understand parameters and return type.",
+        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. The decompiled output shows control flow, variable usage, function calls, and data access patterns. Read the signature line first to understand parameters and return type.",
         _next_steps_decompile,
     ),
     "decompilefunction": (
-        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. "
-        "The decompiled output shows control flow, variable usage, function calls, and data access patterns. "
-        "Read the signature line first to understand parameters and return type.",
+        "Converts machine code into C-like pseudocode using Ghidra's decompiler engine. The decompiled output shows control flow, variable usage, function calls, and data access patterns. Read the signature line first to understand parameters and return type.",
         _next_steps_decompile,
     ),
     "executescript": (
-        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. "
-        "Use for custom analysis, batch operations, or anything not covered by dedicated tools. "
-        "The namespace includes `currentProgram`, `flatApi`, decompiler access, and 30+ Ghidra helper methods.",
+        "Executes arbitrary Python/Jython code in the Ghidra scripting environment with full API access. Use for custom analysis, batch operations, or anything not covered by dedicated tools. See [Ghidra API Javadoc](https://ghidra.re/ghidra_docs/api/index.html) and [FlatProgramAPI](https://ghidra.re/ghidra_docs/api/ghidra/program/flatapi/FlatProgramAPI.html) for available methods and classes.",
         _next_steps_execute_script,
     ),
     "listfunctions": (
-        "Lists all functions defined in the binary with their addresses, sizes, and basic metadata. "
-        "Functions with default names like `FUN_00401000` or `sub_*` haven't been analyzed yet — "
-        "decompile them to understand their purpose and rename accordingly.",
+        "Lists all functions defined in the binary with their addresses, sizes, and basic metadata. Functions with default names like `FUN_00401000` or `sub_*` haven't been analyzed yet — decompile them to understand their purpose and rename accordingly.",
         _next_steps_list_functions,
     ),
     "getfunctions": (
-        "Retrieves detailed information about a specific function. The `view` parameter controls what you see: "
-        "`info` for metadata (params, return type, calling convention), `decompile` for C pseudocode, "
-        "`disassemble` for raw assembly, `calls` for caller/callee relationships.",
+        "Retrieves detailed information about a specific function. The `view` parameter controls what you see: `info` for metadata (params, return type, calling convention), `decompile` for C pseudocode, `disassemble` for raw assembly, `calls` for caller/callee relationships.",
         _next_steps_get_functions,
     ),
     "managesymbols": (
-        "Manages the binary's symbol table — names, labels, imports, exports, classes, and namespaces. "
-        "Symbols are the naming backbone of reverse engineering: every function, variable, and data label is a symbol. "
-        "Import symbols reveal library dependencies; export symbols are the binary's public interface.",
+        "Manages the binary's symbol table — names, labels, imports, exports, classes, and namespaces. Symbols are the naming backbone of reverse engineering: every function, variable, and data label is a symbol. Import symbols reveal library dependencies; export symbols are the binary's public interface.",
         _next_steps_symbols,
     ),
     "searcheverything": (
-        "Searches across 18+ scopes simultaneously: functions, symbols, strings, comments, decompiled code, "
-        "imports, exports, namespaces, data types, structures, bookmarks, and more. "
-        "This is the best starting point when you're looking for something but don't know where it is.",
+        "Searches across 18+ scopes simultaneously: functions, symbols, strings, comments, decompiled code, imports, exports, namespaces, data types, structures, bookmarks, and more. This is the best starting point when you're looking for something but don't know where it is.",
         _next_steps_search_everything,
     ),
     "globalsearch": (
@@ -585,9 +863,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_search_everything,
     ),
     "inspectmemory": (
-        "Examines the binary's memory layout and contents. `blocks` shows memory sections (.text, .data, .bss), "
-        "`read` dumps raw bytes from an address, `data_at` interprets typed data at an address, "
-        "`data_items` lists all memory locations with applied data types.",
+        "Examines the binary's memory layout and contents. `blocks` shows memory sections (.text, .data, .bss), `read` dumps raw bytes from an address, `data_at` interprets typed data at an address, `data_items` lists all memory locations with applied data types.",
         _next_steps_memory,
     ),
     "readbytes": (
@@ -595,9 +871,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_memory,
     ),
     "getcallgraph": (
-        "Maps function call relationships — who calls whom. Essential for understanding program architecture. "
-        "`graph` shows immediate callers+callees, `tree` traverses the full call tree to a given depth, "
-        "`callers` traces only incoming calls, `callees` traces only outgoing calls.",
+        "Maps function call relationships — who calls whom. Essential for understanding program architecture. `graph` shows immediate callers+callees, `tree` traverses the full call tree to a given depth, `callers` traces only incoming calls, `callees` traces only outgoing calls.",
         _next_steps_callgraph,
     ),
     "gencallgraph": (
@@ -605,33 +879,23 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_callgraph,
     ),
     "managecomments": (
-        "Read, write, and search code comments in the Ghidra database. Comments persist across sessions "
-        "and are visible in the listing and decompiler views. Types: `eol` (end-of-line), `pre`, `post`, "
-        "`plate` (function header), `repeatable` (shown at all references).",
+        "Read, write, and search code comments in the Ghidra database. Comments persist across sessions and are visible in the listing and decompiler views. Types: `eol` (end-of-line), `pre`, `post`, `plate` (function header), `repeatable` (shown at all references).",
         _next_steps_comments,
     ),
     "managebookmarks": (
-        "Set, list, and search analysis bookmarks. Bookmarks flag interesting locations for later review "
-        "and persist across sessions. Use categories to organize by analysis phase "
-        "(e.g., 'suspicious', 'crypto', 'network', 'todo').",
+        "Set, list, and search analysis bookmarks. Bookmarks flag interesting locations for later review and persist across sessions. Use categories to organize by analysis phase (e.g., 'suspicious', 'crypto', 'network', 'todo').",
         _next_steps_bookmarks,
     ),
     "managestructures": (
-        "Create, modify, and apply C-style struct/union definitions. Structures let you type raw memory "
-        "regions so the decompiler shows field names instead of byte offsets. Parse C header syntax "
-        "or build field-by-field.",
+        "Create, modify, and apply C-style struct/union definitions. Structures let you type raw memory regions so the decompiler shows field names instead of byte offsets. Parse C header syntax or build field-by-field.",
         _next_steps_structures,
     ),
     "searchconstants": (
-        "Scans instructions for numeric constants/immediates. Finds magic numbers, buffer sizes, "
-        "API flags, and crypto constants. Use `specific` for exact values, `range` for value ranges, "
-        "`common` for frequently-occurring constants.",
+        "Scans instructions for numeric constants/immediates. Finds magic numbers, buffer sizes, API flags, and crypto constants. Use `specific` for exact values, `range` for value ranges, `common` for frequently-occurring constants.",
         _next_steps_constants,
     ),
     "analyzedataflow": (
-        "Traces how data flows through a function using Ghidra's P-code intermediate representation. "
-        "`backward` traces where a value at an address comes from, `forward` traces where it goes, "
-        "`variable_accesses` lists all variable reads/writes in a function.",
+        "Traces how data flows through a function using Ghidra's P-code intermediate representation. `backward` traces where a value at an address comes from, `forward` traces where it goes, `variable_accesses` lists all variable reads/writes in a function.",
         _next_steps_dataflow,
     ),
     "managedatatypes": (
@@ -639,14 +903,11 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         _next_steps_datatypes,
     ),
     "analyzevtables": (
-        "Analyzes C++ virtual function tables (vtables). Vtables are arrays of function pointers "
-        "used for polymorphic dispatch. Understanding vtable layout reveals class hierarchies "
-        "and virtual method signatures.",
+        "Analyzes C++ virtual function tables (vtables). Vtables are arrays of function pointers used for polymorphic dispatch. Understanding vtable layout reveals class hierarchies and virtual method signatures.",
         _next_steps_vtable,
     ),
     "managestrings": (
-        "Find, list, and search strings embedded in the binary. Strings are one of the most valuable "
-        "artifacts in RE — error messages, debug logs, API names, and format strings all reveal program logic.",
+        "Find, list, and search strings embedded in the binary. Strings are one of the most valuable artifacts in RE — error messages, debug logs, API names, and format strings all reveal program logic.",
         _next_steps_strings,
     ),
     "liststrings": (
@@ -693,7 +954,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
         "Lists available processor definitions.",
         _next_steps_import_export,
     ),
-    "openproject": (
+    "open": (
         "Opens a binary or Ghidra project for analysis.",
         _next_steps_project,
     ),
@@ -723,7 +984,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     ),
     "matchfunction": (
         "Matches functions across different builds/versions of a binary.",
-        lambda d: ["Use `get-functions mode=decompile` to compare matched functions side by side."],
+        _next_steps_match_function,
     ),
     "managefunctiontags": (
         "Manages tags on functions for categorization.",
@@ -732,7 +993,7 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     "managefunction": (
         "Rename, set prototype, or modify function properties.",
         lambda d: [
-            "After renaming, use `get-functions mode=decompile` to verify the new name appears correctly.",
+            "After renaming, use `get-function function=<function_name>` to verify the new name appears correctly.",
             "Use `manage-comments` to document why you renamed/retyped.",
         ],
     ),
@@ -742,10 +1003,14 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
 # ---------------------------------------------------------------------------
 # Per-tool custom renderers
 # ---------------------------------------------------------------------------
+# Each _render_* function takes the tool's JSON response dict and returns a single
+# markdown string. Used when format != "json" so the client sees readable output
+# instead of raw JSON. Tools without a custom renderer fall back to _render_generic.
 
 
 def _render_execute_script(data: dict[str, Any]) -> str:
-    """Render execute-script response as rich markdown."""
+    """Render execute-script response: status, combined stdout/stderr, and return value as code blocks."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_execute_script")
     lines: list[str] = []
     lines.append(_md_heading(2, "Script Execution Result"))
     lines.append("")
@@ -756,6 +1021,15 @@ def _render_execute_script(data: dict[str, Any]) -> str:
     stdout_text = str(data.get("stdout", ""))
     stderr_text = str(data.get("stderr", ""))
     result_text = str(data.get("result", ""))
+    executed_program = data.get("executedProgram")
+
+    if isinstance(executed_program, dict):
+        executed_name = str(executed_program.get("name", ""))
+        executed_path = str(executed_program.get("path", ""))
+        if executed_name:
+            lines.append(_md_bold_kv("Executed Program", _md_code_inline(executed_name)))
+        if executed_path and executed_path != executed_name:
+            lines.append(_md_bold_kv("Program Path", _md_code_inline(executed_path)))
 
     if stdout_text or stderr_text:
         lines.append("")
@@ -787,6 +1061,7 @@ def _render_execute_script(data: dict[str, Any]) -> str:
 
 def _render_decompile(data: dict[str, Any]) -> str:
     """Render get-functions response in decompile mode as rich markdown."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_decompile")
     lines: list[str] = []
     func_name = data.get("function", data.get("name", "unknown"))
     addr = data.get("address", "")
@@ -801,7 +1076,7 @@ def _render_decompile(data: dict[str, Any]) -> str:
         lines.append(_md_bold_kv("Signature", _md_code_inline(sig)))
     lines.append("")
 
-    code = str(data.get("decompilation", ""))
+    code = str(data.get("decompilation") or data.get("code") or "")
     if code:
         lines.append(_md_heading(3, "C Pseudocode"))
         lines.append("")
@@ -816,6 +1091,7 @@ def _render_decompile(data: dict[str, Any]) -> str:
 
 def _render_list_functions(data: dict[str, Any]) -> str:
     """Render list-functions response as markdown table."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_list_functions")
     lines: list[str] = []
     lines.append(_md_heading(2, "Function Listing"))
     lines.append("")
@@ -845,6 +1121,7 @@ def _render_list_functions(data: dict[str, Any]) -> str:
 
 def _render_get_functions(data: dict[str, Any]) -> str:
     """Render get-functions response based on view."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_functions")
     view = data.get("view", "info")
     if view == "decompile":
         return _render_decompile(data)
@@ -856,6 +1133,7 @@ def _render_get_functions(data: dict[str, Any]) -> str:
 
 
 def _render_function_info(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_info")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Function Info: `{name}`"))
@@ -888,6 +1166,7 @@ def _render_function_info(data: dict[str, Any]) -> str:
 
 
 def _render_function_calls(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_calls")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Call Relationships: `{name}`"))
@@ -921,6 +1200,7 @@ def _render_function_calls(data: dict[str, Any]) -> str:
 
 
 def _render_disassemble(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_disassemble")
     lines: list[str] = []
     name = data.get("name", "unknown")
     lines.append(_md_heading(2, f"Disassembly: `{name}`"))
@@ -945,6 +1225,7 @@ def _render_disassemble(data: dict[str, Any]) -> str:
 
 def _render_symbols(data: dict[str, Any]) -> str:
     """Render manage-symbols response."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_symbols")
     mode = data.get("mode", "symbols")
     lines: list[str] = []
 
@@ -1022,6 +1303,7 @@ def _render_symbols(data: dict[str, Any]) -> str:
 
 
 def _render_search_everything(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_search_everything")
     lines: list[str] = []
     lines.append(_md_heading(2, "Search Results"))
     lines.append("")
@@ -1029,32 +1311,226 @@ def _render_search_everything(data: dict[str, Any]) -> str:
     query = data.get("queries", data.get("query", ""))
     search_mode = data.get("searchMode", "auto")
     scopes: list[str] = data.get("scopes", [])
+    target_program_count = data.get("targetProgramCount")
+    requested_program_count = data.get("requestedProgramCount")
+    project_program_count = data.get("projectProgramCount")
+    target_programs: list[str] = [str(item) for item in data.get("targetPrograms", []) if str(item).strip()]
+    skipped_programs: list[dict[str, Any]] = data.get("skippedPrograms", [])
+    warnings: list[str] = [str(item) for item in data.get("warnings", []) if str(item).strip()]
 
     lines.append(_md_bold_kv("Query", _md_code_inline(str(query))))
     lines.append(_md_bold_kv("Mode", search_mode))
     if scopes:
         lines.append(_md_bold_kv("Scopes", ", ".join(str(s) for s in scopes)))
+    if target_program_count is not None:
+        coverage = f"{target_program_count} searched"
+        if project_program_count is not None:
+            coverage += f" / {project_program_count} in project"
+        elif requested_program_count is not None:
+            coverage += f" / {requested_program_count} requested"
+        lines.append(_md_bold_kv("Programs", coverage))
     lines.append(_pagination_footer(data))
     lines.append("")
 
+    if target_programs:
+        shown_targets = ", ".join(target_programs[:5])
+        if len(target_programs) > 5:
+            shown_targets += f", ... (+{len(target_programs) - 5} more)"
+        lines.append(_md_bold_kv("Targets", shown_targets))
+        lines.append("")
+
     results: list[dict[str, Any]] = data.get("results", [])
     if results:
-        headers = ["Type", "Name", "Address", "Context"]
-        rows = []
-        for r in results:
-            rtype = r.get("resultType", r.get("type", ""))
-            name = r.get("name", r.get("function", ""))
-            addr = r.get("address", r.get("functionAddress", ""))
-            context = r.get("match", r.get("snippet", r.get("value", "")))
-            rows.append([rtype, str(name), str(addr), _truncate(str(context))])
-        lines.append(_md_table(headers, rows))
+        breakdown: dict[str, int] = {}
+        for result in results:
+            result_type = str(result.get("resultType", result.get("type", "result")) or "result")
+            breakdown[result_type] = breakdown.get(result_type, 0) + 1
+        breakdown_text = ", ".join(f"{count} {result_type}" for result_type, count in sorted(breakdown.items(), key=lambda item: (-item[1], item[0])))
+        lines.append(_md_bold_kv("Breakdown", breakdown_text))
+        lines.append("")
+
+        for index, result in enumerate(results, start=1):
+            result_type = str(result.get("resultType", result.get("type", "result")) or "result")
+            result_name = str(result.get("name", result.get("function", result.get("field", ""))) or "<unnamed>")
+            lines.append(_md_heading(4, f"{index}. {result_type} {result_name}"))
+
+            match_query = str(result.get("query", "") or "")
+            match_type = str(result.get("matchType", "") or "")
+            score = float(result.get("score", 0.0) or 0.0)
+            match_summary = []
+            if match_query:
+                match_summary.append(f"matched {_md_code_inline(match_query)}")
+            if match_type:
+                match_summary.append(match_type)
+            match_summary.append(f"score {score:.2f}")
+            lines.append(_md_bold_kv("Match", " | ".join(match_summary)))
+
+            program_name = str(result.get("program", "") or "")
+            address = str(result.get("address", result.get("functionAddress", "")) or "").strip()
+            address_note = str(result.get("addressNote", "") or "")
+            where_parts: list[str] = []
+            if address and address.upper() != "NO ADDRESS":
+                where_parts.append(f"address {_md_code_inline(address)}")
+            elif address_note:
+                where_parts.append(address_note)
+            else:
+                where_parts.append("no concrete address")
+            if program_name:
+                where_parts.append(f"program {_md_code_inline(program_name)}")
+            namespace = str(result.get("namespace", "") or "")
+            category_path = str(result.get("categoryPath", result.get("relatedStructureCategoryPath", "")) or "")
+            if namespace:
+                where_parts.append(f"namespace {_md_code_inline(namespace)}")
+            if category_path:
+                where_parts.append(f"category {_md_code_inline(category_path)}")
+            lines.append(_md_bold_kv("Where", " | ".join(where_parts)))
+
+            what_parts: list[str] = []
+            if result_type == "structure":
+                field_count = int(result.get("fieldCount", result.get("numComponents", 0)) or 0)
+                length = int(result.get("length", 0) or 0)
+                what_parts.append(f"{length} bytes")
+                what_parts.append(f"{field_count} fields")
+                if result.get("isUnion"):
+                    what_parts.append("union")
+                description = str(result.get("description", "") or "")
+                if description:
+                    what_parts.append(_truncate(description, 160))
+            elif result_type == "class":
+                source = str(result.get("source", "") or "")
+                if source:
+                    what_parts.append(f"source {source}")
+                if result.get("isPrimary"):
+                    what_parts.append("primary symbol")
+                related_structure = str(result.get("relatedStructure", "") or "")
+                if related_structure:
+                    related_length = int(result.get("relatedStructureLength", 0) or 0)
+                    related_fields = int(result.get("relatedStructureFieldCount", 0) or 0)
+                    what_parts.append(f"mirrors structure {_md_code_inline(related_structure)} ({related_length} bytes, {related_fields} fields)")
+            elif result_type == "structure_field":
+                field_type = str(result.get("fieldType", "") or "")
+                offset = int(result.get("offset", 0) or 0)
+                length = int(result.get("length", 0) or 0)
+                what_parts.append(f"offset 0x{offset:x}")
+                if field_type:
+                    what_parts.append(f"type {_md_code_inline(field_type)}")
+                if length:
+                    what_parts.append(f"{length} bytes")
+                comment = str(result.get("comment", "") or "")
+                if comment:
+                    what_parts.append(_truncate(comment, 160))
+            elif result_type == "function":
+                signature = str(result.get("signature", "") or "")
+                if signature:
+                    what_parts.append(_md_code_inline(signature))
+                caller_count = int(result.get("callerCount", 0) or 0)
+                callee_count = int(result.get("calleeCount", 0) or 0)
+                what_parts.append(f"{caller_count} callers")
+                what_parts.append(f"{callee_count} callees")
+            elif result_type == "string":
+                value = str(result.get("value", "") or "")
+                if value:
+                    what_parts.append(_truncate(value, 180))
+                length = int(result.get("length", 0) or 0)
+                if length:
+                    what_parts.append(f"{length} chars")
+                data_type = str(result.get("dataType", "") or "")
+                if data_type:
+                    what_parts.append(f"type {_md_code_inline(data_type)}")
+            else:
+                for key in ("displayName", "description", "symbolType", "type", "value"):
+                    value = str(result.get(key, "") or "")
+                    if value:
+                        what_parts.append(_truncate(value, 180))
+                        break
+            if what_parts:
+                lines.append(_md_bold_kv("What", " | ".join(what_parts)))
+
+            field_preview_text = str(result.get("fieldPreviewText", result.get("relatedStructureFieldPreviewText", "")) or "")
+            if field_preview_text:
+                lines.append(_md_bold_kv("Fields", field_preview_text))
+
+            related_parts: list[str] = []
+            related_classes = result.get("relatedClasses") or []
+            if isinstance(related_classes, list) and related_classes:
+                related_parts.append("classes " + ", ".join(_md_code_inline(str(item)) for item in related_classes[:3]))
+            related_structure = str(result.get("relatedStructure", "") or "")
+            if related_structure:
+                related_parts.append(f"structure {_md_code_inline(related_structure)}")
+            if related_parts:
+                lines.append(_md_bold_kv("Related", " | ".join(related_parts)))
+
+            reference_count = result.get("referenceCount")
+            references_preview = result.get("referencesPreview") or []
+            used_by_parts: list[str] = []
+            if reference_count is not None:
+                used_by_parts.append(f"{int(reference_count)} inbound reference(s)")
+                if isinstance(references_preview, list) and references_preview:
+                    preview_text = []
+                    for reference in references_preview[:3]:
+                        from_addr = str(reference.get("fromAddress", "") or "")
+                        function = str(reference.get("function", "") or "")
+                        ref_type = str(reference.get("type", "") or "")
+                        chunk = from_addr
+                        if function:
+                            chunk += f" in {function}"
+                        if ref_type:
+                            chunk += f" ({ref_type})"
+                        preview_text.append(chunk)
+                    used_by_parts.append("; ".join(preview_text))
+            elif address_note:
+                used_by_parts.append(address_note)
+            if used_by_parts:
+                lines.append(_md_bold_kv("Used By", " | ".join(used_by_parts)))
+
+            next_tools = result.get("nextTools") or []
+            if isinstance(next_tools, list) and next_tools:
+                follow_up_parts: list[str] = []
+                for tool_call in next_tools[:2]:
+                    tool_name = str(tool_call.get("tool", "") or "")
+                    args = tool_call.get("args") or {}
+                    if not tool_name:
+                        continue
+                    args_text = " ".join(f"{key}={value}" for key, value in args.items())
+                    follow_up_parts.append(_md_code_inline(f"{tool_name} {args_text}".strip()))
+                if follow_up_parts:
+                    lines.append(_md_bold_kv("Follow Up", " | ".join(follow_up_parts)))
+
+            snippet = str(result.get("snippet", result.get("match", "")) or "")
+            if snippet:
+                lines.append(_md_bold_kv("Context", _truncate(snippet, 220)))
+
+            lines.append("")
     else:
         lines.append("*No results found.*")
+
+    if skipped_programs:
+        lines.append("")
+        lines.append(_md_heading(3, "Skipped Programs"))
+        lines.append("")
+        skipped_items: list[str] = []
+        for item in skipped_programs[:10]:
+            program = str(item.get("program", "") or "<unknown>")
+            reason = str(item.get("reason", "") or "not activated")
+            skipped_items.append(f"{program}: {reason}")
+        if len(skipped_programs) > 10:
+            skipped_items.append(f"... and {len(skipped_programs) - 10} more")
+        lines.append(_md_bullet_list(skipped_items))
+
+    if warnings:
+        lines.append("")
+        lines.append(_md_heading(3, "Warnings"))
+        lines.append("")
+        warning_items = warnings[:10]
+        if len(warnings) > 10:
+            warning_items = warning_items + [f"... and {len(warnings) - 10} more"]
+        lines.append(_md_bullet_list(warning_items))
 
     return "\n".join(lines)
 
 
 def _render_memory(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_memory")
     mode = data.get("mode", "blocks")
     lines: list[str] = []
 
@@ -1066,7 +1542,7 @@ def _render_memory(data: dict[str, Any]) -> str:
         lines.append("")
         if blocks:
             headers = ["Name", "Start", "End", "Size", "Perms", "Init", "Type"]
-            rows: list[list[str]] = [
+            rows: list[list[str]] = [  # pyright: ignore[reportRedeclaration]
                 [
                     b.get("name", ""),
                     b.get("start", ""),
@@ -1136,10 +1612,11 @@ def _render_memory(data: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     # Fallback for unrecognized mode
-    return _render_generic(data, "inspect-memory")
+    return _render_generic(data, Tool.INSPECT_MEMORY.value)
 
 
 def _render_callgraph(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_callgraph")
     mode = data.get("mode", "graph")
     func_name = data.get("function", data.get("functionName", ""))
     lines: list[str] = []
@@ -1155,10 +1632,10 @@ def _render_callgraph(data: dict[str, Any]) -> str:
             lines.append(_md_bold_kv("Direction", direction))
 
         # If we have callers/callees directly
-        callers: list[dict[str, Any]] = data.get("callers", [])
-        callees: list[dict[str, Any]] = data.get("callees", [])
+        callers: list[dict[str, Any]] = data.get("callers", [])  # pyright: ignore[reportRedeclaration]
+        callees: list[dict[str, Any]] = data.get("callees", [])  # pyright: ignore[reportRedeclaration]
 
-        if callers or callees and not graph_data:
+        if callers or (callees and not graph_data):
             return _render_function_calls(data)
 
         # Rendered graph from CallGraphTool
@@ -1217,10 +1694,11 @@ def _render_callgraph(data: dict[str, Any]) -> str:
             lines.append("*No callees found (leaf function).*")
         return "\n".join(lines)
 
-    return _render_generic(data, "get-call-graph")
+    return _render_generic(data, Tool.GET_CALL_GRAPH.value)
 
 
 def _render_comments(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_comments")
     action = data.get("action", data.get("mode", ""))
     lines: list[str] = []
 
@@ -1228,7 +1706,7 @@ def _render_comments(data: dict[str, Any]) -> str:
         lines.append(_md_heading(2, "Comment Set"))
         lines.append("")
         if data.get("batch"):
-            results: list[dict[str, Any]] = data.get("results", [])
+            results: list[dict[str, Any]] = data.get("results", [])  # pyright: ignore[reportRedeclaration]
             for r in results:
                 status = "OK" if r.get("success") else f"FAIL: {r.get('error', '')}"
                 lines.append(f"- `{r.get('address', '')}`: {status}")
@@ -1286,6 +1764,7 @@ def _render_comments(data: dict[str, Any]) -> str:
 
 
 def _render_bookmarks(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_bookmarks")
     action = data.get("action", data.get("mode", ""))
     lines: list[str] = []
 
@@ -1346,6 +1825,7 @@ def _render_bookmarks(data: dict[str, Any]) -> str:
 
 
 def _render_structures(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_structures")
     action = data.get("action", "")
     lines: list[str] = []
 
@@ -1386,7 +1866,7 @@ def _render_structures(data: dict[str, Any]) -> str:
             lines.append(_md_heading(3, "Fields"))
             lines.append("")
             headers = ["Offset", "Name", "Type", "Size", "Comment"]
-            rows: list[list[str]] = [
+            rows = [
                 [
                     str(f.get("offset", "")),
                     f.get("name", ""),
@@ -1427,6 +1907,7 @@ def _render_structures(data: dict[str, Any]) -> str:
 
 
 def _render_constants(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_constants")
     lines: list[str] = []
     mode = data.get("mode", "")
     lines.append(_md_heading(2, f"Constant Search ({mode})"))
@@ -1462,6 +1943,7 @@ def _render_constants(data: dict[str, Any]) -> str:
 
 
 def _render_dataflow(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_dataflow")
     lines: list[str] = []
     direction = data.get("direction", "")
     func_name = data.get("function", "")
@@ -1507,6 +1989,7 @@ def _render_dataflow(data: dict[str, Any]) -> str:
 
 
 def _render_strings(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_strings")
     mode = data.get("mode", "")
     lines: list[str] = []
 
@@ -1535,6 +2018,25 @@ def _render_strings(data: dict[str, Any]) -> str:
                 row.append(str(len(refs)) if isinstance(refs, list) else str(refs))
             rows.append(row)
         lines.append(_md_table(headers, rows))
+        # Include get-references style output for each string that has referencesTo
+        for r in results:
+            refs_to: list[dict[str, Any]] = r.get("referencesTo") or []
+            if not refs_to:
+                continue
+            addr = r.get("address", "")
+            lines.append("")
+            lines.append(_md_heading(4, f"References to {addr}"))
+            lines.append("")
+            ref_headers: list[str] = ["From", "Type", "Function"]
+            ref_rows: list[list[str]] = [
+                [
+                    ref.get("fromAddress", ""),
+                    ref.get("type", ""),
+                    ref.get("function") or "",
+                ]
+                for ref in refs_to
+            ]
+            lines.append(_md_table(ref_headers, ref_rows))
     else:
         lines.append("*No strings found.*")
 
@@ -1542,6 +2044,7 @@ def _render_strings(data: dict[str, Any]) -> str:
 
 
 def _render_datatypes(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_datatypes")
     action = data.get("action", "")
     lines: list[str] = []
 
@@ -1592,7 +2095,7 @@ def _render_datatypes(data: dict[str, Any]) -> str:
         lines.append(_md_heading(2, "Data Type Applied"))
         lines.append("")
         if data.get("batch"):
-            results: list[dict[str, Any]] = data.get("results", [])
+            results = data.get("results", [])
             for r in results:
                 status = "OK" if r.get("success") else f"FAIL: {r.get('error', '')}"
                 lines.append(f"- `{r.get('address', '')}`: {status}")
@@ -1605,6 +2108,7 @@ def _render_datatypes(data: dict[str, Any]) -> str:
 
 
 def _render_vtable(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_vtable")
     mode = data.get("mode", "")
     lines: list[str] = []
 
@@ -1645,7 +2149,7 @@ def _render_vtable(data: dict[str, Any]) -> str:
         results: list[dict[str, Any]] = data.get("results", [])
         if results:
             headers: list[str] = ["From Address", "Function", "Ref Type"]
-            rows: list[list[str]] = [[r.get("fromAddress", ""), r.get("function", ""), r.get("refType", "")] for r in results]
+            rows = [[r.get("fromAddress", ""), r.get("function", ""), r.get("refType", "")] for r in results]
             lines.append(_md_table(headers, rows))
         return "\n".join(lines)
 
@@ -1653,6 +2157,7 @@ def _render_vtable(data: dict[str, Any]) -> str:
 
 
 def _render_import_export(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_import_export")
     action = data.get("action", data.get("operation", ""))
     lines: list[str] = []
 
@@ -1669,7 +2174,8 @@ def _render_import_export(data: dict[str, Any]) -> str:
             lines.append(_md_heading(3, "Imported Programs"))
             lines.append("")
             for p in programs:
-                lines.append(f"- `{p.get('programName', '')}` from `{p.get('sourcePath', '')}`")
+                src = p.get("sourcePath") or p.get("path", "")
+                lines.append(f"- `{p.get('programName', '')}` from `{src}`")
         errors: list[str] = data.get("errors", [])
         if errors:
             lines.append("")
@@ -1725,12 +2231,120 @@ def _render_import_export(data: dict[str, Any]) -> str:
     return _render_generic(data, "import-export")
 
 
+def _append_program_detail_lines(lines: list[str], detail: dict[str, Any]) -> None:
+    """Append markdown lines for a single program's enriched detail dict."""
+    fc = detail.get("functionCount")
+    if fc is not None:
+        lines.append(_md_bold_kv("Functions", fc))
+    lang = detail.get("languageId")
+    if lang:
+        lines.append(_md_bold_kv("Language", lang))
+    cs = detail.get("compilerSpec")
+    if cs:
+        lines.append(_md_bold_kv("Compiler Spec", cs))
+    ic = detail.get("instructionCount")
+    if ic is not None:
+        lines.append(_md_bold_kv("Instructions", ic))
+    bc = detail.get("bookmarkCount")
+    if bc is not None:
+        lines.append(_md_bold_kv("Bookmarks", bc))
+    bbt = detail.get("bookmarksByType")
+    if bbt:
+        parts = [f"{t}: {c}" for t, c in bbt.items()]
+        lines.append(_md_bold_kv("Bookmark Types", ", ".join(parts)))
+    tags = detail.get("functionTags")
+    if tags:
+        tag_strs = [f"{t['name']} ({t['useCount']})" for t in tags if isinstance(t, dict)]
+        if tag_strs:
+            lines.append(_md_bold_kv("Function Tags", ", ".join(tag_strs)))
+    meta = detail.get("metadata")
+    if isinstance(meta, dict):
+        for mk, mv in meta.items():
+            lines.append(_md_bold_kv(mk, mv))
+    ver = detail.get("versioning")
+    if isinstance(ver, dict):
+        lines.append("")
+        lines.append("**Versioning:**")
+        if ver.get("isVersioned"):
+            lines.append(_md_bold_kv("  Versioned", "Yes"))
+            lines.append(_md_bold_kv("  Version", f"{ver.get('currentVersion', '?')}/{ver.get('latestVersion', '?')}"))
+        else:
+            lines.append(_md_bold_kv("  Versioned", "No (local only)"))
+        if ver.get("isCheckedOut"):
+            lines.append(_md_bold_kv("  Checked Out", "Yes (exclusive)" if ver.get("isCheckedOutExclusive") else "Yes"))
+            co_user = ver.get("checkoutUser")
+            if co_user:
+                lines.append(_md_bold_kv("  Checkout User", co_user))
+            if ver.get("modifiedSinceCheckout"):
+                lines.append(_md_bold_kv("  Modified Since Checkout", "Yes"))
+        lm = ver.get("lastModified")
+        if lm:
+            lines.append(_md_bold_kv("  Last Modified", lm))
+        fs = ver.get("fileSize")
+        if fs is not None:
+            lines.append(_md_bold_kv("  File Size", f"{fs:,} bytes"))
+
+
 def _render_project(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_project")
     action = data.get("action", data.get("operation", ""))
     loaded = data.get("loaded")
     lines: list[str] = []
 
-    if action == "open-project":
+    if action == "import":
+        # Import result from open-project path — render as a rich import summary
+        lines.append(_md_heading(2, "Project Opened (Import)"))
+        lines.append("")
+        imported_from = data.get("importedFrom", "")
+        if imported_from:
+            lines.append(_md_bold_kv("Source", _md_code_inline(imported_from)))
+        lines.append(_md_bold_kv("Files Discovered", data.get("filesDiscovered", 0)))
+        lines.append(_md_bold_kv("Files Imported", data.get("filesImported", 0)))
+        lines.append(_md_bold_kv("Analysis", "Requested" if data.get("analysisRequested") else "Skipped"))
+        errors = data.get("errors", [])
+        if errors:
+            lines.append("")
+            lines.append(_md_heading(3, "Import Errors"))
+            for e in errors:
+                if isinstance(e, dict):
+                    lines.append(f"- `{e.get('path', '')}`: {e.get('error', '')}")
+                else:
+                    lines.append(f"- {e}")
+        imported_programs: list[dict[str, Any]] = data.get("importedPrograms", [])
+        if imported_programs:
+            lines.append("")
+            lines.append(_md_heading(3, f"Imported Programs ({len(imported_programs)})"))
+            lines.append("")
+            headers_imp = ["Program Name", "Source"]
+            rows_imp = [[p.get("programName", ""), p.get("sourcePath") or p.get("path", "")] for p in imported_programs]
+            lines.append(_md_table(headers_imp, rows_imp))
+        program_details: list[dict[str, Any]] = data.get("programDetails", [])
+        if program_details:
+            lines.append("")
+            lines.append(_md_heading(3, "Program Details"))
+            for detail in program_details:
+                detail_name = detail.get("name", detail.get("programPath", ""))
+                lines.append("")
+                lines.append(_md_heading(4, detail_name or "Program"))
+                _append_program_detail_lines(lines, detail)
+                funcs: list[dict[str, Any]] = detail.get("topFunctions", [])
+                if funcs:
+                    lines.append("")
+                    lines.append(_md_bold_kv("Top Functions", ""))
+                    f_headers = ["Address", "Name", "Signature"]
+                    f_rows = [[f.get("address", ""), f.get("name", ""), f.get("signature", "")] for f in funcs]
+                    lines.append(_md_table(f_headers, f_rows))
+        project_files: list[dict[str, Any]] = data.get("projectFiles", [])
+        if project_files:
+            lines.append("")
+            lines.append(_md_heading(3, f"Project Files ({len(project_files)})"))
+            lines.append("")
+            pf_headers = ["Name", "Path", "Size"]
+            pf_rows = [[f.get("name", ""), f.get("path", ""), str(f.get("size", ""))] for f in project_files]
+            lines.append(_md_table(pf_headers, pf_rows))
+        return "\n".join(lines)
+
+    if action == Tool.OPEN.value:
         mode: str = data.get("mode", "")
         lines.append(_md_heading(2, "Program Opened"))
         lines.append("")
@@ -1751,6 +2365,27 @@ def _render_project(data: dict[str, Any]) -> str:
                     lines.append(f"- `{p.get('name', '')}`")
                 else:
                     lines.append(f"- `{p}`")
+
+        # --- Enriched per-program details ---
+        program_details: list[dict[str, Any]] = data.get("programDetails", [])
+        if program_details:
+            lines.append("")
+            lines.append(_md_heading(3, "Program Details"))
+            for detail in program_details:
+                name = detail.get("name", detail.get("programPath", ""))
+                is_active = detail.get("isActive", False)
+                label = f"{name} (active)" if is_active else name
+                lines.append("")
+                lines.append(_md_heading(4, label))
+                _append_program_detail_lines(lines, detail)
+
+        # --- Shared-server checked-out program details ---
+        co_detail = data.get("checkedOutProgramDetails")
+        if isinstance(co_detail, dict) and co_detail:
+            lines.append("")
+            lines.append(_md_heading(3, "Checked-Out Program Details"))
+            _append_program_detail_lines(lines, co_detail)
+
         return "\n".join(lines)
 
     if loaded is True:
@@ -1802,6 +2437,7 @@ def _render_project(data: dict[str, Any]) -> str:
 
 
 def _render_suggestions(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_suggestions")
     lines: list[str] = []
     lines.append(_md_heading(2, "Suggestion Context"))
     lines.append("")
@@ -1821,16 +2457,18 @@ def _render_suggestions(data: dict[str, Any]) -> str:
 
 
 def _render_data(data: dict[str, Any]) -> str:
+    """Render get-data or apply-data-type response: address, type, value, optional hex/ascii dump."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_data")
     lines: list[str] = []
     if data.get("success") is not None and "address" in data and "dataType" in data:
-        # apply-data-type response
+        # apply-data-type success: address + type applied
         lines.append(_md_heading(2, "Data Type Applied"))
         lines.append("")
         lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
         lines.append(_md_bold_kv("Type", _md_code_inline(data.get("dataType", ""))))
         return "\n".join(lines)
 
-    # get-data response
+    # get-data response: address, optional type/value/length, optional raw bytes block
     lines.append(_md_heading(2, "Data At Address"))
     lines.append("")
     lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
@@ -1851,28 +2489,85 @@ def _render_data(data: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Conflict renderer (two-step modification conflicts)
+# ---------------------------------------------------------------------------
+
+
+def _render_conflict(data: dict[str, Any]) -> str:
+    """Render a modification-conflict response as markdown.
+
+    Shows conflictSummary (udiff-style), nextStep (how to resolve), and conflictId/tool.
+    """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_conflict")
+    lines: list[str] = []
+    lines.append(_md_heading(2, "Modification conflict"))
+    lines.append("")
+    summary = data.get("conflictSummary", "")
+    if summary:
+        lines.append(summary)
+        lines.append("")
+    next_step = data.get("nextStep", "")
+    if next_step:
+        lines.append(_md_heading(3, "Next step"))
+        lines.append("")
+        lines.append(next_step)
+        lines.append("")
+    conflict_id = data.get("conflictId", "")
+    tool = data.get("tool", "")
+    if conflict_id or tool:
+        lines.append(_md_bold_kv("conflictId", _md_code_inline(conflict_id)))
+        if tool:
+            lines.append(_md_bold_kv("Tool", _md_code_inline(tool)))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Error renderer
 # ---------------------------------------------------------------------------
 
 
 def _render_error(data: dict[str, Any]) -> str:
-    """Render an error response as readable markdown."""
+    """Render an error response as readable markdown.
+
+    Shows error message, optional state/tool, then any context keys (connection, auth,
+    server reachable, etc.) and a 'How to Fix' list from nextSteps when present.
+    """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_error")
     lines: list[str] = []
     lines.append(_md_heading(2, "Error"))
     lines.append("")
     lines.append(f"> **{data.get('error', 'Unknown error')}**")
     lines.append("")
 
-    context = data.get("context", {})
-    state = data.get("state", context.get("state", ""))
+    context: dict[str, Any] = data.get("context", {})
+    state: str = data.get("state", context.get("state", ""))
     if state:
         lines.append(_md_bold_kv("State", _md_code_inline(state)))
 
-    tool = data.get("tool", context.get("tool", ""))
+    tool: str = data.get("tool", context.get("tool", ""))
     if tool:
         lines.append(_md_bold_kv("Tool", _md_code_inline(tool)))
 
-    next_steps = data.get("nextSteps", [])
+    detail_keys: list[tuple[str, str]] = [
+        ("Provider", "provider"),
+        ("Connection Stage", "connectionStage"),
+        ("Server Host", "serverHost"),
+        ("Server Port", "serverPort"),
+        ("Server Reachable", "serverReachable"),
+        ("Auth Provided", "authProvided"),
+        ("Server Username", "serverUsername"),
+        ("Repository", "repository"),
+        ("Adapter Error Type", "adapterErrorType"),
+        ("Adapter Error", "adapterError"),
+        ("Wrapper Error", "wrapperError"),
+    ]
+    for label, key in detail_keys:
+        value = data.get(key, context.get(key, ""))
+        if value in ("", None, []):
+            continue
+        lines.append(_md_bold_kv(label, value))
+
+    next_steps: list[str] = data.get("nextSteps", [])
     if next_steps:
         lines.append("")
         lines.append(_md_heading(3, "How to Fix"))
@@ -1888,15 +2583,325 @@ def _render_error(data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _render_function_detail_block(data: dict[str, Any], *, heading_level: int = 2) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_function_detail_block")
+    lines: list[str] = []
+    name: str = data.get("name", "unknown")
+    addr: str = data.get("address", "")
+    sig: str = data.get("signature", "")
+    relationship: str = data.get("relationship", "")
+
+    title = f"Function: `{name}`"
+    if relationship:
+        title = f"{title} ({relationship})"
+    lines.append(_md_heading(heading_level, title))
+    lines.append("")
+    lines.append(_md_bold_kv("Address", _md_code_inline(addr)))
+    lines.append(_md_bold_kv("Signature", _md_code_inline(sig)))
+    lines.append("")
+
+    meta: dict[str, Any] = data.get("metadata") or {}
+    if meta:
+        lines.append(_md_bold_kv("Size", f"{meta.get('size', 0)} bytes"))
+        lines.append(_md_bold_kv("Return type", _md_code_inline(meta.get("returnType", ""))))
+        lines.append(_md_bold_kv("Calling convention", meta.get("callingConvention", "") or "unknown"))
+        flags: list[str] = []
+        if meta.get("isExternal"):
+            flags.append("External")
+        if meta.get("isThunk"):
+            flags.append("Thunk")
+        if meta.get("hasVarArgs"):
+            flags.append("VarArgs")
+        if flags:
+            lines.append(_md_bold_kv("Flags", ", ".join(flags)))
+        params: list[dict[str, Any]] = meta.get("parameters") or []
+        if params:
+            lines.append("")
+            lines.append(_md_heading(4, "Parameters"))
+            rows: list[list[str]] = [[str(p.get("ordinal", i)), p.get("name", ""), _truncate(str(p.get("type", "")), 50)] for i, p in enumerate(params)]
+            lines.append(_md_table(["#", "Name", "Type"], rows))
+        lines.append("")
+
+    ns: dict[str, Any] = data.get("namespace") or {}
+    if ns and (ns.get("path") or ns.get("segments")):
+        path_str = ns.get("path", "::".join(ns.get("segments") or []))
+        if path_str and str(path_str).strip("()").lower() not in ("global", ""):
+            lines.append(_md_heading(3, "Namespace"))
+            lines.append("")
+            lines.append(_md_code_inline(str(path_str)))
+            lines.append("")
+
+    decomp = data.get("decompilation", "") or data.get("code", "")
+    if isinstance(decomp, str) and decomp.strip():
+        lines.append(_md_heading(3, "Decompilation"))
+        lines.append("")
+        lines.append(_md_code_block(decomp.rstrip(), "c"))
+        lines.append("")
+
+    disasm: dict[str, Any] = data.get("disassembly") or {}
+    instructions: list[dict[str, Any]] = disasm.get("instructions") or []
+    if instructions and not _decompilation_text_embeds_disassembly(str(decomp)):
+        lines.append(_md_heading(3, "Disassembly"))
+        lines.append("")
+        count = disasm.get("count", len(instructions))
+        truncated = disasm.get("truncated", False)
+        count_label = f"{count} shown (more exist)" if truncated else str(count)
+        lines.append(_md_bold_kv("Instructions", count_label))
+        lines.append("")
+        asm_rows: list[list[str]] = []
+        for instr in instructions:
+            a = instr.get("address", "")
+            b = instr.get("bytes", "")
+            mnem = instr.get("mnemonic", "")
+            full_op = instr.get("operands", "")
+            ops_only = full_op[len(mnem):].lstrip() if full_op.startswith(mnem) else full_op
+            asm_rows.append([a, b, mnem, ops_only])
+        lines.append(_md_table(["Address", "Bytes", "Mnemonic", "Operands"], asm_rows))
+        lines.append("")
+
+    data_flow: dict[str, Any] = data.get("dataFlow") or {}
+    if data_flow:
+        direction = str(data_flow.get("direction", ""))
+        lines.append(_md_heading(3, f"Data flow ({direction or 'requested'})"))
+        lines.append("")
+        lines.append(_md_bold_kv("Seed address", _md_code_inline(str(data_flow.get("address", "")))))
+        if data_flow.get("seedCount") is not None:
+            lines.append(_md_bold_kv("Seed ops", str(data_flow.get("seedCount", 0))))
+        if data_flow.get("analysisDepth") is not None:
+            lines.append(_md_bold_kv("Depth", str(data_flow.get("analysisDepth", 0))))
+        note = data_flow.get("note") or data_flow.get("error")
+        if direction == "variable_accesses":
+            variables: list[dict[str, Any]] = data_flow.get("variables") or []
+            if variables:
+                rows = [[v.get("name", ""), v.get("dataType", ""), v.get("storage", ""), str(v.get("size", ""))] for v in variables[:25]]
+                lines.append(_md_table(["Name", "Type", "Storage", "Size"], rows))
+                if len(variables) > 25:
+                    lines.append(f"*... and {len(variables) - 25} more*")
+            elif note:
+                lines.append(f"*{note}*")
+            else:
+                lines.append("*No variable access information available.*")
+        else:
+            pcode: list[dict[str, Any]] = data_flow.get("pcode") or []
+            if pcode:
+                rows = [
+                    [
+                        op.get("address", ""),
+                        op.get("mnemonic", ""),
+                        op.get("output", "") or "",
+                        ", ".join(op.get("inputs", [])) if isinstance(op.get("inputs"), list) else str(op.get("inputs", "")),
+                    ]
+                    for op in pcode[:30]
+                ]
+                lines.append(_md_table(["Address", "Mnemonic", "Output", "Inputs"], rows))
+                if len(pcode) > 30:
+                    lines.append(f"*... and {len(pcode) - 30} more*")
+            elif note:
+                lines.append(f"*{note}*")
+            else:
+                lines.append("*No P-code slice available for the requested address.*")
+        lines.append("")
+
+    callers: list[dict[str, Any]] = data.get("callers") or []
+    callees: list[dict[str, Any]] = data.get("callees") or []
+    lines.append(_md_heading(3, "Call graph"))
+    lines.append("")
+    lines.append(_md_heading(4, f"Callers ({len(callers)})"))
+    if callers:
+        rows = [[c.get("name", ""), c.get("address", "")] for c in callers]
+        lines.append(_md_table(["Name", "Address"], rows))
+    else:
+        lines.append("*None*")
+    lines.append("")
+    lines.append(_md_heading(4, f"Callees ({len(callees)})"))
+    if callees:
+        rows = [[c.get("name", ""), c.get("address", "")] for c in callees]
+        lines.append(_md_table(["Name", "Address"], rows))
+    else:
+        lines.append("*None*")
+    lines.append("")
+
+    comments: dict[str, Any] = data.get("comments") or {}
+    entry_comments: dict[str, str] = comments.get("entryPoint") or {}
+    if entry_comments:
+        lines.append(_md_heading(3, "Entry-point comments"))
+        lines.append("")
+        for ctype, text in entry_comments.items():
+            if text:
+                lines.append(f"- **{ctype}:** {_truncate(str(text), 120)}")
+        lines.append("")
+    inline: list[dict[str, Any]] = (comments.get("inline") or [])[:20]
+    if inline:
+        lines.append(_md_heading(3, "Comments (inline sample)"))
+        lines.append("")
+        for c in inline:
+            lines.append(f"- `{c.get('address', '')}` [{c.get('type', '')}]: {_truncate(str(c.get('text', '')), 80)}")
+        if (comments.get("inlineCount") or 0) > 20:
+            lines.append(f"- *... and {comments.get('inlineCount', 0) - 20} more*")
+        lines.append("")
+
+    labels: list[dict[str, Any]] = data.get("labels") or []
+    # Suppress if the only label is the function's own entry point (redundant with the header)
+    trivial = len(labels) == 1 and labels[0].get("name") == name and labels[0].get("address") == addr
+    if labels and not trivial:
+        lines.append(_md_heading(3, "Labels"))
+        lines.append("")
+        rows = [[lb.get("name", ""), lb.get("address", ""), lb.get("type", "")] for lb in labels[:30]]
+        lines.append(_md_table(["Name", "Address", "Type"], rows))
+        if len(labels) > 30:
+            lines.append(f"*... and {len(labels) - 30} more*")
+        lines.append("")
+
+    xrefs: list[dict[str, Any]] = data.get("crossReferences") or []
+    outbound: list[dict[str, Any]] = data.get("outboundReferences") or []
+    outbound_filtered = [x for x in outbound if not str(x.get("toAddress", "")).startswith("Stack[")]
+    lines.append(_md_heading(3, "Cross-references (inbound)"))
+    lines.append("")
+    if xrefs:
+        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in xrefs[:25]]
+        lines.append(_md_table(["From", "To", "Type"], rows))
+        if len(xrefs) > 25:
+            lines.append(f"*... and {len(xrefs) - 25} more*")
+    else:
+        lines.append("*None*")
+    lines.append("")
+    if outbound_filtered:
+        lines.append(_md_heading(3, "Outbound references"))
+        lines.append("")
+        rows = [[x.get("fromAddress", ""), x.get("toAddress", ""), x.get("type", "")] for x in outbound_filtered[:15]]
+        lines.append(_md_table(["From", "To", "Type"], rows))
+        if len(outbound_filtered) > 15:
+            lines.append(f"*... and {len(outbound_filtered) - 15} more*")
+        lines.append("")
+
+    tags_list: list[Any] = data.get("tags") or []
+    bookmarks_list: list[dict[str, Any]] = data.get("bookmarks") or []
+    if tags_list or bookmarks_list:
+        lines.append(_md_heading(3, "Tags & bookmarks"))
+        lines.append("")
+        if tags_list:
+            lines.append(_md_bold_kv("Tags", ", ".join(str(t) for t in tags_list)))
+        if bookmarks_list:
+            lines.append(_md_bold_kv("Bookmarks", str(len(bookmarks_list))))
+            rows = [[b.get("address", ""), b.get("type", ""), b.get("category", ""), _truncate(str(b.get("comment", "")), 40)] for b in bookmarks_list[:20]]
+            lines.append(_md_table(["Address", "Type", "Category", "Comment"], rows))
+            if len(bookmarks_list) > 20:
+                lines.append(f"*... and {len(bookmarks_list) - 20} more*")
+        lines.append("")
+
+    stack: dict[str, Any] = data.get("stackFrame") or {}
+    vars_list: list[dict[str, Any]] = stack.get("variables") or []
+    if vars_list:
+        lines.append(_md_heading(3, "Stack frame"))
+        lines.append("")
+        lines.append(_md_bold_kv("Frame size", f"{stack.get('frameSize', 0)} bytes"))
+        has_params = any(v.get("isParameter") for v in vars_list[:25])
+        if has_params:
+            rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", ""), "✓" if v.get("isParameter") else ""] for v in vars_list[:25]]
+            lines.append(_md_table(["Name", "Offset", "Type", "Param"], rows))
+        else:
+            rows = [[v.get("name", ""), str(v.get("offset", "")), v.get("dataType", "")] for v in vars_list[:25]]
+            lines.append(_md_table(["Name", "Offset", "Type"], rows))
+        if len(vars_list) > 25:
+            lines.append(f"*... and {len(vars_list) - 25} more*")
+        lines.append("")
+
+    mem: dict[str, Any] = data.get("memoryBlock") or {}
+    if mem and mem.get("name"):
+        lines.append(_md_heading(3, "Memory block"))
+        lines.append("")
+        lines.append(_md_bold_kv("Name", mem.get("name", "")))
+        lines.append(_md_bold_kv("Range", f"{mem.get('start', '')} – {mem.get('end', '')}"))
+        lines.append(_md_bold_kv("Size", f"{mem.get('size', 0)} bytes"))
+        lines.append(_md_bold_kv("Permissions", str(mem.get("permissions", ""))))
+
+    return "\n".join(lines)
+
+
+def _render_call_tree(nodes: list[dict[str, Any]], *, indent: int = 0) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_call_tree")
+    lines: list[str] = []
+    for node in nodes:
+        prefix = "  " * indent + "- "
+        lines.append(f"{prefix}`{node.get('name', '')}` ({node.get('address', '')})")
+        children = node.get("children") or []
+        if children:
+            lines.extend(_render_call_tree(children, indent=indent + 1))
+    return lines
+
+
+def _render_get_function(data: dict[str, Any]) -> str:
+    """Render get-function (dissect) response as markdown. Avoids raw JSON when format=markdown."""
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_get_function")
+    if data.get("found") is False:
+        return _render_generic(data, "get-function")
+
+    target: dict[str, Any] = data.get("targetFunction") or data
+    lines: list[str] = [_render_function_detail_block(target)]
+
+    call_graph_tree: dict[str, Any] = data.get("callGraphTree") or {}
+    caller_tree: list[dict[str, Any]] = call_graph_tree.get("callers") or []
+    callee_tree: list[dict[str, Any]] = call_graph_tree.get("callees") or []
+    if caller_tree or callee_tree:
+        lines.append("")
+        lines.append(_md_heading(2, "Expanded Call Graph"))
+        lines.append("")
+        lines.append(
+            _md_bold_kv(
+                "Traversal",
+                (
+                    f"callers depth {call_graph_tree.get('callerDepth', 0)} breadth {call_graph_tree.get('callerBranching', 0)}, "
+                    f"callees depth {call_graph_tree.get('calleeDepth', 0)} breadth {call_graph_tree.get('calleeBranching', 0)}"
+                ),
+            ),
+        )
+        lines.append(_md_bold_kv("Expanded caller details", call_graph_tree.get("expandedCallerCount", 0)))
+        lines.append(_md_bold_kv("Expanded callee details", call_graph_tree.get("expandedCalleeCount", 0)))
+        lines.append("")
+        lines.append(_md_heading(3, "Caller Tree"))
+        lines.append("")
+        if caller_tree:
+            lines.extend(_render_call_tree(caller_tree))
+        else:
+            lines.append("*None*")
+        lines.append("")
+        lines.append(_md_heading(3, "Callee Tree"))
+        lines.append("")
+        if callee_tree:
+            lines.extend(_render_call_tree(callee_tree))
+        else:
+            lines.append("*None*")
+
+    caller_details: list[dict[str, Any]] = data.get("callerDetails") or []
+    if caller_details:
+        lines.append("")
+        lines.append(_md_heading(2, f"Expanded Caller Details ({len(caller_details)})"))
+        for detail in caller_details:
+            lines.append("")
+            lines.append(_render_function_detail_block(detail, heading_level=3))
+
+    callee_details: list[dict[str, Any]] = data.get("calleeDetails") or []
+    if callee_details:
+        lines.append("")
+        lines.append(_md_heading(2, f"Expanded Callee Details ({len(callee_details)})"))
+        for detail in callee_details:
+            lines.append("")
+            lines.append(_render_function_detail_block(detail, heading_level=3))
+
+    return "\n".join(lines)
+
+
 def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
     """Smart generic renderer for tools without a custom renderer.
 
-    Detects pagination envelopes, single items, and error responses,
-    and renders them appropriately.
+    Detects: (1) pagination envelope (results + total/hasMore) → table + footer;
+    (2) single key-value payload → bold key: value; (3) nested lists/dicts → subheadings
+    and tables. Title comes from mode/action or normalized tool name.
     """
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_generic")
     lines: list[str] = []
 
-    # Title from mode/action or tool name
+    # Title from mode/action or tool name so the user knows which tool produced this
     mode = data.get("mode", data.get("action", data.get("operation", "")))
     title = tool_name.replace("-", " ").title()
     if mode:
@@ -1935,7 +2940,7 @@ def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
                     lines.append(_md_heading(3, key.replace("_", " ").title()))
                     lines.append("")
                     headers = list(value[0].keys())
-                    rows: list[list[str]] = [[_truncate(str(item.get(h, "")), 60) for h in headers] for item in cast("list[dict[str, Any]]", value)]
+                    rows = [[_truncate(str(item.get(h, "")), 60) for h in headers] for item in cast("list[dict[str, Any]]", value)]
                     lines.append(_md_table(headers, rows))
                 elif isinstance(value, dict):
                     lines.append("")
@@ -1955,11 +2960,14 @@ def _render_generic(data: dict[str, Any], tool_name: str = "") -> str:
 # Tool renderer registry: normalized name → render function
 # ---------------------------------------------------------------------------
 
+# Per-tool markdown renderers: when format=markdown, the intercept uses this map to turn
+# JSON tool output into readable markdown. Tools not listed use _render_generic (table + key blocks).
 TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "executescript": _render_execute_script,
     "decompile": _render_decompile,
     "decompilefunction": _render_decompile,
     "listfunctions": _render_list_functions,
+    "getfunction": _render_get_function,
     "getfunctions": _render_get_functions,
     "managesymbols": _render_symbols,
     "searchsymbolsbyname": _render_symbols,
@@ -1993,6 +3001,7 @@ TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "checkinprogram": _render_import_export,
     "changeprocessor": _render_import_export,
     "listprocessors": _render_import_export,
+    "open": _render_project,
     "openproject": _render_project,
     "getcurrentprogram": _render_project,
     "listprojectfiles": _render_project,
@@ -2031,22 +3040,66 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
     Returns:
         A markdown string suitable for returning as TextContent.text.
     """
-    # Check for error responses first
-    if data.get("success") is False:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:render_tool_response")
+    logger.debug("render_tool_response tool=%s", normalized_tool_name)
+    # Modification conflicts get their own renderer (udiff + nextStep)
+    if data.get("modificationConflict") is True or (data.get("success") is False and data.get("conflictId")):
+        body = _render_conflict(data)
+    elif data.get("success") is False:
         body = _render_error(data)
     else:
+        # Look up per-tool renderer (key = normalize_identifier(tool_name)); missing or exception → generic table + key blocks
         renderer = TOOL_RENDERERS.get(normalized_tool_name)
         if renderer is not None:
             try:
                 body = renderer(data)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "tool_markdown_render_fallback normalized_tool=%s exc_type=%s payload_keys=%s",
+                    normalized_tool_name,
+                    type(exc).__name__,
+                    norm_arg_keys(data),
+                )
                 body = _render_generic(data, normalized_tool_name)
         else:
             body = _render_generic(data, normalized_tool_name)
 
-    # Append About This Tool / Next Steps section
-    guidance = TOOL_GUIDANCE.get(normalized_tool_name)
-    lines = [body]
+    # When we have guidance for this tool, append "About This Tool" and "Suggested Next Steps"
+    # (filtered so we don't recommend tools disabled via env)
+    guidance: tuple[str, Callable[[dict[str, Any]], list[str]]] | None = TOOL_GUIDANCE.get(normalized_tool_name)
+    lines: list[str] = [body]
+
+    # --- Render project context block if present ---
+    project_ctx: dict[str, Any] | None = data.get("projectContext") if isinstance(data, dict) else None
+    if project_ctx:
+        lines.append("")
+        lines.append(_md_heading(3, "Project Context"))
+        ctx_parts: list[str] = []
+        pname = project_ctx.get("projectName")
+        if pname:
+            ctx_parts.append(f"**{pname}**")
+        pmode = project_ctx.get("mode", "")
+        if pmode:
+            ctx_parts.append(pmode)
+        active = project_ctx.get("activeProgram")
+        if active:
+            ctx_parts.append(f"active: `{active}`")
+        pc = project_ctx.get("projectProgramCount", project_ctx.get("programCount"))
+        if pc is not None:
+            ctx_parts.append(f"{pc} in project")
+        open_pc = project_ctx.get("openProgramCount")
+        if open_pc is not None:
+            ctx_parts.append(f"{open_pc} open")
+        ppath = project_ctx.get("projectPath")
+        if ppath:
+            ctx_parts.append(f"`{ppath}`")
+        sh = project_ctx.get("serverHost")
+        if sh:
+            sp = project_ctx.get("serverPort", "")
+            repo = project_ctx.get("repository", "")
+            ctx_parts.append(f"shared: {sh}:{sp}/{repo}")
+        if ctx_parts:
+            lines.append(" | ".join(ctx_parts))
 
     if guidance:
         description, next_steps_fn = guidance
@@ -2060,7 +3113,7 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
         except Exception:
             next_steps = []
 
-        next_steps = _filter_disabled_tool_recommendations(next_steps)
+        next_steps: list[str] = _filter_disabled_tool_recommendations(next_steps)
 
         if next_steps:
             lines.append("")

@@ -36,7 +36,6 @@ import logging
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -86,12 +85,14 @@ class AuthContext:
 # ---------------------------------------------------------------------------
 
 CURRENT_AUTH_CONTEXT: ContextVar[AuthContext | None] = ContextVar(
-    "current_auth_context", default=None
+    "current_auth_context",
+    default=None,
 )
 
 
 def get_current_auth_context() -> AuthContext | None:
     """Return the AuthContext for the current request, or None (anonymous)."""
+    logger.debug("diag.enter %s", "mcp_server/auth.py:get_current_auth_context")
     return CURRENT_AUTH_CONTEXT.get()
 
 
@@ -105,6 +106,7 @@ def parse_basic_auth(authorization_header: str) -> tuple[str, str]:
 
     Raises ValueError for malformed input.
     """
+    logger.debug("diag.enter %s", "mcp_server/auth.py:parse_basic_auth")
     stripped = authorization_header.strip()
     if not stripped.lower().startswith("basic "):
         raise ValueError("Not a Basic auth header")
@@ -127,6 +129,7 @@ def parse_basic_auth(authorization_header: str) -> tuple[str, str]:
 
 def _constant_time_eq(a: str, b: str) -> bool:
     """Constant-time string comparison to resist timing attacks."""
+    logger.debug("diag.enter %s", "mcp_server/auth.py:_constant_time_eq")
     return hmac.compare_digest(a.encode(), b.encode())
 
 
@@ -151,20 +154,18 @@ def validate_credentials(
     * **No server configured and no target_host**: auth should not be required
       in this case; callers should not invoke this function.
     """
+    logger.debug("diag.enter %s", "mcp_server/auth.py:validate_credentials")
     if not username:
         return False
 
-    using_default_server = (
-        not target_host
-        or not config.default_server_host
-        or target_host.lower() == config.default_server_host.lower()
-    )
+    using_default_server = not target_host or not config.default_server_host or target_host.lower() == config.default_server_host.lower()
 
     if using_default_server:
         expected_user = config.default_username or ""
         expected_pass = config.default_password or ""
         return _constant_time_eq(username, expected_user) and _constant_time_eq(
-            password, expected_pass
+            password,
+            expected_pass,
         )
 
     # Dynamic routing to a different Ghidra server: accept any non-empty credentials.
@@ -185,19 +186,20 @@ _401_BODY: bytes = b"Unauthorized"
 
 async def _send_401(send: Any) -> None:
     """Emit a minimal HTTP 401 Unauthorized ASGI response."""
+    logger.debug("diag.enter %s", "mcp_server/auth.py:_send_401")
     await send(
         {
             "type": "http.response.start",
             "status": 401,
             "headers": _401_HEADERS,
-        }
+        },
     )
     await send(
         {
             "type": "http.response.body",
             "body": _401_BODY,
             "more_body": False,
-        }
+        },
     )
 
 
@@ -225,14 +227,14 @@ class AuthMiddleware:
     """
 
     def __init__(self, inner_app: Any, auth_config: AuthConfig) -> None:
+        logger.debug("diag.enter %s", "mcp_server/auth.py:AuthMiddleware.__init__")
         self._inner_app = inner_app
         self._config = auth_config
 
     def _auth_required(self, target_host: str) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/auth.py:AuthMiddleware._auth_required")
         return bool(
-            self._config.require_auth
-            or target_host
-            or self._config.default_username
+            self._config.require_auth or target_host or self._config.default_username,
         )
 
     async def __call__(
@@ -242,6 +244,7 @@ class AuthMiddleware:
         send: Any,
     ) -> None:
         # Non-HTTP scopes (lifespan, websocket) pass straight through
+        logger.debug("diag.enter %s", "mcp_server/auth.py:AuthMiddleware.__call__")
         if scope.get("type") != "http":
             await self._inner_app(scope, receive, send)
             return
@@ -290,19 +293,21 @@ class AuthMiddleware:
             try:
                 username, password = parse_basic_auth(auth_header)
             except ValueError:
-                logger.debug("AuthMiddleware: malformed Basic auth header")
+                logger.warning("mcp_auth_rejected reason=malformed_basic")
         if not username and agent_username:
             username = agent_username
             password = agent_password
 
         if not username:
-            logger.debug("AuthMiddleware: no credentials provided → 401")
+            logger.warning("mcp_auth_rejected reason=no_credentials")
             await _send_401(send)
             return
 
         if not validate_credentials(username, password, self._config, target_host):
-            logger.debug(
-                "AuthMiddleware: credential validation failed for user=%r → 401", username
+            logger.warning(
+                "mcp_auth_rejected reason=invalid_credentials username_len=%s dynamic_target_host=%s",
+                len(username),
+                bool(target_host),
             )
             await _send_401(send)
             return

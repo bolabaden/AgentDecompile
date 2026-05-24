@@ -4,8 +4,15 @@ This package provides a command-line interface that bridges stdio MCP transport
 to AgentDecompile's StreamableHTTP server, enabling seamless integration with Claude CLI.
 Programmatic use: AgentDecompileMcpClient for async HTTP access to an existing server.
 
-Tool and resource names: use agentdecompile_cli.tools_schema (TOOLS,
-RESOURCE_URIS, build_tool_payload, RESOURCE_URI_*).
+Package layout:
+  - bridge: HTTP client (AgentDecompileMcpClient), stdio bridge, MCP session fix.
+  - registry: Tool names (Tool enum), normalization, TOOLS, TOOL_PARAMS, resource URIs.
+  - executor: run_async(), get_client(), error handling, backend URL resolution.
+  - launcher: PyGhidra init, ProjectManager, AgentDecompileLauncher (see launcher.py).
+  - mcp_server: FastMCP server, ToolProviderManager, providers/*, resources, prompts.
+
+Tool and resource names: use agentdecompile_cli.registry (TOOLS, RESOURCE_URIS,
+build_tool_payload, get_tool_params, resolve_tool_name_enum).
 """
 
 try:
@@ -13,6 +20,11 @@ try:
 except ImportError:
     # Fallback version if not installed or in development without git tags
     __version__ = "0.0.0.dev0"
+
+from agentdecompile_cli.env_compat import sync_agentdecompile_env_aliases
+
+# Keep compact and canonical env prefixes in lockstep for all submodules.
+sync_agentdecompile_env_aliases()
 
 from agentdecompile_cli.bridge import (
     AgentDecompileMcpClient,
@@ -25,10 +37,14 @@ from agentdecompile_cli.registry import (
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
     RESOURCE_URIS,
+    ResourceUri,
+    Tool,
+    ToolName,
     TOOLS,
     TOOL_PARAMS,
     build_tool_payload,
     get_tool_params,
+    resolve_tool_name_enum,
     to_camel_case_key,
 )
 from agentdecompile_cli.executor import (
@@ -50,7 +66,10 @@ __all__ = [
     "AgentDecompileMcpClient",
     "ClientError",
     "NotFoundError",
+    "ResourceUri",
     "ServerNotRunningError",
+    "Tool",
+    "ToolName",
     "__version__",
     "build_tool_payload",
     "get_client",
@@ -58,6 +77,7 @@ __all__ = [
     "get_tool_params",
     "handle_command_error",
     "handle_noisy_mcp_errors",
+    "resolve_tool_name_enum",
     "run_async",
     "show_connection_error",
     "to_camel_case_key",

@@ -11,8 +11,8 @@ Usage:
   # Use CLI
   agentdecompile-cli list binaries
   agentdecompile-cli decompile --binary /myapp main
-  agentdecompile-cli search symbols --binary /myapp malloc -l 20
-  agentdecompile-cli search strings --binary /myapp regex "error|warning" -l 50
+    agentdecompile-cli search symbols --binary /myapp malloc
+    agentdecompile-cli search strings --binary /myapp regex "error|warning"
   agentdecompile-cli xref --binary /myapp 0x401000
   agentdecompile-cli read --binary /myapp 0x1000 -s 64
   agentdecompile-cli memory read --binary /myapp 0x1000 --length 32
@@ -26,29 +26,45 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import json
 import logging
 import multiprocessing
 import os
+import socket
+import subprocess
 import sys
+import time
 
-from collections.abc import Coroutine
+from dataclasses import dataclass
 from pathlib import Path
-from types import FunctionType, SimpleNamespace
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import click
+
+from ghidrecomp.decompile import decompile
+from httpx import AsyncClient, Timeout
 
 from agentdecompile_cli import __version__
 from agentdecompile_cli.executor import (
     format_output,
     get_client,
     handle_command_error,
-    resolve_backend_url,
+    normalize_backend_url,
     run_async,
 )
-from agentdecompile_cli.ghidrecomp.decompile import decompile
+from agentdecompile_cli.cli_agent_help import (
+    MAIN_AGENT_EPILOG,
+    TOOL_AGENT_EPILOG,
+    TOOL_MISSING_NAME_USAGE,
+    TOOL_SEQ_AGENT_EPILOG,
+    format_tool_list_output,
+    resolve_tool_seq_steps,
+    tool_seq_json_error_message,
+)
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,
@@ -56,10 +72,18 @@ from agentdecompile_cli.registry import (
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
     TOOLS,
-    TOOL_PARAMS,
+    Tool,
+    get_tool_params,
     to_snake_case,
     tool_registry,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+    from types import FunctionType
+
+    from mcp.client.session import ClientSession
+    from mcp.types import TextContent
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +93,41 @@ _format_options_registered = False
 _CLI_STATE_DIR = ".agentdecompile"
 _CLI_STATE_FILE = "cli_state.json"
 _DEFAULT_OUTPUT_FORMAT = "text"
+_LOCAL_SERVER_STATE_KEY = "local_server"
+_LOCAL_SERVER_MANAGED_MARKER = "agentdecompile-cli"
+_LOCAL_SERVER_READY_TIMEOUT_S = 45.0
+_LOCAL_SERVER_POLL_INTERVAL_S = 0.5
+_LOCAL_SERVER_PROBE_TIMEOUT_S = 1.5
+_BACKEND_ENV_URL_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_URL",
+    "AGENT_DECOMPILE_SERVER_URL",
+    "AGENTDECOMPILE_MCP_SERVER_URL",
+    "AGENTDECOMPILE_SERVER_URL",
+)
+_BACKEND_ENV_HOST_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_HOST",
+    "AGENT_DECOMPILE_SERVER_HOST",
+    "AGENTDECOMPILE_SERVER_HOST",
+)
+_BACKEND_ENV_PORT_KEYS: tuple[str, ...] = (
+    "AGENT_DECOMPILE_MCP_SERVER_PORT",
+    "AGENT_DECOMPILE_SERVER_PORT",
+    "AGENTDECOMPILE_SERVER_PORT",
+)
+
+
+@dataclass(frozen=True)
+class BackendTargetResolution:
+    url: str
+    source: str
+    explicit_cli: bool = False
+    env_provided: bool = False
+    cached_local: bool = False
 
 
 def _configure_runtime_logging(verbose: bool) -> None:
+    """Set log level and HTTP log verbosity from --verbose; stderr only, no file logging."""
+    logger.debug("diag.enter %s", "cli.py:_configure_runtime_logging")
     root_logger = logging.getLogger()
     if not root_logger.handlers:
         logging.basicConfig(
@@ -90,48 +146,418 @@ def _configure_runtime_logging(verbose: bool) -> None:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-# Canonical tools that already have curated command wrappers.
-# Dynamic command registration keeps these callable but hidden from top-level help
-# to avoid duplicate/alias noise in command listings.
-_TOOLS_WITH_CURATED_COMMANDS: frozenset[str] = frozenset(
+# Tools that have dedicated Click subcommands (e.g. decompile, callgraph, xref).
+# They are still registered as dynamic tools for tool-seq, but we hide them from
+# top-level "agentdecompile-cli --help" to avoid duplicate/alias noise; their
+# behavior is exposed via the curated commands instead.
+_TOOLS_WITH_CURATED_COMMANDS: frozenset[Tool] = frozenset(
     {
-        "analyze-data-flow",
-        "analyze-program",
-        "analyze-vtables",
-        "change-processor",
-        "checkin-program",
-        "get-call-graph",
-        "get-current-address",
-        "get-current-function",
-        "get-data",
-        "get-functions",
-        "get-references",
-        "inspect-memory",
-        "list-functions",
-        "list-project-files",
-        "manage-bookmarks",
-        "manage-comments",
-        "manage-data-types",
-        "manage-files",
-        "manage-function",
-        "manage-function-tags",
-        "manage-strings",
-        "manage-structures",
-        "manage-symbols",
-        "match-function",
-        "search-constants",
-        "sync-project",
-        "sync-shared-project",
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_PROGRAM,
+        Tool.ANALYZE_VTABLES,
+        Tool.CHANGE_PROCESSOR,
+        Tool.CHECKIN_PROGRAM,
+        Tool.GET_CALL_GRAPH,
+        Tool.GET_CURRENT_ADDRESS,
+        Tool.GET_CURRENT_FUNCTION,
+        Tool.GET_DATA,
+        Tool.GET_FUNCTIONS,
+        Tool.GET_REFERENCES,
+        Tool.INSPECT_MEMORY,
+        Tool.LIST_FUNCTIONS,
+        Tool.LIST_PROJECT_FILES,
+        Tool.MATCH_FUNCTION,
+        Tool.SEARCH_CONSTANTS,
+        Tool.SVR_ADMIN,
+        Tool.SYNC_PROJECT,
     },
 )
 
 
 def _get_opts(ctx: click.Context) -> dict[str, Any]:
     """Global options from context (set by main group)."""
-    return ctx.obj or {}
+    logger.debug("diag.enter %s", "cli.py:_get_opts")
+    if ctx.obj and isinstance(ctx.obj, dict):
+        return ctx.obj
+    # Subcommands get their own context; use root so main's opts are available
+    root = getattr(ctx, "find_root", None)
+    if root is not None:
+        try:
+            root_ctx = root()
+            if root_ctx.obj and isinstance(root_ctx.obj, dict):
+                return root_ctx.obj
+        except Exception:
+            pass
+    current = ctx.parent
+    while current is not None:
+        if current.obj and isinstance(current.obj, dict):
+            return current.obj
+        current = current.parent
+    return {}
 
 
-def _client(ctx: click.Context) -> Any:
+def _env_value(keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _parse_env_port(keys: tuple[str, ...], default: int) -> int:
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(str(raw).strip())
+        except ValueError:
+            return default
+    return default
+
+
+def _normalize_url_or_none(value: str | None) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return normalize_backend_url(value.strip())
+    except Exception:
+        return value.strip().rstrip("/")
+
+
+def _is_pid_running(pid: int | None) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    except Exception:
+        return False
+    return True
+
+
+def _is_tcp_port_available(port: int) -> bool:
+    if port <= 0 or port > 65535:
+        return False
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def _find_free_local_port() -> int:
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _cli_state_local_server() -> dict[str, Any] | None:
+    state = _load_cli_state()
+    entry = state.get(_LOCAL_SERVER_STATE_KEY)
+    return entry if isinstance(entry, dict) else None
+
+
+def _clear_local_server_state() -> None:
+    state = _load_cli_state()
+    if _LOCAL_SERVER_STATE_KEY not in state:
+        return
+    state = dict(state)
+    state.pop(_LOCAL_SERVER_STATE_KEY, None)
+    _save_cli_state(state)
+
+
+def _persist_local_server_state(url: str, port: int, pid: int | None) -> None:
+    state = _load_cli_state()
+    state = dict(state)
+    state[_LOCAL_SERVER_STATE_KEY] = {
+        "url": _normalize_url_or_none(url) or url,
+        "port": int(port),
+        "pid": int(pid) if isinstance(pid, int) and pid > 0 else None,
+        "managed_by": _LOCAL_SERVER_MANAGED_MARKER,
+        "started_at": time.time(),
+    }
+    _save_cli_state(state)
+
+
+def _get_cached_local_server_url() -> str | None:
+    entry = _cli_state_local_server()
+    if not entry:
+        return None
+    if entry.get("managed_by") != _LOCAL_SERVER_MANAGED_MARKER:
+        return None
+    url = _normalize_url_or_none(entry.get("url"))
+    if not url:
+        _clear_local_server_state()
+        return None
+    pid = entry.get("pid")
+    if isinstance(pid, int) and pid > 0 and not _is_pid_running(pid):
+        _clear_local_server_state()
+        return None
+    return url
+
+
+def _resolve_backend_target(ctx: click.Context) -> BackendTargetResolution:
+    opts = _get_opts(ctx)
+
+    explicit_server_url = opts.get("server_url")
+    if isinstance(explicit_server_url, str) and explicit_server_url.strip() and opts.get("backend_cli_url_explicit"):
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(explicit_server_url) or explicit_server_url.strip(),
+            source="explicit_cli_url",
+            explicit_cli=True,
+        )
+
+    if opts.get("backend_host_explicit") or opts.get("backend_port_explicit"):
+        host = str(opts.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+        try:
+            port = int(opts.get("port") or 8080)
+        except Exception:
+            port = 8080
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+            source="explicit_cli_host_port",
+            explicit_cli=True,
+        )
+
+    env_url = _env_value(_BACKEND_ENV_URL_KEYS)
+    if env_url:
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(env_url) or env_url,
+            source="env_url",
+            env_provided=True,
+        )
+
+    env_host = _env_value(_BACKEND_ENV_HOST_KEYS)
+    env_port_raw = _env_value(_BACKEND_ENV_PORT_KEYS)
+    if env_host or env_port_raw is not None:
+        port = _parse_env_port(_BACKEND_ENV_PORT_KEYS, 8080)
+        host = env_host or "127.0.0.1"
+        return BackendTargetResolution(
+            url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+            source="env_host_port",
+            env_provided=True,
+        )
+
+    cached_local_url = _get_cached_local_server_url()
+    if cached_local_url:
+        return BackendTargetResolution(
+            url=cached_local_url,
+            source="cached_local_server",
+            cached_local=True,
+        )
+
+    host = str(opts.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        port = int(opts.get("port") or 8080)
+    except Exception:
+        port = 8080
+    return BackendTargetResolution(
+        url=_normalize_url_or_none(f"http://{host}:{port}") or f"http://{host}:{port}",
+        source="implicit_default",
+    )
+
+
+def _should_attempt_local_recovery(ctx: click.Context) -> bool:
+    opts = _get_opts(ctx)
+    return not bool(opts.get("backend_cli_explicit"))
+
+
+def _local_server_log_path() -> Path:
+    state_path = _cli_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    return state_path.parent / "local_server.log"
+
+
+def _local_server_port_candidates() -> list[int]:
+    candidates: list[int] = []
+    entry = _cli_state_local_server()
+    if entry:
+        port = entry.get("port")
+        if isinstance(port, int) and port > 0:
+            candidates.append(int(port))
+    if 8080 not in candidates:
+        candidates.append(8080)
+    free_port = _find_free_local_port()
+    if free_port not in candidates:
+        candidates.append(free_port)
+    return candidates
+
+
+async def _probe_backend_health(url: str) -> bool:
+    normalized = _normalize_url_or_none(url)
+    if not normalized:
+        return False
+    parsed = urlparse(normalized)
+    if not parsed.scheme or not parsed.hostname or parsed.port is None:
+        return False
+    health_url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}/health"
+    try:
+        async with AsyncClient(timeout=Timeout(_LOCAL_SERVER_PROBE_TIMEOUT_S)) as client:
+            response = await client.get(health_url)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+async def _wait_for_backend_health(url: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if await _probe_backend_health(url):
+            return True
+        await asyncio.sleep(_LOCAL_SERVER_POLL_INTERVAL_S)
+    return False
+
+
+def _spawn_local_server_process(port: int, ctx: click.Context) -> subprocess.Popen[str]:
+    opts = _get_opts(ctx)
+    env = os.environ.copy()
+    if isinstance(opts.get("local_project_path"), str) and opts.get("local_project_path"):
+        env["AGENT_DECOMPILE_PROJECT_PATH"] = str(opts["local_project_path"])
+    if isinstance(opts.get("local_project_name"), str) and opts.get("local_project_name"):
+        env["AGENT_DECOMPILE_PROJECT_NAME"] = str(opts["local_project_name"])
+    env["PYTHONUNBUFFERED"] = "1"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "agentdecompile_cli.server",
+        "-t",
+        "streamable-http",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+
+    log_file = _local_server_log_path().open("a", encoding="utf-8")
+    creationflags = 0
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(Path.cwd()),
+        "env": env,
+        "stdout": log_file,
+        "stderr": log_file,
+        "stdin": subprocess.DEVNULL,
+        "text": True,
+    }
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(cmd, **popen_kwargs)
+    finally:
+        log_file.close()
+    return process
+
+
+async def _ensure_local_server_url(ctx: click.Context, reason: str) -> str | None:
+    cached_url = _get_cached_local_server_url()
+    if cached_url and await _probe_backend_health(cached_url):
+        click.echo(f"Reusing cached local AgentDecompile server at {cached_url}", err=True)
+        return cached_url
+    if cached_url is not None and cached_url.strip():
+        _clear_local_server_state()
+
+    for port in _local_server_port_candidates():
+        if not _is_tcp_port_available(port):
+            candidate_url = _normalize_url_or_none(f"http://127.0.0.1:{port}") or f"http://127.0.0.1:{port}"
+            if await _probe_backend_health(candidate_url):
+                _persist_local_server_state(candidate_url, port, None)
+                click.echo(f"Reusing local AgentDecompile server at {candidate_url}", err=True)
+                return candidate_url
+            continue
+
+        click.echo(f"Starting local AgentDecompile server on http://127.0.0.1:{port} ({reason})", err=True)
+        process = _spawn_local_server_process(port, ctx)
+        candidate_url = _normalize_url_or_none(f"http://127.0.0.1:{port}") or f"http://127.0.0.1:{port}"
+        if await _wait_for_backend_health(candidate_url, _LOCAL_SERVER_READY_TIMEOUT_S):
+            _persist_local_server_state(candidate_url, port, process.pid)
+            return candidate_url
+        if process.poll() is not None:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Local mode helpers
+# ---------------------------------------------------------------------------
+
+# Module-level cache of the LocalToolBackend instance so it persists across
+# the lifetime of a single CLI invocation (one asyncio.run call).
+_local_backend_instance: Any | None = None
+
+
+def _is_local_mode(ctx: click.Context) -> bool:
+    """Return True when --local / AGENTDECOMPILE_LOCAL_MODE is set."""
+    logger.debug("diag.enter %s", "cli.py:_is_local_mode")
+    opts = _get_opts(ctx)
+    if opts.get("local_mode"):
+        return True
+    # Also check env directly so the flag works even when ctx.obj is not yet populated
+    return (os.environ.get("AGENTDECOMPILE_LOCAL_MODE", "").strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _get_local_backend(ctx: click.Context) -> Any:
+    """Return (creating if needed) the LocalToolBackend for this local-mode session.
+
+    The backend is cached at module level so the same initialised instance is
+    reused across multiple tool calls within a single ``asyncio.run()`` context.
+    """
+    logger.debug("diag.enter %s", "cli.py:_get_local_backend")
+    global _local_backend_instance
+    if _local_backend_instance is not None:
+        return _local_backend_instance
+
+    from agentdecompile_cli.local_backend import LocalToolBackend  # noqa: PLC0415
+
+    opts = _get_opts(ctx)
+    project_path: str | None = opts.get("local_project_path") or None
+    project_name: str = str(opts.get("local_project_name") or "agentdecompile")
+    verbose: bool = bool(opts.get("verbose", False))
+
+    # Default program path from -b / --binary used as initial binary to load
+    default_program = opts.get("cli_default_program_path")
+    input_paths = [default_program] if default_program else []
+
+    _local_backend_instance = LocalToolBackend(
+        project_path=project_path,
+        project_name=project_name,
+        input_paths=input_paths,
+        verbose=verbose,
+        threaded=False,
+    )
+    return _local_backend_instance
+
+
+def _cleanup_local_backend_instance() -> None:
+    global _local_backend_instance
+    if _local_backend_instance is not None:
+        try:
+            _local_backend_instance.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _local_backend_instance = None
+
+
+def _normalize_system_exit_code(code: object) -> int:
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    return 1
+
+
+def _client(ctx: click.Context, url_override: str | None = None) -> Any:
     """Create an MCP HTTP client connected to the backend.
 
     Reads server host/port/url from CLI context options and creates
@@ -142,17 +568,29 @@ def _client(ctx: click.Context) -> Any:
     Returns:
         AgentDecompileMcpClient: Configured MCP client ready to call tools.
     """
+    logger.debug("diag.enter %s", "cli.py:_client")
     opts = _get_opts(ctx)
-    url = resolve_backend_url(
-        opts.get("server_url"),
-        opts.get("host"),
-        opts.get("port"),
-    )
+    resolution = _resolve_backend_target(ctx)
+    url = _normalize_url_or_none(url_override) or resolution.url
+    extra_headers = dict(_shared_request_headers(ctx) or {})
+    # Send persisted session id so second invocation reuses same server session (two-command persistence)
+    state = _load_cli_state()
+    scope = _cache_scope_key(ctx, url_override=url)
+    backends = state.get("backends") if isinstance(state, dict) else None
+    if isinstance(backends, dict):
+        entry = backends.get(scope)
+        if isinstance(entry, dict):
+            sid = entry.get("session_id")
+            if isinstance(sid, str) and sid.strip():
+                extra_headers["Mcp-Session-Id"] = sid.strip()
+    cookie_file = _cookie_file_path(ctx)
     if url:
-        return get_client(url=url)
+        return get_client(url=url, extra_headers=extra_headers, cookie_file=cookie_file)
     return get_client(
         host=opts.get("host", "127.0.0.1"),
         port=opts.get("port", 8080),
+        extra_headers=extra_headers,
+        cookie_file=cookie_file,
     )
 
 
@@ -161,13 +599,15 @@ def _fmt(ctx: click.Context) -> str:
 
     Returns configured format (json, text, yaml, etc.) or default.
     """
+    logger.debug("diag.enter %s", "cli.py:_fmt")
     return _get_opts(ctx).get("format", _DEFAULT_OUTPUT_FORMAT)
 
 
 def _extract_text(result: Any) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_extract_text")
     contents: list[Any] = getattr(result, "contents", None) or []
     for c in contents:
-        text = getattr(c, "text", None)
+        text = c.text if isinstance(c, TextContent) else None
         if text:
             return text
     return None
@@ -175,6 +615,7 @@ def _extract_text(result: Any) -> str | None:
 
 def _safe_json_loads(value: Any) -> Any:
     """Best-effort JSON decode for string payloads."""
+    logger.debug("diag.enter %s", "cli.py:_safe_json_loads")
     if not isinstance(value, str):
         return value
     try:
@@ -185,6 +626,7 @@ def _safe_json_loads(value: Any) -> Any:
 
 def _iter_tool_result_dicts(data: Any):
     """Yield root and nested tool-result dictionaries from MCP response payloads."""
+    logger.debug("diag.enter %s", "cli.py:_iter_tool_result_dicts")
     if not isinstance(data, dict):
         return
 
@@ -204,6 +646,7 @@ def _iter_tool_result_dicts(data: Any):
 
 
 def _parse_json(result: Any) -> dict | list | None:
+    logger.debug("diag.enter %s", "cli.py:_parse_json")
     text = _extract_text(result)
     if not text:
         return None
@@ -213,23 +656,24 @@ def _parse_json(result: Any) -> dict | list | None:
     return parsed
 
 
-def _ensure_count_in_project_file_results(data: Any) -> Any:
+def _ensure_count_in_project_file_results(data: dict[str, Any] | Any) -> Any:
     """Backfill `count` for list-project-files style payloads when backend omits it."""
+    logger.debug("diag.enter %s", "cli.py:_ensure_count_in_project_file_results")
     if not isinstance(data, dict):
         return data
 
-    files = data.get("files")
+    files: list[Any] | Any = data.get("files")
     if "count" not in data and isinstance(files, list):
         data["count"] = len(files)
 
-    content = data.get("content")
+    content: list[Any] | Any = data.get("content")
     if isinstance(content, list):
         for item in content:
             if not isinstance(item, dict):
                 continue
-            nested = _safe_json_loads(item.get("text"))
+            nested: dict[str, Any] | None = _safe_json_loads(item.get("text"))
             if isinstance(nested, dict):
-                nested_files = nested.get("files")
+                nested_files: list[Any] | Any = nested.get("files")
                 if "count" not in nested and isinstance(nested_files, list):
                     nested["count"] = len(nested_files)
                     item["text"] = json.dumps(nested)
@@ -239,18 +683,71 @@ def _ensure_count_in_project_file_results(data: Any) -> Any:
 
 def _get_error_result_message(data: Any) -> str | None:
     """If data is a tool error result (success: false, error present), return the error message; else None."""
+    logger.debug("diag.enter %s", "cli.py:_get_error_result_message")
     for payload in _iter_tool_result_dicts(data):
         if payload.get("success") is False and "error" in payload:
             return str(payload.get("error", "Tool returned an error"))
     return None
 
 
+def _markdown_mcp_content_indicates_error(data: dict[str, Any]) -> bool:
+    """True when formatted markdown in MCP text content is an error (isError often stays false)."""
+    logger.debug("diag.enter %s", "cli.py:_markdown_mcp_content_indicates_error")
+    content = data.get("content")
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str):
+            continue
+        if "## Modification conflict" in text:
+            return True
+        if "## Error" not in text:
+            continue
+        # response_formatter: ## Error then blockquote line "> **...**"
+        if "\n> **" in text or "\n\n> **" in text:
+            return True
+        stripped = text.lstrip()
+        if stripped.startswith("## Error\n") or stripped.startswith("## Error\r\n"):
+            return True
+    return False
+
+
+def _tool_seq_step_succeeded(data: Any) -> bool:
+    """Whether an MCP tool response should count as success for ``tool-seq`` (matches ``tool`` command heuristics)."""
+    logger.debug("diag.enter %s", "cli.py:_tool_seq_step_succeeded")
+    if data is None:
+        return False
+    if not isinstance(data, dict):
+        return True
+    if data.get("isError") is True:
+        return False
+    if _get_error_result_message(data) is not None:
+        return False
+    if _markdown_mcp_content_indicates_error(data):
+        return False
+    return True
+
+
 def _is_no_program_loaded_error(data: Any) -> bool:
+    logger.debug("diag.enter %s", "cli.py:_is_no_program_loaded_error")
     err = _get_error_result_message(data)
     if err:
         err_l = err.strip().lower()
         if "no program loaded" in err_l or "no active program" in err_l:
             return True
+
+    if isinstance(data, dict):
+        content = data.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text", "")).strip().lower()
+                if "no program loaded" in text or "no active program" in text or "state:** `no-active-program`" in text:
+                    return True
 
     for payload in _iter_tool_result_dicts(data):
         note = str(payload.get("note", "")).strip().lower()
@@ -262,9 +759,28 @@ def _is_no_program_loaded_error(data: Any) -> bool:
     return False
 
 
+def _build_svr_admin_payload(
+    args: tuple[str, ...],
+    passthrough_args: list[str],
+    command: str | None,
+    timeout_seconds: int | None,
+) -> dict[str, Any]:
+    """Build MCP payload for svr-admin while preserving raw argument ordering."""
+    logger.debug("diag.enter %s", "cli.py:_build_svr_admin_payload")
+    payload: dict[str, Any] = {}
+    argv = [*args, *passthrough_args]
+    if argv:
+        payload["args"] = argv
+    if command:
+        payload["command"] = command
+    if timeout_seconds is not None:
+        payload["timeoutSeconds"] = timeout_seconds
+    return payload
+
+
 def _backend_host_for_recovery(ctx: click.Context) -> str:
-    opts: dict[str, Any] = _get_opts(ctx)
-    backend_url: str | None = resolve_backend_url(opts.get("server_url"), opts.get("host"), opts.get("port"))
+    logger.debug("diag.enter %s", "cli.py:_backend_host_for_recovery")
+    backend_url = _resolve_backend_target(ctx).url
     if backend_url:
         try:
             parsed = urlparse(backend_url)
@@ -272,7 +788,90 @@ def _backend_host_for_recovery(ctx: click.Context) -> str:
                 return parsed.hostname
         except Exception:
             pass
-    return str(opts.get("host", "127.0.0.1"))
+    return "127.0.0.1"
+
+
+def _shared_server_defaults(ctx: click.Context) -> dict[str, Any]:
+    logger.debug("diag.enter %s", "cli.py:_shared_server_defaults")
+    opts = _get_opts(ctx)
+
+    host = (
+        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_HOST", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
+    )
+    port_raw = (
+        str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_PORT", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "13100").strip()
+        or "13100"
+    )
+    try:
+        port = int(port_raw)
+    except ValueError:
+        port = 13100
+
+    username = (
+        str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_USERNAME", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
+    )
+    password = (
+        str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_PASSWORD", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
+        or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
+    )
+    repository = (
+        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
+        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_GHIDRA_REPOSITORY", "").strip()
+        or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
+        or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
+    )
+
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "repository": repository,
+    }
+
+
+def _shared_request_headers(ctx: click.Context) -> dict[str, str]:
+    logger.debug("diag.enter %s", "cli.py:_shared_request_headers")
+    shared_defaults = _shared_server_defaults(ctx)
+    host = str(shared_defaults["host"] or "").strip()
+    if not host:
+        return {}
+
+    headers: dict[str, str] = {
+        "X-Ghidra-Server-Host": host,
+        "X-Ghidra-Server-Port": str(shared_defaults["port"]),
+    }
+    repository = str(shared_defaults["repository"] or "").strip()
+    if repository:
+        headers["X-Ghidra-Repository"] = repository
+        headers["X-Agent-Server-Repository"] = repository
+    username = str(shared_defaults["username"] or "").strip()
+    password = str(shared_defaults["password"] or "")
+    if username:
+        headers["X-Agent-Server-Username"] = username
+        headers["X-Agent-Server-Password"] = password
+    return headers
 
 
 async def _recover_and_retry_with_program(
@@ -303,6 +902,7 @@ async def _recover_and_retry_with_program(
     Returns:
         Either the original failed result, or the successful retried result
     """
+    logger.debug("diag.enter %s", "cli.py:_recover_and_retry_with_program")
     if not _is_no_program_loaded_error(result):
         return result
 
@@ -311,42 +911,36 @@ async def _recover_and_retry_with_program(
         return result
 
     open_attempts = _build_open_attempts(ctx, requested_program)
+    last_open_error: Any | None = None
 
     for open_payload in open_attempts:
         clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
-        if await _try_open_program(ctx, client, clean_open_payload):
+        opened, open_result = await _try_open_program(ctx, client, clean_open_payload)
+        if not opened:
+            if open_result is not None:
+                last_open_error = open_result
+            continue
+        if opened:
             retried = await _try_retry_tool_call(client, tool_name, payload)
             if retried and not _is_no_program_loaded_error(retried):
                 return retried
             result = retried or result
+
+    if last_open_error is not None:
+        return last_open_error
 
     return result
 
 
 def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dict[str, Any]]:
     """Build a list of open attempts for the requested program."""
-    opts = _get_opts(ctx)
-    shared_host = (
-        str(opts.get("ghidra_server_host") or opts.get("server_host") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
-        or _backend_host_for_recovery(ctx)
-    )
-    shared_port_raw = str(opts.get("ghidra_server_port") or opts.get("server_port") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "13100").strip() or "13100"
-
-    try:
-        shared_port = int(shared_port_raw)
-    except ValueError:
-        shared_port = 13100
-
-    shared_user = str(opts.get("ghidra_server_username") or opts.get("server_username") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-    shared_pass = str(opts.get("ghidra_server_password") or opts.get("server_password") or "").strip() or os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-    shared_repo = (
-        str(opts.get("ghidra_server_repository") or opts.get("server_repository") or "").strip()
-        or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-        or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
-        or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
-        or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
-    )
+    logger.debug("diag.enter %s", "cli.py:_build_open_attempts")
+    shared_defaults = _shared_server_defaults(ctx)
+    shared_host = str(shared_defaults["host"])
+    shared_port = int(shared_defaults["port"])
+    shared_user = str(shared_defaults["username"])
+    shared_pass = str(shared_defaults["password"])
+    shared_repo = str(shared_defaults["repository"])
 
     open_attempts: list[dict[str, Any]] = []
     if shared_host:
@@ -374,14 +968,121 @@ def _build_open_attempts(ctx: click.Context, requested_program: str) -> list[dic
     return open_attempts
 
 
-async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> bool:
-    """Try to open a program with the given payload."""
-    try:
-        open_result = await client.call_tool("open-project", open_payload)
+def _build_shared_open_payload(ctx: click.Context) -> dict[str, Any] | None:
+    """Build open (shared) payload from global opts; None if no host."""
+    logger.debug("diag.enter %s", "cli.py:_build_shared_open_payload")
+    shared_defaults = _shared_server_defaults(ctx)
+    shared_host = str(shared_defaults["host"] or "").strip()
+    if not shared_host:
+        return None
+    open_payload: dict[str, Any] = {
+        "shared": True,
+        "serverHost": shared_host,
+        "serverPort": int(shared_defaults["port"]),
+        "format": "json",
+    }
+    if str(shared_defaults["username"] or "").strip():
+        open_payload["serverUsername"] = str(shared_defaults["username"])
+    if str(shared_defaults["password"] or "").strip():
+        open_payload["serverPassword"] = str(shared_defaults["password"])
+    if str(shared_defaults["repository"] or "").strip():
+        open_payload["path"] = str(shared_defaults["repository"])
+        open_payload["repositoryName"] = str(shared_defaults["repository"])
+    return open_payload
+
+
+async def _maybe_bootstrap_shared_listing(ctx: click.Context, client: Any, tool_name: str, payload: dict[str, Any]) -> Any | None:
+    logger.debug("diag.enter %s", "cli.py:_maybe_bootstrap_shared_listing")
+    if tool_name == "list_project_files":
+        if any(key in payload for key in ("path", "folder", "programPath", "program_path", "binary", "binaryName", "binary_name")):
+            return None
+        open_payload = _build_shared_open_payload(ctx)
+        if not open_payload:
+            return None
+        logger.info(
+            "cli_implicit_open_for_tool bootstrap_branch=list_project_files shared_host_configured=True tool=%s",
+            tool_name,
+        )
+        open_result = await client.call_tool(Tool.OPEN.value, open_payload)
+        if _get_error_result_message(open_result) or _is_no_program_loaded_error(open_result):
+            return open_result
+        return None
+    if tool_name == "match_function":
+        # So standalone migrate-metadata works: open shared project first when credentials present.
+        # Skip when talking to a local server so migrate-metadata completes without opening remote.
+        opts = _get_opts(ctx)
+        server_url = (opts.get("server_url") or opts.get("mcp_server_url") or opts.get("backend_url") or "").strip().lower()
+        if server_url and ("127.0.0.1" in server_url or "localhost" in server_url):
+            logger.info(
+                "cli_implicit_open_for_tool bootstrap_branch=match_function skipped_local_backend_for_match=True shared_host_configured=%s tool=%s",
+                _build_shared_open_payload(ctx) is not None,
+                tool_name,
+            )
+            return None
+        open_payload = _build_shared_open_payload(ctx)
+        if not open_payload:
+            return None
+        logger.info(
+            "cli_implicit_open_for_tool bootstrap_branch=match_function skipped_local_backend_for_match=False shared_host_configured=True tool=%s",
+            tool_name,
+        )
+        open_result = await client.call_tool(Tool.OPEN.value, open_payload)
         if _get_error_result_message(open_result):
-            return False
+            return open_result
+        return None  # proceed with match-function call
+    # Bootstrap shared project for checkout/checkin/checkout-status when path looks like shared repo path
+    if tool_name in ("checkout_program", "checkin_program", "checkout_status"):
+        program_path = payload.get("program_path") or payload.get("programPath") or payload.get("path") or ""
+        if isinstance(program_path, str) and program_path.strip() and (program_path.startswith("/") or "/" in program_path):
+            open_payload = _build_shared_open_payload(ctx)
+            if not open_payload:
+                return None
+            logger.info(
+                "cli_implicit_open_for_tool bootstrap_branch=checkout_family shared_host_configured=True tool=%s",
+                tool_name,
+            )
+            open_result = await client.call_tool(Tool.OPEN.value, open_payload)
+            if _get_error_result_message(open_result):
+                return open_result
+        return None
+    return None
+
+
+async def _maybe_preopen_requested_program(
+    ctx: click.Context,
+    client: Any,
+    tool_name: str,
+    payload: dict[str, Any],
+) -> Any | None:
+    logger.debug("diag.enter %s", "cli.py:_maybe_preopen_requested_program")
+    if tool_name != "get_current_program":
+        return None
+
+    requested_program = _extract_program_argument(payload)
+    if not requested_program:
+        return None
+
+    last_open_error: Any | None = None
+    for open_payload in _build_open_attempts(ctx, requested_program):
+        clean_open_payload = {k: v for k, v in open_payload.items() if v is not None}
+        opened, open_result = await _try_open_program(ctx, client, clean_open_payload)
+        if opened:
+            return None
+        if open_result is not None:
+            last_open_error = open_result
+
+    return last_open_error
+
+
+async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[str, Any]) -> tuple[bool, Any | None]:
+    """Try to open a program with the given payload."""
+    logger.debug("diag.enter %s", "cli.py:_try_open_program")
+    try:
+        open_result = await client.call_tool(Tool.OPEN.value, {**open_payload, "format": "json"})
+        if _get_error_result_message(open_result):
+            return False, open_result
     except Exception:
-        return False
+        return False, None
 
     # Best-effort explicit checkout when shared open connected at repo scope.
     try:
@@ -389,11 +1090,12 @@ async def _try_open_program(ctx: click.Context, client: Any, open_payload: dict[
     except Exception:
         pass
 
-    return True
+    return True, open_result
 
 
 async def _try_retry_tool_call(client: Any, tool_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     """Try to retry the tool call after opening the program."""
+    logger.debug("diag.enter %s", "cli.py:_try_retry_tool_call")
     try:
         return await client.call_tool(tool_name, payload)
     except Exception:
@@ -403,9 +1105,7 @@ async def _try_retry_tool_call(client: Any, tool_name: str, payload: dict[str, A
 def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Resolve CLI-invoked tool name to a server-advertised canonical call target.
 
-    Handles tool name normalization and alias forwarding. For example:
-    - "list-exports" → "manage-symbols" with mode="exports"
-    - "list-imports" → "manage-symbols" with mode="imports"
+    Handles tool name normalization and alias forwarding.
 
     This ensures CLI commands map correctly to the server's advertised tool API,
     even when using legacy or aliased command names.
@@ -417,6 +1117,7 @@ def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, 
     Returns:
         Tuple of (canonical_tool_name, updated_payload) ready for server call
     """
+    logger.debug("diag.enter %s", "cli.py:_resolve_tool_call_target")
     call_tool_name = tool
     resolved_tool = tool_registry.resolve_tool_name(tool) if tool_registry.is_valid_tool(tool) else None
     if resolved_tool is not None:
@@ -426,27 +1127,23 @@ def _resolve_tool_call_target(tool: str, payload: dict[str, Any]) -> tuple[str, 
 
     if call_tool_name in NON_ADVERTISED_TOOL_ALIASES:
         forwarded_tool = NON_ADVERTISED_TOOL_ALIASES[call_tool_name]
-        if call_tool_name == "list-exports":
-            resolved_payload.setdefault("mode", "exports")
-        elif call_tool_name == "list-imports":
-            resolved_payload.setdefault("mode", "imports")
         call_tool_name = forwarded_tool
 
     return call_tool_name, resolved_payload
 
 
-async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
-    """Call tool on the remote MCP server via HTTP client.
+async def _call(ctx: click.Context, tool: str | Tool, **kwargs: Any) -> None:
+    """Call tool through the preferred backend for this CLI invocation.
 
-    The CLI is a pure HTTP client — it NEVER executes tools locally.  All tool
-    calls are forwarded to the MCP server (which runs with PyGhidra and has
-    access to Ghidra APIs).
+    The CLI prefers an MCP HTTP backend, but when no explicit backend was
+    requested it can auto-start a local AgentDecompile server or fall back to
+    in-process local execution.
 
     Workflow:
     1. Clean payload (remove None values)
     2. Resolve tool name and arguments through registry
     3. Cache explicit program paths for future commands
-    4. Make HTTP call to MCP server
+    4. Make an HTTP call to MCP server, or recover to local execution when allowed
     5. Auto-recover from "no program loaded" errors
     6. Format and display results
 
@@ -455,14 +1152,14 @@ async def _call(ctx: click.Context, tool: str, **kwargs: Any) -> None:
         tool: Tool name to call
         **kwargs: Tool arguments (None values are filtered out)
     """
-
     # Drop None values
+    logger.debug("diag.enter %s", "cli.py:_call")
     payload: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
 
-    result = await _call_raw(ctx, tool, payload)
+    result: Any = await _call_raw(ctx, tool, payload)
 
     # data is already a dict from AgentDecompileMcpClient._extract_result()
-    err_msg = _get_error_result_message(result)
+    err_msg: str | None = _get_error_result_message(result)
     if err_msg is not None:
         click.echo(err_msg, err=True)
         sys.exit(1)
@@ -494,26 +1191,140 @@ async def _call_raw(
     Returns:
         Raw tool result dictionary from MCP server
     """
+    # Default to markdown for human-readable output. Use -f json when you need
+    # machine-readable output (shell/json/xml/table modes parse structured data).
+    logger.debug("diag.enter %s", "cli.py:_call_raw")
+    payload.setdefault("format", "markdown")
 
-    # CLI always requests JSON from the MCP server so it can apply local
-    # formatting via format_output() / the -f flag.  The server's default
-    # is markdown (rich output for direct MCP consumers like VS Code / Claude),
-    # but the CLI needs structured data for its own shell/json/xml/table modes.
-    payload.setdefault("format", "json")
-
-    # Canonicalize tool + args through the shared registry path when known.
     call_tool_name, safe_payload = _resolve_tool_call_target(tool, payload)
+    prepared_payload, _ = _prepare_tool_payload_with_program_fallback(ctx, call_tool_name, dict(safe_payload))
+
     if tool_registry.is_valid_tool(call_tool_name):
-        call_tool_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
-        safe_payload = tool_registry.parse_arguments(safe_payload, call_tool_name)
+        dispatch_display = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_tool_name))
+    else:
+        dispatch_display = call_tool_name
+    call_tool_snake = to_snake_case(dispatch_display)
 
-    explicit_program = _extract_program_argument(safe_payload)
-    if explicit_program is not None:
-        _set_cached_program(ctx, explicit_program)
+    return await _execute_tool_call(ctx, call_tool_snake, prepared_payload, client_override)
 
-    call_tool_name = to_snake_case(call_tool_name)
 
-    return await _execute_tool_call(ctx, call_tool_name, safe_payload, client_override)
+async def _call_tool_locally(
+    ctx: click.Context,
+    call_tool_name: str,
+    payload: dict[str, Any],
+) -> Any:
+    backend = _get_local_backend(ctx)
+    try:
+        await backend.initialize()
+        return await backend.call_tool(call_tool_name, payload)
+    except (ImportError, EnvironmentError) as exc:
+        click.echo(f"Error (local mode): {exc}", err=True)
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(f"Error calling tool '{call_tool_name}' (local mode): {exc}", err=True)
+        sys.exit(1)
+
+
+async def _run_tool_with_connected_client(
+    ctx: click.Context,
+    client: Any,
+    call_tool_name: str,
+    payload: dict[str, Any],
+) -> Any:
+    bootstrap = await _maybe_bootstrap_shared_listing(ctx, client, call_tool_name, payload)
+    if bootstrap is not None:
+        return bootstrap
+    preopen_error = await _maybe_preopen_requested_program(ctx, client, call_tool_name, payload)
+    if preopen_error is not None:
+        return preopen_error
+    first = await client.call_tool(call_tool_name, payload)
+    result = await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
+    _persist_session_id(ctx, client)
+    return result
+
+
+async def _attempt_local_backend_recovery(
+    ctx: click.Context,
+    call_tool_name: str,
+    payload: dict[str, Any],
+    original_error: BaseException,
+) -> Any | None:
+    resolution = _resolve_backend_target(ctx)
+    if resolution.explicit_cli:
+        return None
+
+    _emit_backend_recovery_notice(resolution)
+
+    local_url = await _ensure_local_server_url(ctx, "auto-start for CLI fallback")
+    if local_url:
+        try:
+            client = _client(ctx, url_override=local_url)
+            async with client:
+                return await _run_tool_with_connected_client(ctx, client, call_tool_name, payload)
+        except Exception as exc:
+            click.echo(f"Local AgentDecompile server startup did not produce a usable backend: {exc}", err=True)
+
+    click.echo(
+        f"Falling back to in-process local execution after backend connection failure: {original_error}",
+        err=True,
+    )
+    return await _call_tool_locally(ctx, call_tool_name, payload)
+
+
+def _emit_backend_recovery_notice(resolution: BackendTargetResolution) -> None:
+    if resolution.env_provided:
+        click.echo(f"Ignoring unavailable MCP server from environment: {resolution.url}", err=True)
+    elif resolution.source == "implicit_default":
+        click.echo(f"No reachable AgentDecompile server at default local target: {resolution.url}", err=True)
+    elif resolution.source == "cached_local_server":
+        click.echo(f"Cached local AgentDecompile server is unavailable: {resolution.url}", err=True)
+        _clear_local_server_state()
+
+
+@contextlib.asynccontextmanager
+async def _tool_sequence_client(ctx: click.Context):
+    if _is_local_mode(ctx):
+        yield None
+        return
+
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    client = _client(ctx)
+    try:
+        async with client:
+            yield client
+            return
+    except ServerNotRunningError as exc:
+        if not _should_attempt_local_recovery(ctx):
+            click.echo(str(exc), err=True)
+            sys.exit(1)
+
+        resolution = _resolve_backend_target(ctx)
+        _emit_backend_recovery_notice(resolution)
+
+        local_url = await _ensure_local_server_url(ctx, "auto-start for tool-seq fallback")
+        if local_url:
+            try:
+                recovered_client = _client(ctx, url_override=local_url)
+                async with recovered_client:
+                    yield recovered_client
+                    return
+            except Exception as recovery_exc:
+                click.echo(
+                    f"Local AgentDecompile server startup did not produce a usable backend: {recovery_exc}",
+                    err=True,
+                )
+
+        click.echo(
+            f"Falling back to in-process local execution after backend connection failure: {exc}",
+            err=True,
+        )
+        yield None
+        return
+
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
 
 
 async def _execute_tool_call(
@@ -523,22 +1334,91 @@ async def _execute_tool_call(
     client_override: Any | None = None,
 ) -> Any:
     """Execute the actual tool call with error handling and recovery."""
-    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+    logger.debug("diag.enter %s", "cli.py:_execute_tool_call")
+
+    # --- Local mode: call ToolProviderManager in-process, no MCP transport ---
+    if _is_local_mode(ctx) and client_override is None:
+        return await _call_tool_locally(ctx, call_tool_name, payload)
+
+    from agentdecompile_cli.bridge import ClientError, ServerNotRunningError  # noqa: PLC0415
 
     try:
         if client_override is not None:
-            first = await client_override.call_tool(call_tool_name, payload)
-            return await _recover_and_retry_with_program(ctx, client_override, call_tool_name, payload, first)
+            return await _run_tool_with_connected_client(ctx, client_override, call_tool_name, payload)
 
         client = _client(ctx)
         async with client:
-            first = await client.call_tool(call_tool_name, payload)
-            return await _recover_and_retry_with_program(ctx, client, call_tool_name, payload, first)
+            return await _run_tool_with_connected_client(ctx, client, call_tool_name, payload)
+    except ServerNotRunningError as exc:
+        if client_override is None and _should_attempt_local_recovery(ctx):
+            recovered = await _attempt_local_backend_recovery(ctx, call_tool_name, payload, exc)
+            if recovered is not None:
+                return recovered
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    except Exception as exc:
+        if isinstance(exc, ClientError) and "400" in str(exc):
+            _clear_persisted_session_id(ctx)
+        click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
+        sys.exit(1)
+
+
+async def _migrate_metadata_then_checkin(ctx: click.Context, match_payload: dict[str, Any]) -> None:
+    """Run match-function (migrate-metadata) then checkin-program in the same session."""
+    logger.debug("diag.enter %s", "cli.py:_migrate_metadata_then_checkin")
+    from agentdecompile_cli.bridge import ServerNotRunningError  # noqa: PLC0415
+
+    match_payload = dict(match_payload)
+    match_payload.setdefault("format", "markdown")
+    call_name, safe_match = _resolve_tool_call_target(Tool.MATCH_FUNCTION.value, match_payload)
+    if tool_registry.is_valid_tool(call_name):
+        call_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_name))
+        safe_match = tool_registry.parse_arguments(safe_match, call_name)
+    call_name = to_snake_case(call_name)
+    checkin_payload: dict[str, Any] = {"comment": "migrate-metadata checkin", "format": "markdown"}
+    call_name2, safe_checkin = _resolve_tool_call_target(Tool.CHECKIN_PROGRAM.value, checkin_payload)
+    if tool_registry.is_valid_tool(call_name2):
+        call_name2 = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(call_name2))
+        safe_checkin = tool_registry.parse_arguments(safe_checkin, call_name2)
+    call_name2 = to_snake_case(call_name2)
+    client = _client(ctx)
+    try:
+        async with client:
+            result1 = await _execute_tool_call(ctx, call_name, safe_match, client_override=client)
+            err1 = _get_error_result_message(result1)
+            if err1 is not None:
+                click.echo(err1, err=True)
+                sys.exit(1)
+            click.echo(format_output(result1, _fmt(ctx)))
+            result2 = await _execute_tool_call(ctx, call_name2, safe_checkin, client_override=client)
+            err2 = _get_error_result_message(result2)
+            if err2 is not None:
+                click.echo(err2, err=True)
+                sys.exit(1)
+            click.echo(format_output(result2, _fmt(ctx)))
+            # Verify: call checkout-status for each target so user sees state
+            target_paths = safe_match.get("targetProgramPaths") or safe_match.get("target_program_paths")
+            if isinstance(target_paths, str):
+                target_paths = [target_paths]
+            if isinstance(target_paths, list) and target_paths:
+                status_name, status_payload_base = _resolve_tool_call_target(Tool.CHECKOUT_STATUS.value, {"format": "markdown"})
+                if tool_registry.is_valid_tool(status_name):
+                    status_name = to_snake_case(tool_registry.get_display_name(tool_registry.canonicalize_tool_name(status_name)))
+                for tpath in target_paths:
+                    if not isinstance(tpath, str) or not tpath.strip():
+                        continue
+                    status_payload = {**status_payload_base, "programPath": tpath.strip()}
+                    status_payload = tool_registry.parse_arguments(status_payload, Tool.CHECKOUT_STATUS.value)
+                    try:
+                        status_result = await _execute_tool_call(ctx, status_name, status_payload, client_override=client)
+                        click.echo(format_output(status_result, _fmt(ctx)))
+                    except Exception:
+                        pass
     except ServerNotRunningError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
     except Exception as exc:
-        click.echo(f"Error calling tool '{call_tool_name}': {exc}", err=True)
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
 
@@ -559,6 +1439,7 @@ def _parse_tool_payload(arguments: str) -> dict[str, Any]:
         SystemExit: If JSON is invalid or not an object
     """
     # Strip whitespace and leading/trailing quotes (PowerShell may pass them)
+    logger.debug("diag.enter %s", "cli.py:_parse_tool_payload")
     arguments = arguments.strip()
     if arguments and arguments[0] in ('"', "'") and arguments[-1] == arguments[0]:
         arguments = arguments[1:-1]
@@ -576,10 +1457,20 @@ def _parse_tool_payload(arguments: str) -> dict[str, Any]:
 
 
 def _cli_state_path() -> Path:
+    logger.debug("diag.enter %s", "cli.py:_cli_state_path")
     return Path.cwd() / _CLI_STATE_DIR / _CLI_STATE_FILE
 
 
+def _cookie_file_path(ctx: click.Context) -> Path:
+    """Path to persistent cookie file for MCP session (per backend scope)."""
+    logger.debug("diag.enter %s", "cli.py:_cookie_file_path")
+    scope = _cache_scope_key(ctx)
+    safe = hashlib.md5(scope.encode()).hexdigest()[:24]
+    return Path.cwd() / _CLI_STATE_DIR / f"cookies_{safe}.json"
+
+
 def _load_cli_state() -> dict[str, Any]:
+    logger.debug("diag.enter %s", "cli.py:_load_cli_state")
     state_path = _cli_state_path()
     if not state_path.exists():
         return {}
@@ -592,6 +1483,7 @@ def _load_cli_state() -> dict[str, Any]:
 
 
 def _save_cli_state(data: dict[str, Any]) -> None:
+    logger.debug("diag.enter %s", "cli.py:_save_cli_state")
     try:
         state_path = _cli_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -601,19 +1493,21 @@ def _save_cli_state(data: dict[str, Any]) -> None:
         return
 
 
-def _cache_scope_key(ctx: click.Context) -> str:
-    opts = _get_opts(ctx)
-    url = resolve_backend_url(
-        opts.get("server_url"),
-        opts.get("host"),
-        opts.get("port"),
-    )
+def _cache_scope_key(ctx: click.Context, url_override: str | None = None) -> str:
+    logger.debug("diag.enter %s", "cli.py:_cache_scope_key")
+    url = _normalize_url_or_none(url_override)
+    if not url:
+        url = _resolve_backend_target(ctx).url
     if url:
-        return url.rstrip("/")
-    return f"http://{opts.get('host', '127.0.0.1')}:{opts.get('port', 8080)}"
+        try:
+            return normalize_backend_url(url)
+        except Exception:
+            return url.rstrip("/")
+    return "http://127.0.0.1:8080"
 
 
 def _extract_program_argument(payload: dict[str, Any]) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_extract_program_argument")
     for key in ("programPath", "binaryName", "program_path", "binary_name", "program", "binary"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -621,7 +1515,89 @@ def _extract_program_argument(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _store_cli_default_program_path(ctx: click.Context, value: str | None) -> None:
+    """Persist default program path on root ctx.obj for tool / tool-seq / dynamic dispatch."""
+    logger.debug("diag.enter %s", "cli.py:_store_cli_default_program_path")
+    if not value or not str(value).strip():
+        return
+    root = ctx.find_root()
+    if root.obj is None:
+        root.obj = {}
+    root.obj["cli_default_program_path"] = str(value).strip()
+
+
+def _store_cli_default_binary_name(ctx: click.Context, value: str | None) -> None:
+    if not value or not str(value).strip():
+        return
+    root = ctx.find_root()
+    if root.obj is None:
+        root.obj = {}
+    root.obj["cli_default_binary_name"] = str(value).strip()
+
+
+def _cli_program_path_option_callback(
+    ctx: click.Context,
+    _param: click.Parameter,
+    value: str | None,
+) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_cli_program_path_option_callback")
+    _store_cli_default_program_path(ctx, value)
+    return value
+
+
+def _cli_binary_name_option_callback(
+    ctx: click.Context,
+    _param: click.Parameter,
+    value: str | None,
+) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_cli_binary_name_option_callback")
+    _store_cli_default_binary_name(ctx, value)
+    return value
+
+
+def _resolve_cli_default_program_for_param(ctx: click.Context, program_key: str) -> str | None:
+    """CLI flags/env default for programPath or binaryName before cached-session fallback."""
+    logger.debug("diag.enter %s", "cli.py:_resolve_cli_default_program_for_param")
+    opts = _get_opts(ctx)
+    path = opts.get("cli_default_program_path")
+    binary = opts.get("cli_default_binary_name")
+    if isinstance(path, str) and path.strip():
+        path = path.strip()
+    else:
+        path = None
+    if isinstance(binary, str) and binary.strip():
+        binary = binary.strip()
+    else:
+        binary = None
+
+    if not path:
+        for env_key in (
+            "AGENTDECOMPILE_PROGRAM_PATH",
+            "AGENT_DECOMPILE_PROGRAM_PATH",
+            "AGENTDECOMPILE_PROGRAM",
+            "AGENT_DECOMPILE_PROGRAM",
+        ):
+            raw = os.environ.get(env_key)
+            if isinstance(raw, str) and raw.strip():
+                path = raw.strip()
+                break
+
+    if not binary:
+        for env_key in ("AGENTDECOMPILE_BINARY_NAME", "AGENT_DECOMPILE_BINARY_NAME"):
+            raw = os.environ.get(env_key)
+            if isinstance(raw, str) and raw.strip():
+                binary = raw.strip()
+                break
+
+    if program_key == "programPath":
+        return path or binary
+    if program_key == "binaryName":
+        return binary or path
+    return None
+
+
 def _set_cached_program(ctx: click.Context, program: str) -> None:
+    logger.debug("diag.enter %s", "cli.py:_set_cached_program")
     if not program.strip():
         return
     state = _load_cli_state()
@@ -638,7 +1614,49 @@ def _set_cached_program(ctx: click.Context, program: str) -> None:
     _save_cli_state(state)
 
 
+def _persist_session_id(ctx: click.Context, client: Any) -> None:
+    """Persist MCP session id from client so next CLI invocation reuses the same server session."""
+    logger.debug("diag.enter %s", "cli.py:_persist_session_id")
+    get_sid = getattr(client, "get_session_id", None)
+    if not callable(get_sid):
+        return
+    sid = get_sid()
+    if not isinstance(sid, str) or not sid.strip():
+        return
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        backends = {}
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry["session_id"] = sid.strip()
+    backends[scope] = entry
+    state["backends"] = backends
+    _save_cli_state(state)
+
+
+def _clear_persisted_session_id(ctx: click.Context) -> None:
+    """Clear persisted MCP session id for this backend scope (e.g. after 400 so next run does not send stale id)."""
+    logger.debug("diag.enter %s", "cli.py:_clear_persisted_session_id")
+    state = _load_cli_state()
+    backends = state.get("backends")
+    if not isinstance(backends, dict):
+        return
+    scope = _cache_scope_key(ctx)
+    entry = backends.get(scope)
+    if not isinstance(entry, dict) or "session_id" not in entry:
+        return
+    entry = dict(entry)
+    entry.pop("session_id", None)
+    backends[scope] = entry
+    state["backends"] = backends
+    _save_cli_state(state)
+
+
 def _get_cached_program(ctx: click.Context) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_get_cached_program")
     state = _load_cli_state()
     backends = state.get("backends")
     if not isinstance(backends, dict):
@@ -654,6 +1672,7 @@ def _get_cached_program(ctx: click.Context) -> str | None:
 
 
 def _tool_program_param(tool_name: str) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_tool_program_param")
     if not tool_registry.is_valid_tool(tool_name):
         return None
     resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(tool_name))
@@ -670,6 +1689,7 @@ def _prepare_tool_payload_with_program_fallback(
     tool_name: str,
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
+    logger.debug("diag.enter %s", "cli.py:_prepare_tool_payload_with_program_fallback")
     normalized_payload: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
     resolved_name = tool_name
     if tool_registry.is_valid_tool(tool_name):
@@ -685,17 +1705,20 @@ def _prepare_tool_payload_with_program_fallback(
     if program_key is None:
         return normalized_payload, None
 
-    cached_program = _get_cached_program(ctx)
-    if cached_program is None:
-        raise click.ClickException(
-            "Program is required for this tool. Provide 'programPath' or 'binaryName' in arguments, or run a prior command with an explicit program first.",
-        )
+    cli_default = _resolve_cli_default_program_for_param(ctx, program_key)
+    if cli_default:
+        normalized_payload[program_key] = cli_default
+        _set_cached_program(ctx, cli_default)
+        return normalized_payload, cli_default
 
-    normalized_payload[program_key] = cached_program
+    cached_program = _get_cached_program(ctx)
+    if cached_program is not None:
+        normalized_payload[program_key] = cached_program
     return normalized_payload, cached_program
 
 
 def _inject_inferred_program(data: Any, inferred_program: str | None) -> Any:
+    logger.debug("diag.enter %s", "cli.py:_inject_inferred_program")
     if inferred_program is None:
         return data
     if isinstance(data, dict):
@@ -706,6 +1729,7 @@ def _inject_inferred_program(data: Any, inferred_program: str | None) -> Any:
 
 
 def _validate_known_tool(name: str) -> None:
+    logger.debug("diag.enter %s", "cli.py:_validate_known_tool")
     if tool_registry.is_valid_tool(name):
         return
     click.echo(
@@ -725,6 +1749,7 @@ def _run_async(coro: Coroutine[Any, Any, None]) -> None:
 
     Used by most CLI commands that need to call async MCP tools.
     """
+    logger.debug("diag.enter %s", "cli.py:_run_async")
     try:
         run_async(coro)
     except (asyncio.CancelledError, Exception) as e:
@@ -738,10 +1763,12 @@ def _run_async(coro: Coroutine[Any, Any, None]) -> None:
 
 
 def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | FunctionType:
+    logger.debug("diag.enter %s", "cli.py:_add_global_options")
     cmd = click.option("--host", default="127.0.0.1", help="Server host")(cmd)
     cmd = click.option("--port", type=int, default=8080, help="Server port")(cmd)
     cmd = click.option(
         "--server-url",
+        "--mcp-server-url",
         help="Full server URL (overrides --host/--port)",
     )(cmd)
     cmd = click.option(
@@ -754,11 +1781,32 @@ def _add_global_options(cmd: click.Command | FunctionType) -> click.Command | Fu
     return cmd
 
 
+def _argv_contains_any_option(option_flags: tuple[str, ...]) -> bool:
+    """Return True when any option flag appears explicitly in ``sys.argv``.
+
+    This is a compatibility fallback for Click versions/environments where
+    ``Context.get_parameter_source`` is unavailable or unreliable.
+    """
+    logger.debug("diag.enter %s", "cli.py:_argv_contains_any_option")
+    if not option_flags:
+        return False
+
+    args = sys.argv[1:]
+    for token in args:
+        if token == "--":
+            break
+        for flag in option_flags:
+            if token == flag or token.startswith(f"{flag}="):
+                return True
+    return False
+
+
 def _set_output_format_option(
     ctx: click.Context,
     _param: click.Parameter,
     value: str | None,
 ) -> str | None:
+    logger.debug("diag.enter %s", "cli.py:_set_output_format_option")
     if value is None:
         return value
     root_ctx = ctx.find_root()
@@ -769,6 +1817,7 @@ def _set_output_format_option(
 
 
 def _command_has_output_format_option(command: click.Command) -> bool:
+    logger.debug("diag.enter %s", "cli.py:_command_has_output_format_option")
     for param in command.params:
         if isinstance(param, click.Option):
             opts = set(param.opts + param.secondary_opts)
@@ -778,6 +1827,7 @@ def _command_has_output_format_option(command: click.Command) -> bool:
 
 
 def _register_output_format_option_on_all_commands(root: click.Command) -> None:
+    logger.debug("diag.enter %s", "cli.py:_register_output_format_option_on_all_commands")
     global _format_options_registered
     if _format_options_registered:
         return
@@ -812,24 +1862,50 @@ def _register_output_format_option_on_all_commands(root: click.Command) -> None:
 
 def _create_dynamic_commands(cli_group: click.Group) -> None:
     """Dynamically create CLI commands from the tool registry."""
-    advertised_set = set(ADVERTISED_TOOLS)
+    logger.debug("diag.enter %s", "cli.py:_create_dynamic_commands")
+    advertised_set: set[str] = set(ADVERTISED_TOOLS)
     for tool_name in TOOLS:
-        tool_params = tool_registry.get_tool_params(tool_name)
-        snake_params = [to_snake_case(param) for param in tool_params]
-        params_help = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
-        command_help = f"Call `{tool_name}`. Parameters: {params_help}"
+        tool_params: list[str] = _supported_cli_tool_params(tool_name)
+        snake_params: list[str] = [to_snake_case(param) for param in tool_params]
+        params_help: str = ", ".join(f"--{param}" for param in snake_params) if snake_params else "(none)"
+        command_help: str = f"Call `{tool_name}`. Parameters: {params_help}"
 
         # Create parameter options for this tool
         def tool_command(_tool_name: str = tool_name, **kwargs: Any) -> None:
             """Auto-generated MCP tool command."""
             ctx = click.get_current_context()
             # Remove None values and format arguments
-            args = {k: v for k, v in kwargs.items() if v is not None}
+            args: dict[str, Any] = {k: v for k, v in kwargs.items() if v is not None}
+            # For open, merge global Ghidra server options so --ghidra-server-username etc. are sent
+            if _tool_name == Tool.OPEN.value:
+                opts: dict[str, Any] = _get_opts(ctx)
+                if not args.get("serverUsername") and not args.get("server_username"):
+                    v: Any = opts.get("ghidra_server_username") or opts.get("server_username")
+                    if v:
+                        args["serverUsername"] = str(v).strip()
+                if not args.get("serverPassword") and not args.get("server_password"):
+                    v = opts.get("ghidra_server_password") or opts.get("server_password")
+                    if v:
+                        args["serverPassword"] = str(v).strip()
+                if not args.get("serverHost") and not args.get("server_host"):
+                    v = opts.get("ghidra_server_host") or opts.get("server_host")
+                    if v:
+                        args["serverHost"] = str(v).strip()
+                if args.get("serverPort") is None and args.get("server_port") is None:
+                    v = opts.get("ghidra_server_port") or opts.get("server_port")
+                    if v is not None:
+                        args["serverPort"] = int(v)
+                if not args.get("repositoryName") and not args.get("repository_name"):
+                    v = opts.get("ghidra_server_repository") or opts.get("server_repository")
+                    if v:
+                        args["repositoryName"] = str(v).strip()
+                    if v and not args.get("path"):
+                        args["path"] = str(v).strip()
 
             # Call the tool using the unified registry
             async def _run():
                 try:
-                    result = await _call(ctx, _tool_name, **args)
+                    result: Any = await _call(ctx, _tool_name, **args)
                     if result:
                         click.echo(result)
                 except Exception as e:
@@ -839,8 +1915,8 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 
         # Add options to the command function
         for param in tool_params:
-            snake_param = to_snake_case(param)
-            option_name = f"--{snake_param}"
+            snake_param: str = to_snake_case(param)
+            option_name: str = f"--{snake_param}"
 
             # Determine option type based on parameter name
             if "path" in param.lower() or "file" in param.lower():
@@ -852,8 +1928,8 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             else:
                 option_type = str
 
-            # Check if parameter is required
-            required = param in ["programPath", "addressOrSymbol", "action", "mode"]
+            # Check if parameter is required (programPath resolves from session / env when omitted)
+            required: bool = param in ["addressOrSymbol", "action", "mode"]
 
             # Add the option decorator
             tool_command = click.option(
@@ -865,7 +1941,7 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
             )(tool_command)
 
         command_name = tool_name
-        hidden_from_help = tool_name in _TOOLS_WITH_CURATED_COMMANDS or tool_name not in advertised_set
+        hidden_from_help = tool_name in {t.value for t in _TOOLS_WITH_CURATED_COMMANDS} or tool_name not in advertised_set
 
         # Add global options and register the command
         tool_command = _add_global_options(tool_command)
@@ -876,26 +1952,38 @@ def _create_dynamic_commands(cli_group: click.Group) -> None:
 
 
 def _tool_aliases_for(canonical_tool: str) -> list[str]:
+    logger.debug("diag.enter %s", "cli.py:_tool_aliases_for")
     aliases: list[str] = [alias for alias, target in NON_ADVERTISED_TOOL_ALIASES.items() if target == canonical_tool]
-    snake_alias = to_snake_case(canonical_tool)
+    snake_alias: str = to_snake_case(canonical_tool)
     if snake_alias != canonical_tool:
         aliases.append(snake_alias)
     return sorted(set(aliases))
 
 
+_CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS: frozenset[str] = frozenset({"limit", "maxresults", "maxcount", "topn"})
+
+
+def _is_cli_result_limit_param(param: str) -> bool:
+    logger.debug("diag.enter %s", "cli.py:_is_cli_result_limit_param")
+    normalized: str = param.replace("_", "").replace("-", "").lower()
+    return normalized in _CLI_UNSUPPORTED_RESULT_LIMIT_PARAMS
+
+
+def _supported_cli_tool_params(tool_name: str) -> list[str]:
+    logger.debug("diag.enter %s", "cli.py:_supported_cli_tool_params")
+    params: list[str] = get_tool_params(tool_name)
+    return [param for param in params if not _is_cli_result_limit_param(param)]
+
+
 def _tool_signature(tool_name: str) -> str:
-    params = TOOL_PARAMS.get(tool_name)
-    if params is None:
-        resolved = tool_registry.resolve_tool_name(tool_name)
-        if resolved:
-            params = TOOL_PARAMS.get(resolved, [])
-        else:
-            params = []
+    logger.debug("diag.enter %s", "cli.py:_tool_signature")
+    params: list[str] = _supported_cli_tool_params(tool_name)
     params = [to_snake_case(param) for param in params]
     return " ".join(f"--{param}" for param in params) if params else "(none)"
 
 
 def _ensure_dynamic_commands_registered() -> None:
+    logger.debug("diag.enter %s", "cli.py:_ensure_dynamic_commands_registered")
     global _dynamic_commands_registered
     if _dynamic_commands_registered:
         return
@@ -903,12 +1991,16 @@ def _ensure_dynamic_commands_registered() -> None:
     _dynamic_commands_registered = True
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=MAIN_AGENT_EPILOG,
+)
 @click.option("--host", default="127.0.0.1", help="Server host")
 @click.option("--port", type=int, default=8080, help="Server port")
-@click.option("--server-url", help="Full server URL (overrides --host/--port)")
-@click.option("--mcp-server-url", help="Alias of --server-url (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
+@click.option("--server-url", help="Full server URL (overrides --host/--port) (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
+@click.option("--mcp-server-url", help="Alias of --server-url for proxy/backend style configuration")
 @click.option("--backend-url", help="Alias of --server-url for proxy/backend style configuration")
+@click.option("--mcp-backend-url", help="Alias of --server-url for proxy/backend style configuration")
 @click.option(
     "--ghidra-server-host",
     "--server-host",
@@ -942,11 +2034,59 @@ def _ensure_dynamic_commands_registered() -> None:
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logs (including HTTP request diagnostics)")
 @click.option(
+    "--program-path",
+    "--programpath",
+    "--programPath",
+    "--program",
+    "-b",
+    "--binary",
+    "cli_default_program_path",
+    default=None,
+    help=("Default programPath for tools when JSON or flags omit it (before `tool` / `tool-seq` or any subcommand). Environment: AGENTDECOMPILE_PROGRAM_PATH, AGENT_DECOMPILE_PROGRAM_PATH, AGENTDECOMPILE_PROGRAM."),
+)
+@click.option(
+    "--binary-name",
+    "--binaryname",
+    "--binaryName",
+    "cli_default_binary_name",
+    default=None,
+    help="Default binaryName when the tool expects it and arguments omit it. Environment: AGENTDECOMPILE_BINARY_NAME.",
+)
+@click.option(
     "-f",
     "--format",
     type=str,
     default=_DEFAULT_OUTPUT_FORMAT,
     help=("Output format (default: text). Use -f/--format json only when you strictly need machine-readable output; text/markdown is recommended."),
+)
+@click.option(
+    "--local",
+    "local_mode",
+    is_flag=True,
+    default=False,
+    envvar="AGENTDECOMPILE_LOCAL_MODE",
+    help=(
+        "Run locally using PyGhidra in-process — no MCP server required. "
+        "Requires GHIDRA_INSTALL_DIR to be set. "
+        "All tools execute directly against the local Ghidra project without any HTTP or stdio transport."
+    ),
+)
+@click.option(
+    "--local-project-path",
+    "local_project_path",
+    default=None,
+    envvar="AGENT_DECOMPILE_PROJECT_PATH",
+    help=(
+        "Project directory for local mode (--local). Defaults to ./agentdecompile_projects or "
+        "AGENT_DECOMPILE_PROJECT_PATH env var. Ignored unless --local is set."
+    ),
+)
+@click.option(
+    "--local-project-name",
+    "local_project_name",
+    default=None,
+    envvar="AGENT_DECOMPILE_PROJECT_NAME",
+    help="Ghidra project name for local mode (default: 'agentdecompile'). Ignored unless --local is set.",
 )
 @click.version_option(None, "--version", "-V", package_name="agentdecompile")
 @click.pass_context
@@ -957,30 +2097,101 @@ def main(
     server_url: str | None,
     mcp_server_url: str | None,
     backend_url: str | None,
+    mcp_backend_url: str | None,
     ghidra_server_host: str | None,
     ghidra_server_port: int | None,
     ghidra_server_username: str | None,
     ghidra_server_password: str | None,
     ghidra_server_repository: str | None,
     verbose: bool,
+    cli_default_program_path: str | None,
+    cli_default_binary_name: str | None,
     format: str,
+    local_mode: bool,
+    local_project_path: str | None,
+    local_project_name: str | None,
 ) -> None:
     """AgentDecompile CLI – all tools from TOOLS_LIST.md (30+ tools)."""
+    logger.debug("diag.enter %s", "cli.py:main")
     _configure_runtime_logging(verbose)
 
-    existing_obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-    effective_server_url = server_url or mcp_server_url or backend_url
+    def _cli_explicit(name: str, option_flags: tuple[str, ...]) -> bool:
+        getter = getattr(ctx, "get_parameter_source", None)
+        if callable(getter):
+            try:
+                source = getter(name)
+            except Exception:
+                source = None
+            if str(source).endswith("COMMANDLINE"):
+                return True
+        return _argv_contains_any_option(option_flags)
+
+    existing_obj: dict[str, Any] = ctx.obj if isinstance(ctx.obj, dict) else {}
+    effective_server_url: str | None = server_url or mcp_server_url or backend_url or mcp_backend_url
+    pp: str | None = (cli_default_program_path or "").strip() or None
+    bn: str | None = (cli_default_binary_name or "").strip() or None
+    backend_cli_url_explicit: bool = any(
+        _cli_explicit(name, flags)
+        for name, flags in (
+            ("server_url", ("--server-url",)),
+            ("mcp_server_url", ("--mcp-server-url",)),
+            ("backend_url", ("--backend-url",)),
+            ("mcp_backend_url", ("--mcp-backend-url",)),
+        )
+    )
+    backend_host_explicit: bool = _cli_explicit("host", ("--host",))
+    backend_port_explicit: bool = _cli_explicit("port", ("--port",))
+    backend_cli_explicit: bool = backend_cli_url_explicit or backend_host_explicit or backend_port_explicit
+    backend_env_url_set: bool = _env_value(_BACKEND_ENV_URL_KEYS) is not None
+    backend_env_host_set: bool = _env_value(_BACKEND_ENV_HOST_KEYS) is not None or _env_value(_BACKEND_ENV_PORT_KEYS) is not None
+    # Auto-local mode: if the user did NOT explicitly point us at an MCP backend
+    # (via --server-url / --host / --port / env URL/host), the CLI runs entirely
+    # in-process via PyGhidra. No HTTP listener is started. --server-url, when
+    # provided, is still honoured and forwarded to the remote backend.
+    auto_local_mode: bool = not (backend_cli_explicit or backend_env_url_set or backend_env_host_set)
+
+    # Propagate --ghidra-server-* CLI flags into os.environ so the in-process
+    # tool providers (which read env vars directly) see the same shared-server
+    # configuration that HTTP clients send via X-Ghidra-Server-* headers.
+    _flag_env_pairs: tuple[tuple[str | None, tuple[str, ...]], ...] = (
+        (ghidra_server_host, ("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "AGENTDECOMPILE_GHIDRA_SERVER_HOST")),
+        (str(ghidra_server_port) if ghidra_server_port is not None else None, ("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "AGENTDECOMPILE_GHIDRA_SERVER_PORT")),
+        (ghidra_server_username, ("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "AGENTDECOMPILE_GHIDRA_SERVER_USERNAME")),
+        (ghidra_server_password, ("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD")),
+        (ghidra_server_repository, ("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")),
+    )
+    for _flag_value, _env_keys in _flag_env_pairs:
+        if _flag_value is None:
+            continue
+        _flag_str = str(_flag_value).strip()
+        if not _flag_str:
+            continue
+        for _env_key in _env_keys:
+            # Don't clobber an existing env value the user already set deliberately.
+            if not os.environ.get(_env_key, "").strip():
+                os.environ[_env_key] = _flag_str
+
     ctx.obj = {
         "host": host,
         "port": port,
         "server_url": effective_server_url,
+        "backend_cli_url_explicit": backend_cli_url_explicit,
+        "backend_host_explicit": backend_host_explicit,
+        "backend_port_explicit": backend_port_explicit,
+        "backend_cli_explicit": backend_cli_explicit,
+        "auto_local_mode": auto_local_mode,
         "ghidra_server_host": ghidra_server_host,
         "ghidra_server_port": ghidra_server_port,
         "ghidra_server_username": ghidra_server_username,
         "ghidra_server_password": ghidra_server_password,
         "ghidra_server_repository": ghidra_server_repository,
         "verbose": verbose,
+        "cli_default_program_path": pp or existing_obj.get("cli_default_program_path"),
+        "cli_default_binary_name": bn or existing_obj.get("cli_default_binary_name"),
         "format": existing_obj.get("format", format),
+        "local_mode": local_mode or auto_local_mode or existing_obj.get("local_mode", False),
+        "local_project_path": (local_project_path or "").strip() or existing_obj.get("local_project_path") or None,
+        "local_project_name": (local_project_name or "").strip() or existing_obj.get("local_project_name") or "agentdecompile",
     }
 
     # Ensure command surface includes canonical + snake_case tool commands.
@@ -1122,6 +2333,7 @@ def ghidrecomp_command(
     semgrep_rules: tuple[str, ...],
     codeql_rules: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:ghidrecomp_command")
     args: Any = SimpleNamespace(
         bin=bin,
         cppexport=cppexport,
@@ -1170,12 +2382,13 @@ def ghidrecomp_command(
     help="List programs, imports, exports, project files, open programs",
 )
 def list_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:list_grp")
     pass
 
 
 @list_grp.command(
     "binaries",
-    help="List all programs in the project (ghidra://programs)",
+    help="List all programs in the project (legacy alias ghidra://programs)",
 )
 @click.option(
     "-f",
@@ -1188,83 +2401,74 @@ def list_grp() -> None:
 @click.pass_context
 def list_binaries(ctx: click.Context, local_format: str | None) -> None:
     async def _run():
-        client = _client(ctx)
+        client: ClientSession = _client(ctx)
         async with client:
-            result = await client.read_resource("ghidra://programs")
+            result: TextContent = await client.read_resource("ghidra://programs")
         contents: list[Any] = getattr(result, "contents", None) or []
         programs: list[dict[str, Any]] = []
         for c in contents:
-            text = getattr(c, "text", None)
+            text = c.text
             if text:
-                data = json.loads(text) if isinstance(text, str) else text
-                progs = data if isinstance(data, list) else (data.get("programs") if isinstance(data, dict) else [])
+                data: Any = json.loads(text) if isinstance(text, str) else text
+                progs: Any = data if isinstance(data, list) else (data.get("programs") if isinstance(data, dict) else [])
                 if isinstance(progs, list):
                     programs = progs
                     break
         if programs:
-            names = [p.get("programPath", p.get("name", p)) if isinstance(p, dict) else p for p in programs]
+            names: list[str] = [p.get("programPath", p.get("name", p)) if isinstance(p, dict) else p for p in programs]
             click.echo(format_output(names, local_format or _fmt(ctx)))
         else:
             click.echo("No programs in project.")
 
+    logger.debug("diag.enter %s", "cli.py:list_binaries")
     _run_async(_run())
 
 
-@list_grp.command("imports", help="List imports (manage-symbols mode=imports)")
+@list_grp.command("imports", help="List imports (list-imports)")
 @click.option(
     "-b",
     "--binary",
     "program_path",
-    required=True,
     help="Program path in project",
 )
-@click.option("--max-results", type=int, default=75)
 @click.option("--start-index", type=int, default=0)
 @click.option("--library-filter", help="Filter by library name")
 @click.option("--no-group-by-library", is_flag=True, help="Do not group by library")
 @click.pass_context
 def list_imports(
     ctx: click.Context,
-    program_path: str,
-    max_results: int,
+    program_path: str | None,
     start_index: int,
     library_filter: str | None,
     no_group_by_library: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:list_imports")
     payload: dict[str, Any] = {
-        "programPath": program_path,
-        "mode": "imports",
-        "maxResults": max_results,
         "startIndex": start_index,
     }
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
     if library_filter is not None:
         payload["libraryFilter"] = library_filter
     if no_group_by_library:
         payload["groupByLibrary"] = False
-    _run_async(_call(ctx, "manage-symbols", **payload))
+    _run_async(_call(ctx, Tool.LIST_IMPORTS.value, **payload))
 
 
-@list_grp.command("exports", help="List exports (manage-symbols mode=exports)")
-@click.option("-b", "--binary", "program_path", required=True)
-@click.option("--max-results", type=int, default=75)
+@list_grp.command("exports", help="List exports (list-exports)")
+@click.option("-b", "--binary", "program_path")
 @click.option("--start-index", type=int, default=0)
 @click.pass_context
 def list_exports(
     ctx: click.Context,
-    program_path: str,
-    max_results: int,
+    program_path: str | None,
     start_index: int,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "manage-symbols",
-            programPath=program_path,
-            mode="exports",
-            maxResults=max_results,
-            startIndex=start_index,
-        ),
-    )
+    logger.debug("diag.enter %s", "cli.py:list_exports")
+    kwargs: dict[str, Any] = {"startIndex": start_index}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, "list-exports", **kwargs))
 
 
 @list_grp.command(
@@ -1274,10 +2478,11 @@ def list_exports(
 @click.option("-b", "--binary", "program_path")
 @click.pass_context
 def list_project_files(ctx: click.Context, program_path: str | None) -> None:
+    logger.debug("diag.enter %s", "cli.py:list_project_files")
     payload: dict[str, Any] = {}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
-    _run_async(_call(ctx, "list-project-files", **payload))
+    _run_async(_call(ctx, Tool.LIST_PROJECT_FILES.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -1290,70 +2495,69 @@ def list_project_files(ctx: click.Context, program_path: str | None) -> None:
     help="Data at address (get-data, apply-data-type, create-label)",
 )
 def data_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:data_grp")
     pass
 
 
 @data_grp.command("get", help="Get data/code unit at address (get-data)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("address_or_symbol")
 @click.pass_context
-def data_get(ctx: click.Context, program_path: str, address_or_symbol: str) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "get-data",
-            programPath=program_path,
-            addressOrSymbol=address_or_symbol,
-        ),
-    )
+def data_get(ctx: click.Context, program_path: str | None, address_or_symbol: str) -> None:
+    logger.debug("diag.enter %s", "cli.py:data_get")
+    kwargs: dict[str, Any] = {"addressOrSymbol": address_or_symbol}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, "get-data", **kwargs))
 
 
 @data_grp.command("apply-type", help="Apply data type at address (apply-data-type)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("address_or_symbol")
 @click.option("--data-type", "data_type_string", required=True)
 @click.option("--archive-name", "archive_name")
 @click.pass_context
 def data_apply_type(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     address_or_symbol: str,
     data_type_string: str,
     archive_name: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:data_apply_type")
     payload: dict[str, Any] = {
-        "programPath": program_path,
         "addressOrSymbol": address_or_symbol,
         "dataTypeString": data_type_string,
     }
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
     if archive_name is not None:
         payload["archiveName"] = archive_name
-    _run_async(_call(ctx, "apply-data-type", **payload))
+    _run_async(_call(ctx, Tool.APPLY_DATA_TYPE.value, **payload))
 
 
 @data_grp.command("create-label", help="Create label at address (create-label)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("address_or_symbol")
 @click.option("--name", "labelName", required=True)
 @click.option("--primary", "setAsPrimary", is_flag=True)
 @click.pass_context
 def data_create_label(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     address_or_symbol: str,
     label_name: str,
     set_as_primary: bool,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "create-label",
-            programPath=program_path,
-            addressOrSymbol=address_or_symbol,
-            labelName=label_name,
-            setAsPrimary=set_as_primary,
-        ),
-    )
+    logger.debug("diag.enter %s", "cli.py:data_create_label")
+    kwargs: dict[str, Any] = {
+        "addressOrSymbol": address_or_symbol,
+        "labelName": label_name,
+        "setAsPrimary": set_as_primary,
+    }
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, "create-label", **kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -1363,14 +2567,16 @@ def data_create_label(
 
 @main.group(
     "resource",
-    help="Read MCP resources: programs, static-analysis-results, agentdecompile-debug-info",
+    help="Read MCP resources. Canonical advertised URI: agentdecompile://debug-info. Legacy program/static-analysis aliases remain readable.",
 )
 def resource_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:resource_grp")
     pass
 
 
 async def _read_resource(ctx: click.Context, uri: str) -> None:
     """Read a resource with auto-recovery for program loading."""
+    logger.debug("diag.enter %s", "cli.py:_read_resource")
     client = _client(ctx)
 
     try:
@@ -1389,7 +2595,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # Open the cached program
                     await _call_raw(
                         ctx,
-                        "open-project",
+                        Tool.OPEN.value,
                         {"path": cached_prog, "local": True},
                     )
                     # Retry resource read
@@ -1399,7 +2605,7 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
                     # No cached program, raise original error
                     raise e
             except Exception as recovery_error:
-                logger.debug(f"Resource recovery failed: {recovery_error}")
+                logger.debug("Resource recovery failed: %s", recovery_error)
                 raise e
         else:
             # Not a program-loading error, re-raise
@@ -1409,27 +2615,30 @@ async def _read_resource(ctx: click.Context, uri: str) -> None:
     click.echo(format_output(data or result, _fmt(ctx)))
 
 
-@resource_grp.command("programs", help="Read ghidra://programs (same as list binaries)")
+@resource_grp.command("programs", help="Read legacy alias ghidra://programs (same as list binaries)")
 @click.pass_context
 def resource_programs(ctx: click.Context) -> None:
+    logger.debug("diag.enter %s", "cli.py:resource_programs")
     _run_async(_read_resource(ctx, RESOURCE_URI_PROGRAMS))
 
 
 @resource_grp.command(
     "static-analysis",
-    help="Read ghidra://static-analysis-results (SARIF 2.1.0)",
+    help="Read legacy alias ghidra://static-analysis-results (SARIF 2.1.0)",
 )
 @click.pass_context
 def resource_static_analysis(ctx: click.Context) -> None:
+    logger.debug("diag.enter %s", "cli.py:resource_static_analysis")
     _run_async(_read_resource(ctx, RESOURCE_URI_STATIC_ANALYSIS))
 
 
 @resource_grp.command(
     "debug-info",
-    help="Read ghidra://agentdecompile-debug-info (JSON)",
+    help="Read agentdecompile://debug-info (legacy ghidra://agentdecompile-debug-info is still accepted)",
 )
 @click.pass_context
 def resource_debug_info(ctx: click.Context) -> None:
+    logger.debug("diag.enter %s", "cli.py:resource_debug_info")
     _run_async(_read_resource(ctx, RESOURCE_URI_DEBUG_INFO))
 
 
@@ -1443,14 +2652,14 @@ def resource_debug_info(ctx: click.Context) -> None:
     help="Get function details (get-functions): decompile, disassemble, info, calls",
 )
 def functions_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:functions_grp")
     pass
 
 
 @functions_grp.command("decompile", help="Decompile a function (view=decompile)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("identifier")
 @click.option("--offset", type=int, default=1, help="Line offset (1-based)")
-@click.option("--limit", type=int, default=50)
 @click.option("--include-callers", is_flag=True)
 @click.option("--include-callees", is_flag=True)
 @click.option("--include-comments", is_flag=True)
@@ -1463,10 +2672,9 @@ def functions_grp() -> None:
 @click.pass_context
 def functions_decompile(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     identifier: str,
     offset: int,
-    limit: int,
     include_callers: bool,
     include_callees: bool,
     include_comments: bool,
@@ -1476,27 +2684,33 @@ def functions_decompile(
     async def _run():
         client = _client(ctx)
         async with client:
+            body: dict[str, Any] = {
+                "identifier": identifier,
+                "view": "decompile",
+                "offset": offset,
+                "includeCallers": include_callers,
+                "includeCallees": include_callees,
+                "includeComments": include_comments,
+                "includeIncomingReferences": False if no_incoming_refs else True,
+                "includeReferenceContext": False if no_ref_context else True,
+            }
+            if program_path is not None and program_path.strip():
+                body["programPath"] = program_path
             result = await client.call_tool(
-                "get-functions",
-                {
-                    "programPath": program_path,
-                    "identifier": identifier,
-                    "view": "decompile",
-                    "offset": offset,
-                    "limit": limit,
-                    "includeCallers": include_callers,
-                    "includeCallees": include_callees,
-                    "includeComments": include_comments,
-                    "includeIncomingReferences": False if no_incoming_refs else True,
-                    "includeReferenceContext": False if no_ref_context else True,
-                },
+                Tool.GET_FUNCTIONS.value,
+                body,
             )
         data = _parse_json(result)
-        if isinstance(data, dict) and "decompilation" in data:
-            click.echo(data.get("decompilation", data))
+        if isinstance(data, dict):
+            text = data.get("decompilation") or data.get("code")
+            if text is not None and str(text).strip():
+                click.echo(text)
+            else:
+                click.echo(format_output(data or result, _fmt(ctx)))
         else:
             click.echo(format_output(data or result, _fmt(ctx)))
 
+    logger.debug("diag.enter %s", "cli.py:functions_decompile")
     _run_async(_run())
 
 
@@ -1504,55 +2718,43 @@ def functions_decompile(
     "disassemble",
     help="Disassembly for a function (view=disassemble)",
 )
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("identifier")
 @click.pass_context
 def functions_disassemble(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     identifier: str,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "get-functions",
-            programPath=program_path,
-            identifier=identifier,
-            view="disassemble",
-        ),
-    )
+    logger.debug("diag.enter %s", "cli.py:functions_disassemble")
+    kwargs: dict[str, Any] = {"identifier": identifier, "view": "disassemble"}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, Tool.GET_FUNCTIONS.value, **kwargs))
 
 
 @functions_grp.command("info", help="Function metadata (view=info)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("identifier")
 @click.pass_context
-def functions_info(ctx: click.Context, program_path: str, identifier: str) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "get-functions",
-            programPath=program_path,
-            identifier=identifier,
-            view="info",
-        ),
-    )
+def functions_info(ctx: click.Context, program_path: str | None, identifier: str) -> None:
+    logger.debug("diag.enter %s", "cli.py:functions_info")
+    kwargs: dict[str, Any] = {"identifier": identifier, "view": "info"}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, Tool.GET_FUNCTIONS.value, **kwargs))
 
 
 @functions_grp.command("calls", help="Internal calls (view=calls)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("identifier")
 @click.pass_context
-def functions_calls(ctx: click.Context, program_path: str, identifier: str) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "get-functions",
-            programPath=program_path,
-            identifier=identifier,
-            view="calls",
-        ),
-    )
+def functions_calls(ctx: click.Context, program_path: str | None, identifier: str) -> None:
+    logger.debug("diag.enter %s", "cli.py:functions_calls")
+    kwargs: dict[str, Any] = {"identifier": identifier, "view": "calls"}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, Tool.GET_FUNCTIONS.value, **kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -1562,13 +2764,14 @@ def functions_calls(ctx: click.Context, program_path: str, identifier: str) -> N
 
 @main.group(
     "symbols",
-    help="Manage symbols (manage-symbols): classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle",
+    help="Symbol operations: classes, namespaces, imports, exports, create_label, symbols, count, rename_data, demangle",
 )
 def symbols_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:symbols_grp")
     pass
 
 
-@symbols_grp.command("run", help="Run manage-symbols with --mode and optional params")
+@symbols_grp.command("run", help="Run symbol operations with --mode and optional params")
 @click.option("-b", "--binary", "program_path")
 @click.option(
     "--mode",
@@ -1591,10 +2794,8 @@ def symbols_grp() -> None:
 @click.option("--label-name", "label_name", multiple=True)
 @click.option("--new-name", "new_name", multiple=True)
 @click.option("--library-filter", "library_filter")
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--start-index", "start_index", type=int)
 @click.option("--offset", type=int)
-@click.option("--max-count", "max_count", type=int)
 @click.option(
     "--group-by-library/--no-group-by-library",
     "group_by_library",
@@ -1618,13 +2819,12 @@ def symbols_run(
     library_filter: str | None,
     start_index: int | None,
     offset: int | None,
-    limit: int | None,
-    max_count: int | None,
     group_by_library: bool,
     include_external: bool,
     filter_default_names: bool,
     demangle_all: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:symbols_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -1640,16 +2840,12 @@ def symbols_run(
         payload["startIndex"] = start_index
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
-    if max_count is not None:
-        payload["maxCount"] = max_count
     payload["groupByLibrary"] = group_by_library
     payload["includeExternal"] = include_external
     payload["filterDefaultNames"] = filter_default_names
     if mode == "demangle":
         payload["demangleAll"] = demangle_all
-    _run_async(_call(ctx, "manage-symbols", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_SYMBOLS.value, **payload))
 
 
 # --- Convenience subcommands (``symbols classes``, ``symbols imports``, …) ---
@@ -1658,9 +2854,8 @@ def symbols_run(
 def _symbols_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``symbols <mode>`` shorthand subcommands."""
 
-    @symbols_grp.command(mode_name, help=help_text or f"manage-symbols mode={mode_name}")
+    @symbols_grp.command(mode_name, help=help_text or f"Run symbols mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--offset", type=int)
     @click.option("--library-filter", "library_filter")
     @click.option("--group-by-library/--no-group-by-library", "group_by_library", default=True)
@@ -1671,7 +2866,6 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
         ctx: click.Context,
         program_path: str | None,
         offset: int | None,
-        limit: int | None,
         library_filter: str | None,
         group_by_library: bool,
         include_external: bool,
@@ -1682,15 +2876,14 @@ def _symbols_mode_command(mode_name: str, help_text: str | None = None):
             payload["programPath"] = program_path
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         if library_filter:
             payload["libraryFilter"] = library_filter
         payload["groupByLibrary"] = group_by_library
         payload["includeExternal"] = include_external
         payload["filterDefaultNames"] = filter_default_names
-        _run_async(_call(ctx, "manage-symbols", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_SYMBOLS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_symbols_mode_command")
     return _cmd
 
 
@@ -1703,12 +2896,13 @@ for _mode in ("classes", "namespaces", "imports", "exports", "symbols", "count",
 # ---------------------------------------------------------------------------
 
 
-@main.group("strings", help="Manage strings (manage-strings): list, regex, count, similarity")
+@main.group("strings", help="String operations: list, regex, count, similarity")
 def strings_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:strings_grp")
     pass
 
 
-@strings_grp.command("run", help="Run manage-strings with --mode and optional params")
+@strings_grp.command("run", help="Run string operations with --mode and optional params")
 @click.option("-b", "--binary", "program_path")
 @click.option(
     "--mode",
@@ -1719,9 +2913,7 @@ def strings_grp() -> None:
 @click.option("--search-string", "searchString")
 @click.option("--filter")
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--include-referencing-functions", "includeReferencingFunctions", is_flag=True)
 @click.pass_context
 def strings_run(
@@ -1732,11 +2924,10 @@ def strings_run(
     search_string: str | None,
     filter: str | None,
     start_index: int | None,
-    max_count: int | None,
     offset: int | None,
-    limit: int | None,
     include_referencing_functions: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:strings_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -1748,14 +2939,10 @@ def strings_run(
         payload["filter"] = filter
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     payload["includeReferencingFunctions"] = include_referencing_functions
-    _run_async(_call(ctx, "manage-strings", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_STRINGS.value, **payload))
 
 
 # --- Convenience subcommands (``strings list``, ``strings regex``, …) ---
@@ -1764,13 +2951,12 @@ def strings_run(
 def _strings_mode_command(mode_name: str, help_text: str | None = None):
     """Factory for ``strings <mode>`` shorthand subcommands."""
 
-    @strings_grp.command(mode_name, help=help_text or f"manage-strings mode={mode_name}")
+    @strings_grp.command(mode_name, help=help_text or f"Run strings mode={mode_name}")
     @click.option("-b", "--binary", "program_path")
     @click.option("--pattern")
     @click.option("--search-string", "search_string")
     @click.option("--filter")
     @click.option("--offset", type=int)
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.option("--include-referencing-functions", "include_refs", is_flag=True)
     @click.pass_context
     def _cmd(
@@ -1780,7 +2966,6 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
         search_string: str | None,
         filter: str | None,
         offset: int | None,
-        limit: int | None,
         include_refs: bool,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
@@ -1794,11 +2979,10 @@ def _strings_mode_command(mode_name: str, help_text: str | None = None):
             payload["filter"] = filter
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         payload["includeReferencingFunctions"] = include_refs
-        _run_async(_call(ctx, "manage-strings", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_STRINGS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_strings_mode_command")
     return _cmd
 
 
@@ -1816,6 +3000,7 @@ for _mode in ("list", "regex", "count", "similarity"):
     help="List/search functions (list-functions): all, search, similarity, undefined, count, by_identifiers",
 )
 def list_functions_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:list_functions_grp")
     pass
 
 
@@ -1831,9 +3016,7 @@ def list_functions_grp() -> None:
 @click.option("--min-reference-count", "minReferenceCount", type=int)
 @click.option("--identifiers", multiple=True)
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
 @click.option(
     "--filter-default-names/--no-filter-default-names",
     "filterDefaultNames",
@@ -1853,15 +3036,14 @@ def list_functions_run(
     min_reference_count: int | None,
     identifiers: tuple[str, ...],
     start_index: int | None,
-    max_count: int | None,
     offset: int | None,
-    limit: int | None,
     filter_default_names: bool,
     filter_by_tag: str | None,
     untagged: bool,
     has_tags: bool,
     verbose: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:list_functions_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -1875,19 +3057,15 @@ def list_functions_run(
         payload["identifiers"] = list(identifiers)
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     payload["filterDefaultNames"] = filter_default_names
     if filter_by_tag is not None and filter_by_tag.strip():
         payload["filterByTag"] = filter_by_tag
     payload["untagged"] = untagged
     payload["hasTags"] = has_tags
     payload["verbose"] = verbose
-    _run_async(_call(ctx, "list-functions", **payload))
+    _run_async(_call(ctx, Tool.LIST_FUNCTIONS.value, **payload))
 
 
 # --- Convenience subcommands (``list-functions all``, ``list-functions search``, …) ---
@@ -1900,7 +3078,6 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("-b", "--binary", "program_path")
     @click.option("--query")
     @click.option("--offset", type=int)
-    @click.option("--limit", type=int)
     @click.option("--filter-default-names/--no-filter-default-names", "filter_default_names", default=True)
     @click.option("--verbose", is_flag=True)
     @click.pass_context
@@ -1909,7 +3086,6 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
         program_path: str | None,
         query: str | None,
         offset: int | None,
-        limit: int | None,
         filter_default_names: bool,
         verbose: bool,
     ) -> None:
@@ -1920,12 +3096,11 @@ def _list_functions_mode_command(mode_name: str, help_text: str | None = None):
             payload["query"] = query
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
         payload["filterDefaultNames"] = filter_default_names
         payload["verbose"] = verbose
-        _run_async(_call(ctx, "list-functions", **payload))
+        _run_async(_call(ctx, Tool.LIST_FUNCTIONS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_list_functions_mode_command")
     return _cmd
 
 
@@ -1940,6 +3115,7 @@ for _mode in ("all", "search", "similarity", "undefined", "count", "by_identifie
 
 @main.group("function", help="Manage function (manage-function): create, rename_function, rename_variable, set_prototype, set_variable_type, change_datatypes")
 def function_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:function_grp")
     pass
 
 
@@ -1986,6 +3162,7 @@ def function_run(
     propagate_max_candidates: int | None,
     propagate_max_instructions: int | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:function_run")
     payload: dict[str, Any] = {"action": action}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2024,7 +3201,7 @@ def function_run(
         payload["propagateMaxCandidates"] = propagate_max_candidates
     if propagate_max_instructions is not None:
         payload["propagateMaxInstructions"] = propagate_max_instructions
-    _run_async(_call(ctx, "manage-function", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_FUNCTION.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2034,6 +3211,7 @@ def function_run(
 
 @main.group("function-tags", help="Manage function tags (manage-function-tags): get, set, add, remove, list")
 def function_tags_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:function_tags_grp")
     pass
 
 
@@ -2050,6 +3228,7 @@ def function_tags_run(
     function: tuple[str, ...],
     tags: tuple[str, ...],
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:function_tags_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2057,7 +3236,7 @@ def function_tags_run(
         payload["function"] = list(function) if len(function) != 1 else function[0]
     if tags:
         payload["tags"] = list(tags)
-    _run_async(_call(ctx, "manage-function-tags", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_FUNCTION_TAGS.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2065,7 +3244,7 @@ def function_tags_run(
 # ---------------------------------------------------------------------------
 
 
-@main.command("match-function", help="Match functions across programs (match-function)")
+@main.command("match-function", help=f"Match functions across programs ({Tool.MATCH_FUNCTION.value})")
 @click.option("-b", "--binary", "program_path")
 @click.option("--function-identifier", "functionIdentifier", multiple=True)
 @click.option("--target-program-paths", "targetProgramPaths", multiple=True)
@@ -2094,6 +3273,7 @@ def match_function(
     max_functions: int | None,
     batch_size: int | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:match_function")
     payload: dict[str, Any] = {}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2115,7 +3295,84 @@ def match_function(
         payload["maxFunctions"] = max_functions
     if batch_size is not None:
         payload["batchSize"] = batch_size
-    _run_async(_call(ctx, "match-function", **payload))
+    _run_async(_call(ctx, Tool.MATCH_FUNCTION.value, **payload))
+
+
+# ---------------------------------------------------------------------------
+# migrate-metadata (bulk match-function: all functions, optional targets)
+# ---------------------------------------------------------------------------
+
+
+@main.command(
+    "migrate-metadata",
+    help="Bulk propagate function metadata from a source binary to others (match-function over all functions). "
+    "Uses match-function with no function identifier so the tool iterates all functions; discovers targets from the session if not given. "
+    "When using a remote server (--server-url), open the project in the same session first (e.g. tool-seq with open then this command).",
+)
+@click.option("-b", "--binary", "program_path", help="Source program path (programPath).")
+@click.option("--source-path", "program_path_alt", help="Alias for --binary.")
+@click.option("--target-paths", "target_program_paths", multiple=True, help="Target program paths; if omitted, discovered from session.")
+@click.option("--min-similarity", "minSimilarity", type=float, default=0.7, help="minSimilarity for match (default 0.7).")
+@click.option("--limit", "limit", type=int, help="Cap number of functions to process. When omitted with no --binary and no --target-paths, defaults to 50 so the command completes in bounded time.")
+@click.option("--include-externals/--no-include-externals", "includeExternals", default=True, help="Include external functions (default true).")
+@click.option("--propagate-names/--no-propagate-names", "propagateNames", default=True)
+@click.option("--propagate-tags/--no-propagate-tags", "propagateTags", default=True)
+@click.option("--propagate-comments/--no-propagate-comments", "propagateComments", default=True)
+@click.option("--propagate-prototype/--no-propagate-prototype", "propagatePrototype", default=True)
+@click.option("--propagate-bookmarks/--no-propagate-bookmarks", "propagateBookmarks", default=True)
+@click.option(
+    "--checkin",
+    "do_checkin",
+    is_flag=True,
+    help="After propagation, check in all modified target programs (same as checkin-program with no path; uses same session).",
+)
+@click.pass_context
+def migrate_metadata(
+    ctx: click.Context,
+    program_path: str | None,
+    program_path_alt: str | None,
+    target_program_paths: tuple[str, ...],
+    minSimilarity: float,
+    limit: int | None,
+    includeExternals: bool,
+    propagateNames: bool,
+    propagateTags: bool,
+    propagateComments: bool,
+    propagatePrototype: bool,
+    propagateBookmarks: bool,
+    do_checkin: bool,
+) -> None:
+    """Run match-function over all functions in the source (bulk migration). No function identifier = iterate all.
+
+    Sessions are isolated: the server session for this CLI run must already have a project open
+    (shared or local). Use tool-seq to run open then migrate-metadata in one connection.
+    Use --checkin to check in all open programs after propagation (same session).
+    """
+    logger.debug("diag.enter %s", "cli.py:migrate_metadata")
+    source = (program_path or program_path_alt or "").strip()
+    payload: dict[str, Any] = {
+        "propagateNames": propagateNames,
+        "propagateTags": propagateTags,
+        "propagateComments": propagateComments,
+        "propagatePrototype": propagatePrototype,
+        "propagateBookmarks": propagateBookmarks,
+        "minSimilarity": minSimilarity,
+        "includeExternals": includeExternals,
+    }
+    if source:
+        payload["programPath"] = source
+    if target_program_paths:
+        payload["targetProgramPaths"] = list(target_program_paths) if len(target_program_paths) != 1 else target_program_paths[0]
+    # When no args at all (no binary, no target-paths), default limit so the command completes in bounded time
+    effective_limit = limit
+    if effective_limit is None and not source and not target_program_paths:
+        effective_limit = 50
+    if effective_limit is not None:
+        payload["limit"] = effective_limit
+    if do_checkin:
+        _run_async(_migrate_metadata_then_checkin(ctx, payload))
+    else:
+        _run_async(_call(ctx, Tool.MATCH_FUNCTION.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2125,36 +3382,36 @@ def match_function(
 
 @main.group("memory", help="Inspect memory (inspect-memory): blocks, read, data_at, data_items, segments")
 def memory_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:memory_grp")
     pass
 
 
 @memory_grp.command("run", help="Run inspect-memory with --mode")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.option("--mode", type=click.Choice(["blocks", "read", "data_at", "data_items", "segments"]), required=True)
 @click.option("--address")
 @click.option("--length", type=int)
 @click.option("--offset", type=int)
-@click.option("--limit", type=int)
 @click.pass_context
 def memory_run(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     mode: str,
     address: str | None,
     length: int | None,
     offset: int | None,
-    limit: int | None,
 ) -> None:
-    payload: dict[str, Any] = {"programPath": program_path, "mode": mode}
+    logger.debug("diag.enter %s", "cli.py:memory_run")
+    payload: dict[str, Any] = {"mode": mode}
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
     if address is not None and address.strip():
         payload["address"] = address
     if length is not None:
         payload["length"] = length
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
-    _run_async(_call(ctx, "inspect-memory", **payload))
+    _run_async(_call(ctx, Tool.INSPECT_MEMORY.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2162,20 +3419,24 @@ def memory_run(
 # ---------------------------------------------------------------------------
 
 
-@main.command("open", help="Open project or program (open-project)")
+@main.command("open", help="Open project/shared session (open); use import/import-binary for local binaries")
 @click.argument("path", type=click.Path(exists=False), required=False, default=None)
+@click.option("--shared/--no-shared", "shared", default=False, help="Force shared Ghidra repository mode for open")
+@click.option("--open-all-programs", "open_all_programs", is_flag=True, default=False, help="Open all programs in the project")
 @click.option("--extensions", help="Comma-separated extensions for bulk open (e.g. exe,dll)")
 @click.option("--destination_folder", "--destination-folder", "destination_folder", default="/")
 @click.option("--analyze_after_import/--no-analyze_after_import", "--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
-@click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--enable_version_control/--no-enable_version_control", "--enable-version-control/--no-enable-version-control", "enable_version_control", default=False)
 @click.option("--server_username", "--server-username", "--ghidra_server_username", "--ghidra-server-username", "server_username")
 @click.option("--server_password", "--server-password", "--ghidra_server_password", "--ghidra-server-password", "server_password")
 @click.option("--server_host", "--server-host", "--ghidra_server_host", "--ghidra-server-host", "server_host")
 @click.option("--server_port", "--server-port", "--ghidra_server_port", "--ghidra-server-port", "server_port", type=int)
+@click.option("--server_repository", "--server-repository", "--ghidra_server_repository", "--ghidra-server-repository", "server_repository")
 @click.pass_context
 def open_cmd(
     ctx: click.Context,
     path: str | None,
+    shared: bool,
     extensions: str | None,
     open_all_programs: bool,
     destination_folder: str,
@@ -2185,9 +3446,24 @@ def open_cmd(
     server_password: str | None,
     server_host: str | None,
     server_port: int | None,
+    server_repository: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:open_cmd")
     payload: dict[str, Any] = {}
-    is_shared_server_mode = bool(server_host and server_host.strip())
+    opts = _get_opts(ctx)
+    # Merge global Ghidra server options when command-level options are not set (e.g. --ghidra-server-username before open)
+    if not (server_username and server_username.strip()):
+        server_username = opts.get("ghidra_server_username") or opts.get("server_username")
+    if not (server_password and server_password.strip()):
+        server_password = opts.get("ghidra_server_password") or opts.get("server_password")
+    if not (server_host and server_host.strip()):
+        server_host = opts.get("ghidra_server_host") or opts.get("server_host")
+    if server_port is None:
+        server_port = opts.get("ghidra_server_port") or opts.get("server_port")
+    if not (server_repository and server_repository.strip()):
+        server_repository = opts.get("ghidra_server_repository") or opts.get("server_repository")
+
+    is_shared_server_mode = shared or bool(server_host and str(server_host).strip())
 
     # When connecting to a remote Ghidra shared-project server, the MCP
     # backend typically runs on the *same* host (Docker exposes the Ghidra
@@ -2195,8 +3471,7 @@ def open_cmd(
     # provided --server_host but did NOT override the global --host /
     # --server-url (which still points at localhost), automatically route
     # the MCP client connection to the remote host on the default MCP port.
-    if is_shared_server_mode:
-        opts = ctx.ensure_object(dict)
+    if is_shared_server_mode and server_host:
         if opts.get("host") == "127.0.0.1" and not opts.get("server_url"):
             opts["host"] = server_host
 
@@ -2205,21 +3480,27 @@ def open_cmd(
             payload["path"] = path
         else:
             payload["path"] = str(Path(path).resolve()) if path != "/" else path
+    elif is_shared_server_mode and server_repository and str(server_repository).strip():
+        payload["path"] = str(server_repository).strip()
     if extensions is not None:
         payload["extensions"] = extensions
+    if shared:
+        payload["shared"] = True
     payload["openAllPrograms"] = open_all_programs
     payload["destinationFolder"] = destination_folder
     payload["analyzeAfterImport"] = analyze_after_import
     payload["enableVersionControl"] = enable_version_control
-    if server_username is not None and server_username.strip():
-        payload["serverUsername"] = server_username
-    if server_password is not None and server_password.strip():
-        payload["serverPassword"] = server_password
-    if server_host is not None and server_host.strip():
-        payload["serverHost"] = server_host
+    if server_username is not None and str(server_username).strip():
+        payload["serverUsername"] = str(server_username).strip()
+    if server_password is not None and str(server_password).strip():
+        payload["serverPassword"] = str(server_password).strip()
+    if server_host is not None and str(server_host).strip():
+        payload["serverHost"] = str(server_host).strip()
     if server_port is not None:
-        payload["serverPort"] = server_port
-    _run_async(_call(ctx, "open-project", **payload))
+        payload["serverPort"] = int(server_port)
+    if server_repository is not None and str(server_repository).strip():
+        payload["repositoryName"] = str(server_repository).strip()
+    _run_async(_call(ctx, Tool.OPEN.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2229,6 +3510,7 @@ def open_cmd(
 
 @main.group("references", help="Cross-references (get-references): to, from, both, function, referencers_decomp, import, thunk")
 def references_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:references_grp")
     pass
 
 
@@ -2238,7 +3520,6 @@ def references_grp() -> None:
 @click.option("--mode", type=click.Choice(["to", "from", "both", "function", "referencers_decomp", "import", "thunk"]), default="both")
 @click.option("--direction", type=click.Choice(["to", "from", "both"]))
 @click.option("--offset", type=int)
-@click.option("--limit", "--max-results", "limit", type=int)
 @click.option("--library-name", "libraryName")
 @click.option("--start-index", "startIndex", type=int)
 @click.option("--max-referencers", "maxReferencers", type=int)
@@ -2252,13 +3533,13 @@ def references_run(
     mode: str,
     direction: str | None,
     offset: int | None,
-    limit: int | None,
     library_name: str | None,
     start_index: int | None,
     max_referencers: int | None,
     include_ref_context: bool,
     include_data_refs: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:references_run")
     payload: dict[str, Any] = {"target": target, "mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2266,8 +3547,6 @@ def references_run(
         payload["direction"] = direction
     if offset is not None:
         payload["offset"] = offset
-    if limit is not None:
-        payload["limit"] = limit
     if library_name is not None:
         payload["libraryName"] = library_name
     if start_index is not None:
@@ -2276,7 +3555,7 @@ def references_run(
         payload["maxReferencers"] = max_referencers
     payload["includeRefContext"] = include_ref_context
     payload["includeDataRefs"] = include_data_refs
-    _run_async(_call(ctx, "get-references", **payload))
+    _run_async(_call(ctx, Tool.GET_REFERENCES.value, **payload))
 
 
 # --- Convenience subcommands (``references to``, ``references from``, …) ---
@@ -2290,7 +3569,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--target", required=True, help="Address, symbol, function, or import name")
     @click.option("--direction", type=click.Choice(["to", "from", "both"]))
     @click.option("--offset", type=int)
-    @click.option("--limit", "--max-results", "limit", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2298,7 +3576,6 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
         target: str,
         direction: str | None,
         offset: int | None,
-        limit: int | None,
     ) -> None:
         payload: dict[str, Any] = {"target": target, "mode": mode_name}
         if program_path:
@@ -2307,10 +3584,9 @@ def _references_mode_command(mode_name: str, help_text: str | None = None):
             payload["direction"] = direction
         if offset is not None:
             payload["offset"] = offset
-        if limit is not None:
-            payload["limit"] = limit
-        _run_async(_call(ctx, "get-references", **payload))
+        _run_async(_call(ctx, Tool.GET_REFERENCES.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_references_mode_command")
     return _cmd
 
 
@@ -2325,6 +3601,7 @@ for _mode in ("to", "from", "both", "function", "referencers_decomp", "import", 
 
 @main.group("datatypes", help="Manage data types (manage-data-types): archives, list, by_string, apply")
 def datatypes_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:datatypes_grp")
     pass
 
 
@@ -2335,7 +3612,6 @@ def datatypes_grp() -> None:
 @click.option("--category-path", "categoryPath", default="/")
 @click.option("--include-subcategories", "includeSubcategories", is_flag=True)
 @click.option("--start-index", "startIndex", type=int)
-@click.option("--max-count", "maxCount", type=int)
 @click.option("--data-type-string", "dataTypeString")
 @click.option("--address-or-symbol", "addressOrSymbol")
 @click.pass_context
@@ -2347,10 +3623,10 @@ def datatypes_run(
     category_path: str,
     include_subcategories: bool,
     start_index: int | None,
-    max_count: int | None,
     data_type_string: str | None,
     address_or_symbol: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:datatypes_run")
     payload: dict[str, Any] = {"action": action}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2360,13 +3636,11 @@ def datatypes_run(
     payload["includeSubcategories"] = include_subcategories
     if start_index is not None:
         payload["startIndex"] = start_index
-    if max_count is not None:
-        payload["maxCount"] = max_count
     if data_type_string is not None:
         payload["dataTypeString"] = data_type_string
     if address_or_symbol is not None:
         payload["addressOrSymbol"] = address_or_symbol
-    _run_async(_call(ctx, "manage-data-types", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_DATA_TYPES.value, **payload))
 
 
 # --- Convenience subcommands (``datatypes archives``, ``datatypes list``, …) ---
@@ -2381,7 +3655,6 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
     @click.option("--category-path", "categoryPath", default="/")
     @click.option("--include-subcategories", "includeSubcategories", is_flag=True)
     @click.option("--start-index", "startIndex", type=int)
-    @click.option("--max-count", "maxCount", type=int)
     @click.option("--data-type-string", "dataTypeString")
     @click.option("--address-or-symbol", "addressOrSymbol")
     @click.pass_context
@@ -2392,7 +3665,6 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
         category_path: str,
         include_subcategories: bool,
         start_index: int | None,
-        max_count: int | None,
         data_type_string: str | None,
         address_or_symbol: str | None,
     ) -> None:
@@ -2405,14 +3677,13 @@ def _datatypes_action_command(action_name: str, help_text: str | None = None):
         payload["includeSubcategories"] = include_subcategories
         if start_index is not None:
             payload["startIndex"] = start_index
-        if max_count is not None:
-            payload["maxCount"] = max_count
         if data_type_string is not None:
             payload["dataTypeString"] = data_type_string
         if address_or_symbol is not None:
             payload["addressOrSymbol"] = address_or_symbol
-        _run_async(_call(ctx, "manage-data-types", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_DATA_TYPES.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_datatypes_action_command")
     return _cmd
 
 
@@ -2427,6 +3698,7 @@ for _action in ("archives", "list", "by_string", "apply"):
 
 @main.group("structures", help="Manage structures (manage-structures): parse, validate, create, add_field, modify_field, modify_from_c, info, apply, delete, parse_header")
 def structures_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:structures_grp")
     pass
 
 
@@ -2486,6 +3758,7 @@ def structures_run(
     name_filter: str | None,
     include_built_in: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:structures_run")
     payload: dict[str, Any] = {"action": action}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2517,7 +3790,7 @@ def structures_run(
     if name_filter is not None:
         payload["nameFilter"] = name_filter
     payload["includeBuiltIn"] = include_built_in
-    _run_async(_call(ctx, "manage-structures", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_STRUCTURES.value, **payload))
 
 
 # --- Convenience subcommands (``structures parse``, ``structures create``, …) ---
@@ -2573,8 +3846,9 @@ def _structures_action_command(action_name: str, help_text: str | None = None):
         if name_filter is not None:
             payload["nameFilter"] = name_filter
         payload["includeBuiltIn"] = include_built_in
-        _run_async(_call(ctx, "manage-structures", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_STRUCTURES.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_structures_action_command")
     return _cmd
 
 
@@ -2589,6 +3863,7 @@ for _action in ("parse", "validate", "create", "add_field", "modify_field", "mod
 
 @main.group("comments", help="Manage comments (manage-comments): set, get, remove, search, search_decomp")
 def comments_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:comments_grp")
     pass
 
 
@@ -2607,7 +3882,6 @@ def comments_grp() -> None:
 @click.option("--search-text", "searchText")
 @click.option("--pattern")
 @click.option("--case-sensitive", "caseSensitive", is_flag=True)
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--override-max-functions-limit", "overrideMaxFunctionsLimit", is_flag=True)
 @click.pass_context
 def comments_run(
@@ -2626,9 +3900,9 @@ def comments_run(
     search_text: str | None,
     pattern: str | None,
     case_sensitive: bool,
-    max_results: int | None,
     override_max_functions_limit: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:comments_run")
     payload: dict[str, Any] = {"action": action}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2658,10 +3932,8 @@ def comments_run(
     if pattern is not None:
         payload["pattern"] = pattern
     payload["caseSensitive"] = case_sensitive
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["overrideMaxFunctionsLimit"] = override_max_functions_limit
-    _run_async(_call(ctx, "manage-comments", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_COMMENTS.value, **payload))
 
 
 # --- Convenience subcommands (``comments set``, ``comments get``, …) ---
@@ -2677,7 +3949,6 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
     @click.option("--comment")
     @click.option("--comment-type", "commentType", type=click.Choice(["pre", "eol", "post", "plate", "repeatable"]))
     @click.option("--search-text", "searchText")
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2687,7 +3958,6 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
         comment: str | None,
         comment_type: str | None,
         search_text: str | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"action": action_name}
         if program_path:
@@ -2702,10 +3972,9 @@ def _comments_action_command(action_name: str, help_text: str | None = None):
             payload["commentType"] = comment_type
         if search_text is not None:
             payload["searchText"] = search_text
-        if max_results is not None:
-            payload["maxResults"] = max_results
-        _run_async(_call(ctx, "manage-comments", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_COMMENTS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_comments_action_command")
     return _cmd
 
 
@@ -2720,6 +3989,7 @@ for _action in ("set", "get", "remove", "search", "search_decomp"):
 
 @main.group("bookmarks", help="Manage bookmarks (manage-bookmarks): set, get, search, remove, removeAll, categories")
 def bookmarks_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:bookmarks_grp")
     pass
 
 
@@ -2732,7 +4002,6 @@ def bookmarks_grp() -> None:
 @click.option("--comment")
 @click.option("--bookmarks", help="JSON array of bookmark objects")
 @click.option("--search-text", "searchText")
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--remove-all", "removeAll", is_flag=True)
 @click.pass_context
 def bookmarks_run(
@@ -2745,9 +4014,9 @@ def bookmarks_run(
     comment: str | None,
     bookmarks: str | None,
     search_text: str | None,
-    max_results: int | None,
     remove_all: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:bookmarks_run")
     payload: dict[str, Any] = {"action": action}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2766,10 +4035,8 @@ def bookmarks_run(
             raise click.BadParameter("--bookmarks must be valid JSON array")
     if search_text is not None:
         payload["searchText"] = search_text
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["removeAll"] = remove_all
-    _run_async(_call(ctx, "manage-bookmarks", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_BOOKMARKS.value, **payload))
 
 
 # --- Convenience subcommands (``bookmarks set``, ``bookmarks get``, …) ---
@@ -2785,7 +4052,6 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
     @click.option("--category")
     @click.option("--comment")
     @click.option("--search-text", "searchText")
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -2795,7 +4061,6 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
         category: str | None,
         comment: str | None,
         search_text: str | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"action": action_name}
         if program_path:
@@ -2810,10 +4075,9 @@ def _bookmarks_action_command(action_name: str, help_text: str | None = None):
             payload["comment"] = comment
         if search_text is not None:
             payload["searchText"] = search_text
-        if max_results is not None:
-            payload["maxResults"] = max_results
-        _run_async(_call(ctx, "manage-bookmarks", **payload))
+        _run_async(_call(ctx, Tool.MANAGE_BOOKMARKS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_bookmarks_action_command")
     return _cmd
 
 
@@ -2841,6 +4105,7 @@ def dataflow(
     variable_name: str | None,
     direction: str,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:dataflow")
     payload: dict[str, Any] = {
         "functionAddress": function_address,
         "direction": direction,
@@ -2851,7 +4116,7 @@ def dataflow(
         payload["startAddress"] = start_address
     if variable_name is not None:
         payload["variableName"] = variable_name
-    _run_async(_call(ctx, "analyze-data-flow", **payload))
+    _run_async(_call(ctx, Tool.ANALYZE_DATA_FLOW.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -2861,6 +4126,7 @@ def dataflow(
 
 @main.group("callgraph", help="Call graph (get-call-graph): graph, tree, callers, callees, callers_decomp, common_callers")
 def callgraph_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:callgraph_grp")
     pass
 
 
@@ -2889,6 +4155,7 @@ def callgraph_run(
     include_call_context: bool,
     function_addresses: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:callgraph_run")
     payload: dict[str, Any] = {"functionIdentifier": function_identifier, "mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2905,7 +4172,7 @@ def callgraph_run(
     payload["includeCallContext"] = include_call_context
     if function_addresses is not None:
         payload["functionAddresses"] = function_addresses
-    _run_async(_call(ctx, "get-call-graph", **payload))
+    _run_async(_call(ctx, Tool.GET_CALL_GRAPH.value, **payload))
 
 
 # --- Convenience subcommands (``callgraph callers``, ``callgraph callees``, …) ---
@@ -2938,8 +4205,9 @@ def _callgraph_mode_command(mode_name: str, help_text: str | None = None):
             payload["maxDepth"] = max_depth
         if max_callers is not None:
             payload["maxCallers"] = max_callers
-        _run_async(_call(ctx, "get-call-graph", **payload))
+        _run_async(_call(ctx, Tool.GET_CALL_GRAPH.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_callgraph_mode_command")
     return _cmd
 
 
@@ -2954,6 +4222,7 @@ for _mode in ("graph", "tree", "callers", "callees", "callers_decomp", "common_c
 
 @main.group("constants", help="Search constants (search-constants): specific, range, common")
 def constants_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:constants_grp")
     pass
 
 
@@ -2963,9 +4232,7 @@ def constants_grp() -> None:
 @click.option("--value")
 @click.option("--min-value", "minValue")
 @click.option("--max-value", "maxValue")
-@click.option("--max-results", "maxResults", type=int)
 @click.option("--include-small-values", "includeSmallValues", is_flag=True)
-@click.option("--top-n", "topN", type=int)
 @click.pass_context
 def constants_run(
     ctx: click.Context,
@@ -2974,10 +4241,9 @@ def constants_run(
     value: str | None,
     min_value: str | None,
     max_value: str | None,
-    max_results: int | None,
     include_small_values: bool,
-    top_n: int | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:constants_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -2987,12 +4253,8 @@ def constants_run(
         payload["minValue"] = min_value
     if max_value is not None:
         payload["maxValue"] = max_value
-    if max_results is not None:
-        payload["maxResults"] = max_results
     payload["includeSmallValues"] = include_small_values
-    if top_n is not None:
-        payload["topN"] = top_n
-    _run_async(_call(ctx, "search-constants", **payload))
+    _run_async(_call(ctx, Tool.SEARCH_CONSTANTS.value, **payload))
 
 
 # --- Convenience subcommands (``constants specific``, ``constants range``, …) ---
@@ -3006,8 +4268,6 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--value")
     @click.option("--min-value", "minValue")
     @click.option("--max-value", "maxValue")
-    @click.option("--max-results", "maxResults", type=int)
-    @click.option("--top-n", "topN", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -3015,8 +4275,6 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
         value: str | None,
         min_value: str | None,
         max_value: str | None,
-        max_results: int | None,
-        top_n: int | None,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
         if program_path:
@@ -3027,12 +4285,9 @@ def _constants_mode_command(mode_name: str, help_text: str | None = None):
             payload["minValue"] = min_value
         if max_value is not None:
             payload["maxValue"] = max_value
-        if max_results is not None:
-            payload["maxResults"] = max_results
-        if top_n is not None:
-            payload["topN"] = top_n
-        _run_async(_call(ctx, "search-constants", **payload))
+        _run_async(_call(ctx, Tool.SEARCH_CONSTANTS.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_constants_mode_command")
     return _cmd
 
 
@@ -3047,6 +4302,7 @@ for _mode in ("specific", "range", "common"):
 
 @main.group("vtables", help="Analyze vtables (analyze-vtables): analyze, callers, containing")
 def vtables_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:vtables_grp")
     pass
 
 
@@ -3056,7 +4312,6 @@ def vtables_grp() -> None:
 @click.option("--vtable-address", "vtableAddress")
 @click.option("--function-address", "functionAddress")
 @click.option("--max-entries", "maxEntries", type=int)
-@click.option("--max-results", "maxResults", type=int)
 @click.pass_context
 def vtables_run(
     ctx: click.Context,
@@ -3065,8 +4320,8 @@ def vtables_run(
     vtable_address: str | None,
     function_address: str | None,
     max_entries: int | None,
-    max_results: int | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:vtables_run")
     payload: dict[str, Any] = {"mode": mode}
     if program_path is not None and program_path.strip():
         payload["programPath"] = program_path
@@ -3076,9 +4331,7 @@ def vtables_run(
         payload["functionAddress"] = function_address
     if max_entries is not None:
         payload["maxEntries"] = max_entries
-    if max_results is not None:
-        payload["maxResults"] = max_results
-    _run_async(_call(ctx, "analyze-vtables", **payload))
+    _run_async(_call(ctx, Tool.ANALYZE_VTABLES.value, **payload))
 
 
 # --- Convenience subcommands (``vtables analyze``, ``vtables callers``, …) ---
@@ -3092,7 +4345,6 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
     @click.option("--vtable-address", "vtableAddress")
     @click.option("--function-address", "functionAddress")
     @click.option("--max-entries", "maxEntries", type=int)
-    @click.option("--max-results", "maxResults", type=int)
     @click.pass_context
     def _cmd(
         ctx: click.Context,
@@ -3100,7 +4352,6 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
         vtable_address: str | None,
         function_address: str | None,
         max_entries: int | None,
-        max_results: int | None,
     ) -> None:
         payload: dict[str, Any] = {"mode": mode_name}
         if program_path:
@@ -3111,10 +4362,9 @@ def _vtables_mode_command(mode_name: str, help_text: str | None = None):
             payload["functionAddress"] = function_address
         if max_entries is not None:
             payload["maxEntries"] = max_entries
-        if max_results is not None:
-            payload["maxResults"] = max_results
-        _run_async(_call(ctx, "analyze-vtables", **payload))
+        _run_async(_call(ctx, Tool.ANALYZE_VTABLES.value, **payload))
 
+    logger.debug("diag.enter %s", "cli.py:_vtables_mode_command")
     return _cmd
 
 
@@ -3128,7 +4378,7 @@ for _mode in ("analyze", "callers", "containing"):
 
 
 @main.command("suggest", help="Context-aware suggestions (suggest): comments, names, tags, types")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.option("--suggestion-type", "suggestionType", required=True)
 @click.option("--address")
 @click.option("--function")
@@ -3137,17 +4387,19 @@ for _mode in ("analyze", "callers", "containing"):
 @click.pass_context
 def suggest_cmd(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     suggestion_type: str,
     address: str | None,
     function: str | None,
     data_type: str | None,
     variable_address: str | None,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:suggest_cmd")
     payload: dict[str, Any] = {
-        "programPath": program_path,
         "suggestionType": suggestion_type,
     }
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
     if address is not None:
         payload["address"] = address
     if function is not None:
@@ -3156,7 +4408,7 @@ def suggest_cmd(
         payload["dataType"] = data_type
     if variable_address is not None:
         payload["variableAddress"] = variable_address
-    _run_async(_call(ctx, "suggest", **payload))
+    _run_async(_call(ctx, Tool.SUGGEST.value, **payload))
 
 
 # ---------------------------------------------------------------------------
@@ -3164,54 +4416,67 @@ def suggest_cmd(
 # ---------------------------------------------------------------------------
 
 
-@main.command("checkin", help="Checkin program (checkin-program)")
-@click.option("-b", "--binary", "program_path", required=True)
-@click.option("-m", "--message", required=True)
+@main.command(
+    "checkin",
+    help="Checkin program (checkin-program). Omit --binary to check in every open program that is checked out (checkin all).",
+)
+@click.option("-b", "--binary", "program_path", default=None, help="Program path to check in. Omit to check in all open programs that can be checked in.")
+@click.option("-m", "--message", "comment", default=None, help="Checkin comment (default: 'AgentDecompile checkin').")
 @click.option("--keep-checked-out", "keepCheckedOut", is_flag=True)
 @click.pass_context
 def checkin(
     ctx: click.Context,
-    program_path: str,
-    message: str,
+    program_path: str | None,
+    comment: str | None,
     keep_checked_out: bool,
 ) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "checkin-program",
-            programPath=program_path,
-            message=message,
-            keepCheckedOut=keep_checked_out,
-        ),
-    )
+    logger.debug("diag.enter %s", "cli.py:checkin")
+    payload: dict[str, Any] = {"keepCheckedOut": keep_checked_out}
+    if comment is not None:
+        payload["comment"] = comment
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path.strip()
+    # Omit programPath to check in all open programs (checkin all)
+    _run_async(_call(ctx, Tool.CHECKIN_PROGRAM.value, **payload))
 
 
 @main.command("analyze", help="Run auto-analysis (analyze-program)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
+@click.option("--force", is_flag=True, help="Force re-analysis even if the program is already analyzed")
 @click.pass_context
-def analyze(ctx: click.Context, program_path: str) -> None:
-    _run_async(_call(ctx, "analyze-program", programPath=program_path))
+def analyze(ctx: click.Context, program_path: str | None, force: bool) -> None:
+    logger.debug("diag.enter %s", "cli.py:analyze")
+    payload: dict[str, Any] = {}
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
+    if force:
+        payload["force"] = True
+    _run_async(_call(ctx, Tool.ANALYZE_PROGRAM.value, **payload))
 
 
 @main.command("change-processor", help="Change processor (change-processor)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.option("--language-id", "languageId", required=True)
 @click.option("--compiler-spec-id", "compilerSpecId")
 @click.pass_context
 def change_processor(
     ctx: click.Context,
-    program_path: str,
+    program_path: str | None,
     language_id: str,
     compiler_spec_id: str | None,
 ) -> None:
-    payload: dict[str, Any] = {"programPath": program_path, "languageId": language_id}
+    logger.debug("diag.enter %s", "cli.py:change_processor")
+    payload: dict[str, Any] = {"languageId": language_id}
+    if program_path is not None and program_path.strip():
+        payload["programPath"] = program_path
     if compiler_spec_id is not None:
         payload["compilerSpecId"] = compiler_spec_id
-    _run_async(_call(ctx, "change-processor", **payload))
+    _run_async(_call(ctx, Tool.CHANGE_PROCESSOR.value, **payload))
 
 
 @main.group("files", help="Manage files/repositories (manage-files): list, info, create, edit, move, import/export, checkout")
 def files_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:files_grp")
     pass
 
 
@@ -3240,7 +4505,7 @@ def files_grp() -> None:
             "delete",
             "copy",
             "move",
-        ]
+        ],
     ),
     required=True,
 )
@@ -3255,13 +4520,12 @@ def files_grp() -> None:
 @click.option("--create-parents/--no-create-parents", "create_parents", default=True)
 @click.option("--destination-folder", "destination_folder", default="/")
 @click.option("--recursive/--no-recursive", default=True)
-@click.option("--max-results", "max_results", type=int)
 @click.option("--max-depth", "max_depth", type=int)
 @click.option("--analyze-after-import/--no-analyze-after-import", "analyze_after_import", default=True)
 @click.option("--strip-leading-path/--no-strip-leading-path", "strip_leading_path", default=True)
 @click.option("--strip-all-container-path", "strip_all_container_path", is_flag=True)
 @click.option("--mirror-fs", "mirror_fs", is_flag=True)
-@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=True)
+@click.option("--enable-version-control/--no-enable-version-control", "enable_version_control", default=False)
 @click.option("--export-type", "export_type", type=click.Choice(["program", "function_info", "strings"]))
 @click.option("--export-format", "export_format", type=click.Choice(["json", "csv"]))
 @click.option("--include-parameters", "include_parameters", is_flag=True)
@@ -3286,7 +4550,6 @@ def files_run(
     create_parents: bool,
     destination_folder: str,
     recursive: bool,
-    max_results: int | None,
     max_depth: int | None,
     analyze_after_import: bool,
     strip_leading_path: bool,
@@ -3303,6 +4566,7 @@ def files_run(
     exclusive: bool,
     dry_run: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:files_run")
     payload: dict[str, Any] = {"operation": operation}
     if path is not None:
         payload["path"] = path
@@ -3322,8 +4586,6 @@ def files_run(
     payload["createParents"] = create_parents
     payload["destinationFolder"] = destination_folder
     payload["recursive"] = recursive
-    if max_results is not None:
-        payload["maxResults"] = max_results
     if max_depth is not None:
         payload["maxDepth"] = max_depth
     payload["analyzeAfterImport"] = analyze_after_import
@@ -3342,11 +4604,12 @@ def files_run(
     payload["force"] = force
     payload["exclusive"] = exclusive
     payload["dryRun"] = dry_run
-    _run_async(_call(ctx, "manage-files", **payload))
+    _run_async(_call(ctx, Tool.MANAGE_FILES.value, **payload))
 
 
 @main.group("shared", help="Shared repository workflows")
 def shared_grp() -> None:
+    logger.debug("diag.enter %s", "cli.py:shared_grp")
     pass
 
 
@@ -3354,7 +4617,6 @@ def shared_grp() -> None:
 @click.option("--source", "source_path", default="/", show_default=True, help="Shared repository folder/path to download")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination folder in local project")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite existing local project files")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3363,27 +4625,25 @@ def shared_download(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:shared_download")
     payload: dict[str, Any] = {
         "mode": "pull",
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, Tool.SYNC_PROJECT.value, **payload))
 
 
 @shared_grp.command("push", help="Push local project files toward shared-backed storage mapping")
 @click.option("--source", "source_path", default="/", show_default=True, help="Local project source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Destination mapping path")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite destination items")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3392,27 +4652,25 @@ def shared_push(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:shared_push")
     payload: dict[str, Any] = {
         "mode": "push",
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, Tool.SYNC_PROJECT.value, **payload))
 
 
 @shared_grp.command("sync", help="Bidirectional shared/local synchronization")
 @click.option("--source", "source_path", default="/", show_default=True, help="Scope source folder/path")
 @click.option("--destination", "destination_path", default="/", show_default=True, help="Scope destination mapping")
 @click.option("--recursive/--no-recursive", default=True, show_default=True)
-@click.option("--max-results", type=int, default=100000, show_default=True)
 @click.option("--force", is_flag=True, help="Overwrite destination items")
 @click.option("--dry-run", is_flag=True, help="Preview changes without copying")
 @click.pass_context
@@ -3421,20 +4679,19 @@ def shared_sync(
     source_path: str,
     destination_path: str,
     recursive: bool,
-    max_results: int,
     force: bool,
     dry_run: bool,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:shared_sync")
     payload: dict[str, Any] = {
         "mode": "bidirectional",
         "path": source_path,
         "newPath": destination_path,
         "recursive": recursive,
-        "maxResults": max_results,
         "force": force,
         "dryRun": dry_run,
     }
-    _run_async(_call(ctx, "sync-project", **payload))
+    _run_async(_call(ctx, Tool.SYNC_PROJECT.value, **payload))
 
 
 def _gui_only_command_error(tool_name: str) -> None:
@@ -3446,6 +4703,7 @@ def _gui_only_command_error(tool_name: str) -> None:
     Args:
         tool_name: The name of the GUI-only tool that was requested
     """
+    logger.debug("diag.enter %s", "cli.py:_gui_only_command_error")
     click.echo(f"Tool '{tool_name}' is disabled (GUI-only).", err=True)
     sys.exit(1)
 
@@ -3454,6 +4712,7 @@ def _gui_only_command_error(tool_name: str) -> None:
 @main.command("current-address", help="Get current address (get-current-address, GUI)")
 @click.pass_context
 def current_address(ctx: click.Context) -> None:
+    logger.debug("diag.enter %s", "cli.py:current_address")
     _gui_only_command_error("get-current-address")
 
 
@@ -3461,14 +4720,16 @@ def current_address(ctx: click.Context) -> None:
 @main.command("current-function", help="Get current function (get-current-function, GUI)")
 @click.pass_context
 def current_function(ctx: click.Context) -> None:
+    logger.debug("diag.enter %s", "cli.py:current_function")
     _gui_only_command_error("get-current-function")
 
 
 # TODO: GUI Only tools/commands
 @main.command("open-in-code-browser", help="Open program in Code Browser (open-program-in-code-browser, GUI)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.pass_context
-def open_in_code_browser(ctx: click.Context, program_path: str) -> None:
+def open_in_code_browser(ctx: click.Context, program_path: str | None) -> None:
+    logger.debug("diag.enter %s", "cli.py:open_in_code_browser")
     _gui_only_command_error("open-program-in-code-browser")
 
 
@@ -3482,6 +4743,7 @@ def open_all_in_code_browser(
     extensions: str,
     folder_path: str,
 ) -> None:
+    logger.debug("diag.enter %s", "cli.py:open_all_in_code_browser")
     _gui_only_command_error("open-all-programs-in-code-browser")
 
 
@@ -3491,8 +4753,9 @@ def open_all_in_code_browser(
 
 
 @main.command("delete", help="Delete program (not implemented in AgentDecompile)")
-@click.option("-b", "--binary", "program_path", required=True)
-def delete_cmd(program_path: str) -> None:
+@click.option("-b", "--binary", "program_path")
+def delete_cmd(program_path: str | None) -> None:
+    logger.debug("diag.enter %s", "cli.py:delete_cmd")
     click.echo("Delete program is not implemented in AgentDecompile.", err=True)
     sys.exit(1)
 
@@ -3507,6 +4770,7 @@ def delete_cmd(program_path: str) -> None:
 @click.option("--no-analyze", is_flag=True, help="Skip analysis after import")
 @click.pass_context
 def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
+    logger.debug("diag.enter %s", "cli.py:import_cmd")
     opts = ctx.ensure_object(dict)
     host = opts.get("host", "127.0.0.1")
     is_remote = host not in ("127.0.0.1", "localhost", "::1")
@@ -3516,7 +4780,7 @@ def import_cmd(ctx: click.Context, path: str, no_analyze: bool) -> None:
     _run_async(
         _call(
             ctx,
-            "open-project",
+            Tool.OPEN.value,
             path=resolved_path,
             analyzeAfterImport=not no_analyze,
         ),
@@ -3528,21 +4792,40 @@ main.add_command(main.commands["import"], "import-binary")
 
 
 @main.command("read", help="Read bytes at address (inspect-memory mode=read)")
-@click.option("-b", "--binary", "program_path", required=True)
+@click.option("-b", "--binary", "program_path")
 @click.argument("address")
 @click.option("-s", "--size", "length", type=int, default=32)
 @click.pass_context
-def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -> None:
-    _run_async(
-        _call(
-            ctx,
-            "inspect-memory",
-            programPath=program_path,
-            mode="read",
-            address=address,
-            length=length,
-        ),
-    )
+def read_cmd(ctx: click.Context, program_path: str | None, address: str, length: int) -> None:
+    logger.debug("diag.enter %s", "cli.py:read_cmd")
+    kwargs: dict[str, Any] = {"mode": "read", "address": address, "length": length}
+    if program_path is not None and program_path.strip():
+        kwargs["programPath"] = program_path
+    _run_async(_call(ctx, Tool.INSPECT_MEMORY.value, **kwargs))
+
+
+@main.command(
+    "svr-admin",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    help=("Run bundled Ghidra svrAdmin with full passthrough. Use --arg repeatedly or pass raw trailing tokens after '--'."),
+)
+@click.option("--arg", "args", multiple=True, help="Raw token forwarded to svrAdmin (repeatable).")
+@click.option("--command", help="Optional command string tokenized server-side and appended.")
+@click.option("--timeout-seconds", type=int, default=None, help="Timeout for svrAdmin execution in seconds.")
+@click.pass_context
+def svr_admin_cmd(
+    ctx: click.Context,
+    args: tuple[str, ...],
+    command: str | None,
+    timeout_seconds: int | None,
+) -> None:
+    logger.debug("diag.enter %s", "cli.py:svr_admin_cmd")
+    payload = _build_svr_admin_payload(args, list(ctx.args), command, timeout_seconds)
+    _run_async(_call(ctx, Tool.SVR_ADMIN.value, **payload))
+
+
+# Compatibility alias for canonical `svr-admin`.
+main.add_command(main.commands["svr-admin"], "svrAdmin")
 
 
 # ---------------------------------------------------------------------------
@@ -3552,18 +4835,14 @@ def read_cmd(ctx: click.Context, program_path: str, address: str, length: int) -
 
 @main.command(
     "eval",
-    help=(
-        "Execute Ghidra/PyGhidra API code on the server. "
-        "The full Ghidra API is available (currentProgram, flatApi, toAddr, …). "
-        "Example: eval -b /myapp 'currentProgram.getName()'"
-    ),
+    help=("Execute Ghidra/PyGhidra API code on the server. The full Ghidra API is available (currentProgram, flatApi, toAddr, …). Example: eval -b /myapp 'currentProgram.getName()'"),
 )
 @click.argument("code")
 @click.option(
     "-b",
     "--binary",
     "program_path",
-    help="Program path in the project (optional in GUI mode)",
+    help="Program path in the project",
 )
 @click.option(
     "--timeout",
@@ -3590,10 +4869,11 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
       eval -b /myapp 'list(currentProgram.getMemory().getBlocks())'
       eval -b /myapp 'fm=getFunctionManager(); __result__=[str(f) for f in fm.getFunctions(True)][:10'
     """
+    logger.debug("diag.enter %s", "cli.py:eval_cmd")
     kwargs: dict[str, Any] = {"code": code, "timeout": timeout}
     if program_path:
         kwargs["programPath"] = program_path
-    _run_async(_call(ctx, "execute-script", **kwargs))
+    _run_async(_call(ctx, Tool.EXECUTE_SCRIPT.value, **kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -3605,6 +4885,7 @@ def eval_cmd(ctx: click.Context, code: str, program_path: str | None, timeout: i
 @click.argument("name", required=True)
 def alias_cmd(name: str) -> None:
     """Show alias details for a canonical or alias tool name."""
+    logger.debug("diag.enter %s", "cli.py:alias_cmd")
     resolved = tool_registry.resolve_tool_name(name)
     if not resolved:
         click.echo(f"Unknown tool or alias: {name}", err=True)
@@ -3641,24 +4922,49 @@ def alias_cmd(name: str) -> None:
             click.echo(f"  - {alias}")
 
 
-@main.command("tool", help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'')
-@click.argument("name", required=True)
+@main.command(
+    "tool",
+    help="Call any MCP tool by name with a JSON arguments object.",
+    epilog=TOOL_AGENT_EPILOG,
+)
+@click.argument("name", required=False, default=None)
 @click.argument("arguments", required=False, default="{}")
-@click.option("--list-tools", is_flag=True, help="List valid tool names and exit")
+@click.option("--list-tools", is_flag=True, help="List valid tool names and exit (use -f json for machine-readable output)")
+@click.option(
+    "--program-path",
+    "--programpath",
+    "--programPath",
+    "--program",
+    "-b",
+    "--binary",
+    expose_value=False,
+    callback=_cli_program_path_option_callback,
+    help="Default programPath when JSON omits it (may appear after `tool`, before NAME).",
+)
+@click.option(
+    "--binary-name",
+    "--binaryname",
+    "--binaryName",
+    expose_value=False,
+    callback=_cli_binary_name_option_callback,
+    help="Default binaryName when JSON omits it.",
+)
 @click.pass_context
 def tool_cmd(
     ctx: click.Context,
-    name: str,
+    name: str | None,
     arguments: str,
     list_tools: bool,
 ) -> None:
     """Invoke any MCP tool by name; arguments as JSON object (camelCase keys)."""
+    logger.debug("diag.enter %s", "cli.py:tool_cmd")
     available_tools = tool_registry.get_tools()
     if list_tools:
-        click.echo("Valid tool names:")
-        for t in sorted(available_tools):
-            click.echo(f"  {t}")
+        click.echo(format_tool_list_output(available_tools, _fmt(ctx)))
         return
+
+    if not name:
+        raise click.UsageError(TOOL_MISSING_NAME_USAGE)
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)
@@ -3691,58 +4997,250 @@ def tool_cmd(
     _run_async(_run())
 
 
-@main.command("tool-seq", help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]'))
-@click.argument("steps", required=True)
-@click.option("--continue-on-error", is_flag=True, help="Continue remaining steps after a tool failure")
+@main.command(
+    "tool-seq",
+    help=(
+        "Run a sequence of MCP tool calls from JSON. Format: "
+        '[{"name":"open-project","arguments":{...}}, ...]. '
+        "Pass @path to load from a file, - or --stdin to read from stdin. "
+        "Steps fail on markdown ## Error / ## Modification conflict in text content."
+    ),
+    epilog=TOOL_SEQ_AGENT_EPILOG,
+)
+@click.argument("steps", required=False, default=None)
+@click.option(
+    "--stdin",
+    "read_steps_from_stdin",
+    is_flag=True,
+    help="Read the steps JSON array from stdin (same as passing STEPS as -).",
+)
+@click.option(
+    "--continue-on-error",
+    is_flag=True,
+    help="Continue remaining steps after a step failure; exit code is still non-zero if any step failed.",
+)
+@click.option(
+    "--program-path",
+    "--programpath",
+    "--programPath",
+    "--program",
+    "-b",
+    "--binary",
+    expose_value=False,
+    callback=_cli_program_path_option_callback,
+    help="Default programPath for steps that omit it.",
+)
+@click.option(
+    "--binary-name",
+    "--binaryname",
+    "--binaryName",
+    expose_value=False,
+    callback=_cli_binary_name_option_callback,
+    help="Default binaryName for steps that omit it.",
+)
 @click.pass_context
-def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> None:
-    """Invoke a sequence of tools without using ad-hoc python scripts."""
+def tool_seq_cmd(
+    ctx: click.Context,
+    steps: str | None,
+    read_steps_from_stdin: bool,
+    continue_on_error: bool,
+) -> None:
+    """Invoke a sequence of tools without using ad-hoc python scripts.
+
+    A step fails if the MCP response has isError, embedded JSON with success:false and error,
+    or markdown text with ## Error (blockquote-style) or ## Modification conflict.
+    Exits with code 1 when any step fails (unless the process already exited on the first failure).
+    """
+    logger.debug("diag.enter %s", "cli.py:tool_seq_cmd")
     try:
-        parsed_steps = json.loads(steps)
+        steps_text = resolve_tool_seq_steps(steps=steps, use_stdin=read_steps_from_stdin)
+    except click.UsageError:
+        raise
+    try:
+        parsed_steps = json.loads(steps_text)
     except json.JSONDecodeError as exc:
-        click.echo(f"Invalid JSON for steps: {exc}", err=True)
+        click.echo(tool_seq_json_error_message(exc), err=True)
         sys.exit(1)
+    _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
+
+
+def _run_parsed_tool_sequence(
+    ctx: click.Context,
+    parsed_steps: Any,
+    *,
+    continue_on_error: bool = False,
+) -> None:
+    """Core sequence runner shared by tool-seq and tool-seq-file."""
+    logger.debug("diag.enter %s", "cli.py:_run_parsed_tool_sequence")
 
     if not isinstance(parsed_steps, list) or not all(isinstance(s, dict) for s in parsed_steps):
         click.echo("Steps must be a JSON array of objects.", err=True)
         sys.exit(1)
 
+    def _step_arguments(step: dict[str, Any], index: int) -> dict[str, Any]:
+        aliases = ("arguments", "args", "params", "parameters", "input")
+        present = [key for key in aliases if key in step and step.get(key) is not None]
+        if not present:
+            return {}
+        first_key = present[0]
+        first_value = step[first_key]
+        for key in present[1:]:
+            if step[key] != first_value:
+                click.echo(
+                    f"Step {index}: conflicting argument aliases ({', '.join(present)}); use one of: {', '.join(aliases)}",
+                    err=True,
+                )
+                sys.exit(1)
+        if not isinstance(first_value, dict):
+            click.echo(f"Step {index}: '{first_key}' must be a JSON object", err=True)
+            sys.exit(1)
+        return first_value
+
     async def _run_sequence() -> None:
         results: list[dict[str, Any]] = []
-        client = _client(ctx)
-        async with client:
+
+        async def _run_steps(client_override: Any | None) -> None:
             step: dict[str, Any]
             for index, step in enumerate(parsed_steps, start=1):
                 name = step.get("name")
-                arguments = step.get("arguments", {})
 
                 if not isinstance(name, str) or not name.strip():
                     click.echo(f"Step {index}: missing or invalid 'name'", err=True)
                     sys.exit(1)
-                if not isinstance(arguments, dict):
-                    click.echo(f"Step {index}: 'arguments' must be a JSON object", err=True)
-                    sys.exit(1)
+
+                arguments = _step_arguments(step, index)
 
                 _validate_known_tool(name)
-                prepared_arguments, inferred_program = _prepare_tool_payload_with_program_fallback(ctx, name, arguments)
-                data = await _call_raw(ctx, name, prepared_arguments, client_override=client)
-                if inferred_program is not None:
-                    data = _inject_inferred_program(data, inferred_program)
+                prepared_arguments: dict[str, Any] = {k: v for k, v in arguments.items() if v is not None}
+                if tool_registry.is_valid_tool(name):
+                    resolved_name = tool_registry.get_display_name(tool_registry.canonicalize_tool_name(name))
+                    prepared_arguments = tool_registry.parse_arguments(prepared_arguments, resolved_name)
+                # For open, merge global Ghidra server options so tool-seq sends credentials
+                if tool_registry.canonicalize_tool_name(name) == tool_registry.canonicalize_tool_name(Tool.OPEN.value):
+                    opts = _get_opts(ctx)
+                    # Ensure we have root/group opts (tool-seq runs as subcommand; ctx.obj may be unset)
+                    if not opts and ctx.parent and isinstance(getattr(ctx.parent, "obj", None), dict):
+                        opts = ctx.parent.obj or {}
+
+                    # Fallback to env so credentials are sent even when opts not propagated
+                    def _g(k: str, *alt: str) -> Any:
+                        for key in (k, *alt):
+                            v = (opts or {}).get(key)
+                            if v is not None and str(v).strip() != "":
+                                return v
+                        return None
+
+                    if not prepared_arguments.get("serverUsername"):
+                        v = _g("ghidra_server_username", "server_username") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME")
+                        if v:
+                            prepared_arguments["serverUsername"] = str(v).strip()
+                    if not prepared_arguments.get("serverPassword"):
+                        v = _g("ghidra_server_password", "server_password") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD")
+                        if v:
+                            prepared_arguments["serverPassword"] = str(v).strip()
+                    if not prepared_arguments.get("serverHost"):
+                        v = _g("ghidra_server_host", "server_host") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST")
+                        if v:
+                            prepared_arguments["serverHost"] = str(v).strip()
+                    if prepared_arguments.get("serverPort") is None:
+                        v = _g("ghidra_server_port", "server_port")
+                        if v is not None:
+                            prepared_arguments["serverPort"] = int(v)
+                        else:
+                            p = os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT")
+                            if p:
+                                try:
+                                    prepared_arguments["serverPort"] = int(p)
+                                except ValueError:
+                                    pass
+                    if not prepared_arguments.get("repositoryName"):
+                        v = _g("ghidra_server_repository", "server_repository") or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY") or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY")
+                        if v:
+                            prepared_arguments["repositoryName"] = str(v).strip()
+                            if not prepared_arguments.get("path"):
+                                prepared_arguments["path"] = str(v).strip()
+
+                data = await _call_raw(ctx, name, prepared_arguments, client_override=client_override)
+                step_ok = _tool_seq_step_succeeded(data)
                 step_result = {
                     "index": index,
                     "name": name,
-                    "success": not (isinstance(data, dict) and data.get("success") is False and "error" in data),
+                    "success": step_ok,
                     "result": data,
                 }
                 results.append(step_result)
 
-                if not step_result["success"] and not continue_on_error:
+                if not step_ok and not continue_on_error:
                     click.echo(format_output({"success": False, "steps": results}, _fmt(ctx)))
                     sys.exit(1)
 
-        click.echo(format_output({"success": True, "steps": results}, _fmt(ctx)))
+        async with _tool_sequence_client(ctx) as client_override:
+            await _run_steps(client_override)
+
+        all_ok = all(step["success"] for step in results)
+        click.echo(format_output({"success": all_ok, "steps": results}, _fmt(ctx)))
+        if not all_ok:
+            sys.exit(1)
 
     _run_async(_run_sequence())
+
+
+@main.command(
+    "tool-seq-file",
+    help=(
+        "Run a sequence of MCP tool calls from a JSON file. "
+        "The file must contain a JSON array of step objects: "
+        '[{"name":"tool-name","arguments":{...}}, ...]. '
+        "Equivalent to `tool-seq @path` — avoids shell quoting for large payloads."
+    ),
+    epilog=TOOL_SEQ_AGENT_EPILOG,
+)
+@click.argument("file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True))
+@click.option(
+    "--continue-on-error",
+    is_flag=True,
+    help="Continue remaining steps after a step failure; exit code is still non-zero if any step failed.",
+)
+@click.option(
+    "--program-path",
+    "--programpath",
+    "--programPath",
+    "--program",
+    "-b",
+    "--binary",
+    expose_value=False,
+    callback=_cli_program_path_option_callback,
+    help="Default programPath for steps that omit it.",
+)
+@click.option(
+    "--binary-name",
+    "--binaryname",
+    "--binaryName",
+    expose_value=False,
+    callback=_cli_binary_name_option_callback,
+    help="Default binaryName for steps that omit it.",
+)
+@click.pass_context
+def tool_seq_file_cmd(ctx: click.Context, file: str, continue_on_error: bool) -> None:
+    """Invoke a sequence of tools defined in a JSON file.
+
+    A step fails if the MCP response has isError, embedded JSON with success:false and error,
+    or markdown text with ## Error (blockquote-style) or ## Modification conflict.
+    Exits with code 1 when any step fails (unless the process already exited on the first failure).
+    """
+    logger.debug("diag.enter %s", "cli.py:tool_seq_file_cmd")
+    file_path = Path(file).expanduser().resolve()
+    try:
+        raw = file_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        click.echo(f"tool-seq-file: cannot read file '{file_path}': {exc}", err=True)
+        sys.exit(1)
+    try:
+        parsed_steps = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        click.echo(f"tool-seq-file: invalid JSON in '{file_path}': {exc}", err=True)
+        sys.exit(1)
+    _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
 
 
 # ---------------------------------------------------------------------------
@@ -3762,5 +5260,31 @@ _register_output_format_option_on_all_commands(main)
 
 def cli_entry_point() -> None:
     """Entry point for the CLI (referenced by pyproject.toml scripts)."""
+    import atexit  # noqa: PLC0415
+
+    logger.debug("diag.enter %s", "cli.py:cli_entry_point")
+
+    atexit.register(_cleanup_local_backend_instance)
     _ensure_dynamic_commands_registered()
-    main()
+    force_exit_after_cleanup = False
+    exit_code = 0
+    try:
+        try:
+            main()
+        except SystemExit as exc:
+            if _local_backend_instance is None:
+                raise
+            force_exit_after_cleanup = True
+            exit_code = _normalize_system_exit_code(exc.code)
+        else:
+            if _local_backend_instance is not None:
+                force_exit_after_cleanup = True
+    finally:
+        _cleanup_local_backend_instance()
+        if force_exit_after_cleanup:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001
+                pass
+            os._exit(exit_code)

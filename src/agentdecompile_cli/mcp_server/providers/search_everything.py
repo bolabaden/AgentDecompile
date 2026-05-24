@@ -1,18 +1,29 @@
 """Universal search provider - search-everything.
 
-Searches across string-bearing analysis data.
+Single tool that searches across many scopes (strings, symbols, functions,
+comments, bookmarks, constants, data types, structures, imports/exports, etc.)
+in one or more programs. Query can be literal or regex; scope and programPath
+narrow the search. Used for discovery when the user has a keyword or pattern
+but does not know which tool to call.
 """
 
 from __future__ import annotations
 
 import difflib
 import logging
+import os
 import re
 
-from typing import Any
+from contextlib import nullcontext
+from time import perf_counter
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from mcp import types
 
+from agentdecompile_cli.context import (
+    ProgramInfo,
+)
+from agentdecompile_cli.mcp_server.profiling import ProfileCapture
 from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_bookmarks,
     collect_comments,
@@ -26,6 +37,7 @@ from agentdecompile_cli.mcp_server.providers._collectors import (
     collect_structure_fields,
     collect_structures,
     collect_symbols,
+    collect_vtable_candidates,
 )
 from agentdecompile_cli.mcp_server.session_context import (
     SESSION_CONTEXTS,
@@ -33,9 +45,46 @@ from agentdecompile_cli.mcp_server.session_context import (
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
+    ToolProviderManager,
     n,
 )
+from agentdecompile_cli.registry import Tool
 
+if TYPE_CHECKING:
+    from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        DecompileResults as GhidraDecompileResults,
+        DecompiledFunction as GhidraDecompiledFunction,
+    )
+    from ghidra.app.decompiler.component import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401 # noqa: F401
+        Decompiler as GhidraDecompiler,
+    )
+    from ghidra.framework.model import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401 # noqa: F401
+        DomainFile as GhidraDomainFile,
+        DomainFolder as GhidraDomainFolder,
+        ProjectData as GhidraProjectData,
+    )
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        AddressSetView as GhidraAddressSetView,
+    )
+    from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Category as GhidraCategory,
+        DataType as GhidraDataType,
+        DataTypeManager as GhidraDataTypeManager,
+        StringDataInstance as GhidraStringDataInstance,
+        Structure as GhidraStructure,
+    )
+    from ghidra.program.model.lang import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        LanguageDescription as GhidraLanguageDescription,
+        Processor as GhidraProcessor,
+    )
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        InstructionIterator as GhidraInstructionIterator,
+        Listing as GhidraListing,
+        Program as GhidraProgram,
+    )
+    from ghidra.program.util import DefaultLanguageService as GhidraDefaultLanguageService  # pyright: ignore[reportMissingImports, reportMissingModuleSource]  # noqa: F401
 logger = logging.getLogger(__name__)
 
 _REGEX_HINT = re.compile(r"[\[\]\\(){}|*+?^$]")
@@ -43,6 +92,10 @@ _REGEX_HINT = re.compile(r"[\[\]\\(){}|*+?^$]")
 # Detects patterns that look like file extensions (e.g., ".sav", ".exe", ".dll")
 # where the dot should be treated literally, not as a regex wildcard.
 _FILE_EXTENSION_PATTERN = re.compile(r"^\.[a-zA-Z0-9]{1,10}$")
+_EXPENSIVE_SCOPES: frozenset[str] = frozenset({"decompilation", "disassembly"})
+_MAX_FUZZY_FULL_TEXT_CHARS = 512
+_MAX_FUZZY_SEGMENT_CHARS = 240
+_MAX_FUZZY_SEGMENTS = 48
 _COMMENT_TYPES: tuple[tuple[str, int], ...] = (
     ("eol", 0),
     ("pre", 1),
@@ -68,6 +121,7 @@ _ALL_SCOPES: tuple[str, ...] = (
     "imports",  # imported/external symbol names
     "namespaces",  # namespace symbol names
     "strings",  # defined string values
+    "vtables",  # discovered vtable-like defined data
     "structure_fields",  # structure field names/types/comments
     "structures",  # structure names/descriptions
     "symbols",  # all symbol names
@@ -80,16 +134,15 @@ _OPTIONAL_SCOPES: tuple[str, ...] = (
 
 
 class SearchEverythingToolProvider(ToolProvider):
-    HANDLERS = {
-        "searcheverything": "_handle",
-        "globalsearch": "_handle",
-        "searchanything": "_handle",
-    }
+    HANDLERS = {"searcheverything": "_handle"}
+    _TEXT_MATCH_MODES: ClassVar[frozenset[str]] = frozenset({"auto", "regex", "fuzzy"})
+    _LEGACY_CONSTANT_MODES: ClassVar[frozenset[str]] = frozenset({"specific", "range", "common"})
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider.list_tools")
         return [
             types.Tool(
-                name="search-everything",
+                name=Tool.SEARCH_EVERYTHING.value,
                 description="CALL THIS TOOL FIRST FOR DISCOVERY/LOOKUP TASKS. UNIFIED SEARCH ACROSS MOST STRING-BEARING ANALYSIS DATA. Pass ALL related search terms as a 'queries' array in ONE call instead of calling this tool multiple times with individual keywords.",
                 inputSchema={
                     "type": "object",
@@ -115,19 +168,22 @@ class SearchEverythingToolProvider(ToolProvider):
                                 {"type": "array", "items": {"type": "string"}},
                             ],
                         },
-                        "query": {"type": "string", "description": "Single search term or pattern. PREFER queries (array) over this when you have multiple terms — do NOT call this tool repeatedly with individual keywords."},
+                        "query": {
+                            "type": "string",
+                            "description": "Single search term or pattern. PREFER queries (array) over this when you have multiple terms — do NOT call this tool repeatedly with individual keywords.",
+                        },
                         "queries": {
                             "oneOf": [
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ],
-                            "description": "BATCH multiple search terms in ONE call instead of calling this tool repeatedly. E.g. [\"SaveGame\", \"LoadGame\", \".sav\", \"SAVEGAME\"] searches all at once. Deduplication and ranking are automatic.",
+                            "description": 'BATCH multiple search terms in ONE call instead of calling this tool repeatedly. E.g. ["SaveGame", "LoadGame", ".sav", "SAVEGAME"] searches all at once. Deduplication and ranking are automatic.',
                         },
                         "mode": {
                             "type": "string",
-                            "enum": ["auto", "literal", "regex", "fuzzy"],
+                            "enum": ["auto", "regex", "fuzzy"],
                             "default": "auto",
-                            "description": "Match strategy. 'auto' detects regex chars and falls back to substring — WARNING: can produce false positives (e.g. '.sav' matches 'handleScreenSaver'). Use 'literal' to force exact substring matching (required for file extensions like '.sav', '.exe', or identifiers with dots). Use 'regex' to write an explicit anchored pattern. Use 'fuzzy' for approximate/similarity matching.",
+                            "description": "Match strategy. 'auto' handles normal exact-substring matching by default and only treats obvious regex input as regex — WARNING: auto can still produce false positives for regex-like text such as '.sav'. Use 'regex' to write an explicit anchored pattern. Use 'fuzzy' for approximate/similarity matching.",
                         },
                         "scopes": {
                             "type": "array",
@@ -136,11 +192,23 @@ class SearchEverythingToolProvider(ToolProvider):
                         },
                         "caseSensitive": {"type": "boolean", "default": False, "description": "Case-sensitive matching."},
                         "similarityThreshold": {"type": "number", "default": 0.7, "description": "Minimum fuzzy score (0-1)."},
-                        "limit": {"type": "integer", "default": 100, "description": "Max results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Total number of results to return across all scopes. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
-                        "perScopeLimit": {"type": "integer", "default": 300, "description": "Max matches per scope before global pagination."},
-                        "maxFunctionsScan": {"type": "integer", "default": 500, "description": "Function scan cap for expensive scopes."},
-                        "maxInstructionsScan": {"type": "integer", "default": 200000, "description": "Instruction scan cap for disassembly scope."},
+                        "perScopeLimit": {
+                            "type": "integer",
+                            "default": 300,
+                            "description": "Number of matches per individual scope (e.g. functions, strings, comments). Typical values are 200–500. Do not reduce this below 100 unless you have a specific reason.",
+                        },
+                        "maxFunctionsScan": {
+                            "type": "integer",
+                            "default": 500,
+                            "description": "Number of functions to scan in expensive scopes (e.g. decompiled-code search). Typical values are 500–5000. Do not set this below 200 unless the binary is tiny or the user requests a quick scan.",
+                        },
+                        "maxInstructionsScan": {
+                            "type": "integer",
+                            "default": 200000,
+                            "description": "Number of assembly instructions to scan when searching disassembly. Typical values are 100 000–500 000. Do not set this below 50 000 unless the user explicitly wants a shallow scan.",
+                        },
                         "decompileTimeout": {"type": "integer", "default": 10, "description": "Decompiler timeout (seconds) per function."},
                         "groupByFunction": {"type": "boolean", "default": True, "description": "When true, merges function-centric results into grouped entries."},
                     },
@@ -150,14 +218,13 @@ class SearchEverythingToolProvider(ToolProvider):
         ]
 
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._handle")
+        constant_request = self._collect_legacy_constant_request(args)
         queries = self._collect_queries(args)
-        if not queries:
+        if not queries and constant_request is None:
             raise ValueError("query or queries is required")
 
-        mode = self._get_str(args, "mode", "searchmode", default="auto")
-        mode_n = n(mode)
-        if mode_n not in {"auto", "literal", "regex", "fuzzy"}:
-            raise ValueError("mode must be one of: auto, literal, regex, fuzzy")
+        mode_n = self._resolve_text_match_mode(args, constant_request)
 
         case_sensitive = self._get_bool(args, "casesensitive", default=False)
         threshold_raw = self._get(args, "similaritythreshold", "threshold", default=0.7)
@@ -168,139 +235,353 @@ class SearchEverythingToolProvider(ToolProvider):
         threshold = max(0.0, min(1.0, threshold))
 
         offset, limit = self._get_pagination_params(args, default_limit=100)
-        per_scope_limit = self._get_int(args, "perscopelimit", "scope_limit", default=300)
-        max_functions_scan = self._get_int(args, "maxfunctionsscan", "maxfunctions", default=500)
-        max_instructions_scan = self._get_int(args, "maxinstructionsscan", "maxinstructions", default=200000)
-        decompile_timeout = self._get_int(args, "decompiletimeout", "timeout", default=10)
+        per_scope_limit = self._get_int(args, "perscopelimit", "scope_limit", default=300) or 300
+        max_functions_scan = self._get_int(args, "maxfunctionsscan", "maxfunctions", default=500) or 500
+        max_instructions_scan = self._get_int(args, "maxinstructionsscan", "maxinstructions", default=200000) or 200000
+        samples_per_constant = self._get_int(args, "samplesperconstant", default=5) or 5
+        decompile_timeout = self._get_int(args, "decompiletimeout", "timeout", default=10) or 10
         group_by_function = self._get_bool(args, "groupbyfunction", default=True)
-        scopes = self._collect_scopes(args)
-
-        compiled = self._compile_regexes(queries, mode_n, case_sensitive)
-
-        target_programs, target_warnings = await self._resolve_target_programs(args)
-        if not target_programs:
-            raise ValueError("No target programs found. Open a program, pass programPath/programName/binaryName, or ensure project programs are available.")
-
-        all_results: list[dict[str, Any]] = []
-        warnings: list[str] = list(target_warnings)
-
-        for target in target_programs:
-            program_key = str(target.get("programKey", ""))
-            program = target.get("program")
-            if program is None:
-                continue
-            for scope in scopes:
-                try:
-                    scoped = self._search_scope(
-                        scope=scope,
-                        program=program,
-                        queries=queries,
-                        mode=mode_n,
-                        case_sensitive=case_sensitive,
-                        threshold=threshold,
-                        compiled_regexes=compiled,
-                        per_scope_limit=per_scope_limit,
-                        max_functions_scan=max_functions_scan,
-                        max_instructions_scan=max_instructions_scan,
-                        decompile_timeout=decompile_timeout,
-                    )
-                    for row in scoped:
-                        row.setdefault("program", program_key)
-                    all_results.extend(scoped)
-                except Exception as e:
-                    warnings.append(f"{program_key or '<active>'}:{scope}: {e}")
-
-        all_results = [self._attach_next_tools(item) for item in all_results]
-        if group_by_function:
-            all_results = self._group_function_results(all_results)
-
-        all_results.sort(key=lambda item: (float(item.get("score", 0.0)), str(item.get("scope", ""))), reverse=True)
-        paginated, _has_more = self._paginate_results(all_results, offset, limit)
-        return self._create_paginated_response(
-            paginated,
-            offset,
-            limit,
-            total=len(all_results),
-            mode="search",
-            scopes=scopes,
+        scopes = self._collect_scopes(args, prefer_constants_only=constant_request is not None)
+        explicit_scopes_requested = bool(self._get_list(args, "scopes", "scope", "domains", "sources", "types"))
+        capture_ctx = self._maybe_profile_capture(
+            args,
             queries=queries,
-            targetPrograms=[str(tp.get("programKey", "")) for tp in target_programs],
-            searchMode=mode_n,
-            caseSensitive=case_sensitive,
-            similarityThreshold=threshold,
-            groupByFunction=group_by_function,
-            warnings=warnings,
+            scopes=scopes,
+            limit=limit,
+            per_scope_limit=per_scope_limit,
+            max_functions_scan=max_functions_scan,
+            max_instructions_scan=max_instructions_scan,
+            decompile_timeout=decompile_timeout,
         )
 
-    async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-        warnings: list[str] = []
-        requested_program_keys = self._collect_requested_program_keys(args)
+        with capture_ctx as capture:
+            try:
+                compiled: dict[str, re.Pattern[str]] = self._compile_regexes(queries, mode_n, case_sensitive)
 
-        session_id = get_current_mcp_session_id()
+                target_programs, target_warnings, resolution_meta = await self._resolve_target_programs(args)
+                if not target_programs:
+                    raise ValueError("No target programs found. Open a program, pass programPath/programName/binaryName, or ensure project programs are available.")
+
+                if capture is not None:
+                    capture.add_metadata(
+                        targetProgramCount=len(target_programs),
+                        targetPrograms=[str(tp.get("programKey", "")) for tp in target_programs],
+                        explicitScopesRequested=explicit_scopes_requested,
+                    )
+
+                all_results: list[dict[str, Any]] = []
+                warnings: list[str] = list(target_warnings)
+                scope_diagnostics: list[dict[str, Any]] = []
+                requested_result_count = max(offset + limit, 1)
+                ordered_scopes = self._prioritize_scopes(scopes)
+
+                for target in target_programs:
+                    program_key = str(target.get("programKey", ""))
+                    program: GhidraProgram | None = target.get("program")
+                    program_info: ProgramInfo | None = target.get("programInfo")
+                    if program is None:
+                        continue
+                    for scope in ordered_scopes:
+                        if self._should_skip_expensive_scope(scope, explicit_scopes_requested, len(all_results), requested_result_count):
+                            diagnostic = {
+                                "scope": scope,
+                                "program": program_key,
+                                "skipped": True,
+                                "reason": f"Skipped expensive default scope after collecting {len(all_results)} results from cheaper scopes",
+                            }
+                            scope_diagnostics.append(diagnostic)
+                            warnings.append(f"{program_key or '<active>'}:{scope}: {diagnostic['reason']}")
+                            continue
+                        try:
+                            scoped, diagnostic = self._search_scope(
+                                scope=scope,
+                                program=program,
+                                program_info=program_info,
+                                queries=queries,
+                                mode=mode_n,
+                                case_sensitive=case_sensitive,
+                                threshold=threshold,
+                                compiled_regexes=compiled,
+                                per_scope_limit=per_scope_limit,
+                                constant_request=constant_request,
+                                max_functions_scan=max_functions_scan,
+                                max_instructions_scan=max_instructions_scan,
+                                samples_per_constant=samples_per_constant,
+                                decompile_timeout=decompile_timeout,
+                            )
+                            if diagnostic is not None:
+                                diagnostic.setdefault("program", program_key)
+                                scope_diagnostics.append(diagnostic)
+                                warning = self._scope_diagnostic_warning(program_key, diagnostic)
+                                if warning:
+                                    warnings.append(warning)
+                            for row in scoped:
+                                row.setdefault("program", program_key)
+                            all_results.extend(scoped)
+                        except Exception as e:
+                            warnings.append(f"{program_key or '<active>'}:{scope}: {e}")
+
+                all_results = [self._attach_next_tools(item) for item in all_results]
+                if group_by_function:
+                    all_results = self._group_function_results(all_results)
+
+                all_results.sort(key=lambda item: (float(item.get("score", 0.0)), str(item.get("scope", ""))), reverse=True)
+                if capture is not None:
+                    capture.add_metadata(
+                        resultCount=len(all_results),
+                        warningCount=len(warnings),
+                        scopeDiagnostics=scope_diagnostics,
+                        requestOutcome="success",
+                    )
+                paginated, _has_more = self._paginate_results(all_results, offset, limit)
+                return self._create_paginated_response(
+                    paginated,
+                    offset,
+                    limit,
+                    total=len(all_results),
+                    mode="search",
+                    scopes=scopes,
+                    queries=queries,
+                    targetProgramCount=len(target_programs),
+                    requestedProgramCount=resolution_meta.get("requestedProgramCount"),
+                    projectProgramCount=resolution_meta.get("projectProgramCount"),
+                    targetPrograms=[str(tp.get("programKey", "")) for tp in target_programs],
+                    skippedProgramCount=len(resolution_meta.get("skippedPrograms", [])),
+                    skippedPrograms=resolution_meta.get("skippedPrograms", []),
+                    usedProjectInventory=bool(resolution_meta.get("usedProjectInventory")),
+                    usedActiveFallback=bool(resolution_meta.get("usedActiveFallback")),
+                    searchMode=mode_n,
+                    caseSensitive=case_sensitive,
+                    similarityThreshold=threshold,
+                    legacyConstantMode=constant_request.get("mode") if constant_request else None,
+                    groupByFunction=group_by_function,
+                    warnings=warnings,
+                    scopeDiagnostics=scope_diagnostics,
+                )
+            except BaseException as exc:
+                if capture is not None:
+                    capture.add_metadata(
+                        requestOutcome="cancelled" if exc.__class__.__name__ == "CancelledError" else "error",
+                        requestErrorType=exc.__class__.__name__,
+                        requestError=str(exc),
+                    )
+                raise
+
+    def _maybe_profile_capture(
+        self,
+        args: dict[str, Any],
+        *,
+        queries: list[str],
+        scopes: list[str],
+        limit: int,
+        per_scope_limit: int,
+        max_functions_scan: int,
+        max_instructions_scan: int,
+        decompile_timeout: int,
+    ):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._maybe_profile_capture")
+        enabled = str(os.getenv("AGENTDECOMPILE_PROFILE_SEARCH_EVERYTHING", "")).strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return nullcontext(None)
+        target = ",".join(self._collect_requested_program_keys(args)[:5])
+        return ProfileCapture(
+            "search-everything",
+            target=target,
+            metadata={
+                "queries": queries,
+                "scopes": scopes,
+                "limit": limit,
+                "perScopeLimit": per_scope_limit,
+                "maxFunctionsScan": max_functions_scan,
+                "maxInstructionsScan": max_instructions_scan,
+                "decompileTimeout": decompile_timeout,
+            },
+        )
+
+    def _prioritize_scopes(self, scopes: list[str]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._prioritize_scopes")
+        cheap = [scope for scope in scopes if scope not in _EXPENSIVE_SCOPES]
+        expensive = [scope for scope in scopes if scope in _EXPENSIVE_SCOPES]
+        return cheap + expensive
+
+    def _should_skip_expensive_scope(
+        self,
+        scope: str,
+        explicit_scopes_requested: bool,
+        current_result_count: int,
+        requested_result_count: int,
+    ) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._should_skip_expensive_scope")
+        return (not explicit_scopes_requested) and scope in _EXPENSIVE_SCOPES and current_result_count >= requested_result_count
+
+    def _scope_diagnostic_warning(self, program_key: str, diagnostic: dict[str, Any]) -> str | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._scope_diagnostic_warning")
+        if diagnostic.get("skipped"):
+            return None
+
+        scope = str(diagnostic.get("scope", ""))
+        timed_out = int(diagnostic.get("timedOutCount", 0) or 0)
+        cancelled = int(diagnostic.get("cancelledCount", 0) or 0)
+        failed = int(diagnostic.get("failedCount", 0) or 0)
+        if scope == "decompilation" and (timed_out or cancelled or failed):
+            details = [
+                f"scannedFunctions={int(diagnostic.get('scannedFunctions', 0) or 0)}",
+                f"timedOut={timed_out}",
+                f"cancelled={cancelled}",
+                f"failed={failed}",
+            ]
+            return f"{program_key or '<active>'}:{scope}: {' '.join(details)}"
+        return None
+
+    def _resolve_text_match_mode(self, args: dict[str, Any], constant_request: dict[str, Any] | None) -> str:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_text_match_mode")
+        explicit_search_mode = self._get_str(args, "searchmode", default="")
+        if explicit_search_mode:
+            normalized = n(explicit_search_mode)
+            if constant_request is not None and normalized in self._LEGACY_CONSTANT_MODES:
+                return "auto"
+            if normalized == "semantic":
+                return "fuzzy"
+            if normalized == "literal":
+                return "auto"
+            if normalized in self._TEXT_MATCH_MODES:
+                return normalized
+            raise ValueError("searchMode must be one of: semantic, auto, regex, fuzzy")
+
+        explicit_mode = self._get_str(args, "mode", default="auto")
+        normalized_mode = n(explicit_mode)
+        if normalized_mode == "literal":
+            return "auto"
+        if normalized_mode in self._TEXT_MATCH_MODES:
+            return normalized_mode
+        if constant_request is not None:
+            return "auto"
+        raise ValueError("mode must be one of: auto, regex, fuzzy")
+
+    def _collect_legacy_constant_request(self, args: dict[str, Any]) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_legacy_constant_request")
+        explicit_mode = n(self._get_str(args, "mode", default=""))
+        has_numeric_args = any(self._get(args, key) is not None for key in ("value", "minvalue", "maxvalue", "topn", "includesmallvalues"))
+        if explicit_mode not in self._LEGACY_CONSTANT_MODES and not has_numeric_args:
+            return None
+
+        mode = explicit_mode if explicit_mode in self._LEGACY_CONSTANT_MODES else "specific"
+        request: dict[str, Any] = {
+            "mode": mode,
+            "value": self._get_int(args, "value", default=0),
+            "minValue": self._get_int(args, "minvalue", default=0),
+            "maxValue": self._get_int(args, "maxvalue", default=0xFFFFFFFF),
+            "includeSmallValues": self._get_bool(args, "includesmallvalues", default=False),
+            "topN": self._get_int(args, "topn", default=0),
+        }
+        if mode == "specific" and self._get(args, "value") is None:
+            raise ValueError("value is required when mode is specific")
+        if mode == "range" and (self._get(args, "minvalue") is None or self._get(args, "maxvalue") is None):
+            raise ValueError("minValue and maxValue are required when mode is range")
+        return request
+
+    async def _resolve_target_programs(self, args: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_target_programs")
+        warnings: list[str] = []
+        requested_program_keys: list[str] = self._collect_requested_program_keys(args)
+
+        session_id: str = get_current_mcp_session_id()
         targets: list[dict[str, Any]] = []
         seen: set[str] = set()
+        skipped_programs: list[dict[str, str]] = []
+        project_paths: list[str] = []
+        candidate_program_keys: list[str] = []
+        used_active_fallback = False
 
         if requested_program_keys:
-            for key in requested_program_keys:
-                info = SESSION_CONTEXTS.get_program_info(session_id, key)
+            candidate_program_keys = list(requested_program_keys)
+            for key in candidate_program_keys:
+                info: ProgramInfo | None = SESSION_CONTEXTS.get_program_info(session_id, key)
+                activation_error = ""
                 if info is None and self._manager is not None:
                     try:
                         info = await self._manager._activate_requested_program(session_id, key)
                     except Exception as e:
+                        activation_error = str(e)
                         warnings.append(f"program '{key}': {e}")
-                if info is None or getattr(info, "program", None) is None:
+                if info is None or info.program is None:
                     warnings.append(f"program '{key}': not found")
+                    skipped_programs.append({"program": str(key), "reason": activation_error or "not found"})
                     continue
                 name = str(key)
                 if name in seen:
                     continue
                 seen.add(name)
-                targets.append({"programKey": name, "program": info.program})
-            return targets, warnings
+                targets.append({"programKey": name, "program": info.program, "programInfo": info})
+            return targets, warnings, {
+                "requestedProgramCount": len(candidate_program_keys),
+                "projectProgramCount": None,
+                "skippedPrograms": skipped_programs,
+                "usedProjectInventory": False,
+                "usedActiveFallback": False,
+            }
 
         # No explicit program target: search all programs in project if available.
-        project_paths = self._collect_project_program_paths()
+        project_paths = self._collect_project_program_paths(session_id=session_id)
         if project_paths and self._manager is not None:
-            for path in project_paths:
+            candidate_program_keys = list(project_paths)
+            for path in candidate_program_keys:
                 info = SESSION_CONTEXTS.get_program_info(session_id, path)
+                activation_error = ""
                 if info is None:
                     try:
                         info = await self._manager._activate_requested_program(session_id, path)
                     except Exception as e:
+                        activation_error = str(e)
                         warnings.append(f"program '{path}': {e}")
-                if info is None or getattr(info, "program", None) is None:
+                if info is None or info.program is None:
+                    skipped_programs.append({"program": str(path), "reason": activation_error or "not activated"})
                     continue
                 key = str(path)
                 if key in seen:
                     continue
                 seen.add(key)
-                targets.append({"programKey": key, "program": info.program})
+                targets.append({"programKey": key, "program": info.program, "programInfo": info})
 
         if targets:
-            return targets, warnings
+            return targets, warnings, {
+                "requestedProgramCount": len(candidate_program_keys),
+                "projectProgramCount": len(project_paths) or None,
+                "skippedPrograms": skipped_programs,
+                "usedProjectInventory": bool(project_paths),
+                "usedActiveFallback": False,
+            }
 
         # Fallback to active session program.
-        active_info = SESSION_CONTEXTS.get_active_program_info(session_id) or self.program_info
-        if active_info is not None and getattr(active_info, "program", None) is not None:
-            active_name = self._get_str(args, "programpath", "programname", "binaryname", default="<active>") or "<active>"
-            targets.append({"programKey": active_name, "program": active_info.program})
+        active_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id) or self.program_info
+        if active_info is not None and active_info.program is not None:
+            active_name: str = self._get_str(args, "programpath", "programname", "binaryname", default="<active>") or "<active>"
+            targets.append({"programKey": active_name, "program": active_info.program, "programInfo": active_info})
+            used_active_fallback = True
 
-        return targets, warnings
+        return targets, warnings, {
+            "requestedProgramCount": len(candidate_program_keys) or (1 if used_active_fallback else 0),
+            "projectProgramCount": len(project_paths) or None,
+            "skippedPrograms": skipped_programs,
+            "usedProjectInventory": bool(project_paths),
+            "usedActiveFallback": used_active_fallback,
+        }
 
     def _collect_requested_program_keys(self, args: dict[str, Any]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_requested_program_keys")
         keys: list[str] = []
 
         for alias in ("programpath", "programname", "binaryname"):
-            raw_list = self._get_list(args, alias)
+            raw_list: list[Any] = self._get_list(args, alias) or []
             if raw_list:
                 for value in raw_list:
                     if value is None:
                         continue
-                    item = str(value).strip()
+                    item: str = str(value).strip()
                     if item:
                         keys.append(item)
 
-            raw_single = self._get(args, alias)
+            raw_single: Any = self._get(args, alias)
             if isinstance(raw_single, str):
                 for part in raw_single.split(","):
                     item = part.strip()
@@ -310,19 +591,40 @@ class SearchEverythingToolProvider(ToolProvider):
         unique: list[str] = []
         seen: set[str] = set()
         for key in keys:
-            nk = key.lower()
+            nk: str = key.lower()
             if nk in seen:
                 continue
             seen.add(nk)
             unique.append(key)
         return unique
 
-    def _collect_project_program_paths(self) -> list[str]:
-        manager = getattr(self, "_manager", None)
+    def _collect_project_program_paths(self, session_id: str | None = None) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_project_program_paths")
+        active_session_id = session_id or get_current_mcp_session_id()
+        session_binaries = SESSION_CONTEXTS.get_project_binaries(active_session_id, fallback_to_latest=False)
+        session_paths: list[str] = []
+        for item in session_binaries:
+            if not isinstance(item, dict):
+                continue
+            pathname = str(item.get("path") or item.get("programPath") or item.get("name") or "")
+            if pathname:
+                session_paths.append(pathname)
+        if session_paths:
+            unique_session_paths: list[str] = []
+            seen_session_paths: set[str] = set()
+            for path in session_paths:
+                key = path.strip().lower()
+                if not key or key in seen_session_paths:
+                    continue
+                seen_session_paths.add(key)
+                unique_session_paths.append(path)
+            return unique_session_paths
+
+        manager: ToolProviderManager | None = self._manager
         if manager is None:
             return []
 
-        project_data = None
+        project_data: GhidraProjectData | None = None
         try:
             project_data = manager._resolve_project_data()
         except Exception:
@@ -331,21 +633,20 @@ class SearchEverythingToolProvider(ToolProvider):
             return []
 
         try:
-            root = project_data.getRootFolder()
+            root: GhidraDomainFolder | None = project_data.getRootFolder()
         except Exception:
             return []
 
         paths: list[str] = []
-        stack = [root]
+        stack: list[GhidraDomainFolder] = [root]
         while stack:
             folder = stack.pop()
             try:
+                domain_file: GhidraDomainFile | None = None
                 for domain_file in self._iter_items(folder.getFiles() or []):
-                    pathname = ""
-                    if hasattr(domain_file, "getPathname"):
-                        pathname = str(domain_file.getPathname())
-                    if not pathname:
-                        pathname = str(domain_file.getName())
+                    if domain_file is None:
+                        continue
+                    pathname = str(domain_file.getPathname() or "")
                     if pathname:
                         paths.append(pathname)
                 for sub_folder in self._iter_items(folder.getFolders() or []):
@@ -364,19 +665,22 @@ class SearchEverythingToolProvider(ToolProvider):
         return unique
 
     def _collect_queries(self, args: dict[str, Any]) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_queries")
         queries: list[str] = []
-        raw_list = self._get_list(args, "queries", "patterns", "terms") or []
+        raw_list: list[Any] = self._get_list(args, "queries", "patterns", "terms") or []
         for value in raw_list:
             if isinstance(value, str) and value.strip():
                 queries.append(value.strip())
 
-        raw_queries_csv = self._get_str(args, "queries")
+        raw_queries_csv: str | None = self._get_str(args, "queries")
         if raw_queries_csv and not raw_list:
             for value in raw_queries_csv.split(","):
+                if value is None:
+                    continue
                 if value.strip():
                     queries.append(value.strip())
 
-        single = self._get_str(
+        single: str | None = self._get_str(
             args,
             "query",
             "pattern",
@@ -398,19 +702,22 @@ class SearchEverythingToolProvider(ToolProvider):
         unique: list[str] = []
         seen: set[str] = set()
         for q in queries:
-            key = q if self._get_bool(args, "casesensitive", default=False) else q.lower()
+            key: str = q if self._get_bool(args, "casesensitive", default=False) else q.lower()
             if key in seen:
                 continue
             seen.add(key)
             unique.append(q)
         return unique
 
-    def _collect_scopes(self, args: dict[str, Any]) -> list[str]:
-        raw_scopes = self._get_list(args, "scopes", "scope", "domains", "sources", "types")
+    def _collect_scopes(self, args: dict[str, Any], prefer_constants_only: bool = False) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_scopes")
+        raw_scopes: list[Any] = self._get_list(args, "scopes", "scope", "domains", "sources", "types") or []
         if not raw_scopes:
+            if prefer_constants_only:
+                return ["constants"]
             return list(_ALL_SCOPES)
 
-        aliases = {
+        aliases: dict[str, str] = {
             "all": "all",
             "everything": "all",
             "functions": "functions",
@@ -452,6 +759,10 @@ class SearchEverythingToolProvider(ToolProvider):
             "class": "classes",
             "strings": "strings",
             "string": "strings",
+            "vtables": "vtables",
+            "vtable": "vtables",
+            "vftables": "vtables",
+            "vftable": "vtables",
             "datatypes": "data_types",
             "datatype": "data_types",
             "types": "data_types",
@@ -470,7 +781,7 @@ class SearchEverythingToolProvider(ToolProvider):
 
         resolved: list[str] = []
         for scope in raw_scopes:
-            key = aliases.get(n(str(scope)), "")
+            key: str = aliases.get(n(str(scope)), "")
             if key == "all":
                 return list(_ALL_SCOPES)
             if key and key not in resolved:
@@ -478,13 +789,21 @@ class SearchEverythingToolProvider(ToolProvider):
 
         return resolved or list(_ALL_SCOPES)
 
-    def _compile_regexes(self, queries: list[str], mode: str, case_sensitive: bool) -> dict[str, re.Pattern[str]]:
+    def _compile_regexes(
+        self,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+    ) -> dict[str, re.Pattern[str]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._compile_regexes")
         if mode not in {"regex", "auto"}:
             return {}
 
-        flags = 0 if case_sensitive else re.IGNORECASE
+        flags: int = 0 if case_sensitive else re.IGNORECASE
         compiled: dict[str, re.Pattern[str]] = {}
         for q in queries:
+            if q is None:
+                continue
             if mode == "regex":
                 # Explicit regex mode: compile as-is
                 try:
@@ -508,63 +827,82 @@ class SearchEverythingToolProvider(ToolProvider):
         self,
         *,
         scope: str,
-        program: Any,
+        program: GhidraProgram,
+        program_info: ProgramInfo | None,
         queries: list[str],
         mode: str,
         case_sensitive: bool,
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
         per_scope_limit: int,
+        constant_request: dict[str, Any] | None,
         max_functions_scan: int,
         max_instructions_scan: int,
+        samples_per_constant: int,
         decompile_timeout: int,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Dispatch to the _search_* method for the given scope; program-agnostic scopes (processors, project_files) omit program."""
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_scope")
         if scope == "functions":
-            return self._search_functions(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_functions(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "function_signatures":
-            return self._search_function_signatures(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_function_signatures(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "function_parameters":
-            return self._search_function_parameters(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_function_parameters(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "function_tags":
-            return self._search_tags(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_tags(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "bookmarks":
-            return self._search_bookmarks(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_bookmarks(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "comments":
-            return self._search_comments(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_comments(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "constants":
-            return self._search_constants(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_instructions_scan)
+            return self._search_constants(
+                program,
+                queries,
+                mode,
+                case_sensitive,
+                threshold,
+                compiled_regexes,
+                per_scope_limit,
+                max_instructions_scan,
+                samples_per_constant,
+                constant_request,
+            ), None
         if scope == "decompilation":
-            return self._search_decompilation(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, decompile_timeout)
+            return self._search_decompilation(program, program_info, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, decompile_timeout)
         if scope == "disassembly":
             return self._search_disassembly(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit, max_functions_scan, max_instructions_scan)
         if scope == "symbols":
-            return self._search_symbols(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_symbols(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "imports":
-            return self._search_imports(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_imports(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "exports":
-            return self._search_exports(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_exports(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "namespaces":
-            return self._search_namespaces(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_namespaces(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "classes":
-            return self._search_classes(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_classes(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "strings":
-            return self._search_strings(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_strings(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
+        if scope == "vtables":
+            return self._search_vtables(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "data_types":
-            return self._search_data_types(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_data_types(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "data_type_archives":
-            return self._search_data_type_archives(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_data_type_archives(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "structures":
-            return self._search_structures(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_structures(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "structure_fields":
-            return self._search_structure_fields(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_structure_fields(program, queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "processors":
-            return self._search_processors(queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
+            return self._search_processors(queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
         if scope == "project_files":
-            return self._search_project_files(queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit)
-        return []
+            return self._search_project_files(queries, mode, case_sensitive, threshold, compiled_regexes, per_scope_limit), None
+        return [], None
 
     @staticmethod
     def _iter_items(source: Any):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._iter_items")
         if source is None:
             return
         if hasattr(source, "hasNext") and hasattr(source, "next"):
@@ -573,6 +911,157 @@ class SearchEverythingToolProvider(ToolProvider):
             return
         for item in source:
             yield item
+
+    @staticmethod
+    def _has_concrete_address(value: str) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._has_concrete_address")
+        text = str(value or "").strip()
+        if not text:
+            return False
+        if text.upper() == "NO ADDRESS":
+            return False
+        return bool(re.fullmatch(r"(?:0x)?[0-9A-Fa-f]+", text))
+
+    def _resolve_address(self, program: GhidraProgram, value: str) -> Any | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._resolve_address")
+        text = str(value or "").strip()
+        if not self._has_concrete_address(text):
+            return None
+        try:
+            factory = program.getAddressFactory()
+        except Exception:
+            return None
+
+        candidates = [text]
+        if text.lower().startswith("0x"):
+            candidates.append(text[2:])
+        else:
+            candidates.append(f"0x{text}")
+
+        for candidate in candidates:
+            try:
+                address = factory.getAddress(candidate)
+                if address is not None:
+                    return address
+            except Exception:
+                continue
+        return None
+
+    def _collect_reference_summary(self, program: GhidraProgram, address_value: str, *, max_refs: int = 3) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_reference_summary")
+        address = self._resolve_address(program, address_value)
+        if address is None:
+            return {}
+
+        try:
+            ref_mgr = program.getReferenceManager()
+        except Exception:
+            return {}
+
+        fm = self._get_function_manager(program)
+        references: list[dict[str, str]] = []
+        total_count = 0
+        try:
+            if hasattr(ref_mgr, "getReferenceCountTo"):
+                total_count = int(ref_mgr.getReferenceCountTo(address))
+        except Exception:
+            total_count = 0
+
+        try:
+            for ref in self._iter_items(ref_mgr.getReferencesTo(address)):
+                if len(references) >= max_refs:
+                    break
+                from_addr = ref.getFromAddress()
+                function_name = ""
+                if fm is not None:
+                    try:
+                        func = fm.getFunctionContaining(from_addr)
+                        if func is not None:
+                            function_name = str(func.getName() or "")
+                    except Exception:
+                        function_name = ""
+                references.append(
+                    {
+                        "fromAddress": str(from_addr),
+                        "type": str(ref.getReferenceType()),
+                        "function": function_name,
+                    },
+                )
+        except Exception:
+            references = []
+
+        if total_count <= 0:
+            total_count = len(references)
+
+        if total_count <= 0 and not references:
+            return {"referenceCount": 0}
+        return {"referenceCount": total_count, "referencesPreview": references}
+
+    @staticmethod
+    def _collect_structure_field_preview(fields: list[dict[str, Any]], *, max_fields: int = 5) -> tuple[list[dict[str, Any]], str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._collect_structure_field_preview")
+        preview: list[dict[str, Any]] = []
+        preview_parts: list[str] = []
+        for field in fields[:max_fields]:
+            offset = int(field.get("offset", 0) or 0)
+            name = str(field.get("name", "") or f"field_{offset:x}")
+            field_type = str(field.get("type", "") or "?")
+            preview.append(
+                {
+                    "offset": offset,
+                    "name": name,
+                    "type": field_type,
+                    "comment": str(field.get("comment", "") or ""),
+                },
+            )
+            preview_parts.append(f"{name}@0x{offset:x}:{field_type}")
+        remaining = max(0, len(fields) - len(preview))
+        if remaining:
+            preview_parts.append(f"+{remaining} more")
+        return preview, ", ".join(preview_parts)
+
+    def _enrich_structure_match(self, program: GhidraProgram, struct: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._enrich_structure_match")
+        enriched = dict(row)
+        structure_obj = struct.get("structure")
+        if structure_obj is not None:
+            fields = collect_structure_fields(structure_obj)
+            preview_fields, preview_text = self._collect_structure_field_preview(fields)
+            enriched["fieldsPreview"] = preview_fields
+            enriched["fieldPreviewText"] = preview_text
+            enriched["fieldCount"] = len(fields)
+        else:
+            enriched["fieldCount"] = int(struct.get("numComponents", 0) or 0)
+        enriched.setdefault("addressNote", "Data type definition only; no concrete memory address for the type itself")
+        return enriched
+
+    def _enrich_class_match(self, program: GhidraProgram, sym: dict[str, Any], related_structures: dict[str, dict[str, Any]], row: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._enrich_class_match")
+        enriched = dict(row)
+        enriched["source"] = str(sym.get("source", ""))
+        enriched["isPrimary"] = bool(sym.get("isPrimary", False))
+        enriched["isExternalEntryPoint"] = bool(sym.get("isExternalEntryPoint", False))
+
+        class_name = str(sym.get("name", "") or "")
+        related = related_structures.get(class_name) or related_structures.get(class_name.rsplit("::", 1)[-1])
+        if related is not None:
+            enriched["relatedStructure"] = str(related.get("name", ""))
+            enriched["relatedStructureCategoryPath"] = str(related.get("categoryPath", ""))
+            enriched["relatedStructureLength"] = int(related.get("length", 0) or 0)
+            enriched["relatedStructureFieldCount"] = int(related.get("numComponents", 0) or 0)
+            structure_obj = related.get("structure")
+            if structure_obj is not None:
+                fields = collect_structure_fields(structure_obj)
+                preview_fields, preview_text = self._collect_structure_field_preview(fields)
+                enriched["relatedStructureFieldsPreview"] = preview_fields
+                enriched["relatedStructureFieldPreviewText"] = preview_text
+
+        address = str(sym.get("address", "") or "")
+        if self._has_concrete_address(address):
+            enriched.update(self._collect_reference_summary(program, address))
+        else:
+            enriched["addressNote"] = "Class namespace symbol has no concrete memory address"
+        return enriched
 
     def _match_text(
         self,
@@ -584,18 +1073,20 @@ class SearchEverythingToolProvider(ToolProvider):
         threshold: float,
         compiled_regexes: dict[str, re.Pattern[str]],
     ) -> dict[str, Any] | None:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._match_text")
         if not text:
             return None
 
-        cmp_text = text if case_sensitive else text.lower()
+        cmp_text: str = text if case_sensitive else text.lower()
+        fuzzy_candidates: list[str] | None = None
         best: dict[str, Any] | None = None
         for q in queries:
-            q_cmp = q if case_sensitive else q.lower()
-            kind = "literal"
-            score = 0.0
-            matched = False
+            q_cmp: str = q if case_sensitive else q.lower()
+            kind: str = "literal"
+            score: float = 0.0
+            matched: bool = False
 
-            pattern = compiled_regexes.get(q)
+            pattern: re.Pattern[str] | None = compiled_regexes.get(q)
             if pattern is not None:
                 if pattern.search(text):
                     matched = True
@@ -610,7 +1101,9 @@ class SearchEverythingToolProvider(ToolProvider):
                 score = 1.0
                 kind = "literal"
             elif mode in {"fuzzy", "auto"}:
-                similarity = difflib.SequenceMatcher(None, q_cmp, cmp_text).ratio()
+                if fuzzy_candidates is None:
+                    fuzzy_candidates = self._prepare_fuzzy_candidates(text, case_sensitive)
+                similarity = self._fuzzy_similarity(q_cmp, text, case_sensitive, prepared_candidates=fuzzy_candidates)
                 if similarity >= threshold:
                     matched = True
                     score = float(similarity)
@@ -621,50 +1114,170 @@ class SearchEverythingToolProvider(ToolProvider):
             candidate = {"query": q, "score": score, "matchType": kind}
             if best is None or candidate["score"] > best["score"]:
                 best = candidate
+                if float(candidate["score"]) >= 1.0:
+                    break
 
         return best
 
-    def _search_functions(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
-        functions = collect_functions(program, limit=per_scope_limit)
+    def _prepare_fuzzy_candidates(self, text: str, case_sensitive: bool) -> list[str]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._prepare_fuzzy_candidates")
+        if not text:
+            return []
+
+        if len(text) <= _MAX_FUZZY_FULL_TEXT_CHARS:
+            return [text if case_sensitive else text.lower()]
+
+        return [segment if case_sensitive else segment.lower() for segment in self._iter_fuzzy_segments(text)]
+
+    def _fuzzy_similarity(self, query: str, text: str, case_sensitive: bool, *, prepared_candidates: list[str] | None = None) -> float:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._fuzzy_similarity")
+        if not text:
+            return 0.0
+
+        candidates: list[str] = prepared_candidates if prepared_candidates is not None else self._prepare_fuzzy_candidates(text, case_sensitive)
+        if not candidates:
+            return 0.0
+        if len(candidates) == 1:
+            return float(difflib.SequenceMatcher(None, query, candidates[0]).ratio())
+
+        best = 0.0
+        for candidate in candidates:
+            similarity = float(difflib.SequenceMatcher(None, query, candidate).ratio())
+            if similarity > best:
+                best = similarity
+            if best >= 1.0:
+                break
+        return best
+
+    def _iter_fuzzy_segments(self, text: str):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._iter_fuzzy_segments")
+        seen: set[str] = set()
+        count = 0
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            segment = line[:_MAX_FUZZY_SEGMENT_CHARS]
+            if segment in seen:
+                continue
+            seen.add(segment)
+            yield segment
+            count += 1
+            if count >= _MAX_FUZZY_SEGMENTS:
+                return
+
+        if count == 0:
+            yield text[:_MAX_FUZZY_SEGMENT_CHARS]
+
+    def _extract_match_snippet(self, text: str, match: dict[str, Any], case_sensitive: bool) -> str:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._extract_match_snippet")
+        query = str(match.get("query", "") or "")
+        if not text:
+            return ""
+        if not query:
+            return text[:400]
+
+        haystack = text if case_sensitive else text.lower()
+        needle = query if case_sensitive else query.lower()
+        index = haystack.find(needle)
+        if index >= 0:
+            start = max(index - 120, 0)
+            end = min(index + len(query) + 240, len(text))
+            return text[start:end]
+
+        pattern = match.get("matchType") == "regex" and query
+        if pattern:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                compiled = re.compile(query, flags)
+                regex_match = compiled.search(text)
+                if regex_match is not None:
+                    start = max(regex_match.start() - 120, 0)
+                    end = min(regex_match.end() + 240, len(text))
+                    return text[start:end]
+            except re.error:
+                pass
+
+        return text[:400]
+
+    def _search_functions(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_functions")
+        functions: list[dict[str, Any]] = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
-            match = self._match_text(text=str(function.get("name", "")), queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            match: dict[str, Any] | None = self._match_text(
+                text=str(function.get("name", "")), queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            row = self._function_base_result(function)
+            row: dict[str, Any] = self._function_base_result(function)
             row.update({"scope": "functions", "resultType": "function", **match})
             results.append(row)
         return results
 
-    def _search_function_signatures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
-        functions = collect_functions(program, limit=per_scope_limit)
+    def _search_function_signatures(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_signatures")
+        functions: list[dict[str, Any]] = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
-            sig = str(function.get("signature", ""))
-            match = self._match_text(text=sig, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            sig: str = str(function.get("signature", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=sig, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            row = self._function_base_result(function)
+            row: dict[str, Any] = self._function_base_result(function)
             row.update({"scope": "function_signatures", "resultType": "function", **match})
             results.append(row)
         return results
 
-    def _search_function_parameters(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
-        functions = collect_functions(program, limit=per_scope_limit)
+    def _search_function_parameters(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_function_parameters")
+        functions: list[dict[str, Any]] = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
+            param: dict[str, Any]
             for param in list(function.get("parameters", [])):
                 if len(results) >= per_scope_limit:
                     return results
-                texts = [str(param.get("name", "") or ""), str(param.get("type", "") or "")]
+                texts: list[str] = [str(param.get("name", "") or ""), str(param.get("type", "") or "")]
                 best: dict[str, Any] | None = None
                 for txt in texts:
-                    match = self._match_text(text=txt, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                    match: dict[str, Any] | None = self._match_text(
+                        text=txt, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                    )
                     if match and (best is None or float(match["score"]) > float(best["score"])):
                         best = match
                 if not best:
                     continue
-                row = self._function_base_result(function)
+                row: dict[str, Any] = self._function_base_result(function)
                 row.update(
                     {
                         "scope": "function_parameters",
@@ -678,7 +1291,17 @@ class SearchEverythingToolProvider(ToolProvider):
                 results.append(row)
         return results
 
-    def _search_tags(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_tags(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_tags")
         functions = collect_functions(program, limit=per_scope_limit)
         results: list[dict[str, Any]] = []
         for function in functions:
@@ -693,12 +1316,22 @@ class SearchEverythingToolProvider(ToolProvider):
                 results.append(row)
         return results
 
-    def _search_bookmarks(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_bookmarks(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_bookmarks")
         results: list[dict[str, Any]] = []
         for bm in collect_bookmarks(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            candidates = [str(bm.get("comment", "")), str(bm.get("category", "")), str(bm.get("type", ""))]
+            candidates: list[str] = [str(bm.get("comment", "")), str(bm.get("category", "")), str(bm.get("type", ""))]
             best: dict[str, Any] | None = None
             for field_text in candidates:
                 match = self._match_text(text=field_text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
@@ -706,16 +1339,38 @@ class SearchEverythingToolProvider(ToolProvider):
                     best = match
             if not best:
                 continue
-            results.append({"scope": "bookmarks", "resultType": "bookmark", "address": str(bm.get("address", "")), "type": str(bm.get("type", "")), "category": str(bm.get("category", "")), "comment": str(bm.get("comment", "")), **best})
+            results.append(
+                {
+                    "scope": "bookmarks",
+                    "resultType": "bookmark",
+                    "address": str(bm.get("address", "")),
+                    "type": str(bm.get("type", "")),
+                    "category": str(bm.get("category", "")),
+                    "comment": str(bm.get("comment", "")),
+                    **best,
+                }
+            )
         return results
 
-    def _search_comments(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_comments(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_comments")
         results: list[dict[str, Any]] = []
         for comment in collect_comments(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            comment_text = str(comment.get("comment", ""))
-            match = self._match_text(text=comment_text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            comment_text: str = str(comment.get("comment", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=comment_text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
             results.append(
@@ -732,13 +1387,38 @@ class SearchEverythingToolProvider(ToolProvider):
             )
         return results
 
-    def _search_constants(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_instructions_scan: int) -> list[dict[str, Any]]:
-        constants, _instr_count = collect_constants(program, max_instructions=max_instructions_scan)
+    def _search_constants(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+        max_instructions_scan: int,
+        samples_per_constant: int,
+        constant_request: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_constants")
+        value_filter = self._build_constant_filter(constant_request)
+        constants, _instr_count = collect_constants(
+            program,
+            value_filter=value_filter,
+            max_instructions=max_instructions_scan,
+            samples_per_constant=samples_per_constant,
+        )
+        if constant_request is not None and constant_request.get("mode") == "common":
+            if not constant_request.get("includeSmallValues"):
+                constants = [item for item in constants if abs(int(item.get("value", 0))) >= 0x100]
+            top_n = int(constant_request.get("topN") or 0)
+            if top_n > 0:
+                constants = constants[:top_n]
         results: list[dict[str, Any]] = []
         for item in constants:
             if len(results) >= per_scope_limit:
                 break
-            fields = [str(item.get("hex", "")), str(item.get("value", ""))]
+            fields: list[str] = [str(item.get("hex", "")), str(item.get("value", ""))]
             best: dict[str, Any] | None = None
             for text in fields:
                 match = self._match_text(text=text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
@@ -746,109 +1426,296 @@ class SearchEverythingToolProvider(ToolProvider):
                     best = match
             if not best:
                 continue
-            results.append({"scope": "constants", "resultType": "constant", "value": int(item.get("value", 0)), "hex": str(item.get("hex", "")), "occurrences": int(item.get("occurrences", 0)), "samples": item.get("samples", []), **best})
+            results.append(
+                {
+                    "scope": "constants",
+                    "resultType": "constant",
+                    "value": int(item.get("value", 0)),
+                    "hex": str(item.get("hex", "")),
+                    "occurrences": int(item.get("occurrences", 0)),
+                    "samples": item.get("samples", []),
+                    **best,
+                }
+            )
         return results
 
-    def _search_decompilation(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, decompile_timeout: int) -> list[dict[str, Any]]:
+    @staticmethod
+    def _build_constant_filter(constant_request: dict[str, Any] | None):
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._build_constant_filter")
+        if constant_request is None:
+            return None
+        mode = str(constant_request.get("mode", "specific"))
+        if mode == "specific":
+            target = int(constant_request.get("value", 0))
+            return lambda value: value == target
+        if mode == "range":
+            min_value = int(constant_request.get("minValue", 0))
+            max_value = int(constant_request.get("maxValue", 0xFFFFFFFF))
+            return lambda value: min_value <= value <= max_value
+        return lambda value: True
+
+    def _search_decompilation(
+        self,
+        program: GhidraProgram,
+        program_info: ProgramInfo | None,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+        max_functions_scan: int,
+        decompile_timeout: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_decompilation")
         results: list[dict[str, Any]] = []
+        diagnostic: dict[str, Any] = {
+            "scope": "decompilation",
+            "scannedFunctions": 0,
+            "timedOutCount": 0,
+            "cancelledCount": 0,
+            "failedCount": 0,
+            "matches": 0,
+        }
+        started_at = perf_counter()
         try:
-            from ghidra.app.decompiler import DecompInterface, DecompileOptions  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
-            from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+            from ghidra.util.task import ConsoleTaskMonitor as GhidraConsoleTaskMonitor  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
 
-            fm = self._get_function_manager(program)
-            decomp = DecompInterface()
-            opts = DecompileOptions()
-            opts.grabFromProgram(program)
-            decomp.setOptions(opts)
-            decomp.openProgram(program)
-            monitor = ConsoleTaskMonitor()
+            from agentdecompile_cli.mcp_utils.decompiler_util import acquire_decompiler_for_program, get_decompiled_function_from_results
 
-            scanned = 0
-            for func in fm.getFunctions(True):
-                if scanned >= max_functions_scan or len(results) >= per_scope_limit:
-                    break
-                scanned += 1
-                try:
-                    dr = decomp.decompileFunction(func, decompile_timeout, monitor)
-                    if not dr or not dr.decompileCompleted():
+            fm: GhidraFunctionManager | None = self._get_function_manager(program)
+            if fm is None:
+                return results, diagnostic
+            monitor = GhidraConsoleTaskMonitor()
+            session_decompiler: GhidraDecompiler | None = None
+            if program_info is not None:
+                getter = getattr(program_info, "get_decompiler", None)
+                if callable(getter):
+                    try:
+                        session_decompiler = getter()
+                    except Exception:
+                        session_decompiler = getattr(program_info, "decompiler", None)
+                else:
+                    session_decompiler = getattr(program_info, "decompiler", None)
+            if session_decompiler is None:
+                session_decompiler = getattr(self.program_info, "decompiler", None)
+            with acquire_decompiler_for_program(session_decompiler, program) as lease:
+                diagnostic["reusedSessionDecompiler"] = bool(lease.reused_session)
+                func: GhidraFunction
+                for func in fm.getFunctions(True):
+                    if diagnostic["scannedFunctions"] >= max_functions_scan or len(results) >= per_scope_limit:
+                        break
+                    diagnostic["scannedFunctions"] += 1
+                    try:
+                        dr: GhidraDecompileResults | None = lease.decompiler.decompileFunction(func, decompile_timeout, monitor)
+                        if not dr or not dr.decompileCompleted():
+                            diagnostic["timedOutCount"] += int(self._result_flag(dr, "isTimedOut"))
+                            diagnostic["cancelledCount"] += int(self._result_flag(dr, "isCancelled"))
+                            diagnostic["failedCount"] += 1
+                            continue
+                        decompiled: GhidraDecompiledFunction | None = get_decompiled_function_from_results(dr)
+                        text = decompiled.getC() if decompiled else ""
+                        match = self._match_text(text=str(text), queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                        if not match:
+                            continue
+                        snippet = self._extract_match_snippet(str(text), match, case_sensitive)
+                        results.append(
+                            {
+                                "scope": "decompilation",
+                                "resultType": "decompiled_code",
+                                "function": str(func.getName()),
+                                "functionAddress": str(func.getEntryPoint()),
+                                "address": str(func.getEntryPoint()),
+                                "snippet": snippet,
+                                **match,
+                            }
+                        )
+                    except Exception:
+                        diagnostic["failedCount"] += 1
                         continue
-                    decompiled = dr.getDecompiledFunction()
-                    text = decompiled.getC() if decompiled else ""
-                    match = self._match_text(text=str(text), queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
-                    if not match:
-                        continue
-                    snippet = str(text)[:400]
-                    results.append({"scope": "decompilation", "resultType": "decompiled_code", "function": str(func.getName()), "functionAddress": str(func.getEntryPoint()), "address": str(func.getEntryPoint()), "snippet": snippet, **match})
-                except Exception:
-                    continue
-            decomp.dispose()
         except Exception as e:
-            logger.warning(f"Decompilation scope failed: {e}")
-        return results
+            logger.warning("Decompilation scope failed: %s", e)
+            diagnostic["error"] = str(e)
+        diagnostic["matches"] = len(results)
+        diagnostic["elapsedMs"] = int((perf_counter() - started_at) * 1000)
+        return results, diagnostic
 
-    def _search_disassembly(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int, max_functions_scan: int, max_instructions_scan: int) -> list[dict[str, Any]]:
-        fm = self._get_function_manager(program)
-        listing = self._get_listing(program)
+    def _result_flag(self, result: GhidraDecompileResults | None, method_name: str) -> bool:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._result_flag")
+        if result is None:
+            return False
+        try:
+            value = getattr(result, method_name)
+        except Exception:
+            return False
+        try:
+            return bool(value() if callable(value) else value)
+        except Exception:
+            return False
+
+    def _search_disassembly(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+        max_functions_scan: int,
+        max_instructions_scan: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_disassembly")
+        fm: GhidraFunctionManager | None = self._get_function_manager(program)
+        listing: GhidraListing | None = self._get_listing(program)
+        if fm is None or listing is None:
+            return [], {"scope": "disassembly", "scannedFunctions": 0, "instructionsScanned": 0, "matches": 0}
         results: list[dict[str, Any]] = []
-        function_count = 0
-        instruction_count = 0
+        function_count: int = 0
+        instruction_count: int = 0
+        started_at = perf_counter()
 
         for func in fm.getFunctions(True):
             if function_count >= max_functions_scan or len(results) >= per_scope_limit or instruction_count >= max_instructions_scan:
                 break
             function_count += 1
-            body = func.getBody()
+            body: GhidraAddressSetView | None = func.getBody()
             if not body:
                 continue
-            instructions = listing.getInstructions(body, True)
+            instructions: GhidraInstructionIterator = listing.getInstructions(body, True)
             for ins in self._iter_items(instructions):
                 instruction_count += 1
                 if len(results) >= per_scope_limit or instruction_count >= max_instructions_scan:
                     break
-                text = str(ins)
-                match = self._match_text(text=text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                text: str = str(ins)
+                match: dict[str, Any] | None = self._match_text(
+                    text=text, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                )
                 if not match:
                     continue
-                results.append({"scope": "disassembly", "resultType": "instruction", "function": str(func.getName()), "functionAddress": str(func.getEntryPoint()), "address": str(ins.getAddress()), "instruction": text, **match})
-        return results
+                results.append(
+                    {
+                        "scope": "disassembly",
+                        "resultType": "instruction",
+                        "function": str(func.getName()),
+                        "functionAddress": str(func.getEntryPoint()),
+                        "address": str(ins.getAddress()),
+                        "instruction": text,
+                        **match,
+                    }
+                )
+        return results, {
+            "scope": "disassembly",
+            "scannedFunctions": function_count,
+            "instructionsScanned": instruction_count,
+            "matches": len(results),
+            "elapsedMs": int((perf_counter() - started_at) * 1000),
+        }
 
-    def _search_symbols(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_symbols(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_symbols")
         results: list[dict[str, Any]] = []
         for sym in collect_symbols(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(sym.get("name", ""))
-            match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            name: str = str(sym.get("name", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            results.append({"scope": "symbols", "resultType": "symbol", "name": name, "address": str(sym.get("address", "")), "symbolType": str(sym.get("symbolType", "")), "namespace": str(sym.get("namespace", "")), "source": str(sym.get("source", "")), **match})
+            results.append(
+                {
+                    "scope": "symbols",
+                    "resultType": "symbol",
+                    "name": name,
+                    "address": str(sym.get("address", "")),
+                    "symbolType": str(sym.get("symbolType", "")),
+                    "namespace": str(sym.get("namespace", "")),
+                    "source": str(sym.get("source", "")),
+                    **match,
+                }
+            )
         return results
 
-    def _search_imports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_imports(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_imports")
         results: list[dict[str, Any]] = []
         for sym in collect_imports(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(sym.get("name", ""))
-            match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            name: str = str(sym.get("name", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            results.append({"scope": "imports", "resultType": "import", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), "library": str(sym.get("library", "")), **match})
+            results.append(
+                {
+                    "scope": "imports",
+                    "resultType": "import",
+                    "name": name,
+                    "address": str(sym.get("address", "")),
+                    "namespace": str(sym.get("namespace", "")),
+                    "library": str(sym.get("library", "")),
+                    **match,
+                }
+            )
         return results
 
-    def _search_exports(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_exports(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_exports")
         results: list[dict[str, Any]] = []
         for sym in collect_exports(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(sym.get("name", ""))
+            name: str = str(sym.get("name", ""))
             match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
             if not match:
                 continue
-            results.append({"scope": "exports", "resultType": "export", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match})
+            results.append(
+                {"scope": "exports", "resultType": "export", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match}
+            )
         return results
 
-    def _search_namespaces(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_namespaces(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_namespaces")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
         except Exception:
@@ -857,86 +1724,288 @@ class SearchEverythingToolProvider(ToolProvider):
         for sym in collect_symbols(program, symbol_type=SymbolType.NAMESPACE, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(sym.get("name", ""))
-            match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            name: str = str(sym.get("name", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
             results.append({"scope": "namespaces", "resultType": "namespace", "name": name, "address": str(sym.get("address", "")), **match})
         return results
 
-    def _search_classes(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_classes(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_classes")
         try:
             from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
         except Exception:
             return []
+        related_structures: dict[str, dict[str, Any]] = {}
+        for struct in collect_structures(program):
+            name = str(struct.get("name", "") or "")
+            if not name:
+                continue
+            related_structures.setdefault(name, struct)
+            related_structures.setdefault(name.rsplit("::", 1)[-1], struct)
         results: list[dict[str, Any]] = []
         for sym in collect_symbols(program, symbol_type=SymbolType.CLASS, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(sym.get("name", ""))
-            match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            name: str = str(sym.get("name", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            results.append({"scope": "classes", "resultType": "class", "name": name, "address": str(sym.get("address", "")), "namespace": str(sym.get("namespace", "")), **match})
+            row = {
+                "scope": "classes",
+                "resultType": "class",
+                "name": name,
+                "address": str(sym.get("address", "")),
+                "namespace": str(sym.get("namespace", "")),
+                **match,
+            }
+            results.append(self._enrich_class_match(program, sym, related_structures, row))
         return results
 
-    def _search_strings(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_strings(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_strings")
         results: list[dict[str, Any]] = []
         for data in collect_strings(program, min_len=1, limit=per_scope_limit, ghidra_tools=self.ghidra_tools):
             if len(results) >= per_scope_limit:
                 break
-            value = str(data.get("value", ""))
-            match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            value: str = str(data.get("value", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            results.append({"scope": "strings", "resultType": "string", "address": str(data.get("address", "")), "value": value, "length": int(data.get("length", len(value))), "dataType": str(data.get("dataType", "")), **match})
+            results.append(
+                {
+                    "scope": "strings",
+                    "resultType": "string",
+                    "address": str(data.get("address", "")),
+                    "value": value,
+                    "length": int(data.get("length", len(value))),
+                    "dataType": str(data.get("dataType", "")),
+                    **match,
+                }
+            )
         return results
 
-    def _search_data_types(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_data_types(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_types")
         results: list[dict[str, Any]] = []
         for dt in collect_data_types(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            values = [str(dt.get("name", "")), str(dt.get("description", "")), str(dt.get("displayName", ""))]
+            values: list[str] = [str(dt.get("name", "")), str(dt.get("description", "")), str(dt.get("displayName", ""))]
             best: dict[str, Any] | None = None
             for value in values:
-                match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                match: dict[str, Any] | None = self._match_text(
+                    text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                )
                 if match and (best is None or float(match["score"]) > float(best["score"])):
                     best = match
             if not best:
                 continue
-            results.append({"scope": "data_types", "resultType": "data_type", "name": str(dt.get("name", "")), "displayName": str(dt.get("displayName", "")), "categoryPath": str(dt.get("categoryPath", "")), "description": str(dt.get("description", "")), "length": int(dt.get("length", 0)), **best})
+            results.append(
+                {
+                    "scope": "data_types",
+                    "resultType": "data_type",
+                    "name": str(dt.get("name", "")),
+                    "displayName": str(dt.get("displayName", "")),
+                    "categoryPath": str(dt.get("categoryPath", "")),
+                    "description": str(dt.get("description", "")),
+                    "length": int(dt.get("length", 0)),
+                    **best,
+                }
+            )
         return results
 
-    def _search_data_type_archives(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_vtables(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_vtables")
+        results: list[dict[str, Any]] = []
+        for candidate in collect_vtable_candidates(program, limit=per_scope_limit):
+            haystack = " | ".join(
+                part for part in [str(candidate.get("name", "")), str(candidate.get("type", "")), str(candidate.get("address", ""))] if part
+            )
+            match: dict[str, Any] | None = self._match_text(
+                text=haystack,
+                queries=queries,
+                mode=mode,
+                case_sensitive=case_sensitive,
+                threshold=threshold,
+                compiled_regexes=compiled_regexes,
+            )
+            if not match:
+                continue
+            results.append(
+                {
+                    "scope": "vtables",
+                    "resultType": "vtable",
+                    "name": str(candidate.get("name", "")),
+                    "address": str(candidate.get("address", "")),
+                    "type": str(candidate.get("type", "")),
+                    "size": int(candidate.get("size", 0)),
+                    **match,
+                },
+            )
+        return results
+
+    def _search_data_type_archives(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_data_type_archives")
         results: list[dict[str, Any]] = []
         for archive in collect_data_type_archives(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            name = str(archive.get("name", ""))
-            match = self._match_text(text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+            name: str = str(archive.get("name", ""))
+            match: dict[str, Any] | None = self._match_text(
+                text=name, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+            )
             if not match:
                 continue
-            results.append({"scope": "data_type_archives", "resultType": "data_type_archive", "name": name, "id": str(archive.get("id", "")), "type": str(archive.get("type", "")), "categoryCount": archive.get("categoryCount"), "dataTypeCount": archive.get("dataTypeCount"), **match})
+            results.append(
+                {
+                    "scope": "data_type_archives",
+                    "resultType": "data_type_archive",
+                    "name": name,
+                    "id": str(archive.get("id", "")),
+                    "type": str(archive.get("type", "")),
+                    "categoryCount": archive.get("categoryCount"),
+                    "dataTypeCount": archive.get("dataTypeCount"),
+                    **match,
+                }
+            )
         return results
 
-    def _search_structures(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_structures(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structures")
+        try:
+            from ghidra.program.model.symbol import SymbolType  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+        except Exception:
+            SymbolType = None
+
+        related_classes: dict[str, list[dict[str, Any]]] = {}
+        if SymbolType is not None:
+            for sym in collect_symbols(program, symbol_type=SymbolType.CLASS):
+                name = str(sym.get("name", "") or "")
+                if not name:
+                    continue
+                related_classes.setdefault(name, []).append(sym)
+                related_classes.setdefault(name.rsplit("::", 1)[-1], []).append(sym)
+
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program, limit=per_scope_limit):
             if len(results) >= per_scope_limit:
                 break
-            values = [str(struct.get("name", "")), str(struct.get("description", ""))]
+            values: list[str] = [str(struct.get("name", "")), str(struct.get("description", ""))]
             best: dict[str, Any] | None = None
             for value in values:
-                match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                match: dict[str, Any] | None = self._match_text(
+                    text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                )
                 if match and (best is None or float(match["score"]) > float(best["score"])):
                     best = match
             if not best:
                 continue
-            results.append({"scope": "structures", "resultType": "structure", "name": str(struct.get("name", "")), "categoryPath": str(struct.get("categoryPath", "")), "description": str(struct.get("description", "")), "length": int(struct.get("length", 0)), "numComponents": int(struct.get("numComponents", 0)), "isUnion": bool(struct.get("isUnion", False)), **best})
+            row = {
+                "scope": "structures",
+                "resultType": "structure",
+                "name": str(struct.get("name", "")),
+                "categoryPath": str(struct.get("categoryPath", "")),
+                "description": str(struct.get("description", "")),
+                "length": int(struct.get("length", 0)),
+                "numComponents": int(struct.get("numComponents", 0)),
+                "isUnion": bool(struct.get("isUnion", False)),
+                **best,
+            }
+            enriched = self._enrich_structure_match(program, struct, row)
+
+            matching_classes = related_classes.get(str(struct.get("name", "") or ""), [])
+            if matching_classes:
+                unique_related_classes: list[dict[str, Any]] = []
+                seen_related_class_names: set[str] = set()
+                for item in matching_classes:
+                    class_name = str(item.get("name", "") or "")
+                    class_key = class_name.lower()
+                    if not class_key or class_key in seen_related_class_names:
+                        continue
+                    seen_related_class_names.add(class_key)
+                    unique_related_classes.append(item)
+                enriched["relatedClasses"] = [str(item.get("name", "")) for item in unique_related_classes[:3]]
+                first_class = unique_related_classes[0]
+                related_address = str(first_class.get("address", "") or "")
+                if self._has_concrete_address(related_address):
+                    enriched["relatedClassAddress"] = related_address
+                    enriched.update(self._collect_reference_summary(program, related_address))
+            results.append(enriched)
         return results
 
-    def _search_structure_fields(self, program: Any, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_structure_fields(
+        self,
+        program: GhidraProgram,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_structure_fields")
         results: list[dict[str, Any]] = []
         for struct in collect_structures(program):
             struct_obj = struct.get("structure")
@@ -945,18 +2014,37 @@ class SearchEverythingToolProvider(ToolProvider):
             for component in collect_structure_fields(struct_obj):
                 if len(results) >= per_scope_limit:
                     return results
-                values = [str(component.get("name", "")), str(component.get("comment", "")), str(component.get("type", ""))]
+                values: list[str] = [str(component.get("name", "")), str(component.get("comment", "")), str(component.get("type", ""))]
                 best: dict[str, Any] | None = None
                 for value in values:
-                    match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                    match: dict[str, Any] | None = self._match_text(
+                        text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                    )
                     if match and (best is None or float(match["score"]) > float(best["score"])):
                         best = match
                 if not best:
                     continue
-                results.append({"scope": "structure_fields", "resultType": "structure_field", "structure": str(struct.get("name", "")), "field": str(component.get("name", "")), "fieldType": str(component.get("type", "")), "comment": str(component.get("comment", "")), "offset": int(component.get("offset", 0)), "length": int(component.get("length", 0)), **best})
+                results.append(
+                    {
+                        "scope": "structure_fields",
+                        "resultType": "structure_field",
+                        "structure": str(struct.get("name", "")),
+                        "categoryPath": str(struct.get("categoryPath", "")),
+                        "structureLength": int(struct.get("length", 0) or 0),
+                        "structureFieldCount": int(struct.get("numComponents", 0) or 0),
+                        "field": str(component.get("name", "")),
+                        "fieldType": str(component.get("type", "")),
+                        "comment": str(component.get("comment", "")),
+                        "offset": int(component.get("offset", 0)),
+                        "length": int(component.get("length", 0)),
+                        "addressNote": "Structure field definition only; no concrete memory address for the data type field itself",
+                        **best,
+                    },
+                )
         return results
 
     def _function_base_result(self, function: dict[str, Any]) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._function_base_result")
         return {
             "name": str(function.get("name", "")),
             "function": str(function.get("name", "")),
@@ -967,9 +2055,9 @@ class SearchEverythingToolProvider(ToolProvider):
             "callingConvention": str(function.get("callingConvention", "")),
             "parameterCount": int(function.get("parameterCount", 0)),
             "size": int(function.get("size", 0)),
-            "isExternal": bool(function.get("isExternal", False)),
-            "isThunk": bool(function.get("isThunk", False)),
-            "hasVarArgs": bool(function.get("hasVarArgs", False)),
+            "isExternal": bool(function.get("isExternal")),
+            "isThunk": bool(function.get("isThunk")),
+            "hasVarArgs": bool(function.get("hasVarArgs")),
             "parameters": function.get("parameters", []),
             "comments": function.get("comments", {}),
             "tags": function.get("tags", []),
@@ -978,42 +2066,51 @@ class SearchEverythingToolProvider(ToolProvider):
         }
 
     def _attach_next_tools(self, row: dict[str, Any]) -> dict[str, Any]:
-        result_type = str(row.get("resultType", ""))
-        address = str(row.get("functionAddress") or row.get("address") or "")
-        function_name = str(row.get("function") or row.get("name") or "")
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._attach_next_tools")
+        result_type: str = str(row.get("resultType", ""))
+        address: str = str(row.get("functionAddress") or row.get("address") or "")
+        function_name: str = str(row.get("function") or row.get("name") or "")
 
         next_tools: list[dict[str, Any]] = []
         if result_type == "function":
             next_tools = [
-                {"tool": "decompile-function", "args": {"name": function_name}},
-                {"tool": "get-call-graph", "args": {"name": function_name, "mode": "graph"}},
-                {"tool": "get-references", "args": {"address": address, "mode": "to"}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name, "mode": "decompile"}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address or function_name}},
+                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
                 {"tool": "manage-comments", "args": {"address": address, "mode": "get"}},
             ]
         elif result_type == "function_parameter":
             next_tools = [
-                {"tool": "decompile-function", "args": {"name": function_name}},
-                {"tool": "manage-function", "args": {"name": function_name, "mode": "info"}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": function_name}},
             ]
         elif result_type == "function_tag":
-            next_tools = [{"tool": "get-functions", "args": {"mode": "tags", "tag": row.get("tag", "")}}]
+            next_tools = [{"tool": Tool.GET_FUNCTIONS.value, "args": {"mode": "tags", "tag": row.get("tag", "")}}]
         elif result_type in {"bookmark", "comment", "instruction", "export", "symbol", "string"}:
             next_tools = [
-                {"tool": "get-references", "args": {"address": address, "mode": "to"}},
-                {"tool": "decompile-function", "args": {"address": address}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address}},
+                {"tool": Tool.ANALYZE_DATA_FLOW.value, "args": {"addressOrSymbol": address}},
             ]
         elif result_type == "decompiled_code":
             next_tools = [
-                {"tool": "decompile-function", "args": {"name": function_name}},
-                {"tool": "get-call-graph", "args": {"name": function_name, "mode": "graph"}},
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": function_name, "mode": "decompile"}},
+                {"tool": Tool.GET_FUNCTION.value, "args": {"addressOrSymbol": address or function_name}},
             ]
         elif result_type == "import":
             next_tools = [
-                {"tool": "get-references", "args": {"mode": "import", "importName": row.get("name", "")}},
-                {"tool": "manage-symbols", "args": {"mode": "imports", "query": row.get("name", "")}},
+                {"tool": Tool.GET_REFERENCES.value, "args": {"mode": "import", "importName": row.get("name", "")}},
+                {"tool": "list-imports", "args": {"query": row.get("name", "")}},
             ]
         elif result_type in {"namespace", "class"}:
-            next_tools = [{"tool": "manage-symbols", "args": {"mode": "symbols", "query": row.get("name", "")}}]
+            next_tools = [
+                {"tool": Tool.GET_FUNCTIONS.value, "args": {"identifier": row.get("name", "")}},
+                {"tool": Tool.SEARCH_EVERYTHING.value, "args": {"query": row.get("name", ""), "scopes": ["vtables"]}},
+            ]
+        elif result_type == "vtable":
+            next_tools = [
+                {"tool": Tool.GET_REFERENCES.value, "args": {"address": address, "mode": "to"}},
+                {"tool": Tool.ANALYZE_VTABLES.value, "args": {"mode": "analyze", "addressOrSymbol": address}},
+            ]
         elif result_type == "data_type":
             next_tools = [{"tool": "manage-data-types", "args": {"mode": "info", "dataTypeString": row.get("name", "")}}]
         elif result_type == "data_type_archive":
@@ -1030,22 +2127,23 @@ class SearchEverythingToolProvider(ToolProvider):
         return enriched
 
     def _group_function_results(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._group_function_results")
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         remainder: list[dict[str, Any]] = []
 
         for row in rows:
-            function_addr = str(row.get("functionAddress", "") or "")
-            program = str(row.get("program", "") or "")
+            function_addr: str = str(row.get("functionAddress", "") or "")
+            program: str = str(row.get("program", "") or "")
             if not function_addr:
                 remainder.append(row)
                 continue
 
-            key = (program, function_addr)
+            key: tuple[str, str] = (program, function_addr)
             if key not in grouped:
                 grouped[key] = dict(row)
                 grouped[key]["relatedResults"] = []
             else:
-                grouped[key]["relatedResults"].append(
+                cast("list[dict[str, Any]]", grouped[key]["relatedResults"]).append(
                     {
                         "scope": row.get("scope"),
                         "resultType": row.get("resultType"),
@@ -1062,64 +2160,100 @@ class SearchEverythingToolProvider(ToolProvider):
                     },
                 )
                 if float(row.get("score", 0.0)) > float(grouped[key].get("score", 0.0)):
-                    base_related = grouped[key].get("relatedResults", [])
+                    base_related: list[dict[str, Any]] = cast("list[dict[str, Any]]", grouped[key].get("relatedResults", []))
                     grouped[key] = dict(row)
                     grouped[key]["relatedResults"] = base_related
 
         return [*grouped.values(), *remainder]
 
-    def _search_processors(self, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_processors(
+        self,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_processors")
         results: list[dict[str, Any]] = []
         try:
-            from ghidra.program.util import DefaultLanguageService  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
-
-            svc = DefaultLanguageService.getLanguageService()
+            svc: GhidraDefaultLanguageService = GhidraDefaultLanguageService.getLanguageService()
+            desc: GhidraLanguageDescription | None = None
             for desc in self._iter_items(svc.getLanguageDescriptions(False)):
+                if desc is None:
+                    continue
                 if len(results) >= per_scope_limit:
                     break
-                values = [str(desc.getLanguageID()), str(desc.getProcessor().toString()), str(desc.getDescription())]
+                values: list[str] = [str(desc.getLanguageID()), str(cast("GhidraProcessor", desc.getProcessor()).toString()), str(desc.getDescription())]
+                if not values:
+                    continue
                 best: dict[str, Any] | None = None
                 for value in values:
-                    match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                    match: dict[str, Any] | None = self._match_text(
+                        text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                    )
                     if match and (best is None or float(match["score"]) > float(best["score"])):
                         best = match
                 if not best:
                     continue
-                results.append({"scope": "processors", "languageId": str(desc.getLanguageID()), "processor": str(desc.getProcessor().toString()), "description": str(desc.getDescription()), **best})
+                results.append(
+                    {
+                        "scope": "processors",
+                        "languageId": str(desc.getLanguageID()),
+                        "processor": str(desc.getProcessor().toString()),
+                        "description": str(desc.getDescription()),
+                        **best,
+                    }
+                )
         except Exception as e:
-            logger.warning(f"Processor scope failed: {e}")
+            logger.warning("Processor scope failed: %s", e)
         return results
 
-    def _search_project_files(self, queries: list[str], mode: str, case_sensitive: bool, threshold: float, compiled_regexes: dict[str, re.Pattern[str]], per_scope_limit: int) -> list[dict[str, Any]]:
+    def _search_project_files(
+        self,
+        queries: list[str],
+        mode: str,
+        case_sensitive: bool,
+        threshold: float,
+        compiled_regexes: dict[str, re.Pattern[str]],
+        per_scope_limit: int,
+    ) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "mcp_server/providers/search_everything.py:SearchEverythingToolProvider._search_project_files")
         results: list[dict[str, Any]] = []
-        manager = getattr(self, "_manager", None)
+        manager: ToolProviderManager | None = self._manager
         if manager is None:
             return results
 
         try:
-            project_data = manager._resolve_project_data()
+            project_data: GhidraProjectData | None = manager._resolve_project_data()
         except Exception:
             project_data = None
         if project_data is None:
             return results
 
         try:
-            root = project_data.getRootFolder()
+            root: GhidraDomainFolder | None = project_data.getRootFolder()
         except Exception:
             return results
 
-        stack = [root]
+        stack: list[GhidraDomainFolder] = [root]
         while stack and len(results) < per_scope_limit:
-            folder = stack.pop()
+            folder: GhidraDomainFolder = stack.pop()
             try:
+                domain_file: GhidraDomainFile | None = None
                 for domain_file in self._iter_items(folder.getFiles() or []):
+                    if domain_file is None:
+                        continue
                     if len(results) >= per_scope_limit:
                         break
-                    file_name = str(domain_file.getName())
-                    file_path = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else file_name
+                    file_name: str = str(domain_file.getName())
+                    file_path: str = str(domain_file.getPathname()) if hasattr(domain_file, "getPathname") else file_name
                     best: dict[str, Any] | None = None
                     for value in (file_name, file_path):
-                        match = self._match_text(text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes)
+                        match: dict[str, Any] | None = self._match_text(
+                            text=value, queries=queries, mode=mode, case_sensitive=case_sensitive, threshold=threshold, compiled_regexes=compiled_regexes
+                        )
                         if match and (best is None or float(match["score"]) > float(best["score"])):
                             best = match
                     if not best:

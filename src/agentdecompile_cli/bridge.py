@@ -24,27 +24,17 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 import sys
 
-from collections import deque
-from collections.abc import Iterable
 from pathlib import Path
-from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Any, Callable
 
-try:
-    from anyio import BrokenResourceError, ClosedResourceError
-except ImportError:
+from mcp.server.models import InitializationOptions
 
-    class _PlaceholderConnectionError(Exception):  # noqa: B903
-        """Placeholder; never raised when anyio is not available."""
-
-    BrokenResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
-    ClosedResourceError = _PlaceholderConnectionError  # type: ignore[assignment,misc]
-
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from httpx import AsyncClient, Timeout
+from httpx import AsyncClient, HTTPStatusError, Timeout
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
@@ -58,11 +48,34 @@ from mcp.types import (
     Tool,
 )
 
+from agentdecompile_cli.app_logger import basename_hint, redact_session_id
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
 from agentdecompile_cli.registry import resolve_tool_name
 
+logger = logging.getLogger(__name__)
+
+
+def _backend_host_port_for_logs(url: str) -> str:
+    """Hostname and optional port for logs; never includes URL userinfo."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if not host:
+            return "—"
+        if parsed.port:
+            return f"{host}:{parsed.port}"
+        return host
+    except Exception:
+        return "—"
+
+
 if TYPE_CHECKING:
+    from collections import deque
+    from collections.abc import Iterable
+    from types import TracebackType
+
+    from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
     from mcp.server.lowlevel.helper_types import ReadResourceContents
     from mcp.server.lowlevel.server import (
         CombinationContent,
@@ -70,7 +83,6 @@ if TYPE_CHECKING:
         UnstructuredContent,
     )
     from mcp.types import (
-        CallToolResult,
         Prompt,
         Resource,
     )
@@ -95,20 +107,40 @@ def _apply_mcp_session_fix() -> None:
     This patches the installed mcp package's source file on disk before import.
     No monkeypatching - we edit the installed source once.
     """
+    logger.debug("diag.enter %s", "bridge.py:_apply_mcp_session_fix")
+    mcp_spec_resolved = False
+    session_py_found = False
+    patch_written = False
+    already_patched = False
+    patch_exception_type = "—"
     try:
         spec = importlib.util.find_spec("mcp")
+        mcp_spec_resolved = bool(spec and spec.origin)
         if not spec or not spec.origin:
             return
         session_path = Path(spec.origin).parent / "shared" / "session.py"
-        if not session_path.exists():
+        session_py_found = session_path.exists()
+        if not session_py_found:
             return
         content = session_path.read_text(encoding="utf-8")
         old = "for id, stream in self._response_streams.items():"
         new = "for id, stream in list(self._response_streams.items()):"
-        if old in content and new not in content:
+        if new in content:
+            already_patched = True
+        elif old in content:
             session_path.write_text(content.replace(old, new), encoding="utf-8")
-    except Exception:
-        pass
+            patch_written = True
+    except Exception as exc:
+        patch_exception_type = type(exc).__name__
+    finally:
+        logger.info(
+            "mcp_sdk_session_iteration_patch mcp_spec_resolved=%s session_py_found=%s patch_written=%s already_patched=%s patch_exception_type=%s",
+            mcp_spec_resolved,
+            session_py_found,
+            patch_written,
+            already_patched,
+            patch_exception_type,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -132,33 +164,78 @@ class NotFoundError(ClientError):
 # RawMcpHttpBackend – plain httpx JSON-RPC client (no anyio / no MCP SDK client)
 # ---------------------------------------------------------------------------
 
-MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_PROTOCOL_VERSION: str = "2025-03-26"
 
 # Timeout for initial transport connect
-CONNECT_TIMEOUT = 10.0
-# Timeout for backend operations (tool calls, list_resources, etc.)
-BACKEND_OP_TIMEOUT = 120.0
+CONNECT_TIMEOUT: float = 10.0
 
-_TRANSPORT_ERROR_KEYWORDS = (
-    "ConnectError",
-    "ConnectTimeout",
-    "ConnectionRefused",
+
+def _default_backend_op_timeout() -> float:
+    """Max wait for a single MCP tool call (import_binary → analyzeHeadless can exceed 120s on Windows)."""
+    for key in ("AGENT_DECOMPILE_CLI_OP_TIMEOUT", "AGENTDECOMPILE_CLI_OP_TIMEOUT"):
+        raw = os.environ.get(key, "").strip()
+        if raw:
+            try:
+                return max(30.0, min(float(raw), 7200.0))
+            except ValueError:
+                break
+    return 600.0
+
+
+# Timeout for backend operations (tool calls, list_resources, etc.)
+BACKEND_OP_TIMEOUT: float = _default_backend_op_timeout()
+
+_TRANSPORT_ERROR_KEYWORDS: tuple[str, ...] = (
     "BrokenResource",
     "ClosedResource",
+    "ConnectError",
     "connection reset",
+    "ConnectionRefused",
+    "ConnectTimeout",
     "Timed out",
     "TimeoutException",
 )
 
 
+def _anyio_resource_exception_types() -> tuple[type[BaseException], ...]:
+    """Lazily import anyio stream errors so test conftest can load bridge before pytest-asyncio rewrites anyio."""
+    try:
+        from anyio import BrokenResourceError as _BRE
+        from anyio import ClosedResourceError as _CRE
+
+        return (_BRE, _CRE)
+    except ImportError:
+        return ()
+
+
+def _classify_anyio_stdio_disconnect(exc: BaseException) -> str | None:
+    """Return 'closed' or 'broken' for anyio stdio disconnect errors, else None."""
+    try:
+        from anyio import BrokenResourceError as _BRE
+        from anyio import ClosedResourceError as _CRE
+    except ImportError:
+        return None
+    if isinstance(exc, _CRE):
+        return "closed"
+    if isinstance(exc, _BRE):
+        return "broken"
+    return None
+
+
 def _is_transport_connection_error(exc: BaseException) -> bool:
     """Return True if *exc* is likely a backend transport/connection failure."""
+    logger.debug("diag.enter %s", "bridge.py:_is_transport_connection_error")
     if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)):
         return True
-    if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
+    aio_types = _anyio_resource_exception_types()
+    if aio_types and isinstance(exc, aio_types):
         return True
     err_str = str(exc)
     return any(keyword in err_str for keyword in _TRANSPORT_ERROR_KEYWORDS)
+
+
+# Cookie name for MCP session (persistent cookie jar); must match server/proxy.
+_MCP_SESSION_COOKIE_NAME = "mcp_session_id"
 
 
 class RawMcpHttpBackend:
@@ -171,12 +248,23 @@ class RawMcpHttpBackend:
     Safe to call from **any** asyncio task — no anyio cancel scopes are created.
     """
 
-    def __init__(self, url: str, *, connect_timeout: float = CONNECT_TIMEOUT, op_timeout: float = BACKEND_OP_TIMEOUT):
-        self._url = url.rstrip("/")
+    def __init__(
+        self,
+        url: str,
+        *,
+        connect_timeout: float = CONNECT_TIMEOUT,
+        op_timeout: float = BACKEND_OP_TIMEOUT,
+        extra_headers: dict[str, str] | None = None,
+        cookie_file: Path | None = None,
+    ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.__init__")
+        self._url: str = url.rstrip("/")
         self._session_id: str | None = None
-        self._request_counter = 0
-        self._initialized = False
-        self._client = AsyncClient(
+        self._request_counter: int = 0
+        self._initialized: bool = False
+        self._extra_headers: dict[str, str] = dict(extra_headers or {})
+        self._cookie_file: Path | None = cookie_file
+        self._client: AsyncClient = AsyncClient(
             timeout=Timeout(op_timeout, connect=connect_timeout),
             follow_redirects=True,
         )
@@ -184,17 +272,107 @@ class RawMcpHttpBackend:
     # -- helpers -------------------------------------------------------------
 
     def _next_id(self) -> int:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._next_id")
         self._request_counter += 1
         return self._request_counter
 
+    def _load_cookie_from_file(self) -> str | None:
+        """Load mcp_session_id from persistent cookie file; return value or None."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._load_cookie_from_file")
+        if not self._cookie_file or not self._cookie_file.exists():
+            return None
+        try:
+            data = json.loads(self._cookie_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                val = data.get(_MCP_SESSION_COOKIE_NAME)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        except Exception as e:
+            _tail = basename_hint(str(self._cookie_file)) if self._cookie_file else "—"
+            logger.warning(
+                "mcp_session_cookie_io operation=load exc_type=%s path_tail=%s",
+                type(e).__name__,
+                _tail,
+            )
+        return None
+
+    def _save_cookie_to_file(self, value: str) -> None:
+        """Persist mcp_session_id to cookie file (HttpOnly-style; we only store the value)."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._save_cookie_to_file")
+        if not self._cookie_file:
+            return
+        try:
+            self._cookie_file.parent.mkdir(parents=True, exist_ok=True)
+            self._cookie_file.write_text(
+                json.dumps({_MCP_SESSION_COOKIE_NAME: value}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            _tail = basename_hint(str(self._cookie_file)) if self._cookie_file else "—"
+            logger.warning(
+                "mcp_session_cookie_io operation=save exc_type=%s path_tail=%s",
+                type(e).__name__,
+                _tail,
+            )
+
+    def _save_session_cookie_from_response(self, resp: Any) -> None:
+        """If response has Set-Cookie mcp_session_id, persist to cookie file."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._save_session_cookie_from_response")
+        if not self._cookie_file:
+            return
+        set_cookie: str | None = resp.headers.get("set-cookie") or resp.headers.get("Set-Cookie")
+        if not set_cookie:
+            return
+        prefix = _MCP_SESSION_COOKIE_NAME + "="
+        idx = set_cookie.find(prefix)
+        if idx >= 0:
+            rest = set_cookie[idx + len(prefix) :]
+            end = rest.find(";")
+            cookie_val = (rest[:end].strip() if end >= 0 else rest.strip()).strip('"')
+            if cookie_val:
+                self._save_cookie_to_file(cookie_val)
+
     def _headers(self) -> dict[str, str]:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._headers")
         h: dict[str, str] = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        if self._session_id:
-            h["Mcp-Session-Id"] = self._session_id
+        h.update(self._extra_headers)
+        # Prefer id from last response; else keep extra_headers (CLI persistence / proxy forwards).
+        # Do not overwrite persisted Mcp-Session-Id with "default" when _session_id is still None — that
+        # breaks cross-invocation flows (e.g. create-label conflict then resolve-modification-conflict).
+        sid = self._session_id
+        if not sid:
+            sid = h.get("Mcp-Session-Id") or h.get("mcp-session-id")
+        h["Mcp-Session-Id"] = sid or "default"
+        # Persistent cookie jar: send session cookie if present so server can use cookie-based session.
+        if self._cookie_file:
+            cookie_val = self._load_cookie_from_file()
+            if cookie_val:
+                h["Cookie"] = f"{_MCP_SESSION_COOKIE_NAME}={cookie_val}"
         return h
+
+    def _apply_mcp_session_from_response(self, sid: str | None) -> None:
+        """Apply ``mcp-session-id`` from an HTTP response; log first bind vs rotation (redacted)."""
+        if not sid:
+            return
+        prev = self._session_id
+        if sid == prev:
+            self._session_id = sid
+            return
+        self._session_id = sid
+        if prev:
+            logger.info(
+                "mcp_session_id_rotated prev=%s next=%s",
+                redact_session_id(prev),
+                redact_session_id(sid),
+            )
+        else:
+            logger.info(
+                "mcp_session_id_bound next=%s",
+                redact_session_id(sid),
+            )
 
     @staticmethod
     def _parse_sse_data(text: str) -> dict[str, Any] | None:
@@ -207,6 +385,7 @@ class RawMcpHttpBackend:
         when only the final result matters.
         """
         # Find the last "data:" line more efficiently by working backwards
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._parse_sse_data")
         lines = text.splitlines()
         for line in reversed(lines):
             stripped = line.strip()
@@ -223,51 +402,118 @@ class RawMcpHttpBackend:
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST a JSON-RPC envelope and return the parsed response dict."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._post")
+        had_session_id = bool(self._session_id)
         try:
             resp = await self._client.post(self._url, json=body, headers=self._headers())
-        except Exception:
+        except Exception as e:
             # Retry once with a trailing slash for backends that strictly require it.
+            logger.debug(
+                "mcp_http_post_retry exc_type=%s retry_trailing_slash=True mcp_method=%s",
+                type(e).__name__,
+                str(body.get("method", "")),
+            )
             retry_url = f"{self._url}/"
             resp = await self._client.post(retry_url, json=body, headers=self._headers())
 
-        # Capture session id.
+        # Capture session id from response so subsequent requests reuse the same session
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
-        if sid:
-            self._session_id = sid
+        self._apply_mcp_session_from_response(sid)
+        self._save_session_cookie_from_response(resp)
 
+        # Some servers expose /mcp but not /mcp/message; retry without /message on 404
         if resp.status_code == 404 and self._url.endswith("/mcp/message/"):
+            logger.info("mcp http 404 on /mcp/message; retrying without /message suffix")
             retry_url = self._url.rstrip("/")
             resp = await self._client.post(retry_url, json=body, headers=self._headers())
             sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
-            if sid:
-                self._session_id = sid
+            self._apply_mcp_session_from_response(sid)
+            self._save_session_cookie_from_response(resp)
 
-        resp.raise_for_status()
+        # On 400, retry once without session id (stale id can cause server to reject)
+        if resp.status_code == 400 and had_session_id:
+            logger.info("mcp http 400 with session id; retrying POST without mcp-session-id (stale session)")
+            self._session_id = None
+            resp = await self._client.post(self._url, json=body, headers=self._headers())
+            sid = resp.headers.get("mcp-session-id") or resp.headers.get("Mcp-Session-Id")
+            self._apply_mcp_session_from_response(sid)
+            self._save_session_cookie_from_response(resp)
+
+        try:
+            resp.raise_for_status()
+        except HTTPStatusError as e:
+            req = e.request
+            path = getattr(req.url, "path", str(req.url)) if req is not None else "?"
+            logger.warning(
+                "mcp http error status=%s reason=%s path=%s mcp_method=%s session_header=%s",
+                e.response.status_code,
+                e.response.reason_phrase,
+                path,
+                str(body.get("method", "")),
+                "yes" if self._session_id else "no",
+            )
+            body_str = e.response.text or ""
+            try:
+                data = e.response.json()
+                if isinstance(data, dict) and "error" in data:
+                    err = data["error"]
+                    body_str = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                elif isinstance(data, dict) and "message" in data:
+                    body_str = str(data["message"])
+            except Exception:
+                pass
+            if len(body_str) > 500:
+                body_str = body_str[:500] + "..."
+            raise ClientError(
+                f"Client error '{e.response.status_code} {e.response.reason_phrase}' for url {e.request.url}: {body_str}",
+            ) from e
 
         ct = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" in ct:
-            parsed = self._parse_sse_data(resp.text)
+            _txt = resp.text or ""
+            _had_data = any(ln.strip().startswith("data:") for ln in _txt.splitlines())
+            parsed = self._parse_sse_data(_txt)
             if parsed is not None:
                 return parsed
             # Fallback: try parsing whole body as JSON.
             try:
                 return resp.json()  # type: ignore[return-value]
-            except Exception:
-                return {"error": {"code": -32600, "message": f"Unparseable SSE response ({len(resp.text)} bytes)"}}
+            except Exception as sse_json_e:
+                logger.warning(
+                    "mcp_sse_parse_failure content_type_has_event_stream=True body_byte_len=%s had_data_lines=%s json_fallback_exc_type=%s",
+                    len(_txt.encode("utf-8", errors="replace")),
+                    _had_data,
+                    type(sse_json_e).__name__,
+                )
+                return {"error": {"code": -32600, "message": f"Unparseable SSE response ({len(_txt)} bytes)"}}
         return resp.json()  # type: ignore[return-value]
 
-    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+    async def _notify(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> None:
         """Send a JSON-RPC notification (no id, no response expected)."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._notify")
         body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params:
             body["params"] = params
         try:
             await self._client.post(self._url, json=body, headers=self._headers())
-        except Exception:
-            pass  # notifications are fire-and-forget
+        except Exception as e:
+            logger.debug(
+                "mcp_notify_dropped rpc_method=%s exc_type=%s",
+                method,
+                type(e).__name__,
+            )
 
-    async def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Send a JSON-RPC request and return the ``result`` dict."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._request")
         rid = self._next_id()
         body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "id": rid}
         if params is not None:
@@ -277,11 +523,18 @@ class RawMcpHttpBackend:
         if "error" in response:
             err = response["error"]
             msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            code = err.get("code", "") if isinstance(err, dict) else ""
+            logger.warning("mcp json-rpc error method=%s code=%s message=%s", method, code, (msg[:300] + "…") if len(str(msg)) > 300 else msg)
             raise ClientError(f"JSON-RPC error: {msg}")
         return response.get("result", response)
 
-    async def _request_list(self, method: str, key: str) -> list[dict[str, Any]]:
+    async def _request_list(
+        self,
+        method: str,
+        key: str,
+    ) -> list[dict[str, Any]]:
         """Call a list-style RPC method and safely extract ``key`` from its result."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend._request_list")
         result = await self._request(method)
         if not isinstance(result, dict):
             return []
@@ -292,6 +545,7 @@ class RawMcpHttpBackend:
 
     async def initialize(self) -> dict[str, Any]:
         """Send ``initialize`` + ``notifications/initialized``."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.initialize")
         result = await self._request(
             "initialize",
             {
@@ -321,23 +575,33 @@ class RawMcpHttpBackend:
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return the raw tool list from ``tools/list``."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.list_tools")
         return await self._request_list("tools/list", "tools")
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Call a tool and return the raw result dict."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.call_tool")
         return await self._request("tools/call", {"name": name, "arguments": arguments or {}})
 
     async def list_resources(self) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.list_resources")
         return await self._request_list("resources/list", "resources")
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.read_resource")
         return await self._request("resources/read", {"uri": uri})
 
     async def list_prompts(self) -> list[dict[str, Any]]:
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.list_prompts")
         return await self._request_list("prompts/list", "prompts")
 
     async def close(self) -> None:
         """Close the underlying httpx client."""
+        logger.debug("diag.enter %s", "bridge.py:RawMcpHttpBackend.close")
         try:
             await self._client.aclose()
         except Exception:
@@ -360,7 +624,7 @@ class AgentDecompileMcpClient:
 
         async with AgentDecompileMcpClient(host="127.0.0.1", port=8080) as client:
             tools = await client.list_tools()
-            result = await client.call_tool("get-functions", {"programPath": "..."})
+            result = await client.call_tool(Tool.GET_FUNCTIONS.value, {"programPath": "..."})
     """
 
     def __init__(
@@ -368,14 +632,19 @@ class AgentDecompileMcpClient:
         host: str = "127.0.0.1",
         port: int = 8080,
         url: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        cookie_file: Path | None = None,
     ):
         """Initialize the client.
 
         Args:
+        ----
             host: Server host (used if url is None).
             port: Server port (used if url is None).
             url: Override URL (e.g. http://host:port or http://host:port/mcp/message).
+            cookie_file: Optional path to persist MCP session cookie (for cookie-based session reuse).
         """
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.__init__")
         if url and url.strip():
             self._url = normalize_backend_url(url.strip())
         else:
@@ -383,57 +652,100 @@ class AgentDecompileMcpClient:
             if not base.endswith("/mcp/message"):
                 base = f"{base.rstrip('/')}/mcp/message"
             self._url = base
+        self._extra_headers = dict(extra_headers or {})
+        self._cookie_file: Path | None = cookie_file
         self._backend: RawMcpHttpBackend | None = None
         self._connected: bool = False
 
     async def __aenter__(self) -> AgentDecompileMcpClient:
         """Async context manager entry; establishes connection."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.__aenter__")
         await self._connect_internal()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit; closes connection."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.__aexit__")
         await self._close_internal()
 
     async def _connect_internal(self) -> None:
         """Connect to the backend using plain httpx."""
-        self._backend = RawMcpHttpBackend(self._url)
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._connect_internal")
+        self._backend = RawMcpHttpBackend(
+            self._url,
+            extra_headers=self._extra_headers,
+            cookie_file=self._cookie_file,
+        )
         try:
             await self._backend.initialize()
             self._connected = True
         except Exception as e:
-            if self._backend:
+            logger.info(
+                "mcp_client_connect_failed exc_type=%s backend_host_port=%s had_cookie_file=%s",
+                type(e).__name__,
+                _backend_host_port_for_logs(self._url),
+                bool(self._cookie_file),
+            )
+            if self._backend is not None:
                 await self._backend.close()
             self._backend = None
+            msg_prefix = f"Cannot connect to AgentDecompile server at {self._url}"
             if self._is_connection_error(e):
-                raise ServerNotRunningError(
-                    f"Cannot connect to AgentDecompile server at {self._url}\n\n{get_server_start_message()}",
-                ) from e
-            raise ServerNotRunningError(
-                f"Cannot connect to AgentDecompile server at {self._url}: {e}\n\n{get_server_start_message()}",
-            ) from e
+                msg = f"{msg_prefix}\n\n{get_server_start_message()}"
+            else:
+                msg = f"{msg_prefix}: {e}\n\n{get_server_start_message()}"
+            raise ServerNotRunningError(msg) from e
 
     async def _close_internal(self) -> None:
         """Close connection and release resources."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._close_internal")
         self._connected = False
-        if self._backend:
+        if self._backend is not None:
             await self._backend.close()
             self._backend = None
 
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """Return True if *exc* is a transport/connection failure."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._is_connection_error")
         return _is_transport_connection_error(exc)
 
     def _require_connected_backend(self) -> RawMcpHttpBackend:
         """Return the active backend when connected, else raise a client error."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._require_connected_backend")
         backend = self._backend
         if not self._connected or backend is None:
             raise ClientError("Not connected")
         return backend
 
+    def get_session_id(self) -> str | None:
+        """Return the current MCP session id from the last response (for CLI persistence across invocations)."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.get_session_id")
+        if self._backend is None:
+            return None
+        return getattr(self._backend, "_session_id", None) or None
+
     def _extract_result(self, result: Any) -> dict[str, Any]:
         """Extract data from raw result dict; raise on error or not-found."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient._extract_result")
+
+        def _content_item_text(item: Any) -> str:
+            if isinstance(item, dict):
+                text = item.get("text")
+                return str(text) if text is not None else ""
+            text = getattr(item, "text", None)
+            if text is not None:
+                return str(text)
+            if hasattr(item, "model_dump"):
+                try:
+                    dumped = item.model_dump()
+                    if isinstance(dumped, dict):
+                        dumped_text = dumped.get("text")
+                        return str(dumped_text) if dumped_text is not None else ""
+                except Exception:
+                    return ""
+            return ""
+
         if isinstance(result, dict):
             result_dict = result
         elif hasattr(result, "model_dump"):
@@ -443,28 +755,39 @@ class AgentDecompileMcpClient:
 
         if result_dict.get("isError"):
             content = result_dict.get("content", [])
+            _clen = len(content) if isinstance(content, list) else 0
+            logger.warning("mcp_client_result_shape branch=is_error content_len=%s", _clen)
             if content and len(content) > 0:
-                c0 = content[0]
-                if isinstance(c0, dict):
-                    error_text = c0.get("text", "Unknown error")
-                    raise ClientError(error_text)
+                for item in content:
+                    error_text = _content_item_text(item)
+                    if error_text:
+                        raise ClientError(error_text)
             raise ClientError("Unknown error occurred")
 
         if "structuredContent" in result_dict:
             structured = result_dict["structuredContent"]
             if structured is None:
                 content = result_dict.get("content", [])
+                _keys = [k for k in result_dict.keys() if isinstance(k, str)]
+                logger.warning(
+                    "mcp_client_result_shape branch=structured_content_null top_level_keys=%s",
+                    _keys[:24],
+                )
                 if content and len(content) > 0 and content[0].get("text"):
                     try:
                         return json.loads(content[0]["text"])
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+                    except (json.JSONDecodeError, KeyError) as parse_e:
+                        logger.warning(
+                            "mcp_client_result_shape branch=content_text_json_parse exc_type=%s",
+                            type(parse_e).__name__,
+                        )
                 raise NotFoundError(
                     "Resource not found. List programs or resources and try again.",
                 )
             return structured
 
         if not result_dict or (isinstance(result_dict, dict) and not result_dict):
+            logger.warning("mcp_client_result_shape branch=empty_or_falsy_result_dict")
             raise NotFoundError(
                 "Resource not found. List programs or resources and try again.",
             )
@@ -473,23 +796,32 @@ class AgentDecompileMcpClient:
 
     async def list_tools(self) -> list[Any]:
         """List tools offered by the server."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.list_tools")
         return await self._require_connected_backend().list_tools()
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Call a tool by name with optional arguments."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.call_tool")
         result = await self._require_connected_backend().call_tool(name, arguments or {})
         return self._extract_result(result)
 
     async def list_resources(self) -> list[Any]:
         """List resources offered by the server."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.list_resources")
         return await self._require_connected_backend().list_resources()
 
     async def read_resource(self, uri: str) -> Any:
         """Read a resource by URI."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.read_resource")
         return await self._require_connected_backend().read_resource(uri)
 
     async def list_prompts(self) -> list[Any]:
         """List prompts offered by the server."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileMcpClient.list_prompts")
         return await self._require_connected_backend().list_prompts()
 
 
@@ -500,6 +832,7 @@ class AgentDecompileMcpClient:
 
 def _is_jsonrpc_request(msg: SessionMessage) -> bool:
     """True if message is a JSON-RPC request (has method and id)."""
+    logger.debug("diag.enter %s", "bridge.py:_is_jsonrpc_request")
     m = getattr(msg, "message", None)
     if m is None:
         return False
@@ -508,6 +841,7 @@ def _is_jsonrpc_request(msg: SessionMessage) -> bool:
 
 def _is_jsonrpc_response_with_id_zero(msg: SessionMessage) -> bool:
     """True if message is a JSON-RPC response (has result or error) with id 0."""
+    logger.debug("diag.enter %s", "bridge.py:_is_jsonrpc_response_with_id_zero")
     m = getattr(msg, "message", None)
     if m is None:
         return False
@@ -519,6 +853,7 @@ def _is_jsonrpc_response_with_id_zero(msg: SessionMessage) -> bool:
 
 def _session_message_with_id(msg: SessionMessage, new_id: int | str) -> SessionMessage:
     """Return a new SessionMessage with the same content but response id set to new_id."""
+    logger.debug("diag.enter %s", "bridge.py:_session_message_with_id")
     m = msg.message
     if not hasattr(m, "model_copy"):
         return msg
@@ -526,6 +861,9 @@ def _session_message_with_id(msg: SessionMessage, new_id: int | str) -> SessionM
     return SessionMessage(message=new_msg, metadata=msg.metadata)
 
 
+# The MCP SDK sometimes sends responses with id:0 instead of the request's id.
+# We record request ids as they go out and rewrite response id to the matching
+# request id so the client can correlate responses with requests.
 class _IdFixReadStream:
     """Wraps the stdio read stream and records JSON-RPC request ids so responses
     with id:0 can be rewritten to match (see _IdFixWriteStream).
@@ -539,10 +877,12 @@ class _IdFixReadStream:
         read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
         request_ids: deque[int | str],
     ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixReadStream.__init__")
         self._read: MemoryObjectReceiveStream[SessionMessage | Exception] = read_stream
         self._request_ids: deque[int | str] = request_ids
 
     async def __aenter__(self) -> _IdFixReadStream:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixReadStream.__aenter__")
         if hasattr(self._read, "__aenter__"):
             await self._read.__aenter__()
         return self
@@ -553,13 +893,16 @@ class _IdFixReadStream:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixReadStream.__aexit__")
         if hasattr(self._read, "__aexit__"):
             await self._read.__aexit__(exc_type, exc_val, exc_tb)
 
     def __aiter__(self) -> _IdFixReadStream:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixReadStream.__aiter__")
         return self
 
     async def __anext__(self) -> SessionMessage | Exception:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixReadStream.__anext__")
         item: SessionMessage | Exception = await self._read.__anext__()
         if isinstance(item, SessionMessage) and _is_jsonrpc_request(item):
             rid = getattr(item.message, "id", None)
@@ -581,6 +924,7 @@ class _IdFixWriteStream:
         write_stream: MemoryObjectSendStream[SessionMessage | Exception],
         request_ids: deque[int | str],
     ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixWriteStream.__init__")
         self._write: MemoryObjectSendStream[SessionMessage | Exception] = write_stream
         self._request_ids: deque[int | str] = request_ids
 
@@ -588,6 +932,7 @@ class _IdFixWriteStream:
         self,
         msg: SessionMessage | Exception,
     ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixWriteStream.send")
         if isinstance(msg, SessionMessage) and _is_jsonrpc_response_with_id_zero(msg):
             if self._request_ids:
                 new_id: int | str = self._request_ids.popleft()
@@ -595,6 +940,7 @@ class _IdFixWriteStream:
         await self._write.send(msg)
 
     async def aclose(self) -> None:
+        logger.debug("diag.enter %s", "bridge.py:_IdFixWriteStream.aclose")
         if hasattr(self._write, "aclose"):
             await self._write.aclose()
 
@@ -611,9 +957,11 @@ class JsonEnvelopeStream:
         self,
         original_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
     ) -> None:
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.__init__")
         self.original_stream: MemoryObjectReceiveStream[SessionMessage | Exception] = original_stream
 
     async def __aenter__(self) -> JsonEnvelopeStream | MemoryObjectReceiveStream[SessionMessage | Exception]:
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.__aenter__")
         if hasattr(self.original_stream, "__aenter__"):
             return await self.original_stream.__aenter__()
         return self
@@ -624,14 +972,17 @@ class JsonEnvelopeStream:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.__aexit__")
         if hasattr(self.original_stream, "__aexit__"):
             return await self.original_stream.__aexit__(exc_type, exc_val, exc_tb)
         return None
 
     def __aiter__(self) -> JsonEnvelopeStream:
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.__aiter__")
         return self
 
     async def __anext__(self) -> SessionMessage | Exception:
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.__anext__")
         try:
             item: SessionMessage | Exception = await self.original_stream.__anext__()
         except StopAsyncIteration:
@@ -650,6 +1001,7 @@ class JsonEnvelopeStream:
 
     async def aclose(self):
         """Close the stream if it supports it."""
+        logger.debug("diag.enter %s", "bridge.py:JsonEnvelopeStream.aclose")
         if hasattr(self.original_stream, "aclose"):
             await self.original_stream.aclose()
 
@@ -674,6 +1026,7 @@ class AgentDecompileStdioBridge:
         Args:
             backend: AgentDecompile server port (int) or URL (str) to connect to
         """
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge.__init__")
         if isinstance(backend, int):
             self.port: int | None = backend
             self.url: str = f"http://localhost:{backend}/mcp/message"
@@ -685,12 +1038,48 @@ class AgentDecompileStdioBridge:
         self._backends: dict[str, RawMcpHttpBackend] = {}
         self._backend_locks: dict[str, asyncio.Lock] = {}
         self._backend_map_lock = asyncio.Lock()
-        self._streamable_http_headers: dict[str, str] | None = None
+        self._streamable_http_headers: dict[str, dict[str, str]] = {}
 
         self._register_handlers()
 
+    def _set_streamable_http_headers(self, session_id: str, headers: dict[str, str]) -> None:
+        """Store forwarded HTTP headers for one frontend session."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._set_streamable_http_headers")
+        if headers:
+            self._streamable_http_headers[session_id] = dict(headers)
+        else:
+            self._streamable_http_headers.pop(session_id, None)
+
+    def _get_streamable_http_headers(self, session_id: str) -> dict[str, str]:
+        """Return forwarded HTTP headers for one frontend session."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._get_streamable_http_headers")
+        return dict(self._streamable_http_headers.get(session_id, {}))
+
+    @staticmethod
+    def _proxy_project_path_headers() -> dict[str, str]:
+        """Build X-AgentDecompile-Project-Path from proxy env so backend uses configured project.
+
+        When agentdecompile-proxy runs with AGENTDECOMPILE_PROJECT_PATH and optionally
+        AGENTDECOMPILE_PROJECT_NAME, these are sent to the backend so debug-info and
+        open use the right .gpr path instead of the backend default (e.g. my_project.gpr).
+        Enables multiple proxy sessions to target different projects via env.
+        """
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._proxy_project_path_headers")
+        path_val: str = os.environ.get("AGENTDECOMPILE_PROJECT_PATH", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_PATH", "").strip() or ""
+        if not path_val.strip():
+            return {}
+        path: Path = Path(path_val.strip()).expanduser()
+        if path.suffix.lower() == ".gpr":
+            return {"X-AgentDecompile-Project-Path": path.as_posix()}
+        name_val: str = os.environ.get("AGENTDECOMPILE_PROJECT_NAME", "").strip() or os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "").strip() or ""
+        name: str = name_val.strip() or "my_project"
+        if not name.lower().strip().endswith(".gpr"):
+            name = f"{name.strip()}.gpr"
+        return {"X-AgentDecompile-Project-Path": (path / name).as_posix()}
+
     def _current_frontend_session_id(self) -> str:
-        sid = get_current_mcp_session_id()
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._current_frontend_session_id")
+        sid: str = get_current_mcp_session_id()
         if sid and sid != "default":
             return sid
 
@@ -706,39 +1095,57 @@ class AgentDecompileStdioBridge:
                     if value:
                         return str(value)
                 return f"sdk-session:{id(session)}"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                "mcp_stdio_session_id_fallback exc_type=%s resolved_source=sdk_probe_failed",
+                type(e).__name__,
+            )
 
         return sid or "default"
 
     async def _get_backend_lock(self, session_id: str) -> asyncio.Lock:
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._get_backend_lock")
         async with self._backend_map_lock:
-            lock = self._backend_locks.get(session_id)
+            lock: asyncio.Lock | None = self._backend_locks.get(session_id)
             if lock is None:
                 lock = asyncio.Lock()
                 self._backend_locks[session_id] = lock
             return lock
 
     async def _ensure_backend(self, session_id: str | None = None) -> RawMcpHttpBackend:
-        """Return (or lazily create) the backend connection for one frontend session."""
-        sid = session_id or self._current_frontend_session_id()
-        backend = self._backends.get(sid)
+        """Return (or lazily create) the backend connection for one frontend session.
+        Per-session lock prevents concurrent requests from opening duplicate connections.
+        """
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._ensure_backend")
+        sid: str = session_id or self._current_frontend_session_id()
+        backend: RawMcpHttpBackend | None = self._backends.get(sid)
         if backend is not None and backend._initialized:
             return backend
 
-        lock = await self._get_backend_lock(sid)
+        lock: asyncio.Lock = await self._get_backend_lock(sid)
         async with lock:
             backend = self._backends.get(sid)
             if backend is not None and backend._initialized:
                 return backend
 
+            replaced_uninitialized = backend is not None
             if backend is not None:
                 await backend.close()
 
-            backend = RawMcpHttpBackend(self.url)
+            merged_headers: dict[str, str] = {
+                **self._get_streamable_http_headers(sid),
+                **self._proxy_project_path_headers(),
+            }
+            backend = RawMcpHttpBackend(self.url, extra_headers=merged_headers)
             await backend.initialize()
             self._backends[sid] = backend
             sys.stderr.write(f"Backend session established to {self.url} (frontend session: {sid})\n")
+            logger.info(
+                "stdio_http_backend_attached session_id=%s replaced_uninitialized_backend=%s host_port=%s",
+                redact_session_id(sid),
+                replaced_uninitialized,
+                _backend_host_port_for_logs(self.url),
+            )
 
             # Auto-open shared server if CLI credentials are available.
             await self._auto_open_shared_server(backend)
@@ -757,63 +1164,63 @@ class AgentDecompileStdioBridge:
         backend so that tools like ``list-project-files`` work immediately
         without requiring a manual ``open`` call.
         """
-        server_host = (
-
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._auto_open_shared_server")
+        server_host: str = (
             os.environ.get("AGENT_DECOMPILE_SERVER_HOST", "").strip()
             or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_HOST", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST", "").strip()
             or os.environ.get("AGENTDECOMPILE_SERVER_HOST", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_HOST", "").strip()
-        )
-        if not server_host:
+            or ""
+        ).strip()
+        if not server_host.strip():
+            sys.stderr.write("[auto-open] No shared server host found in env. Checked: AGENT_DECOMPILE_SERVER_HOST, AGENT_DECOMPILE_GHIDRA_SERVER_HOST, AGENTDECOMPILE_SERVER_HOST, AGENTDECOMPILE_GHIDRA_SERVER_HOST\n")
             return  # No shared server configured – nothing to auto-open.
 
-        server_port = (
+        server_port: str = (
             os.environ.get("AGENT_DECOMPILE_SERVER_PORT", "").strip()
             or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PORT", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_PORT", "").strip()
             or os.environ.get("AGENTDECOMPILE_SERVER_PORT", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PORT", "").strip()
             or "13100"
-        )
-        server_username = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip()
-        )
-        server_password = (
-            os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip()
-            or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip()
-        )
-        repository = (
+        ).strip()
+        server_username: str = (os.environ.get("AGENT_DECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_USERNAME", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_USERNAME", "").strip() or "").strip()
+        server_password: str = (os.environ.get("AGENT_DECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_SERVER_PASSWORD", "").strip() or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD", "").strip() or "").strip()
+        repository: str = (
             os.environ.get("AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
+            or os.environ.get("AGENTDECOMPILE_HTTP_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_GHIDRA_SERVER_REPOSITORY", "").strip()
             or os.environ.get("AGENT_DECOMPILE_REPOSITORY", "").strip()
             or os.environ.get("AGENTDECOMPILE_REPOSITORY", "").strip()
-        )
+            or ""
+        ).strip()
+        sys.stderr.write(f"[auto-open] Resolved env: host={server_host!r}, port={server_port!r}, username={'(set)' if server_username else '(not set)'}, password={'(set)' if server_password else '(not set)'}, repository={repository!r}\n")
 
         open_args: dict[str, Any] = {
             "server_host": server_host,
             "server_port": int(server_port) if server_port.isdigit() else 13100,
         }
-        if server_username:
+        if server_username.strip():
             open_args["server_username"] = server_username
         if server_password:
             open_args["server_password"] = server_password
-        if repository:
+        if repository.strip():
             open_args["path"] = repository
 
+        # Log the exact args being sent (redact password)
+        _log_args: dict[str, Any] = {k: ("***" if "password" in k.lower() else v) for k, v in open_args.items()}
+        sys.stderr.write(f"[auto-open] Calling connect-shared-project with args: {_log_args}\n")
         sys.stderr.write(f"Auto-opening shared server {server_host}:{open_args['server_port']}{(' repo=' + repository) if repository else ''} ...\n")
 
         try:
-            result = await backend.call_tool("connect-shared-project", open_args)
+            result: dict[str, Any] = await backend.call_tool("connect-shared-project", open_args)
             # Log a structured summary of the result.
             if isinstance(result, dict):
-                content = result.get("content", [])
+                content: list[dict[str, Any]] = result.get("content", [])
                 is_error = result.get("isError", False)
                 if is_error:
-                    text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                    text_parts: list[str] = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
                     sys.stderr.write(f"Auto-open FAILED: {' '.join(text_parts)}\n")
                 else:
                     # Parse the embedded JSON to get structured fields.
@@ -833,10 +1240,7 @@ class AgentDecompileStdioBridge:
                         server_connected = data.get("serverConnected", False)
                         checked_out = data.get("checkedOutProgram")
                         sys.stderr.write(
-                            f"Auto-open OK: connected={server_connected}"
-                            f", repo={repo!r}"
-                            f", availableRepositories={avail_repos}"
-                            f", programs={prog_count}\n"
+                            f"Auto-open OK: connected={server_connected}, repo={repo!r}, availableRepositories={avail_repos}, programs={prog_count}\n",
                         )
                         if programs:
                             prog_paths = [p.get("path", p.get("name", str(p))) for p in programs[:20]]
@@ -860,36 +1264,57 @@ class AgentDecompileStdioBridge:
         If ``session_id`` is provided, only that frontend-mapped backend session
         is reset. Otherwise all backend sessions are reset.
         """
-        if session_id:
-            sid = session_id or "default"
-            backend = self._backends.pop(sid, None)
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._reset_backend_session")
+        if session_id is not None and session_id.strip():
+            sid: str = session_id.strip() or "default"
+            backend: RawMcpHttpBackend | None = self._backends.pop(sid, None)
             self._backend_locks.pop(sid, None)
+            self._streamable_http_headers.pop(sid, None)
+            had_backend = backend is not None
             if backend is not None:
                 await backend.close()
+            logger.info(
+                "stdio_http_backend_teardown reset_scope=single session_id=%s had_backend=%s",
+                redact_session_id(sid),
+                had_backend,
+            )
             return
 
-        backends = list(self._backends.values())
+        backends: list[RawMcpHttpBackend] = list(self._backends.values())
+        n_backends = len(backends)
         self._backends.clear()
         self._backend_locks.clear()
+        self._streamable_http_headers.clear()
         for backend in backends:
             await backend.close()
+        logger.info(
+            "stdio_http_backend_teardown reset_scope=all sessions_closed_count=%s",
+            n_backends,
+        )
 
     async def _backend_request(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        """Convenience: ensure backend, call *method*, retry once on connection errors."""
+        """Ensure backend for current session, call *method*, retry once on connection errors by resetting session."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._backend_request")
         last_exc: Exception | None = None
-        session_id = self._current_frontend_session_id()
+        session_id: str = self._current_frontend_session_id()
         for attempt in range(2):
             try:
-                backend = await self._ensure_backend(session_id)
-                func = getattr(backend, method)
+                backend: RawMcpHttpBackend = await self._ensure_backend(session_id)
+                func: Callable[[Any, Any], Any] = getattr(backend, method)
                 return await func(*args, **kwargs)
             except Exception as exc:
                 last_exc = exc
                 if attempt == 0 and self._is_connection_error(exc):
-                    sys.stderr.write(
-                        f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]\n",
+                    logger.warning(
+                        "stdio_http_backend_retry_after_transport_error method=%s exc_type=%s attempt_index=%s session_id=%s",
+                        method,
+                        type(exc).__name__,
+                        attempt + 1,
+                        redact_session_id(session_id),
                     )
-                    # Invalidate the session so _ensure_backend creates a fresh one.
+                    msg = f"Backend connection error on {method}, reconnecting... ({type(exc).__name__}: {exc}) [frontend session: {session_id}]"
+                    sys.stderr.write(msg + "\n")
+                    # Invalidate this session's backend so next _ensure_backend creates a fresh connection
                     await self._reset_backend_session(session_id)
                     continue
                 break
@@ -898,22 +1323,32 @@ class AgentDecompileStdioBridge:
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """Return True if *exc* is a transport/connection failure."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._is_connection_error")
         return _is_transport_connection_error(exc)
 
     @staticmethod
     def _raw_tool_to_mcp(raw: dict[str, Any]) -> Tool:
         """Convert a raw tool dict from the backend to an MCP ``Tool`` object."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._raw_tool_to_mcp")
         return Tool.model_validate(raw)
 
     async def _handle_list_tools(self) -> list[Tool]:
         """Handle MCP list_tools request by forwarding to backend."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._handle_list_tools")
         try:
             raw_tools: list[dict[str, Any]] = await self._backend_request("list_tools")
             advertised: list[Tool] = []
+            schema_skip_count = 0
+            schema_skip_sample_name = ""
             for raw in raw_tools:
                 try:
                     tool = self._raw_tool_to_mcp(raw)
                 except Exception:
+                    schema_skip_count += 1
+                    if not schema_skip_sample_name and isinstance(raw, dict):
+                        _n = raw.get("name")
+                        if isinstance(_n, str) and _n.strip():
+                            schema_skip_sample_name = (_n[:80] + "…") if len(_n) > 80 else _n
                     continue  # skip non-parseable tools
 
                 # Normalize name via registry.
@@ -925,37 +1360,53 @@ class AgentDecompileStdioBridge:
                     except Exception:
                         pass
                 advertised.append(tool)
+            if schema_skip_count:
+                logger.warning(
+                    "mcp_stdio_tool_ad_schema_skip skipped_count=%s sample_tool_name=%s",
+                    schema_skip_count,
+                    schema_skip_sample_name or "—",
+                )
             sys.stderr.write(f"Tools advertised: {len(advertised)}\n")
             return advertised
         except Exception as e:
-            sys.stderr.write(f"ERROR: list_tools failed: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: list_tools failed: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return []
 
     async def _handle_call_tool(
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult: # pyright: ignore[reportInvalidTypeForm]
+    ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # pyright: ignore[reportInvalidTypeForm]
         """Handle MCP call_tool request by forwarding to backend."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._handle_call_tool")
         backend_name = resolve_tool_name(name) if isinstance(name, str) else None
         if backend_name is None:
             backend_name = name
 
+        logger.info("stdio bridge forwarding call_tool name=%s", backend_name)
         try:
             call_args: dict[str, Any] = dict(arguments or {})
             call_args.setdefault("format", "markdown")
             raw_result: dict[str, Any] = await self._backend_request("call_tool", backend_name, call_args)
             # raw_result is the JSON-RPC "result" value which should be
             # a CallToolResult-shaped dict: {content: [...], isError: bool}
-            return CallToolResult.model_validate(raw_result)
+            out = CallToolResult.model_validate(raw_result)
+            if out.isError:
+                logger.warning("stdio bridge call_tool backend reported isError name=%s", name)
+            else:
+                logger.info("stdio bridge call_tool ok name=%s", name)
+            return out
         except ClientError as exc:
             sys.stderr.write(f"ERROR: call_tool {name}: {exc}\n")
+            logger.warning("stdio bridge call_tool client error name=%s: %s", name, exc)
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Error: {exc}")],
                 isError=True,
             )
         except Exception as exc:
             sys.stderr.write(f"ERROR: call_tool {name} failed: {type(exc).__name__}: {exc}\n")
+            logger.exception("stdio bridge call_tool failed name=%s", name)
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Error: {type(exc).__name__}: {exc}")],
                 isError=True,
@@ -963,6 +1414,7 @@ class AgentDecompileStdioBridge:
 
     async def _handle_list_resources(self) -> list[Resource]:
         """Handle MCP list_resources request by forwarding to backend."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._handle_list_resources")
         try:
             from mcp.types import Resource as _Resource
 
@@ -979,6 +1431,7 @@ class AgentDecompileStdioBridge:
         uri: AnyUrl,
     ) -> str | bytes | Iterable[ReadResourceContents]:
         """Handle MCP read_resource request by forwarding to backend."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._handle_read_resource")
         try:
             raw: dict[str, Any] = await self._backend_request("read_resource", str(uri))
             contents = raw.get("contents", [])
@@ -988,11 +1441,13 @@ class AgentDecompileStdioBridge:
                     return c0.get("text", c0.get("blob", ""))
             return ""
         except Exception as e:
-            sys.stderr.write(f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: read_resource failed for URI {uri}: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return ""
 
     async def _handle_list_prompts(self) -> list[Prompt]:
         """Handle MCP list_prompts request by forwarding to backend."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._handle_list_prompts")
         try:
             from mcp.types import Prompt as _Prompt
 
@@ -1001,7 +1456,8 @@ class AgentDecompileStdioBridge:
             sys.stderr.write(f"Prompts available: {len(prompts)}\n")
             return prompts
         except Exception as e:
-            sys.stderr.write(f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}\n")
+            msg = f"ERROR: list_prompts failed: {e.__class__.__name__}: {e}"
+            sys.stderr.write(msg + "\n")
             return []
 
     def _register_handlers(self):
@@ -1009,6 +1465,7 @@ class AgentDecompileStdioBridge:
 
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:  # type: ignore[name-defined]
+            sys.stderr.write("list_tools handler called\n")
             return await self._handle_list_tools()
 
         @self.server.call_tool()
@@ -1016,20 +1473,24 @@ class AgentDecompileStdioBridge:
             name: str,
             arguments: dict[str, Any],
         ) -> UnstructuredContent | StructuredContent | CombinationContent | CallToolResult:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
+            sys.stderr.write(f"call_tool handler called for {name}\n")
             return await self._handle_call_tool(name, arguments)
 
         @self.server.list_resources()
         async def list_resources() -> list[Resource]:  # type: ignore[name-defined]
+            sys.stderr.write("list_resources handler called\n")
             return await self._handle_list_resources()
 
         @self.server.read_resource()
         async def read_resource(
             uri: AnyUrl,  # type: ignore[name-defined]
         ) -> str | bytes | Iterable[ReadResourceContents]:  # type: ignore[name-defined]  # pyright: ignore[reportInvalidTypeForm]
+            sys.stderr.write(f"read_resource handler called for {uri}\n")
             return await self._handle_read_resource(uri)
 
         @self.server.list_prompts()
         async def list_prompts() -> list[Prompt]:  # type: ignore[name-defined]
+            sys.stderr.write("list_prompts handler called\n")
             return await self._handle_list_prompts()
 
     def _create_initialization_options(self):
@@ -1038,12 +1499,14 @@ class AgentDecompileStdioBridge:
         Some MCP clients attempt to set the server log level during/after
         initialize and expect `capabilities.logging` to be present.
         """
-        options = self.server.create_initialization_options()
-        capabilities = getattr(options, "capabilities", None)
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge._create_initialization_options")
+        sys.stderr.write("Creating initialization options\n")
+        options: InitializationOptions = self.server.create_initialization_options()
+        capabilities: ServerCapabilities | None = getattr(options, "capabilities", None)
         if capabilities is None:
             capabilities = ServerCapabilities()
 
-        if getattr(capabilities, "logging", None) is None:
+        if hasattr(capabilities, "logging") and capabilities.logging is None:
             capabilities = capabilities.model_copy(update={"logging": LoggingCapability()})
 
         return options.model_copy(update={"capabilities": capabilities})
@@ -1055,8 +1518,10 @@ class AgentDecompileStdioBridge:
         request.  All backend communication uses ``RawMcpHttpBackend`` (plain
         httpx POST) so no anyio cancel scopes are involved.
         """
-        sys.stderr.write("Bridge ready - stdio transport active\n")
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge.run")
+        sys.stderr.write("Running bridge - stdio transport active\n")
 
+        disconnect_kind = "none"
         try:
             async with stdio_server() as (stdio_read, stdio_write):
                 await self.server.run(
@@ -1064,17 +1529,27 @@ class AgentDecompileStdioBridge:
                     stdio_write,  # pyright: ignore[reportArgumentType]
                     self._create_initialization_options(),
                 )
-        except ClosedResourceError:
-            sys.stderr.write("Client disconnected\n")
-        except BrokenResourceError:
-            sys.stderr.write("Client connection broken - disconnecting\n")
-        except Exception:
-            raise
+        except Exception as exc:
+            kind = _classify_anyio_stdio_disconnect(exc)
+            if kind == "closed":
+                disconnect_kind = "closed"
+                sys.stderr.write("Client disconnected\n")
+            elif kind == "broken":
+                disconnect_kind = "broken"
+                sys.stderr.write("Client connection broken - disconnecting\n")
+            else:
+                raise
         finally:
+            logger.info(
+                "stdio_bridge_run_finished client_disconnect_kind=%s host_port=%s",
+                disconnect_kind,
+                _backend_host_port_for_logs(self.url),
+            )
             await self._reset_backend_session()
 
     def stop(self):
         """Stop the bridge and cleanup resources."""
+        logger.debug("diag.enter %s", "bridge.py:AgentDecompileStdioBridge.stop")
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

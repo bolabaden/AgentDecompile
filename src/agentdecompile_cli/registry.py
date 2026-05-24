@@ -1,8 +1,17 @@
 """Unified tool registry - schema definitions, normalization, and ToolRegistry class.
 
-Merged from tools_schema.py and tool_registry.py.
-Single source of truth for all tool names, parameter schemas, normalization helpers,
-and the ToolRegistry that parses and validates arguments.
+Merged from tools_schema.py and tool_registry.py. Single source of truth for:
+  - Tool names: Tool enum (canonical kebab-case); TOOLS list for advertisement.
+  - Parameter schemas: TOOL_PARAMS, TOOL_PARAM_ALIASES (e.g. mode/action/operation).
+  - Normalization: normalize_identifier() strips non-alpha and lowercases so that
+    "program-path", "programPath", and "program_path" all match the same param.
+  - Resolution: resolve_tool_name() / resolve_tool_name_enum() (or Tool.from_string()) map input to Tool.
+  - Resource URIs: RESOURCE_URIS, RESOURCE_URI_DEBUG_INFO, etc. for read_resource.
+
+Tool execution flow: CLI or MCP client sends tool name + args → registry normalizes
+tool name and param keys → ToolProviderManager dispatches to provider HANDLERS →
+handlers use _get_* / _require_* with normalized keys. Do not add provider-local
+normalization; keep it all here.
 """
 
 from __future__ import annotations
@@ -12,12 +21,15 @@ import logging
 import os
 import re
 
+from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mcp import types
-from mcp.client.session import ClientSession
+if TYPE_CHECKING:
+    from mcp import types
+    from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +73,14 @@ _QUOTED_PATH_PATTERN = re.compile(r'"[^"]+"|\'[^\']+\'')
 @lru_cache(maxsize=512)
 def _compile_nl_phrase_pattern(phrase: str) -> re.Pattern[str]:
     """Return cached regex used to capture values for a normalized NL phrase."""
+    logger.debug("diag.enter %s", "registry.py:_compile_nl_phrase_pattern")
     phrase_re = re.escape(phrase).replace("\\ ", r"\s+")
     pattern_text = _NL_PHRASE_VALUE_PATTERN_TEMPLATE.replace("__PHRASE_RE__", phrase_re)
     return re.compile(
         pattern_text,
         flags=re.IGNORECASE,
     )
+
 
 # NL phrase preprocessing patterns (used in _preprocess_nl_phrases)
 _NL_PHRASE_PATTERNS = [
@@ -82,75 +96,180 @@ _NL_PHRASE_PATTERNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# MCP tool names (exact strings expected by Java server)
+# MCP tool names (canonical wire names) – enum is single source of truth
 # ---------------------------------------------------------------------------
-TOOLS = [
-    "analyze-data-flow",
-    "analyze-program",
-    "analyze-vtables",
-    "apply-data-type",
-    "change-processor",
-    "checkin-program",
-    "checkout-program",
-    "checkout-status",
-    "create-label",
-    "decompile-function",
-    "sync-project",
-    "export",
-    "delete-project-binary",
-    "gen-callgraph",
-    "get-call-graph",
-    "get-current-address",
-    "get-current-function",
-    "get-current-program",
-    "get-data",
-    "get-functions",
-    "get-references",
-    "import-binary",
-    "inspect-memory",
-    "list-cross-references",
-    "list-exports",
-    "list-functions",
-    "list-imports",
-    "list-project-files",
-    "list-processors",
-    "list-strings",
-    "manage-bookmarks",
-    "manage-comments",
-    "manage-data-types",
-    "manage-files",
-    "manage-function-tags",
-    "manage-function",
-    "manage-strings",
-    "manage-structures",
-    "manage-symbols",
-    "match-function",
-    "execute-script",
-    "open-all-programs-in-code-browser",
-    "open-program-in-code-browser",
-    "open-project",
-    "read-bytes",
-    "search-code",
-    "search-constants",
-    "search-everything",
-    "search-strings",
-    "search-symbols",
-    "suggest",
-]
+
+
+class Tool(str, Enum):
+    """Canonical MCP tool names. Use .value (or .wire_name) for wire/CLI (kebab-case string)."""
+
+    ANALYZE_DATA_FLOW = "analyze-data-flow"
+    ANALYZE_PROGRAM = "analyze-program"
+    ANALYZE_VTABLES = "analyze-vtables"
+    APPLY_DATA_TYPE = "apply-data-type"
+    CHANGE_PROCESSOR = "change-processor"
+    CHECKIN_PROGRAM = "checkin-program"
+    CHECKOUT_PROGRAM = "checkout-program"
+    CHECKOUT_STATUS = "checkout-status"
+    CREATE_LABEL = "create-label"
+    DECOMPILE_FUNCTION = "decompile-function"
+    DELETE_PROJECT_BINARY = "delete-project-binary"
+    SYNC_PROJECT = "sync-project"
+    EXPORT = "export"
+    GEN_CALLGRAPH = "gen-callgraph"
+    GET_CALL_GRAPH = "get-call-graph"
+    REMOVE_PROGRAM_BINARY = "remove-program-binary"
+    GET_CURRENT_ADDRESS = "get-current-address"
+    GET_CURRENT_FUNCTION = "get-current-function"
+    GET_CURRENT_PROGRAM = "get-current-program"
+    GET_DATA = "get-data"
+    GET_FUNCTION = "get-function"
+    GET_FUNCTIONS = "get-functions"
+    GET_REFERENCES = "get-references"
+    IMPORT_BINARY = "import-binary"
+    INSPECT_MEMORY = "inspect-memory"
+    LIST_CROSS_REFERENCES = "list-cross-references"
+    LIST_EXPORTS = "list-exports"
+    LIST_FUNCTIONS = "list-functions"
+    LIST_IMPORTS = "list-imports"
+    LIST_PROJECT_FILES = "list-project-files"
+    LIST_FALLBACK_PROJECTS = "list-fallback-projects"
+    REINTEGRATE_FALLBACK_PROJECTS = "reintegrate-fallback-projects"
+    LIST_PROCESSORS = "list-processors"
+    LIST_PROMPTS = "list-prompts"
+    LIST_STRINGS = "list-strings"
+    MANAGE_BOOKMARKS = "manage-bookmarks"
+    MANAGE_COMMENTS = "manage-comments"
+    MANAGE_DATA_TYPES = "manage-data-types"
+    MANAGE_FILES = "manage-files"
+    MANAGE_FUNCTION_TAGS = "manage-function-tags"
+    MANAGE_FUNCTION = "manage-function"
+    MANAGE_STRINGS = "manage-strings"
+    MANAGE_STRUCTURES = "manage-structures"
+    MANAGE_SYMBOLS = "manage-symbols"
+    MATCH_FUNCTION = "match-function"
+    MIGRATE_METADATA = "migrate-metadata"
+    EXECUTE_SCRIPT = "execute-script"
+    OPEN_ALL_PROGRAMS_IN_CODE_BROWSER = "open-all-programs-in-code-browser"
+    OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
+    OPEN = "open"
+    READ_BYTES = "read-bytes"
+    RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
+    SEARCH_CODE = "search-code"
+    SEARCH_CONSTANTS = "search-constants"
+    SEARCH_EVERYTHING = "search-everything"
+    SEARCH_STRINGS = "search-strings"
+    SEARCH_SYMBOLS = "search-symbols"
+    SVR_ADMIN = "svr-admin"
+    SUGGEST = "suggest"
+
+    @property
+    def wire_name(self) -> str:
+        """Canonical kebab-case name for MCP/CLI wire (same as .value)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.wire_name")
+        return self.value
+
+    @property
+    def normalized(self) -> str:
+        """Alpha-only lowercase form for matching (normalize_identifier(.value))."""
+        logger.debug("diag.enter %s", "registry.py:Tool.normalized")
+        return normalize_identifier(self.value)
+
+    @property
+    def snake_name(self) -> str:
+        """Snake_case form for display/CLI (to_snake_case(.value))."""
+        logger.debug("diag.enter %s", "registry.py:Tool.snake_name")
+        return to_snake_case(self.value)
+
+    @property
+    def params(self) -> list[str]:
+        """Parameter names (camelCase) for this tool. Returns a copy."""
+        logger.debug("diag.enter %s", "registry.py:Tool.params")
+        return list(TOOL_PARAMS.get(self, []))
+
+    @property
+    def is_hidden(self) -> bool:
+        """True if this tool is in the default hidden set (curated commands)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_hidden")
+        return self in _DEFAULT_HIDDEN_TOOLS
+
+    @property
+    def is_gui_only_disabled(self) -> bool:
+        """True if this tool is disabled in headless (GUI-only)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_gui_only_disabled")
+        return self in DISABLED_GUI_ONLY_TOOLS
+
+    @property
+    def is_advertised(self) -> bool:
+        """True if this tool is currently advertised (env-aware)."""
+        logger.debug("diag.enter %s", "registry.py:Tool.is_advertised")
+        return any(normalize_identifier(t) == self.normalized for t in ADVERTISED_TOOLS)
+
+    @classmethod
+    def from_string(cls, s: str) -> Tool | None:
+        """Resolve any alias/variant to canonical Tool, or None if unknown."""
+        logger.debug("diag.enter %s", "registry.py:Tool.from_string")
+        resolved = resolve_tool_name(s)
+        if resolved is None:
+            return None
+        try:
+            return cls(resolved)
+        except ValueError:
+            return None
+
+    @classmethod
+    def advertised(cls) -> list[Tool]:
+        """Tools currently advertised (env-aware). Same logic as ADVERTISED_TOOLS but returns list[Tool]."""
+        logger.debug("diag.enter %s", "registry.py:Tool.advertised")
+        return [t for t in cls if t.is_advertised]
+
+
+class ToolSurfaceProfile(str, Enum):
+    """Named advertised tool surfaces for clients with different complexity budgets."""
+
+    CURATED = "curated"
+    FULL = "full"
+    LEGACY = "legacy"
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    """Machine-readable tool metadata for client/tool-surface selection."""
+
+    context_rich: bool
+    single_purpose: bool
+    writes_state: bool
+    legacy: bool
+    replacement: tuple[str, ...] = ()
+
+
+# Backward-compat alias
+ToolName = Tool
+
+TOOLS: list[str] = [t.value for t in Tool]
+
+_TOOL_SURFACE_ENV_VARS: tuple[str, ...] = (
+    "AGENTDECOMPILE_TOOL_SURFACE",
+    "AGENT_DECOMPILE_TOOL_SURFACE",
+)
+
 
 # ---------------------------------------------------------------------------
 # Resource URIs (exact strings for read_resource)
 # ---------------------------------------------------------------------------
 
+
+class ResourceUri(str, Enum):
+    """Canonical resource URIs for read_resource."""
+
+    DEBUG_INFO = "agentdecompile://debug-info"
+
+
+RESOURCE_URI_DEBUG_INFO = ResourceUri.DEBUG_INFO.value
 RESOURCE_URI_PROGRAMS = "ghidra://programs"
 RESOURCE_URI_STATIC_ANALYSIS = "ghidra://static-analysis-results"
-RESOURCE_URI_DEBUG_INFO = "ghidra://agentdecompile-debug-info"
 
-RESOURCE_URIS: list[str] = [
-    RESOURCE_URI_PROGRAMS,
-    RESOURCE_URI_STATIC_ANALYSIS,
-    RESOURCE_URI_DEBUG_INFO,
-]
+RESOURCE_URIS: list[str] = [u.value for u in ResourceUri]
 
 # ---------------------------------------------------------------------------
 # Parameter names (camelCase) per tool – for building payloads from CLI
@@ -158,6 +277,7 @@ RESOURCE_URIS: list[str] = [
 
 
 def _params(*names: str) -> list[str]:
+    logger.debug("diag.enter %s", "registry.py:_params")
     return list(names)
 
 
@@ -181,6 +301,7 @@ MODE_PARAM_ALIASES: frozenset[str] = frozenset(
     },
 )
 
+# Parameter names that may hold natural-language instructions; used by NL parsing to find user intents
 NATURAL_LANGUAGE_INPUT_KEYS: frozenset[str] = frozenset(
     {
         "applescript",
@@ -199,64 +320,190 @@ NATURAL_LANGUAGE_INPUT_KEYS: frozenset[str] = frozenset(
 
 
 def _canonical_param_name(param: str) -> str:
+    logger.debug("diag.enter %s", "registry.py:_canonical_param_name")
     if normalize_identifier(param) in MODE_PARAM_ALIASES:
         return "mode"
     return param
 
 
-# Required / common: programPath is optional in GUI, required in headless for program-scoped tools
-TOOL_PARAMS: dict[str, list[str]] = {
-    "analyze-data-flow": _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
-    "analyze-program": _params( "programPath", "forceAnalysis", "verbose", "noSymbols", "gdts", "programOptions", "threaded", "maxWorkers", "waitForAnalysis" ),
-    "analyze-vtables": _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
-    "apply-data-type": _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
-    "change-processor": _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
-    "checkin-program": _params("programPath", "comment", "keepCheckedOut"),
-    "checkout-program": _params("programPath", "exclusive"),
-    "checkout-status": _params("programPath"),
-    "create-label": _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
-    "decompile-function": _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
-    "delete-project-binary": _params("programPath", "confirm"),
-    "execute-script": _params("code", "programPath", "timeout"),
-    "export": _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
-    "gen-callgraph": _params( "programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers" ),
-    "get-call-graph": _params( "programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses" ),
-    "get-current-address": _params("programPath"),
-    "get-current-function": _params("programPath"),
-    "get-current-program": _params("programPath"),
-    "get-data": _params("programPath", "addressOrSymbol"),
-    "get-functions": _params( "programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose" ),
-    "get-references": _params( "programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow" ),
-    "import-binary": _params("path", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl"),
-    "inspect-memory": _params("programPath", "mode", "address", "length", "offset", "limit"),
-    "list-cross-references": _params("programPath", "address", "direction", "maxResults"),
-    "list-exports": _params("programPath", "filter", "maxResults", "offset", "startIndex"),
-    "list-functions": _params( "programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers" ),
-    "list-imports": _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
-    "list-processors": _params("filter"),
-    "list-project-files": [],
-    "list-strings": _params("programPath", "filter", "maxResults", "offset"),
-    "manage-bookmarks": _params( "programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types" ),
-    "manage-comments": _params( "programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange" ),
-    "manage-data-types": _params( "programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol" ),
-    "manage-files": _params( "mode", "path", "sourcePath", "filePath", "programPath", "newPath", "destinationPath", "newName", "content", "encoding", "createParents", "keep", "force", "exclusive", "dryRun", "maxResults", "destinationFolder", "recursive", "maxDepth", "analyzeAfterImport", "stripLeadingPath", "stripAllContainerPath", "mirrorFs", "enableVersionControl", "exportType", "format", "includeParameters", "includeVariables", "includeComments", "processor", "languageId", "compilerSpecId", "endian" ),
-    "manage-function-tags": _params("programPath", "function", "mode", "tags"),
-    "manage-function": _params( "programPath", "mode", "address", "functionIdentifier", "name", "functions", "oldName", "newName", "variableMappings", "prototype", "variableName", "newType", "datatypeMappings", "archiveName", "createIfNotExists", "propagate", "propagateProgramPaths", "propagateMaxCandidates", "propagateMaxInstructions" ),
-    "manage-strings": _params( "programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions" ),
-    "manage-structures": _params( "programPath", "mode", "cDefinition", "headerContent", "structureName", "name", "size", "type", "category", "packed", "description", "fields", "addressOrSymbol", "clearExisting", "force", "nameFilter", "includeBuiltIn", "fieldName", "dataType", "offset", "comment", "bitfield", "newDataType", "newFieldName", "newComment", "newLength" ),
-    "manage-symbols": _params( "programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll" ),
-    "match-function": _params( "programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize" ),
-    "open-all-programs-in-code-browser": _params("extensions", "folderPath"),
-    "open-program-in-code-browser": _params("programPath"),
-    "open-project": _params( "path", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName" ),
-    "read-bytes": _params("programPath", "address", "length"),
-    "search-code": _params( "programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit" ),
-    "search-constants": _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
-    "search-everything": _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
-    "search-strings": _params("programPath", "pattern", "searchString", "maxResults"),
-    "search-symbols": _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
-    "suggest": _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
-    "sync-project": _params( "mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun" ),
+# programPath is optional everywhere: headless resolves active session program when omitted.
+# Built as str keys for _merge_tools_list_params; then converted to dict[Tool, list[str]] below.
+_TOOL_PARAMS_STR: dict[str, list[str]] = {
+    Tool.ANALYZE_DATA_FLOW.value: _params("programPath", "functionAddress", "startAddress", "variableName", "direction"),
+    Tool.ANALYZE_PROGRAM.value: _params("programPath", "analyzers", "force"),
+    Tool.ANALYZE_VTABLES.value: _params("programPath", "mode", "vtableAddress", "functionAddress", "maxEntries", "maxResults"),
+    Tool.APPLY_DATA_TYPE.value: _params("programPath", "addressOrSymbol", "dataTypeString", "archiveName"),
+    Tool.CHANGE_PROCESSOR.value: _params("programPath", "processor", "languageId", "compilerSpecId", "endian"),
+    Tool.CHECKIN_PROGRAM.value: _params("programPath", "comment", "keepCheckedOut"),
+    Tool.CHECKOUT_PROGRAM.value: _params("programPath", "exclusive"),
+    Tool.CHECKOUT_STATUS.value: _params("programPath"),
+    Tool.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
+    Tool.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
+    Tool.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
+    Tool.GET_FUNCTION.value: _params(
+        "programPath",
+        "function",
+        "addressOrSymbol",
+        "functionIdentifier",
+        "timeout",
+        "maxInstructions",
+        "maxRefs",
+        "maxCallers",
+        "maxCallees",
+        "callerDepth",
+        "calleeDepth",
+        "callerBranching",
+        "calleeBranching",
+        "maxRelatedCallers",
+        "maxRelatedCallees",
+    ),
+    Tool.REMOVE_PROGRAM_BINARY.value: _params("programPath", "confirm"),
+    Tool.EXECUTE_SCRIPT.value: _params("code", "programPath", "timeout"),
+    Tool.EXPORT.value: _params("programPath", "outputPath", "format", "createHeader", "includeTypes", "includeGlobals", "includeComments", "tags"),
+    Tool.GEN_CALLGRAPH.value: _params("programPath", "functionIdentifier", "depth", "direction", "format", "displayType", "includeRefs", "maxDepth", "maxRunTime", "condenseThreshold", "topLayers", "bottomLayers"),
+    Tool.GET_CALL_GRAPH.value: _params("programPath", "functionIdentifier", "mode", "depth", "maxDepth", "direction", "startIndex", "maxCallers", "includeCallContext", "functionAddresses"),
+    Tool.GET_CURRENT_ADDRESS.value: _params("programPath"),
+    Tool.GET_CURRENT_FUNCTION.value: _params("programPath"),
+    Tool.GET_CURRENT_PROGRAM.value: _params("programPath"),
+    Tool.GET_DATA.value: _params("programPath", "addressOrSymbol"),
+    Tool.GET_FUNCTIONS.value: _params("programPath", "identifier", "view", "offset", "limit", "includeCallers", "includeCallees", "includeComments", "includeIncomingReferences", "includeReferenceContext", "filterDefaultNames", "filterByTag", "untagged", "verbose"),
+    Tool.GET_REFERENCES.value: _params("programPath", "target", "mode", "direction", "offset", "limit", "libraryName", "startIndex", "maxReferencers", "includeRefContext", "includeDataRefs", "contextLines", "importName", "includeFlow"),
+    Tool.IMPORT_BINARY.value: _params(
+        "path",
+        "programPath",
+        "programName",
+        "destinationFolder",
+        "recursive",
+        "maxDepth",
+        "analyzeAfterImport",
+        "stripLeadingPath",
+        "stripAllContainerPath",
+        "mirrorFs",
+        "enableVersionControl",
+    ),
+    Tool.INSPECT_MEMORY.value: _params("programPath", "mode", "address", "length", "offset", "limit"),
+    Tool.LIST_CROSS_REFERENCES.value: _params("programPath", "address", "direction", "maxResults"),
+    Tool.LIST_EXPORTS.value: _params("programPath", "filter", "maxResults", "offset", "startIndex"),
+    Tool.LIST_FUNCTIONS.value: _params("programPath", "mode", "query", "searchString", "minReferenceCount", "startIndex", "maxCount", "offset", "limit", "filterDefaultNames", "filterByTag", "untagged", "hasTags", "verbose", "identifiers"),
+    Tool.LIST_IMPORTS.value: _params("programPath", "libraryFilter", "maxResults", "offset", "startIndex", "query", "groupByLibrary"),
+    Tool.LIST_PROCESSORS.value: _params("filter"),
+    Tool.LIST_PROJECT_FILES.value: [],
+    Tool.LIST_FALLBACK_PROJECTS.value: _params("projectsDir", "originalProjectName"),
+    Tool.REINTEGRATE_FALLBACK_PROJECTS.value: _params(
+        "projectsDir",
+        "originalProjectName",
+        "fallbackProjectNames",
+        "mergeMode",
+        "deleteAfterMerge",
+        "dryRun",
+    ),
+    Tool.LIST_STRINGS.value: _params("programPath", "filter", "maxResults", "offset"),
+    Tool.MANAGE_BOOKMARKS.value: _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
+    Tool.MANAGE_COMMENTS.value: _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),
+    Tool.MANAGE_DATA_TYPES.value: _params("programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol"),
+    Tool.MANAGE_FILES.value: _params(
+        "mode",
+        "path",
+        "sourcePath",
+        "filePath",
+        "programPath",
+        "newPath",
+        "destinationPath",
+        "newName",
+        "content",
+        "encoding",
+        "createParents",
+        "keep",
+        "force",
+        "exclusive",
+        "dryRun",
+        "maxResults",
+        "destinationFolder",
+        "recursive",
+        "maxDepth",
+        "analyzeAfterImport",
+        "stripLeadingPath",
+        "stripAllContainerPath",
+        "mirrorFs",
+        "enableVersionControl",
+        "exportType",
+        "format",
+        "includeParameters",
+        "includeVariables",
+        "includeComments",
+        "processor",
+        "languageId",
+        "compilerSpecId",
+        "endian",
+    ),
+    Tool.MANAGE_FUNCTION_TAGS.value: _params("programPath", "function", "mode", "tags"),
+    Tool.MANAGE_FUNCTION.value: _params(
+        "programPath",
+        "mode",
+        "address",
+        "functionIdentifier",
+        "name",
+        "functions",
+        "oldName",
+        "newName",
+        "variableMappings",
+        "prototype",
+        "variableName",
+        "newType",
+        "datatypeMappings",
+        "archiveName",
+        "createIfNotExists",
+        "propagate",
+        "propagateProgramPaths",
+        "propagateMaxCandidates",
+        "propagateMaxInstructions",
+    ),
+    Tool.MANAGE_STRINGS.value: _params("programPath", "mode", "pattern", "searchString", "filter", "query", "startIndex", "maxCount", "offset", "limit", "includeReferencingFunctions"),
+    Tool.MANAGE_STRUCTURES.value: _params(
+        "programPath",
+        "mode",
+        "cDefinition",
+        "headerContent",
+        "structureName",
+        "name",
+        "size",
+        "type",
+        "category",
+        "packed",
+        "description",
+        "fields",
+        "addressOrSymbol",
+        "clearExisting",
+        "force",
+        "nameFilter",
+        "includeBuiltIn",
+        "fieldName",
+        "dataType",
+        "offset",
+        "comment",
+        "bitfield",
+        "newDataType",
+        "newFieldName",
+        "newComment",
+        "newLength",
+    ),
+    Tool.MANAGE_SYMBOLS.value: _params("programPath", "mode", "address", "labelName", "newName", "libraryFilter", "startIndex", "maxCount", "offset", "limit", "groupByLibrary", "includeExternal", "filterDefaultNames", "demangleAll"),
+    Tool.MATCH_FUNCTION.value: _params("programPath", "functionIdentifier", "targetProgramPaths", "maxInstructions", "minSimilarity", "propagateNames", "propagateTags", "propagateComments", "filterDefaultNames", "filterByTag", "maxFunctions", "batchSize"),
+    Tool.MIGRATE_METADATA.value: _params("programPath", "targetProgramPaths", "minSimilarity", "limit", "includeExternals", "propagateNames", "propagateTags", "propagateComments", "propagatePrototype", "propagateBookmarks"),
+    Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER.value: _params("extensions", "folderPath"),
+    Tool.OPEN_PROGRAM_IN_CODE_BROWSER.value: _params("programPath"),
+    Tool.OPEN.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
+    Tool.LIST_PROMPTS.value: _params(),
+    Tool.READ_BYTES.value: _params("programPath", "address", "length"),
+    Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),
+    Tool.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
+    Tool.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
+    Tool.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
+    Tool.SEARCH_STRINGS.value: _params("programPath", "pattern", "searchString", "maxResults"),
+    Tool.SEARCH_SYMBOLS.value: _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
+    Tool.SVR_ADMIN.value: _params("args", "command", "timeoutSeconds"),
+    Tool.SUGGEST.value: _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
+    Tool.SYNC_PROJECT.value: _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
 }
 
 # Populated from TOOLS_LIST.md when available.
@@ -271,139 +518,150 @@ TOOL_ALIASES: dict[str, str] = {}
 # TODO(gui-only): Keep GUI-only tools disabled in headless advertisement/call flow.
 NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     # Canonical tools forwarded to parent tools
-    "open": "open-project",
-    "switch-project": "open-project",  # folded into open-project
-    "create-label": "manage-symbols",
-    "download-shared-repository": "sync-project",
-    "sync-shared-repository": "sync-project",
-    "sync-shared-project": "sync-project",
-    "pull-shared-repository": "sync-project",
-    "push-shared-repository": "sync-project",
-    "download-shared-project": "sync-project",
-    "gen-callgraph": "get-call-graph",
-    "list-cross-references": "get-references",
-    "list-exports": "manage-symbols",
-    "list-imports": "manage-symbols",
-    "list-strings": "manage-strings",
-    "search-strings": "manage-strings",
-    "search-symbols": "manage-symbols",
-    "search-symbols-by-name": "manage-symbols",
+    "open-project": Tool.OPEN.value,  # e.g. Open_Project / open_project → normalize_identifier → openproject
+    "switch-project": Tool.OPEN.value,  # folded into open
+    "download-shared-repository": Tool.SYNC_PROJECT.value,
+    "sync-shared-repository": Tool.SYNC_PROJECT.value,
+    "sync-shared-project": Tool.SYNC_PROJECT.value,
+    "pull-shared-repository": Tool.SYNC_PROJECT.value,
+    "push-shared-repository": Tool.SYNC_PROJECT.value,
+    "download-shared-project": Tool.SYNC_PROJECT.value,
+    "delete-project-binary": Tool.REMOVE_PROGRAM_BINARY.value,
+    "gen-callgraph": Tool.GET_CALL_GRAPH.value,
+    "list-cross-references": Tool.GET_REFERENCES.value,
+    "list-strings": Tool.MANAGE_STRINGS.value,
+    "search-strings": Tool.MANAGE_STRINGS.value,
     # analyze-data-flow overloads
-    "find-variable-accesses": "analyze-data-flow",
-    "trace-data-flow-backward": "analyze-data-flow",
-    "trace-data-flow-forward": "analyze-data-flow",
+    "find-variable-accesses": Tool.ANALYZE_DATA_FLOW.value,
+    "trace-data-flow-backward": Tool.ANALYZE_DATA_FLOW.value,
+    "trace-data-flow-forward": Tool.ANALYZE_DATA_FLOW.value,
     # analyze-vtables overloads
-    "analyze-vtable": "analyze-vtables",
-    "find-vtable-callers": "analyze-vtables",
-    "find-vtables-containing-function": "analyze-vtables",
+    "analyze-vtable": Tool.ANALYZE_VTABLES.value,
+    "find-vtable-callers": Tool.ANALYZE_VTABLES.value,
+    "find-vtables-containing-function": Tool.ANALYZE_VTABLES.value,
     # decompile-function overloads/synonyms
-    "get-decompilation": "decompile-function",
+    "get-decompilation": Tool.DECOMPILE_FUNCTION.value,
     # get-call-graph overloads
-    "find-common-callers": "get-call-graph",
-    "get-call-tree": "get-call-graph",
-    "get-callers-decompiled": "get-call-graph",
+    "find-common-callers": Tool.GET_CALL_GRAPH.value,
+    "get-call-tree": Tool.GET_CALL_GRAPH.value,
+    "get-callers-decompiled": Tool.GET_CALL_GRAPH.value,
     # get-functions overloads/synonyms
-    "get-function-by-address": "get-functions",
-    "find-function": "get-functions",
-    "get-all-functions": "list-functions",
+    "get-function-by-address": Tool.GET_FUNCTIONS.value,
+    "find-function": Tool.GET_FUNCTIONS.value,
+    "get-all-functions": Tool.LIST_FUNCTIONS.value,
     # get-references overloads
-    "find-cross-references": "get-references",
-    "find-import-references": "get-references",
-    "get-referencers-decompiled": "get-references",
-    "resolve-thunk": "get-references",
+    "find-cross-references": Tool.GET_REFERENCES.value,
+    "find-import-references": Tool.GET_REFERENCES.value,
+    "get-referencers-decompiled": Tool.GET_REFERENCES.value,
+    "resolve-thunk": Tool.GET_REFERENCES.value,
     # import-binary overloads/legacy
-    "import-file": "import-binary",
+    "import-file": Tool.IMPORT_BINARY.value,
     # inspect-memory overloads
-    "get-memory-blocks": "inspect-memory",
-    "read-memory": "inspect-memory",
-    "read-bytes": "inspect-memory",
+    "get-memory-blocks": Tool.INSPECT_MEMORY.value,
+    "read-memory": Tool.INSPECT_MEMORY.value,
+    "read-bytes": Tool.INSPECT_MEMORY.value,
     # list-functions overloads
-    "get-function-count": "list-functions",
-    "get-functions-by-similarity": "list-functions",
-    "get-undefined-function-candidates": "list-functions",
-    "list-methods": "list-functions",
+    "get-function-count": Tool.LIST_FUNCTIONS.value,
+    "get-functions-by-similarity": Tool.LIST_FUNCTIONS.value,
+    "get-undefined-function-candidates": Tool.LIST_FUNCTIONS.value,
+    "list-methods": Tool.LIST_FUNCTIONS.value,
     # manage-bookmarks overloads/legacy
-    "set-bookmark": "manage-bookmarks",
-    "get-bookmarks": "manage-bookmarks",
-    "remove-bookmark": "manage-bookmarks",
-    "search-bookmarks": "manage-bookmarks",
-    "list-bookmark-categories": "manage-bookmarks",
+    "set-bookmark": Tool.MANAGE_BOOKMARKS.value,
+    "get-bookmarks": Tool.MANAGE_BOOKMARKS.value,
+    "remove-bookmark": Tool.MANAGE_BOOKMARKS.value,
+    "search-bookmarks": Tool.MANAGE_BOOKMARKS.value,
+    "list-bookmark-categories": Tool.MANAGE_BOOKMARKS.value,
     # manage-comments overloads/legacy
-    "set-comment": "manage-comments",
-    "get-comments": "manage-comments",
-    "remove-comment": "manage-comments",
-    "search-comments": "manage-comments",
-    "set-decompilation-comment": "manage-comments",
+    "set-comment": Tool.MANAGE_COMMENTS.value,
+    "get-comments": Tool.MANAGE_COMMENTS.value,
+    "remove-comment": Tool.MANAGE_COMMENTS.value,
+    "search-comments": Tool.MANAGE_COMMENTS.value,
+    "set-decompilation-comment": Tool.MANAGE_COMMENTS.value,
     # manage-data-types overloads
-    "get-data-type-archives": "manage-data-types",
-    "get-data-type-by-string": "manage-data-types",
+    "get-data-type-archives": Tool.MANAGE_DATA_TYPES.value,
+    "get-data-type-by-string": Tool.MANAGE_DATA_TYPES.value,
     # manage-function overloads/legacy
-    "rename-function": "manage-function",
-    "rename-function-by-address": "manage-function",
-    "set-function-prototype": "manage-function",
-    "set-local-variable-type": "manage-function",
-    "rename-variable": "manage-function",
-    "change-variable-datatypes": "manage-function",
-    "create-function": "manage-function",
-    "rename-variables": "manage-function",
+    "rename-function": Tool.MANAGE_FUNCTION.value,
+    "rename-function-by-address": Tool.MANAGE_FUNCTION.value,
+    "set-function-prototype": Tool.MANAGE_FUNCTION.value,
+    "set-local-variable-type": Tool.MANAGE_FUNCTION.value,
+    "rename-variable": Tool.MANAGE_FUNCTION.value,
+    "change-variable-datatypes": Tool.MANAGE_FUNCTION.value,
+    "create-function": Tool.MANAGE_FUNCTION.value,
+    "rename-variables": Tool.MANAGE_FUNCTION.value,
     # manage-function-tags overloads
-    "function-tags": "manage-function-tags",
+    "function-tags": Tool.MANAGE_FUNCTION_TAGS.value,
     # manage-strings overloads
-    "get-strings": "manage-strings",
-    "get-strings-by-similarity": "manage-strings",
-    "get-strings-count": "manage-strings",
-    "search-strings-regex": "manage-strings",
+    "get-strings": Tool.MANAGE_STRINGS.value,
+    "get-strings-by-similarity": Tool.MANAGE_STRINGS.value,
+    "get-strings-count": Tool.MANAGE_STRINGS.value,
+    "search-strings-regex": Tool.MANAGE_STRINGS.value,
     # manage-structures overloads
-    "add-structure-field": "manage-structures",
-    "apply-structure": "manage-structures",
-    "create-structure": "manage-structures",
-    "delete-structure": "manage-structures",
-    "get-structure-info": "manage-structures",
-    "list-structures": "manage-structures",
-    "modify-structure-field": "manage-structures",
-    "modify-structure-from-c": "manage-structures",
-    "parse-c-header": "manage-structures",
-    "parse-c-structure": "manage-structures",
-    "validate-c-structure": "manage-structures",
+    "add-structure-field": Tool.MANAGE_STRUCTURES.value,
+    "apply-structure": Tool.MANAGE_STRUCTURES.value,
+    "create-structure": Tool.MANAGE_STRUCTURES.value,
+    "delete-structure": Tool.MANAGE_STRUCTURES.value,
+    "get-structure-info": Tool.MANAGE_STRUCTURES.value,
+    "list-structures": Tool.MANAGE_STRUCTURES.value,
+    "modify-structure-field": Tool.MANAGE_STRUCTURES.value,
+    "modify-structure-from-c": Tool.MANAGE_STRUCTURES.value,
+    "parse-c-header": Tool.MANAGE_STRUCTURES.value,
+    "parse-c-structure": Tool.MANAGE_STRUCTURES.value,
+    "validate-c-structure": Tool.MANAGE_STRUCTURES.value,
     # manage-symbols overloads/legacy
-    "list-classes": "manage-symbols",
-    "list-namespaces": "manage-symbols",
-    "rename-data": "manage-symbols",
-    "get-symbols": "manage-symbols",
-    "get-symbols-count": "manage-symbols",
+    "list-classes": Tool.MANAGE_SYMBOLS.value,
+    "list-namespaces": Tool.MANAGE_SYMBOLS.value,
+    "rename-data": Tool.MANAGE_SYMBOLS.value,
+    "get-symbols": Tool.MANAGE_SYMBOLS.value,
+    "get-symbols-count": Tool.MANAGE_SYMBOLS.value,
     # search-code overloads
-    "search-decompilation": "search-code",
+    "search-decompilation": Tool.SEARCH_CODE.value,
     # search-constants overloads
-    "find-constant-uses": "search-constants",
-    "find-constants-in-range": "search-constants",
-    "list-common-constants": "search-constants",
+    "find-constant-uses": Tool.SEARCH_CONSTANTS.value,
+    "find-constants-in-range": Tool.SEARCH_CONSTANTS.value,
+    "list-common-constants": Tool.SEARCH_CONSTANTS.value,
     # search-everything overloads
-    "global-search": "search-everything",
-    "search-anything": "search-everything",
-    "unified-search": "search-everything",
+    "global-search": Tool.SEARCH_EVERYTHING.value,
+    "search-anything": Tool.SEARCH_EVERYTHING.value,
+    "unified-search": Tool.SEARCH_EVERYTHING.value,
+}
+
+CANONICAL_TOOL_FORWARDERS: dict[str, str] = {
+    # get-function
+    "decompilefunction": Tool.GET_FUNCTION.value,
+    "getfunctions": Tool.GET_FUNCTION.value,
+    "getcallgraph": Tool.GET_FUNCTION.value,
+    "gencallgraph": Tool.GET_FUNCTION.value,
+    # search-everything
+    "searchcode": Tool.SEARCH_EVERYTHING.value,
+    "searchconstants": Tool.SEARCH_EVERYTHING.value,
+    "searchstrings": Tool.SEARCH_EVERYTHING.value,
+    "searchsymbols": Tool.SEARCH_EVERYTHING.value,
 }
 
 # GUI-only tools disabled for headless MCP/CLI usage.
 # These tools require a graphical interface and are not available in server/headless mode.
 # They remain defined for completeness but are filtered out of advertised tool lists.
-DISABLED_GUI_ONLY_TOOLS: frozenset[str] = frozenset(
+DISABLED_GUI_ONLY_TOOLS: frozenset[Tool] = frozenset(
     {
-        "get-current-address",
-        "get-current-function",
-        "open-program-in-code-browser",
-        "open-all-programs-in-code-browser",
+        Tool.GET_CURRENT_ADDRESS,
+        Tool.GET_CURRENT_FUNCTION,
+        Tool.OPEN_PROGRAM_IN_CODE_BROWSER,
+        Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER,
     },
 )
 
 
 def to_camel_case_key(key: str) -> str:
     """Convert snake_case to camelCase for MCP payload keys."""
+    logger.debug("diag.enter %s", "registry.py:to_camel_case_key")
     parts = key.split("_")
     return parts[0].lower() + "".join(p.capitalize() for p in parts[1:])
 
 
 def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Convert CLI kwargs (snake_case) to MCP payload (camelCase), dropping None."""
+    logger.debug("diag.enter %s", "registry.py:build_tool_payload")
     out: dict[str, Any] = {}
     for k, v in snake_kwargs.items():
         if v is None:
@@ -412,9 +670,19 @@ def build_tool_payload(snake_kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def get_tool_params(tool_name: str) -> list[str]:
-    """Return the list of parameter names (camelCase) for a tool, or empty if unknown."""
-    return list(TOOL_PARAMS.get(tool_name, []))
+def resolve_tool_name_enum(tool_name: str) -> Tool | None:
+    """Resolve arbitrary tool name/alias to canonical Tool enum, or None if unknown. Thin wrapper for Tool.from_string()."""
+    logger.debug("diag.enter %s", "registry.py:resolve_tool_name_enum")
+    return Tool.from_string(tool_name)
+
+
+def get_tool_params(tool_name: Tool | str) -> list[str]:
+    """Return the list of parameter names (camelCase) for a tool, or empty if unknown. Prefer tool.params when you have a Tool."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_params")
+    if isinstance(tool_name, Tool):
+        return tool_name.params
+    resolved = Tool.from_string(tool_name)
+    return resolved.params if resolved is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +706,7 @@ def normalize_identifier(s: str) -> str:
         normalize_identifier("program_path")        # -> "programpath"
         normalize_identifier("PROGRAM PATH")        # -> "programpath"
     """
+    logger.debug("diag.enter %s", "registry.py:normalize_identifier")
     return _NON_ALPHA_PATTERN.sub("", s.lower().strip())
 
 
@@ -451,7 +720,8 @@ def _find_repo_root_for_tools_list() -> Path | None:
     Returns:
         Path to the repository root directory, or None if TOOLS_LIST.md not found
     """
-    current = Path(__file__).resolve()
+    logger.debug("diag.enter %s", "registry.py:_find_repo_root_for_tools_list")
+    current: Path = Path(__file__).resolve()
     for parent in [current.parent, *current.parents]:
         candidate = parent / "TOOLS_LIST.md"
         if candidate.exists():
@@ -462,13 +732,12 @@ def _find_repo_root_for_tools_list() -> Path | None:
 def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dict[str, set[str]]], dict[str, str]]:
     """Parse TOOLS_LIST.md and extract parameter names, param aliases, and tool aliases.
 
-    Reads the TOOLS_LIST.md file and extracts:
-    - Tool parameter definitions
-    - Parameter aliases/synonyms
-    - Tool aliases (forwarding relationships)
+    Returns a 3-tuple: (tool_params, tool_param_aliases, tool_aliases).
+    - tool_params: canonical tool name → list of param names.
+    - tool_param_aliases: param alias → set of canonical param names (e.g. "action" → {"mode"}).
+    - tool_aliases: alias tool name → canonical tool name.
 
-    This enables dynamic synchronization between documentation and code,
-    ensuring tool specifications stay in sync with the implementation.
+    Reads the TOOLS_LIST.md file when present so documentation and code stay in sync.
 
     Returns:
         Tuple of (params_by_tool, param_aliases_by_tool_norm, tool_aliases_by_norm):
@@ -476,7 +745,8 @@ def _extract_tools_list_sync_data() -> tuple[dict[str, list[str]], dict[str, dic
         - param_aliases_by_tool_norm: dict[normalized_tool_name, dict[normalized_alias, set[normalized_canonicals]]]
         - tool_aliases_by_norm: dict[normalized_alias_tool, canonical_tool_name]
     """
-    root = _find_repo_root_for_tools_list()
+    logger.debug("diag.enter %s", "registry.py:_extract_tools_list_sync_data")
+    root: Path | None = _find_repo_root_for_tools_list()
     if root is None:
         return {}, {}, {}
 
@@ -582,6 +852,7 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
     Returns:
         Merged parameter dictionary with all parameters from both sources
     """
+    logger.debug("diag.enter %s", "registry.py:_merge_tools_list_params")
     merged = {k: list(v) for k, v in base.items()}
     for tool, params in extra.items():
         if tool not in merged:
@@ -599,24 +870,54 @@ def _merge_tools_list_params(base: dict[str, list[str]], extra: dict[str, list[s
 
 
 _tools_list_params, _tools_list_param_aliases, _tools_list_tool_aliases = _extract_tools_list_sync_data()
-TOOL_PARAMS = _merge_tools_list_params(TOOL_PARAMS, _tools_list_params)
+_merged_params_str: dict[str, list[str]] = _merge_tools_list_params(_TOOL_PARAMS_STR, _tools_list_params)
+TOOL_PARAMS: dict[Tool, list[str]] = {Tool(k): v for k, v in _merged_params_str.items()}
 TOOL_PARAM_ALIASES.update(_tools_list_param_aliases)
 TOOL_ALIASES.update(_tools_list_tool_aliases)
 TOOL_ALIASES.update({normalize_identifier(alias): target for alias, target in NON_ADVERTISED_TOOL_ALIASES.items()})
 
 
 def _add_builtin_param_aliases() -> None:
-    def _add(tool: str, alias: str, canonical_param: str) -> None:
+    def _add(
+        tool: str,
+        alias: str,
+        canonical_param: str,
+        *,
+        replace: bool = False,
+    ) -> None:
         tool_norm = normalize_identifier(tool)
         alias_norm = normalize_identifier(alias)
         canonical_norm = normalize_identifier(canonical_param)
         if not tool_norm or not alias_norm or not canonical_norm:
             return
         per_tool = TOOL_PARAM_ALIASES.setdefault(tool_norm, {})
+        if replace:
+            per_tool[alias_norm] = {canonical_norm}
+            return
         per_tool.setdefault(alias_norm, set()).add(canonical_norm)
 
+    # Correct import-binary aliases even if TOOLS_LIST-derived aliases were polluted.
+    logger.debug("diag.enter %s", "registry.py:_add_builtin_param_aliases")
+    for alias_name, canonical_param in (
+        ("filePath", "path"),
+        ("binaryPath", "path"),
+        ("binary_path", "path"),
+        ("destFolder", "destinationFolder"),
+        ("recurse", "recursive"),
+        ("autoAnalyze", "analyzeAfterImport"),
+        ("stripPath", "stripLeadingPath"),
+        ("stripContainer", "stripAllContainerPath"),
+        ("mirror", "mirrorFs"),
+        ("versioning", "enableVersionControl"),
+        ("depth", "maxDepth"),
+    ):
+        _add(Tool.IMPORT_BINARY.value, alias_name, canonical_param, replace=True)
+
     # Open/shared-server argument harmonization.
-    for tool_name in ("open-project",):
+    for tool_name in (Tool.OPEN.value,):
+        _add(tool_name, "isShared", "shared")
+        _add(tool_name, "sharedMode", "shared")
+        _add(tool_name, "shared_mode", "shared")
         _add(tool_name, "ghidraServerHost", "serverHost")
         _add(tool_name, "ghidra_server_host", "serverHost")
         _add(tool_name, "ghidraServerPort", "serverPort")
@@ -635,85 +936,245 @@ def _add_builtin_param_aliases() -> None:
 
 _add_builtin_param_aliases()
 
-# Default advertised surface (MCP + CLI).
+# Default advertised surface (MCP + CLI) is blacklist-driven.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
-# Tools in _LEGACY_TOOL_NAMES are hidden by default; set AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1
-# to include them. AGENTDECOMPILE_ENABLE_TOOLS (comma-separated) takes priority over everything.
-DEFAULT_ADVERTISED_TOOLS: tuple[str, ...] = (
-    "analyze-data-flow",
-    "analyze-program",
-    "analyze-vtables",
-    "apply-data-type",
-    "change-processor",
-    "checkin-program",
-    "checkout-program",
-    "checkout-status",
-    "create-label",
-    "decompile-function",
-    "delete-project-binary",
-    "execute-script",
-    "export",
-    "gen-callgraph",
-    "get-call-graph",
-    "get-current-program",
-    "get-data",
-    "get-references",
-    "import-binary",
-    "inspect-memory",
-    "list-cross-references",
-    "list-exports",
-    "list-functions",
-    "list-imports",
-    "list-project-files",
-    "list-processors",
-    "list-strings",
-    "manage-function-tags",
-    "match-function",
-    "open-project",
-    "read-bytes",
-    "search-code",
-    "search-constants",
-    "search-everything",
-    "search-strings",
-    "search-symbols",
-    "sync-project",
+# New tools are auto-advertised unless added to this hidden set.
+# Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols
+# (create_label, rename_data) are advertised by default for annotation and organization.
+_DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.DELETE_PROJECT_BINARY,
+        Tool.GEN_CALLGRAPH,
+        Tool.GET_DATA,
+        Tool.GET_FUNCTIONS,
+        Tool.LIST_EXPORTS,
+        Tool.LIST_CROSS_REFERENCES,
+        Tool.LIST_FALLBACK_PROJECTS,
+        Tool.LIST_FUNCTIONS,
+        Tool.LIST_IMPORTS,
+        Tool.LIST_STRINGS,
+        Tool.REINTEGRATE_FALLBACK_PROJECTS,
+        Tool.SUGGEST,
+    },
 )
 
-# Tools that are hidden by default; exposed only when AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1
-# (or when explicitly listed in AGENTDECOMPILE_ENABLE_TOOLS).
-_LEGACY_TOOL_NAMES: frozenset[str] = frozenset(
+_CONTEXT_RICH_TOOLS: frozenset[Tool] = frozenset(
     {
-        "get-functions",
-        "manage-bookmarks",
-        "manage-comments",
-        "manage-data-types",
-        "manage-files",
-        "manage-function",
-        "manage-strings",
-        "manage-structures",
-        "manage-symbols",
-        "suggest",
-    }
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.GET_CALL_GRAPH,
+        Tool.GET_CURRENT_PROGRAM,
+        Tool.GET_DATA,
+        Tool.GET_FUNCTION,
+        Tool.GET_REFERENCES,
+        Tool.INSPECT_MEMORY,
+        Tool.LIST_EXPORTS,
+        Tool.LIST_FUNCTIONS,
+        Tool.LIST_IMPORTS,
+        Tool.LIST_STRINGS,
+        Tool.SEARCH_CODE,
+        Tool.SEARCH_CONSTANTS,
+        Tool.SEARCH_EVERYTHING,
+        Tool.SEARCH_STRINGS,
+        Tool.SEARCH_SYMBOLS,
+    },
 )
+
+_MULTI_MODE_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.GET_CALL_GRAPH,
+        Tool.GET_REFERENCES,
+        Tool.INSPECT_MEMORY,
+        Tool.MANAGE_BOOKMARKS,
+        Tool.MANAGE_COMMENTS,
+        Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_FILES,
+        Tool.MANAGE_FUNCTION,
+        Tool.MANAGE_FUNCTION_TAGS,
+        Tool.MANAGE_STRINGS,
+        Tool.MANAGE_STRUCTURES,
+        Tool.MANAGE_SYMBOLS,
+        Tool.OPEN,
+        Tool.SEARCH_CONSTANTS,
+        Tool.SYNC_PROJECT,
+    },
+)
+
+_STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.APPLY_DATA_TYPE,
+        Tool.CHANGE_PROCESSOR,
+        Tool.CHECKIN_PROGRAM,
+        Tool.CHECKOUT_PROGRAM,
+        Tool.CREATE_LABEL,
+        Tool.DELETE_PROJECT_BINARY,
+        Tool.EXECUTE_SCRIPT,
+        Tool.IMPORT_BINARY,
+        Tool.MANAGE_BOOKMARKS,
+        Tool.MANAGE_COMMENTS,
+        Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_FILES,
+        Tool.MANAGE_FUNCTION,
+        Tool.MANAGE_FUNCTION_TAGS,
+        Tool.MANAGE_STRINGS,
+        Tool.MANAGE_STRUCTURES,
+        Tool.MANAGE_SYMBOLS,
+        Tool.MATCH_FUNCTION,
+        Tool.MIGRATE_METADATA,
+        Tool.OPEN,
+        Tool.REMOVE_PROGRAM_BINARY,
+        Tool.RESOLVE_MODIFICATION_CONFLICT,
+        Tool.SVR_ADMIN,
+        Tool.SYNC_PROJECT,
+    },
+)
+
+_LEGACY_TOOLS: frozenset[Tool] = _DEFAULT_HIDDEN_TOOLS
+
+_TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
+    Tool.ANALYZE_DATA_FLOW: (Tool.GET_FUNCTION.value,),
+    Tool.DECOMPILE_FUNCTION: (Tool.GET_FUNCTION.value,),
+    Tool.DELETE_PROJECT_BINARY: (Tool.REMOVE_PROGRAM_BINARY.value,),
+    Tool.GEN_CALLGRAPH: (Tool.GET_FUNCTION.value,),
+    Tool.GET_CALL_GRAPH: (Tool.GET_FUNCTION.value,),
+    Tool.GET_FUNCTIONS: (Tool.GET_FUNCTION.value,),
+    Tool.GET_REFERENCES: (Tool.GET_FUNCTION.value,),
+    Tool.LIST_EXPORTS: (Tool.MANAGE_SYMBOLS.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.LIST_CROSS_REFERENCES: (Tool.GET_FUNCTION.value,),
+    Tool.LIST_FALLBACK_PROJECTS: (Tool.OPEN.value, Tool.SYNC_PROJECT.value, Tool.LIST_PROJECT_FILES.value),
+    Tool.LIST_FUNCTIONS: (Tool.SEARCH_EVERYTHING.value, Tool.GET_FUNCTION.value),
+    Tool.LIST_IMPORTS: (Tool.MANAGE_SYMBOLS.value, Tool.SEARCH_EVERYTHING.value),
+    Tool.LIST_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.MANAGE_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.READ_BYTES: (Tool.INSPECT_MEMORY.value,),
+    Tool.REINTEGRATE_FALLBACK_PROJECTS: (Tool.OPEN.value, Tool.SYNC_PROJECT.value),
+    Tool.SEARCH_CODE: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_CONSTANTS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_STRINGS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.SEARCH_SYMBOLS: (Tool.SEARCH_EVERYTHING.value,),
+    Tool.GET_DATA: (Tool.INSPECT_MEMORY.value,),
+}
 
 _LEGACY_TOOLS_ENV_VARS: tuple[str, ...] = (
     "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
     "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
 )
 
+# When set (1/true/yes), the server auto-runs checkin-program after any modifying tool succeeds.
+# checkin-program is then hidden from the advertised tool list.
+_AUTO_CHECKIN_ENV_VARS: tuple[str, ...] = (
+    "AGENTDECOMPILE_AUTO_CHECKIN",
+    "AGENT_DECOMPILE_AUTO_CHECKIN",
+)
+
+
+def _auto_checkin_enabled() -> bool:
+    """True if AGENTDECOMPILE_AUTO_CHECKIN (or alias) is set; then checkin-program is hidden and run after setters."""
+    logger.debug("diag.enter %s", "registry.py:_auto_checkin_enabled")
+    return any(_is_truthy_env(os.getenv(var_name)) for var_name in _AUTO_CHECKIN_ENV_VARS)
+
 
 def _is_truthy_env(value: str | None) -> bool:
+    logger.debug("diag.enter %s", "registry.py:_is_truthy_env")
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _legacy_tools_advertised() -> bool:
+    logger.debug("diag.enter %s", "registry.py:_legacy_tools_advertised")
     return any(_is_truthy_env(os.getenv(var_name)) for var_name in _LEGACY_TOOLS_ENV_VARS)
+
+
+def _get_tool_surface_profile() -> ToolSurfaceProfile:
+    """Return the active tool-surface profile.
+
+    Default is `full` so clean environments advertise every non-GUI canonical tool.
+    Legacy env vars map to the `legacy` profile for backward compatibility.
+    """
+    logger.debug("diag.enter %s", "registry.py:_get_tool_surface_profile")
+    for var_name in _TOOL_SURFACE_ENV_VARS:
+        raw = os.getenv(var_name)
+        if raw is None:
+            continue
+        value = raw.strip().lower()
+        if not value:
+            continue
+        if value in {profile.value for profile in ToolSurfaceProfile}:
+            return ToolSurfaceProfile(value)
+    if _legacy_tools_advertised():
+        return ToolSurfaceProfile.LEGACY
+    return ToolSurfaceProfile.FULL
+
+
+def get_active_tool_surface_profile() -> str:
+    """Return the active tool-surface profile name."""
+    logger.debug("diag.enter %s", "registry.py:get_active_tool_surface_profile")
+    return _get_tool_surface_profile().value
+
+
+def _profiles_for_tool(tool: Tool) -> tuple[ToolSurfaceProfile, ...]:
+    logger.debug("diag.enter %s", "registry.py:_profiles_for_tool")
+    if tool in DISABLED_GUI_ONLY_TOOLS:
+        return tuple()
+    profiles: list[ToolSurfaceProfile] = [ToolSurfaceProfile.FULL, ToolSurfaceProfile.LEGACY]
+    if tool not in _DEFAULT_HIDDEN_TOOLS:
+        profiles.insert(0, ToolSurfaceProfile.CURATED)
+    return tuple(profiles)
+
+
+def _resolve_canonical_tool_identity(tool_name: Tool | str) -> Tool | None:
+    """Resolve a tool name for metadata without applying legacy call forwarders first."""
+    logger.debug("diag.enter %s", "registry.py:_resolve_canonical_tool_identity")
+    if isinstance(tool_name, Tool):
+        return tool_name
+    raw = str(tool_name or "").strip()
+    if not raw:
+        return None
+    try:
+        return Tool(raw)
+    except ValueError:
+        pass
+    direct = _TOOLS_BY_NORMALIZED.get(normalize_identifier(raw))
+    if direct is not None:
+        try:
+            return Tool(direct)
+        except ValueError:
+            pass
+    return Tool.from_string(raw)
+
+
+def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
+    """Return machine-readable metadata for a canonical tool name."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_metadata")
+    tool = _resolve_canonical_tool_identity(tool_name)
+    if tool is None:
+        return None
+    return ToolMetadata(
+        context_rich=tool in _CONTEXT_RICH_TOOLS,
+        single_purpose=tool not in _MULTI_MODE_TOOLS,
+        writes_state=tool in _STATE_WRITING_TOOLS,
+        legacy=tool in _LEGACY_TOOLS,
+        replacement=_TOOL_REPLACEMENTS.get(tool, ()),
+    )
+
+
+def get_tool_profiles(tool_name: Tool | str) -> list[str]:
+    """Return the advertised profiles a canonical tool belongs to."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_profiles")
+    tool = _resolve_canonical_tool_identity(tool_name)
+    if tool is None:
+        return []
+    return [profile.value for profile in _profiles_for_tool(tool)]
 
 
 def _get_disabled_tools() -> set[str]:
     """Parse AGENTDECOMPILE_DISABLE_TOOLS env var and return normalized tool names to disable."""
+    logger.debug("diag.enter %s", "registry.py:_get_disabled_tools")
     disable_env = os.getenv("AGENT_DECOMPILE_DISABLE_TOOLS", os.getenv("AGENTDECOMPILE_DISABLE_TOOLS", "")).strip()
     if not disable_env:
         return set()
@@ -729,14 +1190,11 @@ def _get_explicit_enabled_tools() -> set[str] | None:
     """Parse AGENTDECOMPILE_ENABLE_TOOLS env var.
 
     Returns a set of normalized tool names that should be forcibly enabled,
-    taking priority over default/legacy filtering and DISABLE_TOOLS.
+    taking priority over default/hidden filtering and DISABLE_TOOLS.
     Returns None when the var is unset or empty.
     """
-    raw = (
-        os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS")
-        or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS")
-        or ""
-    )
+    logger.debug("diag.enter %s", "registry.py:_get_explicit_enabled_tools")
+    raw = os.environ.get("AGENTDECOMPILE_ENABLE_TOOLS") or os.environ.get("AGENT_DECOMPILE_ENABLE_TOOLS") or ""
     enable_env = raw.strip()
     if not enable_env:
         return None
@@ -745,34 +1203,45 @@ def _get_explicit_enabled_tools() -> set[str] | None:
         tool = tool.strip()
         if tool:
             enabled.add(normalize_identifier(tool))
-    return enabled if enabled else None
+    return enabled or None
 
 
 def _build_advertised_tools() -> list[str]:
-    canonical_visible = [tool for tool in TOOLS if tool not in DISABLED_GUI_ONLY_TOOLS]
-    default_set = {normalize_identifier(tool) for tool in DEFAULT_ADVERTISED_TOOLS}
-    legacy_set = {normalize_identifier(tool) for tool in _LEGACY_TOOL_NAMES}
-    disabled_set = _get_disabled_tools()
-    explicit_set = _get_explicit_enabled_tools()
+    """Build the list of tool names to advertise in MCP tools/list (and CLI).
+
+    Priority: AGENTDECOMPILE_ENABLE_TOOLS (if set) → exact list to expose.
+    Otherwise: start from all canonical tools, remove disabled, and use the
+    requested surface profile. The implicit profile is full.
+    """
+    logger.debug("diag.enter %s", "registry.py:_build_advertised_tools")
+    canonical_visible: list[Tool] = [t for t in Tool if t not in DISABLED_GUI_ONLY_TOOLS]
+    hidden_set: set[str] = {normalize_identifier(t.value) for t in _DEFAULT_HIDDEN_TOOLS}
+    disabled_set: set[str] = _get_disabled_tools()
+    explicit_set: set[str] | None = _get_explicit_enabled_tools()
+    surface_profile = _get_tool_surface_profile()
 
     if explicit_set is not None:
         # AGENTDECOMPILE_ENABLE_TOOLS takes absolute priority – expose exactly these tools.
-        return [
-            tool for tool in canonical_visible
-            if normalize_identifier(tool) in explicit_set
-        ]
-
-    include_legacy = _legacy_tools_advertised()
+        result: list[str] = [tool.value for tool in canonical_visible if normalize_identifier(tool.value) in explicit_set]
+        if _auto_checkin_enabled():
+            checkin_norm = normalize_identifier(Tool.CHECKIN_PROGRAM.value)
+            result = [t for t in result if normalize_identifier(t) != checkin_norm]
+        return result
 
     result: list[str] = []
     for tool in canonical_visible:
-        norm = normalize_identifier(tool)
+        norm: str = normalize_identifier(tool.value)
         if norm in disabled_set:
             continue
-        if norm in default_set:
-            result.append(tool)
-        elif norm in legacy_set and include_legacy:
-            result.append(tool)
+        profiles = _profiles_for_tool(tool)
+        if surface_profile == ToolSurfaceProfile.CURATED and norm in hidden_set:
+            continue
+        if surface_profile.value in {profile.value for profile in profiles}:
+            result.append(tool.value)
+    # When auto-checkin is enabled, hide checkin-program (it runs automatically after modifying tools).
+    if _auto_checkin_enabled():
+        checkin_norm: str = normalize_identifier(Tool.CHECKIN_PROGRAM.value)
+        result = [t for t in result if normalize_identifier(t) != checkin_norm]
     return result
 
 
@@ -782,24 +1251,27 @@ _ADVERTISED_SELECTOR_ALIASES: tuple[str, ...] = ()
 
 
 def is_tool_advertised(tool_name: str) -> bool:
-    """Check if a tool is currently advertised based on env var configuration."""
-    normalized = normalize_identifier(tool_name)
-    return any(normalize_identifier(t) == normalized for t in ADVERTISED_TOOLS)
+    """Check if a tool is currently advertised based on env var configuration. Prefer tool.is_advertised when you have a Tool."""
+    logger.debug("diag.enter %s", "registry.py:is_tool_advertised")
+    t = Tool.from_string(tool_name)
+    return t.is_advertised if t is not None else False
 
 
 def get_advertised_tools() -> list[str]:
     """Get the list of currently advertised tools."""
+    logger.debug("diag.enter %s", "registry.py:get_advertised_tools")
     return list(ADVERTISED_TOOLS)
 
 
 def _build_advertised_tool_params() -> dict[str, list[str]]:
+    logger.debug("diag.enter %s", "registry.py:_build_advertised_tool_params")
     advertised: dict[str, list[str]] = {}
     advertised_set = set(ADVERTISED_TOOLS)
     for tool, params in TOOL_PARAMS.items():
-        if tool not in advertised_set:
+        if tool.value not in advertised_set:
             continue
         expanded: list[str] = list(params)
-        advertised[tool] = expanded
+        advertised[tool.value] = expanded
     return advertised
 
 
@@ -827,6 +1299,7 @@ def _build_tool_match_candidates() -> list[tuple[str, str, str]]:
     Returns tuples of ``(canonical_tool_name, raw_variant, normalized_variant)``
     ordered by descending variant length so more specific names win first.
     """
+    logger.debug("diag.enter %s", "registry.py:_build_tool_match_candidates")
     candidates: list[tuple[str, str, str]] = []
     for tool_name in TOOLS:
         seen: set[str] = set()
@@ -875,18 +1348,28 @@ def resolve_tool_name(tool_name: str) -> str | None:
     Returns:
         The canonical kebab-case tool name, or None if no match found
     """
+    logger.debug("diag.enter %s", "registry.py:resolve_tool_name")
     norm = normalize_identifier(tool_name)
     if not norm:
+        logger.debug(
+            "registry_tool_name_unresolved reason=empty_after_normalize input_stripped_len=%s",
+            len((tool_name or "").strip()),
+        )
         return None
 
     direct: str | None = _TOOLS_BY_NORMALIZED.get(norm)
     if direct is not None:
         return direct
 
+    forwarded: str | None = CANONICAL_TOOL_FORWARDERS.get(norm)
+    if forwarded is not None:
+        return forwarded
+
     aliased: str | None = TOOL_ALIASES.get(norm)
     if aliased is not None:
         return aliased
 
+    # Strip common prefixes/suffixes (e.g. "agentdecompile", "tool") so noisy names still resolve
     stripped: str = norm
     changed: bool = True
     while changed and stripped:
@@ -896,7 +1379,7 @@ def resolve_tool_name(tool_name: str) -> str | None:
                 stripped = stripped[len(prefix) :]
                 changed = True
                 break
-    changed: bool = True
+    changed = True
     while changed and stripped:
         changed = False
         for suffix in _TOOL_SUFFIXES:
@@ -909,10 +1392,16 @@ def resolve_tool_name(tool_name: str) -> str | None:
         direct = _TOOLS_BY_NORMALIZED.get(stripped)
         if direct is not None:
             return direct
-        aliased: str | None = TOOL_ALIASES.get(stripped)
+        aliased = TOOL_ALIASES.get(stripped)
         if aliased is not None:
             return aliased
 
+    logger.debug(
+        "registry_tool_name_unresolved reason=no_match norm_len=%s stripped_len=%s strip_changed=%s",
+        len(norm),
+        len(stripped),
+        stripped != norm,
+    )
     return None
 
 
@@ -926,6 +1415,7 @@ def to_snake_case(s: str) -> str:
     - snake_case:   returned unchanged
     """
     # Replace hyphens and spaces with underscores
+    logger.debug("diag.enter %s", "registry.py:to_snake_case")
     s = s.replace("-", "_").replace(" ", "_")
     # Insert underscore before uppercase letters (camelCase / PascalCase)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
@@ -941,18 +1431,20 @@ class ToolRegistry:
     """Unified tool registry and argument parsing system."""
 
     def __init__(self):
-        self._tool_params: dict[str, list[str]] = TOOL_PARAMS.copy()
-        self._tools: list[str] = ADVERTISED_TOOLS.copy()
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.__init__")
+        self._tool_params: dict[str, list[str]] = {t.value: list(p) for t, p in TOOL_PARAMS.items()}
+        self._tools: list[str] = list(ADVERTISED_TOOLS)
         self._tool_aliases: dict[str, str] = TOOL_ALIASES.copy()
         # Pre-computed normalized (alpha-only, lowercase) lookups so that
         # callers using alpha-only keys (e.g. "getdata") resolve correctly
         # alongside the kebab-case storage keys (e.g. "get-data").
-        self._params_by_norm: dict[str, list[str]] = {normalize_identifier(k): v for k, v in TOOL_PARAMS.items()}
-        self._display_name_by_norm: dict[str, str] = {normalize_identifier(k): k for k in TOOL_PARAMS}
+        self._params_by_norm: dict[str, list[str]] = {normalize_identifier(t.value): p for t, p in TOOL_PARAMS.items()}
+        self._display_name_by_norm: dict[str, str] = {normalize_identifier(t.value): t.value for t in TOOL_PARAMS}
         self._tool_by_norm: dict[str, str] = {normalize_identifier(tool): tool for tool in self._tools}
 
     def get_tools(self) -> list[str]:
         """Get all available tool names."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_tools")
         return list(self._tools)
 
     def get_tool_params(self, tool_name: str) -> list[str]:
@@ -962,6 +1454,7 @@ class ToolRegistry:
         Performs an exact match first, then a normalized (alpha-only, lowercase)
         fallback so callers using the internal alpha-only form still resolve.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_tool_params")
         resolved_tool: str = self.resolve_tool_name(tool_name) or tool_name
 
         # Fast path: exact match on the storage key (kebab-case)
@@ -979,6 +1472,7 @@ class ToolRegistry:
 
         Returns the input unchanged if no mapping is found.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.get_display_name")
         return self._display_name_by_norm.get(
             normalize_identifier(normalized_name),
             normalized_name,
@@ -986,10 +1480,12 @@ class ToolRegistry:
 
     def is_valid_tool(self, tool_name: str) -> bool:
         """Check if a tool name is valid (with fuzzy matching)."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.is_valid_tool")
         return self.resolve_tool_name(tool_name) is not None
 
     def resolve_tool_name(self, tool_name: str) -> str | None:
         """Resolve any supported alias/noisy variation to canonical kebab-case name."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.resolve_tool_name")
         resolved: str | None = resolve_tool_name(tool_name)
         if resolved is not None:
             return resolved
@@ -1024,6 +1520,7 @@ class ToolRegistry:
         -------
             The canonicalized tool name (only a-z letters, lowercase)
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.canonicalize_tool_name")
         if not tool_name or not tool_name.strip():
             return ""
         return normalize_identifier(tool_name)
@@ -1044,6 +1541,7 @@ class ToolRegistry:
         -------
             True if the tool names match (after canonicalization), False otherwise
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.match_tool_name")
         resolved_tool: str | None = self.resolve_tool_name(tool_name)
         resolved_canonical: str | None = self.resolve_tool_name(canonical_name)
         if resolved_canonical is None:
@@ -1070,6 +1568,7 @@ class ToolRegistry:
         -------
             Parsed and validated arguments dictionary
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.parse_arguments")
         resolved_tool = self.resolve_tool_name(tool_name)
         if resolved_tool is None:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -1080,10 +1579,7 @@ class ToolRegistry:
 
         expected_params: list[str] = self._tool_params.get(actual_tool_key, [])
         param_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(normalize_identifier(actual_tool_key), {})
-        normalized_argument_keys: dict[str, str] = {
-            key: normalize_identifier(key)
-            for key in augmented_arguments
-        }
+        normalized_argument_keys: dict[str, str] = {key: normalize_identifier(key) for key in augmented_arguments}
         normalized_arguments: dict[str, Any] = {}
         for key, value in augmented_arguments.items():
             normalized_arguments.setdefault(normalized_argument_keys[key], value)
@@ -1136,6 +1632,7 @@ class ToolRegistry:
         "naturalLanguage", "instruction", etc. Explicit structured arguments
         always win; extracted values only fill missing keys.
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._expand_natural_language_arguments")
         expanded: dict[str, Any] = dict(arguments)
 
         expected_params = self.get_tool_params(tool_name)
@@ -1155,12 +1652,7 @@ class ToolRegistry:
             # generic keys like "text" (e.g., alias-value tests).  Treat as
             # natural language only when the payload looks sentence/kv-like.
             compact_value = value.strip()
-            looks_nl = (
-                (" " in compact_value)
-                or any(token in compact_value for token in ("=", ":", ",", ";"))
-                or (" with " in compact_value.lower())
-                or (" and " in compact_value.lower())
-            )
+            looks_nl = (" " in compact_value) or any(token in compact_value for token in ("=", ":", ",", ";")) or (" with " in compact_value.lower()) or (" and " in compact_value.lower())
             if not looks_nl:
                 continue
 
@@ -1178,10 +1670,11 @@ class ToolRegistry:
         expected_params: list[str],
     ) -> dict[str, str]:
         """Build normalized alias->canonical-param map for NL extraction."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._build_natural_language_alias_map")
         map_out: dict[str, str] = {}
-        tool_norm = normalize_identifier(tool_name)
-        tool_aliases = TOOL_PARAM_ALIASES.get(tool_norm, {})
-        expected_by_norm = {normalize_identifier(param): param for param in expected_params}
+        tool_norm: str = normalize_identifier(tool_name)
+        tool_aliases: dict[str, set[str]] = TOOL_PARAM_ALIASES.get(tool_norm, {})
+        expected_by_norm: dict[str, str] = {normalize_identifier(param): param for param in expected_params}
 
         for canonical_param in expected_params:
             canonical_norm = normalize_identifier(canonical_param)
@@ -1210,6 +1703,7 @@ class ToolRegistry:
         - "target is main"
         - "with include ref context true and max results 5"
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_natural_language_pairs")
         extracted: dict[str, Any] = {}
 
         # Use precompiled pattern for KV extraction to avoid repeated compilation
@@ -1265,6 +1759,7 @@ class ToolRegistry:
 
     def _capture_nl_pattern(self, text: str, extracted: dict[str, Any], param_name: str, pattern: str, flags: int = re.IGNORECASE) -> None:
         """Capture a natural language pattern and extract the value if not already present."""
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._capture_nl_pattern")
         m = re.search(pattern, text, flags=flags)
         if not m:
             return
@@ -1275,7 +1770,8 @@ class ToolRegistry:
 
     def _extract_common_nl_patterns(self, text: str, extracted: dict[str, Any]) -> None:
         """Extract common natural language patterns using predefined capture rules."""
-        capture_patterns = [
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_common_nl_patterns")
+        capture_patterns: list[tuple[str, str]] = [
             # Path/program patterns
             ("programPath", r"\bprogram\s+path\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)"),
             ("programPath", r"\bprogram\s+(?P<value>\"[^\"]+\"|'[^']+'|/[^,;\n ]+)"),
@@ -1314,14 +1810,12 @@ class ToolRegistry:
     ) -> Any:
         """Normalize natural-language extracted ``programPath`` values."""
         # Use precompiled pattern for cleanup step
-        cleaned = _PROGRAM_PATH_CLEANUP_PATTERN.sub("", raw_value).strip()
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._normalize_extracted_program_path")
+        cleaned: str = _PROGRAM_PATH_CLEANUP_PATTERN.sub("", raw_value).strip()
         # Use precompiled pattern to split on "to" keyword
         cleaned = _PROGRAM_PATH_SCOPE_PATTERN.split(cleaned, maxsplit=1)[0].strip()
 
-        if recover_unbalanced_quotes and (
-            (cleaned.startswith('"') and not cleaned.endswith('"'))
-            or (cleaned.startswith("'") and not cleaned.endswith("'"))
-        ):
+        if recover_unbalanced_quotes and ((cleaned.startswith('"') and not cleaned.endswith('"')) or (cleaned.startswith("'") and not cleaned.endswith("'"))):
             # Use precompiled quoted path pattern
             quoted_path_match = _QUOTED_PATH_PATTERN.search(full_text)
             if quoted_path_match:
@@ -1350,7 +1844,8 @@ class ToolRegistry:
         Returns:
             Coerced value in appropriate Python type, or original string if coercion fails
         """
-        value = raw_value.strip()
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._coerce_natural_language_value")
+        value: str = raw_value.strip()
         if not value:
             return value
 
@@ -1409,18 +1904,19 @@ class ToolRegistry:
             The argument value or None if not found
         """
         # Try exact match first
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._extract_argument_value")
         if param_name in arguments:
             return arguments[param_name]
 
         # Try variations of the parameter name
-        variations = self._generate_param_variations(param_name)
+        variations: tuple[str, ...] = self._generate_param_variations(param_name)
 
         for variation in variations:
             if variation in arguments:
                 return arguments[variation]
 
         # Selector fallback: canonical "mode" accepts action/operation/etc.
-        normalized_param = normalize_identifier(param_name)
+        normalized_param: str = normalize_identifier(param_name)
         if _canonical_param_name(param_name) == "mode":
             lookup = normalized_arguments or {normalize_identifier(k): v for k, v in arguments.items()}
             for alias in MODE_PARAM_ALIASES:
@@ -1458,6 +1954,7 @@ class ToolRegistry:
         -------
             List of parameter name variations
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._generate_param_variations")
         variations: list[str] = [param_name]
 
         # Convert camelCase to snake_case using precompiled pattern
@@ -1488,9 +1985,8 @@ class ToolRegistry:
         """Validate that required arguments are present for a tool.
 
         Checks that all mandatory parameters for a given tool are provided in the
-        arguments dictionary. Required parameters vary by tool - for example,
-        most program-scoped tools require a programPath, while some operations
-        require additional parameters like mode or addressOrSymbol.
+        arguments dictionary. programPath is never validated here (session/backend
+        resolves the active program when omitted).
 
         Args:
             arguments: Parsed arguments dictionary to validate
@@ -1500,6 +1996,7 @@ class ToolRegistry:
             ValueError: If any required arguments are missing, with details about
                        which parameters are required for the tool
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.validate_required_arguments")
         resolved_tool = self.resolve_tool_name(tool_name) or tool_name
         canonical_name: str = self.canonicalize_tool_name(resolved_tool)
         expected_params: list[str] = self.get_tool_params(canonical_name)  # noqa: F841
@@ -1508,22 +2005,23 @@ class ToolRegistry:
         # Keys are alpha-only (normalize_identifier form) so the lookup against
         # canonical_name (which is already alpha-only from canonicalize_tool_name)
         # always succeeds.
+        # TODO: use the enum here and add more methods/functions/normalizing pipelines into the enum class itself.
         required_params: dict[str, list[str]] = {
-            "analyzedataflow": ["programPath"],
-            "analyzeprogram": ["programPath"],
-            "analyzevtables": ["programPath", "mode"],
-            "applydatatype": ["programPath", "addressOrSymbol", "dataTypeString"],
-            "createlabel": ["programPath", "addressOrSymbol", "labelName"],
-            "decompile": ["programPath"],
-            "getcallgraph": ["programPath"],
-            "getdata": ["programPath", "addressOrSymbol"],
-            "getreferences": ["programPath", "target"],
-            "inspectmemory": ["programPath", "mode"],
-            "managebookmarks": ["programPath", "mode"],
-            "managecomments": ["programPath", "mode"],
-            "managestructures": ["programPath", "mode"],
+            "analyzedataflow": [],
+            "analyzeprogram": [],
+            "analyzevtables": ["mode"],
+            "applydatatype": ["addressOrSymbol", "dataTypeString"],
+            "createlabel": ["addressOrSymbol", "labelName"],
+            "decompile": [],
+            "getcallgraph": [],
+            "getdata": ["addressOrSymbol"],
+            "getreferences": ["target"],
+            "inspectmemory": ["mode"],
+            "managebookmarks": ["mode"],
+            "managecomments": ["mode"],
+            "managestructures": ["mode"],
             "open": ["path"],
-            "searchconstants": ["programPath", "mode"],
+            "searchconstants": ["mode"],
         }
 
         required: list[str] = required_params.get(canonical_name, [])
@@ -1549,6 +2047,7 @@ class ToolRegistry:
         -------
             Tool call payload dictionary
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.create_tool_call")
         if validate:
             resolved_tool = self.resolve_tool_name(tool_name) or tool_name
             parsed_args: dict[str, Any] = self.parse_arguments(arguments, resolved_tool)
@@ -1584,6 +2083,7 @@ class ToolRegistry:
         -------
             Tuple of (resolved_tool_name, arguments_dict), or (None, {}) if no tool matched
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.parse_natural_language_tool_call")
         if not text or not text.strip():
             return None, {}
 
@@ -1632,6 +2132,7 @@ class ToolRegistry:
         - "at address 0x1000" → "with address 0x1000"
         - "for function main" → "with function main"
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry._preprocess_nl_phrases")
         if not text or not text.strip():
             return text
 
@@ -1665,6 +2166,7 @@ class ToolRegistry:
         Raises:
             ValueError: If client is not provided or tool execution fails
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.execute_tool_cli")
         if client is None:
             raise ValueError("MCP client is required")
 
@@ -1692,6 +2194,7 @@ class ToolRegistry:
         Returns:
             Formatted response string suitable for CLI display
         """
+        logger.debug("diag.enter %s", "registry.py:ToolRegistry.format_tool_response")
         if not response:
             return ""
 

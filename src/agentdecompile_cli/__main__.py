@@ -11,6 +11,10 @@ Project path (when spawning local server): AGENT_DECOMPILE_PROJECT_PATH.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import argparse
 import asyncio
 import json
@@ -31,10 +35,8 @@ from agentdecompile_cli.executor import (  # noqa: E402
     resolve_backend_url,
     run_async,
 )
-from agentdecompile_cli.launcher import (
-    AgentDecompileLauncher,  # noqa: E402
-    ProjectManager,  # noqa: E402
-)
+from agentdecompile_cli.launcher import AgentDecompileLauncher  # noqa: E402
+from agentdecompile_cli.project_manager import ProjectManager  # noqa: E402
 
 try:
     from agentdecompile_cli import __version__
@@ -44,6 +46,8 @@ except ImportError:
 if TYPE_CHECKING:
     from types import FrameType
 
+    from agentdecompile_cli.webui import WebUiSidecar
+
 
 def _redirect_java_outputs():
     """Best-effort JVM output redirection setup.
@@ -52,6 +56,7 @@ def _redirect_java_outputs():
     Stdout/stderr filters already protect the MCP stream, so this hook now
     becomes a no-op when no redirect bridge is available.
     """
+    logger.debug("diag.enter %s", "__main__.py:_redirect_java_outputs")
     try:
         from jpype import isJVMStarted  # pyright: ignore[reportMissingImports]
 
@@ -69,12 +74,14 @@ class StderrFilter:
     """
 
     def __init__(self, real_stderr: TextIO):
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter.__init__")
         self.real_stderr: TextIO = real_stderr
         self._buffer: str = ""
         self._closed: bool = False
 
     def write(self, s: str) -> int:
         """Write to stderr, wrapping in JSON-RPC notification if needed."""
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter.write")
         if self._closed or not s:
             return 0
 
@@ -102,6 +109,7 @@ class StderrFilter:
     def _write_jsonrpc_log(self, message: str):
         """Write a log message wrapped in a JSON-RPC notification."""
         # Escape the message for JSON
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter._write_jsonrpc_log")
         escaped_message: str = json.dumps(message)
         # Create JSON-RPC notification
         # Format: {"jsonrpc":"2.0","method":"_log","params":{"message":"..."}}
@@ -111,6 +119,7 @@ class StderrFilter:
 
     def flush(self):
         """Flush any remaining buffer."""
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter.flush")
         if self._buffer:
             if self._buffer.strip():
                 self._write_jsonrpc_log(self._buffer)
@@ -119,12 +128,14 @@ class StderrFilter:
 
     def close(self):
         """Close the filter (but not the underlying stream)."""
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter.close")
         if not self._closed:
             self.flush()
             self._closed = True
 
     def __getattr__(self, name: str) -> Any:
         """Delegate other attributes to real stderr."""
+        logger.debug("diag.enter %s", "__main__.py:StderrFilter.__getattr__")
         return getattr(self.real_stderr, name)
 
 
@@ -140,12 +151,14 @@ class StdoutFilter:
     """
 
     def __init__(self, real_stdout: TextIO):
+        logger.debug("diag.enter %s", "__main__.py:StdoutFilter.__init__")
         self.real_stdout: TextIO = real_stdout
         self._buffer: str = ""
         self._closed: bool = False
 
     def write(self, s: str) -> int:
         """Write to stdout if JSON-RPC, otherwise redirect to wrapped stderr."""
+        logger.debug("diag.enter %s", "__main__.py:StdoutFilter.write")
         if self._closed or not s:
             return 0
 
@@ -197,6 +210,7 @@ class StdoutFilter:
 
     def flush(self):
         """Flush both streams."""
+        logger.debug("diag.enter %s", "__main__.py:StdoutFilter.flush")
         if self._buffer:
             # Check if remaining buffer is JSON-RPC
             buffer_stripped = self._buffer.lstrip()
@@ -214,12 +228,14 @@ class StdoutFilter:
 
     def close(self):
         """Close the filter (but not the underlying streams)."""
+        logger.debug("diag.enter %s", "__main__.py:StdoutFilter.close")
         if not self._closed:
             self.flush()
             self._closed = True
 
     def __getattr__(self, name: str) -> Any:
         """Delegate other attributes to real stdout."""
+        logger.debug("diag.enter %s", "__main__.py:StdoutFilter.__getattr__")
         return getattr(self.real_stdout, name)
 
 
@@ -231,6 +247,7 @@ class AgentDecompileCLI:
         launcher: AgentDecompileLauncher | None,
         project_manager: ProjectManager | None,
         backend: int | str,
+        webui_sidecar: WebUiSidecar | None = None,
     ):
         """Initialize AgentDecompile CLI with pre-initialized components.
 
@@ -239,9 +256,11 @@ class AgentDecompileCLI:
             project_manager: Pre-initialized project manager (local mode)
             backend: Backend port (int) or URL (str)
         """
+        logger.debug("diag.enter %s", "__main__.py:AgentDecompileCLI.__init__")
         self.launcher: AgentDecompileLauncher | None = launcher
         self.project_manager: ProjectManager | None = project_manager
         self.backend: int | str = backend
+        self.webui_sidecar: WebUiSidecar | None = webui_sidecar
         self.bridge: AgentDecompileStdioBridge | None = None
         self.cleanup_done: bool = False
 
@@ -256,6 +275,7 @@ class AgentDecompileCLI:
                 self.cleanup()
             sys.exit(0)
 
+        logger.debug("diag.enter %s", "__main__.py:AgentDecompileCLI.setup_signal_handlers")
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
@@ -265,6 +285,7 @@ class AgentDecompileCLI:
 
     def cleanup(self):
         """Clean up all resources."""
+        logger.debug("diag.enter %s", "__main__.py:AgentDecompileCLI.cleanup")
         if self.cleanup_done:
             return
 
@@ -274,6 +295,12 @@ class AgentDecompileCLI:
         if self.bridge is not None:
             try:
                 self.bridge.stop()
+            except Exception:
+                pass
+
+        if self.webui_sidecar is not None:
+            try:
+                self.webui_sidecar.stop()
             except Exception:
                 pass
 
@@ -293,6 +320,7 @@ class AgentDecompileCLI:
 
     async def run(self):
         """Run the async stdio bridge (all initialization already done)."""
+        logger.debug("diag.enter %s", "__main__.py:AgentDecompileCLI.run")
         try:
             # Setup signal handlers
             self.setup_signal_handlers()
@@ -325,6 +353,7 @@ class AgentDecompileCLI:
 
 def _setup_main_argument_parser() -> argparse.ArgumentParser:
     """Set up the argument parser for the main CLI."""
+    logger.debug("diag.enter %s", "__main__.py:_setup_main_argument_parser")
     parser = argparse.ArgumentParser(
         description="AgentDecompile MCP server with stdio transport for Claude CLI integration",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -364,10 +393,7 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
         type=str,
         choices=["json", "table", "text"],
         default="text",
-        help=(
-            "Output format for CLI messages (default: text). Use -f/--format json "
-            "only when you strictly need machine-readable output; text is recommended."
-        ),
+        help=("Output format for CLI messages (default: text). Use -f/--format json only when you strictly need machine-readable output; text is recommended."),
     )
     parser.add_argument(
         "--verbose",
@@ -385,12 +411,22 @@ def _setup_main_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _handle_connect_mode(args: argparse.Namespace) -> None:
-    """Handle connect mode to existing MCP server."""
+def _handle_connect_mode(args: argparse.Namespace, backend_url: str) -> None:
+    """Handle connect mode to existing MCP server.
+    
+    Args:
+        args: Parsed command-line arguments
+        backend_url: Resolved backend URL (from --server-url or env vars)
+    """
+    logger.debug("diag.enter %s", "__main__.py:_handle_connect_mode")
+    from agentdecompile_cli.webui import launch_webui_sidecar
+
+    webui_sidecar = launch_webui_sidecar(backend_url, verbose=bool(args.verbose))
     cli = AgentDecompileCLI(
         launcher=None,
         project_manager=None,
-        backend=args.server_url,
+        backend=backend_url,
+        webui_sidecar=webui_sidecar,
     )
     try:
         run_async(cli.run())
@@ -405,6 +441,7 @@ def _handle_connect_mode(args: argparse.Namespace) -> None:
 def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompileLauncher, ProjectManager, int]:
     """Perform blocking PyGhidra initialization and return components."""
     # Save original stdout/stderr
+    logger.debug("diag.enter %s", "__main__.py:_initialize_pygidra_blocking")
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
@@ -423,9 +460,7 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
             sys.stdout = original_stdout
             sys.stderr = original_stderr
             sys.stderr.write(
-                "PyGhidra is not installed for local spawn mode.\n"
-                'Install with the local extra (e.g. `pip install "agentdecompile[local]"`) '
-                "or connect to an existing server using --server-url.\n",
+                'PyGhidra is not installed for local spawn mode.\nInstall with the local extra (e.g. `pip install "agentdecompile[local]"`) or connect to an existing server using --server-url.\n',
             )
             sys.exit(1)
 
@@ -438,12 +473,19 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
 
         # Force garbage collection to clean up any lingering references
         import gc
+
         gc.collect()
 
         project_manager = ProjectManager()
         launcher = AgentDecompileLauncher(config_file=args.config, use_random_port=True)
         port = launcher.start()
         sys.stderr.write(f"AgentDecompile server ready on port {port}\n")
+        logger.info(
+            "pyghidra_local_spawn_ready listen_port=%s has_config_arg=%s verbose=%s",
+            port,
+            bool(getattr(args, "config", None)),
+            bool(getattr(args, "verbose", False)),
+        )
 
         return launcher, project_manager, port
 
@@ -453,16 +495,22 @@ def _initialize_pygidra_blocking(args: argparse.Namespace) -> tuple[AgentDecompi
         sys.stderr = original_stderr
         sys.stderr.write(f"Initialization error: {e.__class__.__name__}: {e}\n")
         import traceback
+
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 
 def _run_async_execution(launcher: AgentDecompileLauncher, project_manager: ProjectManager, port: int) -> None:
     """Run the async stdio bridge with initialized components."""
+    logger.debug("diag.enter %s", "__main__.py:_run_async_execution")
+    from agentdecompile_cli.webui import launch_webui_sidecar
+
+    webui_sidecar = launch_webui_sidecar(f"http://127.0.0.1:{port}/mcp", verbose=False)
     cli = AgentDecompileCLI(
         launcher=launcher,
         project_manager=project_manager,
         backend=port,
+        webui_sidecar=webui_sidecar,
     )
 
     try:
@@ -476,10 +524,16 @@ def _run_async_execution(launcher: AgentDecompileLauncher, project_manager: Proj
 
 
 def main():
-    """Main entry point for mcp-agentdecompile command."""
+    """Main entry point for mcp-agentdecompile command.
+
+    Flow: parse args → resolve backend URL → if URL given, connect mode (stdio bridge only);
+    else spawn PyGhidra + local server, then run stdio bridge to that server.
+    """
+    logger.debug("diag.enter %s", "__main__.py:main")
     parser = _setup_main_argument_parser()
     args = parser.parse_args()
 
+    # Resolve backend: --server-url wins; else --host/--port or env vars (connect mode)
     backend_url: str | None = resolve_backend_url(
         args.server_url,
         args.host,
@@ -499,7 +553,7 @@ def main():
             sys.stderr.write(
                 "Note: --config is ignored when connecting to an existing MCP server.\n",
             )
-        _handle_connect_mode(args)
+        _handle_connect_mode(args, backend_url)
         return
 
     # Blocking initialization (before async event loop)

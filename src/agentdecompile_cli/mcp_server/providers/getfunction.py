@@ -1,38 +1,131 @@
 """GetFunction Tool Provider - manage-function, manage-function-tags, match-function.
 
-Covers function modification, tagging, and matching/comparison.
+This provider implements three tools:
+
+  - manage-function: Rename, set prototype/return type/calling convention, create, or delete
+    a function. Used when the user or agent has identified what a function does and wants
+    to persist that knowledge (name, signature) into the program.
+  - manage-function-tags: Attach string tags to functions (e.g. 'crypto', 'network') for
+    organization and search. Modes: list, add, remove, search.
+  - match-function: Cross-program or single-program function matching. Primary use: given
+    a source function and target program paths, find the equivalent function in each target
+    (by signature/name similarity) and optionally propagate name, tags, comments, prototype,
+    bookmarks. Single-program modes: similar, callers, callees, signature (no targets).
+
+Match-function builds an in-memory index (_FunctionMatchIndex) keyed by signature and
+call graph so that candidates can be ranked by similarity; the index is cached per program
+to avoid recomputing on repeated calls.
 """
 
 from __future__ import annotations
 
 import heapq
+import json
 import logging
-from itertools import islice
+import uuid
 
-from typing import Any, cast
+from collections import defaultdict
+from pathlib import Path
+from dataclasses import dataclass
+from itertools import islice
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+if TYPE_CHECKING:
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
+        Function as GhidraFunction,
+        FunctionManager as GhidraFunctionManager,
+        Program as GhidraProgram,
+    )
 
 from mcp import types
 
+from agentdecompile_cli.app_logger import basename_hint, redact_session_id
+from agentdecompile_cli.mcp_server.providers._collectors import iter_items, make_task_monitor
+from agentdecompile_cli.mcp_server.profiling import ProfileCapture
+from agentdecompile_cli.mcp_server.session_context import (
+    SESSION_CONTEXTS,
+    get_current_mcp_session_id,
+    get_current_request_auto_match_propagate,
+)
 from agentdecompile_cli.mcp_server.tool_providers import (
+    FORCE_APPLY_CONFLICT_ID_KEY,
     ToolProvider,
+    create_conflict_response,
     create_success_response,
     n,
 )
+from agentdecompile_cli.mcp_utils.symbol_util import SymbolUtil
+from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
 
+def _detail_limits(result_count: int) -> tuple[int | None, int | None, int]:
+    """Return (max_callers, max_callees, max_instructions) for get-function enrichment.
+
+    Fewer results get more detail; many results get tighter caps to keep output usable.
+    """
+    logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:_detail_limits")
+    if result_count <= 1:
+        return (None, None, 2000)
+    if result_count <= 10:
+        return (50, 50, 500)
+    if result_count <= 50:
+        return (20, 20, 200)
+    return (5, 5, 80)
+
+
+# ---------------------------------------------------------------------------
+# Match-function index: per-program feature set for similarity and call-graph lookup
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)  # pyright: ignore[reportCallIssue]
+class _FunctionMatchFeature:
+    """One function's extracted features for matching (signature, callers, callees)."""
+
+    function: GhidraFunction
+    name: str
+    address: str
+    signature: str
+    param_count: int
+    return_type: str
+    callers: frozenset[str]
+    callees: frozenset[str]
+
+
+@dataclass(slots=True)  # pyright: ignore[reportCallIssue]
+class _FunctionMatchIndex:
+    """In-memory index of all functions in a program for match-function.
+
+    Indexed by: identity (name/addr), (param_count, return_type), caller names,
+    callee names. Built once per program and cached in _MATCH_INDEX_CACHE so
+    repeated match calls (e.g. same program, different source function) are fast.
+    """
+
+    function_count: int
+    features: list[_FunctionMatchFeature]
+    by_identity: dict[str, _FunctionMatchFeature]
+    by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]]
+    by_caller: dict[str, set[str]]
+    by_callee: dict[str, set[str]]
+
+
 class GetFunctionToolProvider(ToolProvider):
+    _MATCH_INDEX_CACHE: ClassVar[dict[int, _FunctionMatchIndex]] = {}
+
     HANDLERS = {
         "managefunction": "_handle_manage",
         "managefunctiontags": "_handle_tags",
         "matchfunction": "_handle_match",
+        "migratemetadata": "_handle_migrate_metadata",
     }
 
     def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider.list_tools")
         return [
             types.Tool(
-                name="manage-function",
+                name=Tool.MANAGE_FUNCTION.value,
                 description="Change attributes of an existing function to improve analysis. Use this when you understand what a function does and want to update its name, its input arguments (prototype), the type of value it returns, or its calling convention (how it receives arguments). You can also create a new function or delete an existing one.",
                 inputSchema={
                     "type": "object",
@@ -46,7 +139,10 @@ class GetFunctionToolProvider(ToolProvider):
                             "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"],
                         },
                         "newName": {"type": "string", "description": "If mode is 'rename', the new name you want to give the function."},
-                        "prototype": {"type": "string", "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)')."},
+                        "prototype": {
+                            "type": "string",
+                            "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)').",
+                        },
                         "callingConvention": {"type": "string", "description": "If mode is 'set_calling_convention', the new convention (e.g., '__stdcall', '__fastcall')."},
                         "returnType": {"type": "string", "description": "If mode is 'set_return_type', the new return data type (e.g. 'int', 'void')."},
                         "address": {"type": "string", "description": "If mode is 'create', the memory address where the new function should start."},
@@ -55,7 +151,7 @@ class GetFunctionToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="manage-function-tags",
+                name=Tool.MANAGE_FUNCTION_TAGS.value,
                 description="Label a function with simple string tags (like 'crypto', 'network', 'vulnerable') to easily group or find it later. Use this to organize the reverse engineering workload.",
                 inputSchema={
                     "type": "object",
@@ -63,7 +159,11 @@ class GetFunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "Path to the program."},
                         "function": {"type": "string", "description": "The function name or address to tag."},
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function."},
-                        "mode": {"type": "string", "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), or 'search' (find functions by tag).", "enum": ["list", "add", "remove", "search"]},
+                        "mode": {
+                            "type": "string",
+                            "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), or 'search' (find functions by tag).",
+                            "enum": ["list", "add", "remove", "search"],
+                        },
                         "tag": {"type": "string", "description": "The specific tag to add, remove, or search for (e.g. 'encryption')."},
                         "tagName": {"type": "string", "description": "Alternative parameter name for 'tag'."},
                     },
@@ -71,23 +171,96 @@ class GetFunctionToolProvider(ToolProvider):
                 },
             ),
             types.Tool(
-                name="match-function",
-                description="Find other functions in the binary that look or behave similarly to a target function. Use this to find cloned functions, shared library code, or to discover groups of functions that share common traits like the same number of arguments or similar callers/callees.",
+                name=Tool.MATCH_FUNCTION.value,
+                description="Match functions across different builds or versions of a binary (cross-program matching). Matching uses signature (param count, return type), name, and call-graph (caller/callee names)—not byte or instruction comparison—so it works when addresses and assembly differ (e.g. related binaries). Give a source function and target program paths; when multiple targets share the same signature, candidates are ranked by name match then call-graph overlap. Optionally propagate names, tags, comments, prototype, and bookmarks. If function/functionIdentifier/addressOrSymbol is omitted but targetProgramPaths is set (or targets are discoverable from the session), the tool iterates over all functions in the source (bulk migration). Use without targetProgramPaths for single-program modes: similar, callers, callees, signature. Matched results include functionDetails (get-function output) for context.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "programPath": {"type": "string", "description": "Path to the program."},
-                        "function": {"type": "string", "description": "The target function you want to match against."},
-                        "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the target function."},
-                        "mode": {"type": "string", "enum": ["similar", "callers", "callees", "signature"], "default": "similar", "description": "How to evaluate similarity: 'similar' (overall heuristics), 'callers' (functions grouped by who calls them), 'callees' (functions grouped by who they call), 'signature' (functions with identical argument types)."},
-                        "maxResults": {"type": "integer", "default": 50, "description": "Maximum number of matched functions to return."},
+                        "programPath": {"type": "string", "description": "Path to the source program containing the function to match."},
+                        "function": {"type": "string", "description": "The source function name or address to match (alias: functionIdentifier, addressOrSymbol)."},
+                        "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the source function."},
+                        "functionIdentifier": {"type": "string", "description": "Source function name or address (same as function)."},
+                        "targetProgramPaths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Paths to target programs to find the equivalent function in. When provided, cross-program matching runs (primary use). Omit for single-program modes.",
+                        },
+                        "minSimilarity": {
+                            "type": "number",
+                            "default": 0.7,
+                            "description": "Minimum similarity 0–1 (or 0–100). Name match = 1.0, signature-only = 0.7. Default 0.7.",
+                        },
+                        "propagateNames": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, set the matched target function's name to the source function's name.",
+                        },
+                        "propagateTags": {"type": "boolean", "default": False, "description": "If true, copy source function's tags to the matched target function."},
+                        "propagateComments": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, copy all comment types (plate, pre, post, eol, repeatable) at the source function entry to the matched target.",
+                        },
+                        "propagatePrototype": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, set the matched target function's signature (return type and parameters) to the source function's prototype.",
+                        },
+                        "propagateBookmarks": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, copy bookmarks at the source function entry to the matched target function entry.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["similar", "callers", "callees", "signature"],
+                            "default": "similar",
+                            "description": "Single-program only: 'similar', 'callers', 'callees', or 'signature'. Ignored when targetProgramPaths is provided.",
+                        },
+                        "maxResults": {"type": "integer", "default": 100, "description": "Single-program mode: number of matched functions to return."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name=Tool.MIGRATE_METADATA.value,
+                description="Bulk propagate function metadata from a source binary to others: runs match-function over all functions in the source. Use when you want to migrate names, tags, comments, prototype, and bookmarks from one binary to one or more target binaries (e.g. different builds). Optional targetProgramPaths; if omitted, targets are discovered from the session. Open a project in the session first (open or import-binary).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Path to a source program (optional)."},
+                        "targetProgramPaths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Paths to target programs to propagate metadata to. If omitted, other open programs in the session are used.",
+                        },
+                        "minSimilarity": {
+                            "type": "number",
+                            "default": 0.7,
+                            "description": "Minimum similarity 0–1 (or 0–100) for matching. Default 0.7.",
+                        },
+                        "limit": {"type": "integer", "description": "Cap number of functions to process (for testing). Omit to process all."},
+                        "includeExternals": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Include external functions in the migration. Default true.",
+                        },
+                        "propagateNames": {"type": "boolean", "default": True, "description": "Propagate function names to matched targets."},
+                        "propagateTags": {"type": "boolean", "default": True, "description": "Propagate function tags."},
+                        "propagateComments": {"type": "boolean", "default": True, "description": "Propagate all comment types."},
+                        "propagatePrototype": {"type": "boolean", "default": True, "description": "Propagate function signature (return type and parameters)."},
+                        "propagateBookmarks": {"type": "boolean", "default": True, "description": "Propagate bookmarks at function entry."},
                     },
                     "required": [],
                 },
             ),
         ]
 
-    async def _handle_manage(self, args: dict[str, Any]) -> list[types.TextContent]:
+    async def _handle_manage(
+        self,
+        args: dict[str, Any],
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_manage")
         self._require_program()
         action = self._require_str(args, "mode", "action", "operation", name="mode")
         func_id = self._get_address_or_symbol(args)
@@ -110,14 +283,14 @@ class GetFunctionToolProvider(ToolProvider):
             func = self._run_program_transaction(program, "create-function", _create_function)
             return create_success_response({"action": "create", "address": str(addr), "name": func.getName(), "success": True})
 
-        # For other actions, ensure function specified
+        # All other actions need an existing function (rename, set_prototype, delete, etc.)
         if not func_id:
             raise ValueError("function or addressOrSymbol required")
         func = self._resolve_function(func_id, program=program)
         if func is None:
             raise ValueError(f"Function not found: {func_id}")
 
-        # Dispatch remaining actions to dedicated handlers to reduce inline branching
+        # Dispatch to per-action handlers (rename, set_prototype, set_calling_convention, etc.)
         return await self._dispatch_handler(
             args,
             action,
@@ -135,15 +308,49 @@ class GetFunctionToolProvider(ToolProvider):
             func_id=func_id,
         )
 
-    async def _handle_rename(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_rename(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_rename")
         new_name = self._require_str(args, "newname", "name", name="newName")
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_name = func.getName()
+            if not SymbolUtil.is_default_symbol_name(current_name):
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = f"Rename would overwrite existing custom function name:\n\n```diff\n- {current_name}\n+ {new_name}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _rename_function() -> None:
             from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
 
             func.setName(new_name, SourceType.USER_DEFINED)
+            try:
+                sym = func.getSymbol()
+                if sym is not None and str(sym.getName()) != new_name:
+                    sym.setName(new_name, SourceType.USER_DEFINED)
+            except Exception:
+                pass
+            self._touch_listing_for_shared_checkin(program)
 
         self._run_program_transaction(program, "rename-function", _rename_function)
+        self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
         return create_success_response(
             {
                 "action": "rename",
@@ -153,8 +360,106 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_prototype(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    def _notify_versioned_checkout_after_program_edit(self, program: GhidraProgram, program_path: str | None = None) -> None:
+        """Align shared checkout metadata with function edits so versioned checkin can persist updates."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._notify_versioned_checkout_after_program_edit")
+        if program is None:
+            return
+        try:
+            from agentdecompile_cli.mcp_server.providers.import_export import (
+                ImportExportToolProvider as _ImportExport,
+            )
+            from agentdecompile_cli.mcp_server.session_context import (
+                SESSION_CONTEXTS,
+                get_current_mcp_session_id,
+                is_shared_server_handle,
+            )
+
+            sid = get_current_mcp_session_id()
+            sess = SESSION_CONTEXTS.get_or_create(sid)
+            handle = sess.project_handle if isinstance(sess.project_handle, dict) else None
+            if bool(handle and is_shared_server_handle(handle)) and self._manager is not None:
+                iep = None
+                for pr in getattr(self._manager, "providers", None) or []:
+                    if hasattr(pr, "_persist_open_program_for_versioned_checkin"):
+                        iep = pr
+                        break
+                if iep is not None:
+                    if hasattr(iep, "_bump_versioned_checkout_dirty_bookmark"):
+                        iep._bump_versioned_checkout_dirty_bookmark(program)
+                    iep._persist_open_program_for_versioned_checkin(program)
+
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+            df = None
+            try:
+                df = program.getDomainFile()
+            except Exception:
+                df = None
+            if df is not None:
+                if iep is not None and hasattr(iep, "_save_domain_file_before_versioned_checkin"):
+                    try:
+                        iep._save_domain_file_before_versioned_checkin(df, program)
+                    except Exception as flush_exc:
+                        logger.debug("save_domain_file_before_versioned_checkin after edit: %s", flush_exc)
+                _ImportExport._try_mark_versioned_checkout_dirty(df)
+                _ImportExport._notify_domain_file_changed_for_versioned_checkin(df, program)
+                if hasattr(df, "getParent"):
+                    par = df.getParent()
+                    if par is not None and hasattr(par, "fileChanged"):
+                        try:
+                            par.fileChanged()
+                        except Exception:
+                            pass
+
+            _ImportExport._force_domain_object_changed_for_versioned_checkin(program)
+        except Exception as exc:
+            logger.debug("notify_versioned_checkout_after_program_edit: %s", exc)
+
+    @staticmethod
+    def _touch_listing_for_shared_checkin(program: GhidraProgram) -> None:
+        """Bookmark bump in the same transaction as function edits so VC sees a listing change."""
+        try:
+            mem = program.getMemory()
+            if mem is None:
+                return
+            addr = mem.getMinAddress()
+            if addr is None:
+                return
+            bmm = program.getBookmarkManager()
+            if bmm is None:
+                return
+            bmm.setBookmark(addr, "Note", "AgentDecompile", "agentdecompile_vc_checkin_bump")
+        except Exception:
+            pass
+
+    async def _handle_set_prototype(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_prototype")
         proto = self._require_str(args, "prototype", "signature", name="prototype")
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_sig = str(func.getSignature() or "").strip()
+            if current_sig and current_sig != proto:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = f"Set prototype would overwrite existing signature:\n\n```diff\n- {current_sig}\n+ {proto}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _set_prototype() -> None:
             func.setSignature(proto)
@@ -169,8 +474,34 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_calling_convention(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_set_calling_convention(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_calling_convention")
         cc = self._require_str(args, "callingconvention", "convention", name="callingConvention")
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_cc = (func.getCallingConventionName() or "").strip() if hasattr(func, "getCallingConventionName") else ""
+            if current_cc and current_cc != cc:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = f"Set calling convention would overwrite existing:\n\n```diff\n- {current_cc}\n+ {cc}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _set_calling_convention() -> None:
             func.setCallingConvention(cc)
@@ -185,13 +516,39 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_set_return_type(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_set_return_type(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_return_type")
         rt_str = self._require_str(args, "returntype", "newtype", "type", name="returnType")
         from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
 
         dtm = program.getDataTypeManager()
-        parser = DataTypeParser(dtm, dtm, cast(Any, None), DataTypeParser.AllowedDataTypes.ALL)
+        parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
         rt = parser.parse(rt_str)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            current_rt = str(func.getReturnType() or "").strip()
+            if current_rt and current_rt != rt_str:
+                from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+                conflict_id = str(uuid.uuid4())
+                conflict_summary = f"Set return type would overwrite existing:\n\n```diff\n- {current_rt}\n+ {rt_str}\n```"
+                next_step = f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+                program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (getattr(self.program_info, "file_path", None) if self.program_info else None)
+                conflict_store_store(
+                    get_current_mcp_session_id(),
+                    conflict_id,
+                    tool=Tool.MANAGE_FUNCTION.value,
+                    arguments=dict(args),
+                    program_path=str(program_path) if program_path else None,
+                    summary=conflict_summary,
+                )
+                return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, conflict_summary, next_step)
 
         def _set_return_type() -> None:
             from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
@@ -208,10 +565,11 @@ class GetFunctionToolProvider(ToolProvider):
             },
         )
 
-    async def _handle_delete(self, args: dict[str, Any], program: Any, func: Any, func_id: str) -> list[types.TextContent]:
+    async def _handle_delete(self, args: dict[str, Any], program: GhidraProgram, func: GhidraFunction, func_id: str) -> list[types.TextContent]:
         def _delete_function() -> None:
             self._get_function_manager(program).removeFunction(func.getEntryPoint())
 
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_delete")
         self._run_program_transaction(program, "delete-function", _delete_function)
         return create_success_response(
             {
@@ -222,6 +580,7 @@ class GetFunctionToolProvider(ToolProvider):
         )
 
     async def _handle_tags(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_tags")
         self._require_program()
         action = self._get_str(args, "mode", "action", "operation", default="list")
         func_id = self._get_address_or_symbol(args)
@@ -235,7 +594,7 @@ class GetFunctionToolProvider(ToolProvider):
             # Search for functions with a specific tag
             fm = self._get_function_manager(program)
             results = []
-            for func in fm.getFunctions(True):
+            for func in iter_items(fm.getFunctions(True)):
                 tags = list(func.getTags())
                 tag_names = [t.getName() for t in tags]
                 if tag_name and tag_name.lower() in [tn.lower() for tn in tag_names]:
@@ -246,9 +605,8 @@ class GetFunctionToolProvider(ToolProvider):
             # List all known tags
             fm = self._get_function_manager(program)
             all_tags = set()
-            for func in fm.getFunctions(True):
-                for t in func.getTags():
-                    all_tags.add(t.getName())
+            for func in iter_items(fm.getFunctions(True)):
+                all_tags.update(t.getName() for t in func.getTags())
             return create_success_response({"action": "list", "tags": sorted(all_tags), "count": len(all_tags)})
 
         func = self._resolve_function(func_id, program=program)
@@ -301,8 +659,600 @@ class GetFunctionToolProvider(ToolProvider):
 
         raise ValueError(f"Unknown tag action: {action}")
 
+    def _get_match_index(
+        self,
+        program: GhidraProgram,
+        fm: GhidraFunctionManager,
+    ) -> tuple[_FunctionMatchIndex, bool]:
+        """Build or return cached match index for this program.
+
+        The index maps: identity (addr) → feature; (param_count, return_type) → list of features;
+        caller name → set of addrs; callee name → set of addrs. Used to rank candidates by
+        signature and call-graph similarity. Cache is keyed by program id; we invalidate when
+        function count changes (e.g. after analysis or import).
+        """
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._get_match_index")
+        cache_key: int = id(program)
+        function_count: int = int(fm.getFunctionCount()) if hasattr(fm, "getFunctionCount") else -1
+        cached: _FunctionMatchIndex | None = self._MATCH_INDEX_CACHE.get(cache_key)
+        if cached is not None and cached.function_count == function_count:
+            return cached, True
+
+        with ProfileCapture(
+            "match-function-index-build",
+            target=getattr(program, "getName", lambda: "")(),
+            metadata={"functionCount": function_count},
+        ) as capture:
+            features: list[_FunctionMatchFeature] = []
+            by_identity: dict[str, _FunctionMatchFeature] = {}
+            by_signature: dict[tuple[int, str], list[_FunctionMatchFeature]] = defaultdict(list)
+            by_caller: dict[str, set[str]] = defaultdict(set)
+            by_callee: dict[str, set[str]] = defaultdict(set)
+
+            for func in iter_items(fm.getFunctions(True)):
+                # Call graph sets used for similarity: more shared callers/callees => higher match score
+                _monitor = make_task_monitor()
+                callers = frozenset(c.getName() for c in func.getCallingFunctions(_monitor))
+                callees = frozenset(c.getName() for c in func.getCalledFunctions(_monitor))
+                addr_str = str(func.getEntryPoint())
+                feature = _FunctionMatchFeature(
+                    function=func,  # pyright: ignore[reportCallIssue]
+                    name=func.getName(),  # pyright: ignore[reportCallIssue]
+                    address=addr_str,  # pyright: ignore[reportCallIssue]
+                    signature=str(func.getSignature()),  # pyright: ignore[reportCallIssue]
+                    param_count=func.getParameterCount(),  # pyright: ignore[reportCallIssue]
+                    return_type=str(func.getReturnType()),  # pyright: ignore[reportCallIssue]
+                    callers=callers,  # pyright: ignore[reportCallIssue]
+                    callees=callees,  # pyright: ignore[reportCallIssue]
+                )
+                features.append(feature)
+                by_identity[addr_str] = feature
+                by_signature[feature.param_count, feature.return_type].append(feature)
+                for caller in callers:
+                    by_caller[caller].add(addr_str)
+                for callee in callees:
+                    by_callee[callee].add(addr_str)
+
+            capture.add_metadata(indexedFunctions=len(features))
+
+        index = _FunctionMatchIndex(
+            function_count=function_count,  # pyright: ignore[reportCallIssue]
+            features=features,  # pyright: ignore[reportCallIssue]
+            by_identity=by_identity,  # pyright: ignore[reportCallIssue]
+            by_signature=dict(by_signature),  # pyright: ignore[reportCallIssue]
+            by_caller={name: set(addrs) for name, addrs in by_caller.items()},  # pyright: ignore[reportCallIssue]
+            by_callee={name: set(addrs) for name, addrs in by_callee.items()},  # pyright: ignore[reportCallIssue]
+        )
+        self._MATCH_INDEX_CACHE[cache_key] = index
+        return index, False
+
+    def _normalize_min_similarity(self, args: dict[str, Any]) -> float:
+        """Return minSimilarity in 0.0–1.0 (accepts 0–100 or 0–1)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._normalize_min_similarity")
+        raw = self._get_str(args, "minsimilarity", "similaritythreshold", default="")
+        if not raw:
+            return 0.7
+        try:
+            v = float(raw)
+            return min(1.0, max(0.0, v / 100.0 if v > 1 else v))
+        except (ValueError, TypeError):
+            return 0.7
+
+    def _discover_target_paths(self, source_path: str) -> list[str]:
+        """Discover target program paths from session (list-project-files style); exclude source; filter to common binaries."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._discover_target_paths")
+        session_id = get_current_mcp_session_id()
+        binaries = SESSION_CONTEXTS.get_project_binaries(session_id, fallback_to_latest=False)
+        source_norm = (source_path or "").strip().lower().replace("\\", "/")
+        source_basename = (Path(source_path).name or "").lower() if source_path else ""
+        binary_extensions = (".exe", ".dll", ".so", ".dylib")
+        paths: list[str] = []
+        eligible_count = 0
+        for item in binaries:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip() == "Folder":
+                continue
+            path = (item.get("path") or item.get("name") or "").strip().replace("\\", "/")
+            if not path or not any(path.lower().endswith(ext) for ext in binary_extensions):
+                continue
+            eligible_count += 1
+            if path.lower() == source_norm:
+                continue
+            # Exclude same program when path differs only by directory (e.g. "test_x86_64" vs "tests/fixtures/test_x86_64")
+            if source_basename and (Path(path).name or "").lower() == source_basename:
+                continue
+            paths.append(path)
+        # Single program in session: no other targets (avoid matching program to itself)
+        if eligible_count <= 1:
+            return []
+        return paths
+
+    def _source_call_graph_sets(self, source_func: GhidraFunction) -> tuple[frozenset[str], frozenset[str]]:
+        """Return (callers, callees) as frozensets of function names for cross-program call-graph scoring."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._source_call_graph_sets")
+        callers = frozenset(c.getName() for c in source_func.getCallingFunctions(make_task_monitor()))
+        callees = frozenset(c.getName() for c in source_func.getCalledFunctions(make_task_monitor()))
+        return callers, callees
+
+    def _call_graph_overlap(
+        self,
+        source_callers: frozenset[str],
+        source_callees: frozenset[str],
+        target_feature: _FunctionMatchFeature,
+    ) -> float:
+        """Return overlap in [0, 1]: shared callers + shared callees over source total. Used to rank same-signature candidates."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._call_graph_overlap")
+        if not source_callers and not source_callees:
+            return 0.0
+        shared_calls = len(source_callers & target_feature.callers) + len(source_callees & target_feature.callees)
+        total = len(source_callers) + len(source_callees)
+        return shared_calls / total if total else 0.0
+
+    def _list_source_function_identifiers(
+        self,
+        program: GhidraProgram,
+        include_externals: bool = True,
+        limit: int | None = None,
+    ) -> list[str]:
+        """List function identifiers (name or address) from source program for bulk match."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._list_source_function_identifiers")
+        fm = self._get_function_manager(program)
+        identifiers: list[str] = []
+        for func in iter_items(fm.getFunctions(include_externals)):
+            name = func.getName() or ""
+            addr = str(func.getEntryPoint())
+            if name and not (name.startswith("FUN_") and len(name) > 4 and name[4:].replace(".", "").isdigit()):
+                ident = name
+            else:
+                ident = addr
+            if ident:
+                identifiers.append(ident)
+            if limit is not None and len(identifiers) >= limit:
+                break
+        return identifiers
+
+    async def _handle_match_cross_program(
+        self,
+        source_func: GhidraFunction,
+        source_program: GhidraProgram,
+        target_paths: list[str],
+        min_similarity: float,
+        propagate_names: bool,
+        propagate_tags: bool,
+        propagate_comments: bool,
+        propagate_prototype: bool = False,
+        propagate_bookmarks: bool = False,
+        detail_result_count: int | None = None,
+    ) -> list[types.TextContent]:
+        """Match source function to equivalent functions in target programs; optionally propagate name, tags, comments, prototype, bookmarks."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_match_cross_program")
+        session_id = get_current_mcp_session_id()
+        manager = getattr(self, "_manager", None)
+        if manager is None:
+            raise ValueError("Cross-program matching requires a session with program resolution. Ensure open or import-binary has been used so target programs can be opened.")
+
+        source_name = source_func.getName()
+        source_param_count = source_func.getParameterCount()
+        source_return_type = str(source_func.getReturnType())
+        source_sig = str(source_func.getSignature())
+        sig_key = (source_param_count, source_return_type)
+        source_callers, source_callees = self._source_call_graph_sets(source_func)
+
+        results_per_target: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        for target_path in target_paths:
+            target_path = str(target_path).strip()
+            if not target_path:
+                continue
+            try:
+                target_info = await manager.get_or_open_program(session_id, target_path)
+            except Exception as e:
+                errors.append(f"{target_path}: {e}")
+                results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": str(e)})
+                continue
+            if target_info is None:
+                errors.append(f"{target_path}: could not open program")
+                results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": "Could not open program"})
+                continue
+
+            target_program = target_info.program
+            domain_file = target_program.getDomainFile()
+            is_versioned = domain_file.isVersioned() if domain_file else False
+            we_did_checkout = False
+            did_propagate = False
+            if is_versioned and domain_file is not None and not domain_file.isCheckedOut():
+                try:
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    domain_file.checkout(False, TaskMonitor.DUMMY)
+                    we_did_checkout = True
+                except Exception as e:
+                    errors.append(f"{target_path}: checkout failed: {e}")
+                    results_per_target.append({"targetProgramPath": target_path, "matched": None, "error": f"Checkout failed: {e}"})
+                    continue
+
+            target_fm = self._get_function_manager(target_program)
+            target_index, _ = self._get_match_index(target_program, target_fm)
+
+            candidates = target_index.by_signature.get(sig_key, [])
+            best_feature: _FunctionMatchFeature | None = None
+            best_score = 0.0
+            best_call_graph_overlap = 0.0
+            for feat in candidates:
+                # Name match = 1.0; same signature (param_count, return_type) but different name = 0.7
+                score = 1.0 if feat.name == source_name else 0.7
+                if score < min_similarity:
+                    continue
+                cg_overlap = self._call_graph_overlap(source_callers, source_callees, feat)
+                # Rank by (score, call-graph overlap) so same-signature candidates are disambiguated by call graph
+                if (score, cg_overlap) > (best_score, best_call_graph_overlap):
+                    best_score = score
+                    best_call_graph_overlap = cg_overlap
+                    best_feature = feat
+
+            if best_feature is None:
+                results_per_target.append(
+                    {
+                        "targetProgramPath": target_path,
+                        "matched": None,
+                        "candidatesBySignature": len(candidates),
+                        "message": "No match meeting minSimilarity",
+                    },
+                )
+                if is_versioned and domain_file is not None and we_did_checkout:
+                    try:
+                        from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                        from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                        handler = DefaultCheckinHandler("Auto match-function propagation", False, False)
+                        domain_file.checkin(handler, TaskMonitor.DUMMY)
+                    except Exception as e:
+                        logger.warning("Checkin after no-match (target %s) failed: %s", target_path, e)
+                continue
+
+            target_func = best_feature.function
+            entry: dict[str, Any] = {
+                "targetProgramPath": target_path,
+                "matched": {
+                    "name": best_feature.name,
+                    "address": best_feature.address,
+                    "signature": best_feature.signature,
+                    "similarityScore": best_score,
+                    "callGraphOverlap": round(best_call_graph_overlap, 4),
+                },
+                "propagated": [],
+            }
+
+            if propagate_names and best_feature.name != source_name:
+
+                def _rename() -> None:
+                    from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
+                    target_func.setName(source_name, SourceType.USER_DEFINED)
+
+                self._run_program_transaction(target_program, "match-function-rename", _rename)
+                entry["propagated"].append("name")
+                did_propagate = True
+
+            if propagate_prototype:
+                target_sig = str(target_func.getSignature())
+                if source_sig != target_sig:
+                    try:
+
+                        def _set_proto() -> None:
+                            target_func.setSignature(source_sig)
+
+                        self._run_program_transaction(target_program, "match-function-prototype", _set_proto)
+                        entry["propagated"].append("prototype")
+                        did_propagate = True
+                    except Exception as e:
+                        logger.debug("Propagate prototype skipped for %s: %s", target_path, e)
+
+            if propagate_tags:
+                source_tags = [t.getName() for t in source_func.getTags()]
+                existing = {t.getName() for t in target_func.getTags()}
+                to_add = [t for t in source_tags if t not in existing]
+                if to_add:
+
+                    def _add_tags() -> None:
+                        for tag in to_add:
+                            target_func.addTag(tag)
+
+                    self._run_program_transaction(target_program, "match-function-tags", _add_tags)
+                    entry["propagated"].extend(to_add)
+                    did_propagate = True
+
+            if propagate_comments:
+                try:
+                    from ghidra.program.model.listing import CodeUnit  # pyright: ignore[reportMissingModuleSource]
+
+                    source_listing = source_program.getListing()
+                    target_listing = target_program.getListing()
+                    source_entry = source_func.getEntryPoint()
+                    target_entry = target_func.getEntryPoint()
+                    comment_types = (
+                        CodeUnit.PLATE_COMMENT,
+                        CodeUnit.PRE_COMMENT,
+                        CodeUnit.POST_COMMENT,
+                        CodeUnit.EOL_COMMENT,
+                        CodeUnit.REPEATABLE_COMMENT,
+                    )
+                    for ctype in comment_types:
+                        try:
+                            comment = source_listing.getComment(ctype, source_entry)
+                            if comment and str(comment).strip():
+                                _comment = comment
+
+                                def _set_comment() -> None:
+                                    target_listing.setComment(target_entry, ctype, _comment)
+
+                                self._run_program_transaction(target_program, "match-function-comment", _set_comment)
+                                entry["propagated"].append("comment")
+                                did_propagate = True
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.debug("Propagate comments skipped: %s", e)
+
+            if propagate_bookmarks:
+                try:
+                    source_bm_mgr = source_program.getBookmarkManager()
+                    source_entry = source_func.getEntryPoint()
+                    target_entry = target_func.getEntryPoint()
+                    source_bms = list(source_bm_mgr.getBookmarks(source_entry)) if hasattr(source_bm_mgr, "getBookmarks") else []
+                    if not source_bms and hasattr(source_bm_mgr, "getBookmarksIterator"):
+                        for bm in source_bm_mgr.getBookmarksIterator():
+                            if bm.getAddress().equals(source_entry):
+                                source_bms.append(bm)
+                    bm_data = [(bm.getTypeString(), bm.getCategory(), bm.getComment() or "") for bm in source_bms]
+                    if bm_data:
+
+                        def _set_bookmarks() -> None:
+                            tgt_mgr = target_program.getBookmarkManager()
+                            for bm_type, bm_cat, bm_comment in bm_data:
+                                tgt_mgr.setBookmark(target_entry, bm_type, bm_cat, bm_comment)
+
+                        self._run_program_transaction(target_program, "match-function-bookmarks", _set_bookmarks)
+                        entry["propagated"].append("bookmarks")
+                        did_propagate = True
+                except Exception as e:
+                    logger.debug("Propagate bookmarks skipped: %s", e)
+
+            # Enrich with get-function output for contextual details (same shape as get-function tool)
+            manager: Any | None = getattr(self, "_manager", None)
+            if manager is not None and entry.get("matched"):
+                matched_info: dict[str, Any] = entry["matched"]
+                gf_address: str = (matched_info.get("address") or "").strip()
+                gf_name: str = (matched_info.get("name") or gf_address or "").strip()
+                if gf_name or gf_address:
+                    try:
+                        result_count: int = detail_result_count if detail_result_count is not None else len(target_paths)
+                        max_callers: int | None = None
+                        max_callees: int | None = None
+                        max_instructions: int = 0
+                        max_callers, max_callees, max_instructions = _detail_limits(result_count)
+                        gf_payload: dict[str, Any] = {
+                            "programPath": target_path,
+                            "format": "json",
+                        }
+                        # Prefer address for resolution so get-function finds the same function in the target
+                        if gf_address:
+                            gf_payload["addressOrSymbol"] = gf_address
+                        gf_payload["function"] = gf_name or gf_address
+                        if max_callers is not None:
+                            gf_payload["maxCallers"] = max_callers
+                        if max_callees is not None:
+                            gf_payload["maxCallees"] = max_callees
+                        gf_payload["callerDepth"] = 0
+                        gf_payload["calleeDepth"] = 0
+                        gf_payload["maxRelatedCallers"] = 0
+                        gf_payload["maxRelatedCallees"] = 0
+                        gf_payload["maxInstructions"] = max_instructions
+                        gf_resp: list[types.TextContent] | None = await manager.call_tool(
+                            "get-function",
+                            gf_payload,
+                        )
+                        if gf_resp and isinstance(gf_resp[0], types.TextContent) and gf_resp[0].text:
+                            parsed = json.loads(gf_resp[0].text)
+                            if isinstance(parsed, dict):
+                                entry["functionDetails"] = parsed
+                    except Exception as e:
+                        logger.debug("get-function enrichment for %s in %s: %s", gf_name or gf_address, target_path, e)
+
+            results_per_target.append(entry)
+
+            if is_versioned and domain_file is not None and (we_did_checkout or did_propagate):
+                try:
+                    from ghidra.framework.data import DefaultCheckinHandler  # pyright: ignore[reportMissingModuleSource]
+                    from ghidra.util.task import TaskMonitor  # pyright: ignore[reportMissingModuleSource]
+
+                    keep_out = not we_did_checkout and did_propagate
+                    handler = DefaultCheckinHandler("Auto match-function propagation", keep_out, False)
+                    domain_file.checkin(handler, TaskMonitor.DUMMY)
+                except Exception as e:
+                    logger.warning("Checkin after propagation (target %s) failed: %s", target_path, e)
+
+        return create_success_response(
+            {
+                "mode": "cross-program",
+                "sourceFunction": source_name,
+                "sourceSignature": source_sig,
+                "targetProgramPaths": target_paths,
+                "minSimilarity": min_similarity,
+                "results": results_per_target,
+                "count": len(results_per_target),
+                "errors": errors or None,
+            },
+        )
+
+    async def _handle_migrate_metadata(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Bulk metadata migration: delegate to match-function with no functionIdentifier so it iterates all functions."""
+        # Omit any function identifier so _handle_match always takes the bulk path
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_migrate_metadata")
+        bulk_args: dict[str, Any] = {k: v for k, v in args.items() if n(k) not in ("functionidentifier", "function", "addressorsymbol", "address")}
+        return await self._handle_match(bulk_args)
+
     async def _handle_match(self, args: dict[str, Any]) -> list[types.TextContent]:
+        """Entry for match-function: cross-program (targetProgramPaths set) or single-program (similar/callers/callees/signature)."""
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_match")
         self._require_program()
+        raw_targets: list[str] | str | None = args.get(n("targetprogrampaths"))
+        target_paths: list[str] = []
+        if raw_targets is not None:
+            if isinstance(raw_targets, list):
+                target_paths = [str(x).strip() for x in raw_targets if x and str(x).strip()]
+            elif str(raw_targets).strip():
+                target_paths = [str(raw_targets).strip()]
+        # Cross-program: single function or all functions (when no functionIdentifier given)
+        assert self.program_info is not None
+        program: GhidraProgram = self.program_info.program
+        source_path: str = self._get_str(args, "programpath", "programpath", default="") or getattr(self.program_info, "file_path", None) or getattr(self.program_info, "path", None) or ""
+        source_path = str(source_path).strip() if source_path else ""
+        # Resolve targets: from args or discover from session (so bulk works without targetProgramPaths)
+        resolved_targets: list[str] = target_paths if target_paths else self._discover_target_paths(source_path or "unknown")
+
+        if resolved_targets:
+            func_id: str = self._get_address_or_symbol(args)
+            if func_id:
+                # Single function: existing behavior
+                func: GhidraFunction | None = self._resolve_function(func_id)
+                if func is None:
+                    raise ValueError(f"Function not found: {func_id}")
+                min_sim = self._normalize_min_similarity(args)
+                propagate_names = self._get_bool(args, "propagatenames", "propagatename", default=False)
+                propagate_tags = self._get_bool(args, "propagatetags", "propagatetag", default=False)
+                propagate_comments = self._get_bool(args, "propagatecomments", "propagatecomment", default=False)
+                propagate_prototype = self._get_bool(args, "propagateprototype", "propagatesignature", default=False)
+                propagate_bookmarks = self._get_bool(args, "propagatebookmarks", default=False)
+                src_tail = basename_hint(source_path) if source_path else basename_hint(str(program.getName()) if hasattr(program, "getName") else "")
+                logger.info(
+                    "match_function_cross_program_single session_id=%s source_tail=%s target_count=%s auto_match_propagate_header=%s",
+                    redact_session_id(get_current_mcp_session_id()),
+                    src_tail,
+                    len(resolved_targets),
+                    bool(get_current_request_auto_match_propagate()),
+                )
+                return await self._handle_match_cross_program(
+                    func,
+                    program,
+                    resolved_targets,
+                    min_sim,
+                    propagate_names,
+                    propagate_tags,
+                    propagate_comments,
+                    propagate_prototype,
+                    propagate_bookmarks,
+                    detail_result_count=None,
+                )
+
+            # No functionIdentifier: iterate all functions (bulk migration)
+            targets: list[str] = resolved_targets
+            include_externals: bool = self._get_bool(args, "includeexternals", "includeexternals", default=True)
+            limit: int | None = self._get_int(args, "limit", "maxfunctions", "maxcount", default=None)
+            # Treat limit<=0 as no limit (process all functions)
+            if limit is not None and limit <= 0:
+                limit = None
+            identifiers: list[str] = self._list_source_function_identifiers(program, include_externals, limit)
+            logger.info(
+                "match-function bulk: source_path=%s target_count=%d identifier_count=%d limit=%s",
+                source_path,
+                len(targets),
+                len(identifiers),
+                limit,
+            )
+            if not identifiers:
+                return create_success_response(
+                    {
+                        "mode": "cross-program-bulk",
+                        "sourceProgramPath": source_path,
+                        "targetProgramPaths": targets,
+                        "processedCount": 0,
+                        "resultsByFunction": [],
+                        "summary": {"processed": 0, "errors": 0, "matchesPerTarget": {t: 0 for t in targets}},
+                    },
+                )
+            min_sim = self._normalize_min_similarity(args)
+            propagate_names: bool = self._get_bool(args, "propagatenames", "propagatename", default=True)
+            propagate_tags: bool = self._get_bool(args, "propagatetags", "propagatetag", default=True)
+            propagate_comments: bool = self._get_bool(args, "propagatecomments", "propagatecomment", default=True)
+            propagate_prototype: bool = self._get_bool(args, "propagateprototype", "propagatesignature", default=True)
+            propagate_bookmarks: bool = self._get_bool(args, "propagatebookmarks", default=True)
+            results_by_function: list[dict[str, Any]] = []
+            errors_count: int = 0
+            matches_per_target: dict[str, int] = {t: 0 for t in targets}
+            progress_interval: int = 1000
+            for idx, ident in enumerate(identifiers):
+                if progress_interval and (idx + 1) % progress_interval == 0:
+                    logger.info("match-function bulk progress: %d/%d", idx + 1, len(identifiers))
+                func: GhidraFunction | None = self._resolve_function(ident)
+                if func is None:
+                    continue
+                try:
+                    one_resp: list[types.TextContent] | None = await self._handle_match_cross_program(
+                        func,
+                        program,
+                        targets,
+                        min_sim,
+                        propagate_names,
+                        propagate_tags,
+                        propagate_comments,
+                        propagate_prototype,
+                        propagate_bookmarks,
+                        detail_result_count=len(identifiers) * len(targets),
+                    )
+                except Exception as e:
+                    errors_count += 1
+                    logger.debug("match-function bulk %s: %s", ident, e)
+                    results_by_function.append(
+                        {
+                            "sourceFunction": ident,
+                            "error": str(e),
+                            "results": [],
+                        },
+                    )
+                    continue
+                if not one_resp or not isinstance(one_resp[0], types.TextContent):
+                    continue
+                try:
+                    data: dict[str, Any] = json.loads(one_resp[0].text)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                one_results = data.get("results") or []
+                one_errors = data.get("errors") or []
+                if one_errors:
+                    errors_count += len(one_errors)
+                for entry in one_results:
+                    tpath = (entry.get("targetProgramPath") or "").strip()
+                    if entry.get("matched") is not None and tpath:
+                        matches_per_target[tpath] = matches_per_target.get(tpath, 0) + 1
+                results_by_function.append(
+                    {
+                        "sourceFunction": data.get("sourceFunction") or ident,
+                        "results": one_results,
+                        "errors": one_errors or None,
+                    },
+                )
+            return create_success_response(
+                {
+                    "mode": "cross-program-bulk",
+                    "sourceProgramPath": source_path,
+                    "targetProgramPaths": targets,
+                    "processedCount": len(results_by_function),
+                    "resultsByFunction": results_by_function,
+                    "summary": {
+                        "processed": len(results_by_function),
+                        "errors": errors_count,
+                        "matchesPerTarget": matches_per_target,
+                    },
+                },
+            )
+        # No targets: bulk was intended but session has no other binaries (or targetProgramPaths not passed)
+        func_id_any = self._get_address_or_symbol(args)
+        if not func_id_any and source_path:
+            raise ValueError("No target programs found for bulk migration. Open a project with multiple binaries, or pass targetProgramPaths (e.g. CLI: --target-paths /path/to/other.exe). For single-function match, pass function or addressOrSymbol.")
+        # Single-program: similar (rank by signature + call graph), callers, callees, or signature-only
         func_id = self._require_address_or_symbol(args)
         mode = self._get_str(args, "mode", default="similar")
         max_results = self._get_int(args, "maxresults", "limit", "maxfunctions", "maxcount", default=50)
@@ -316,9 +1266,13 @@ class GetFunctionToolProvider(ToolProvider):
         fm = self._get_function_manager(program)
 
         mode_n = n(mode)
+        match_index: _FunctionMatchIndex | None = None
+        cache_hit = False
+        if mode_n in {"similar", "signature"}:
+            match_index, cache_hit = self._get_match_index(program, fm)
 
         if mode_n == "callers":
-            callers = list(islice(func.getCallingFunctions(None), max_results))
+            callers = list(islice(func.getCallingFunctions(make_task_monitor()), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -329,7 +1283,7 @@ class GetFunctionToolProvider(ToolProvider):
             )
 
         if mode_n == "callees":
-            callees = list(islice(func.getCalledFunctions(None), max_results))
+            callees = list(islice(func.getCalledFunctions(make_task_monitor()), max_results))
             return create_success_response(
                 {
                     "function": func.getName(),
@@ -343,44 +1297,69 @@ class GetFunctionToolProvider(ToolProvider):
             sig = str(func.getSignature())
             param_count = func.getParameterCount()
             ret = str(func.getReturnType())
-            similar = []
-            for f in fm.getFunctions(True):
-                if f == func:
-                    continue
-                if f.getParameterCount() == param_count and str(f.getReturnType()) == ret:
-                    similar.append({"name": f.getName(), "address": str(f.getEntryPoint()), "signature": str(f.getSignature())})
-                    if len(similar) >= max_results:
-                        break
+            func_addr = str(func.getEntryPoint())
+            assert match_index is not None
+            candidates = [feature for feature in match_index.by_signature.get((param_count, ret), []) if feature.address != func_addr]
+            similar = [{"name": feature.name, "address": feature.address, "signature": feature.signature} for feature in candidates[:max_results]]
             return create_success_response(
                 {
                     "function": func.getName(),
                     "mode": "signature",
                     "referenceSignature": sig,
+                    "indexedFunctionCount": match_index.function_count,
+                    "cacheHit": cache_hit,
                     "results": similar,
                     "count": len(similar),
                 },
             )
 
-        # similar
-        # Compare by callee overlap
-        my_callees = {c.getName() for c in func.getCalledFunctions(None)}
-        my_callers = {c.getName() for c in func.getCallingFunctions(None)}
-        scores = []
-        top_k = max(max_results, 1)
-        for f in fm.getFunctions(True):
-            if f == func:
+        assert match_index is not None
+        func_addr = str(func.getEntryPoint())
+        target_feature = match_index.by_identity.get(func_addr)
+        if target_feature is None:
+            raise ValueError(f"Function not indexed for matching: {func_id}")
+
+        candidate_addrs: set[str] = set()
+        for caller in target_feature.callers:
+            candidate_addrs.update(match_index.by_caller.get(caller, set()))
+        for callee in target_feature.callees:
+            candidate_addrs.update(match_index.by_callee.get(callee, set()))
+
+        candidate_addrs.discard(func_addr)
+        if not candidate_addrs:
+            signature_candidates = match_index.by_signature.get((target_feature.param_count, target_feature.return_type), [])
+            candidate_addrs.update(feature.address for feature in signature_candidates if feature.address != func_addr)
+
+        scores: list[tuple[int, _FunctionMatchFeature]] = []
+        top_k = max(max_results or 0, 1)
+        for addr in candidate_addrs:
+            feature = match_index.by_identity.get(addr)
+            if feature is None:
                 continue
-            f_callees = {c.getName() for c in f.getCalledFunctions(None)}
-            f_callers = {c.getName() for c in f.getCallingFunctions(None)}
-            overlap = len(my_callees & f_callees) + len(my_callers & f_callers)
+            overlap = len(target_feature.callees & feature.callees) + len(target_feature.callers & feature.callers)
             if overlap > 0:
-                scores.append((overlap, f))
-        top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
-        similar = [{"name": f.getName(), "address": str(f.getEntryPoint()), "similarityScore": s} for s, f in top_matches]
+                scores.append((overlap, feature))
+
+        with ProfileCapture(
+            "match-function-similarity",
+            target=func.getName(),
+            metadata={
+                "mode": "similar",
+                "cacheHit": cache_hit,
+                "indexedFunctionCount": match_index.function_count,
+                "candidateCount": len(candidate_addrs),
+            },
+        ):
+            top_matches = heapq.nlargest(top_k, scores, key=lambda item: item[0])
+
+        similar = [{"name": feature.name, "address": feature.address, "similarityScore": score} for score, feature in top_matches]
         return create_success_response(
             {
                 "function": func.getName(),
                 "mode": "similar",
+                "indexedFunctionCount": match_index.function_count,
+                "candidateCount": len(candidate_addrs),
+                "cacheHit": cache_hit,
                 "results": similar,
                 "count": len(similar),
             },

@@ -1,0 +1,18 @@
+{
+  "sample": "sourcedennis/small-hello-world x64",
+  "repository": "https://github.com/sourcedennis/small-hello-world",
+  "source_url": "https://raw.githubusercontent.com/sourcedennis/small-hello-world/master/program.elf.x64.asm",
+  "license_file": "LICENSE.upstream.txt",
+  "license": "Unlicense / public domain",
+  "source_sha256": "fb4dc6934f67eefb89f38f4911c365a3c5d58a3116327c90afa6b41eb27d9b82",
+  "generated_binary_name": "sourcedennis_small_hello_world_x64",
+  "generated_binary_sha256": "90fc6ad98b5f31d7a365a2b24e5ef0ca1103a42768721793810b5d0480570b38",
+  "generated_binary_size": 172,
+  "language_id": "x86:LE:64:default",
+  "embedded_message": "Hello, World\\n",
+  "notes": [
+    "The repo vendors the upstream public-domain assembly source, not a third-party compiled binary.",
+    "The test fixture binary is generated deterministically from the vendored source bytes in tests/helpers.py.",
+    "This keeps provenance auditable and avoids requiring NASM in CI."
+  ]
+}

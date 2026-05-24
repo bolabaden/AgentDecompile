@@ -77,8 +77,8 @@ RUN set -eux; \
     rm -rf /tmp/ghidra_extract; \
     mkdir -p ${GHIDRA_HOME}/repositories
 
-COPY docker/start-ghidra-server.sh /ghidra/docker/start-ghidra-server.sh
-RUN sed -i 's/\r$//' /ghidra/docker/start-ghidra-server.sh && chmod +x /ghidra/docker/start-ghidra-server.sh
+COPY docker/ghidra-entrypoint.sh /ghidra/docker/entrypoint.sh
+RUN sed -i 's/\r$//' /ghidra/docker/entrypoint.sh && chmod +x /ghidra/docker/entrypoint.sh
 
 FROM ${ALPINE_BASE_IMAGE} AS runtime
 
@@ -134,4 +134,4 @@ ARG GHIDRA_SERVER_PORT3="13102"
 ENV GHIDRA_SERVER_PORT3=${GHIDRA_SERVER_PORT3}
 EXPOSE ${GHIDRA_SERVER_PORT3}
 
-ENTRYPOINT ["/bin/bash", "/ghidra/docker/start-ghidra-server.sh"]
+ENTRYPOINT ["/bin/bash", "/ghidra/docker/entrypoint.sh"]

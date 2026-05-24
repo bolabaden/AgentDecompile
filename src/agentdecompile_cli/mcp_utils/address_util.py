@@ -1,24 +1,49 @@
-"""Address utility helpers for formatting, parsing, and symbol resolution."""
+"""Address utility helpers for Ghidra addresses and symbols.
+
+Single pipeline for address handling: all user-supplied address strings (e.g. from
+function/addressOrSymbol parameters) should be parsed or resolved via AddressUtil so
+that 0x-prefixed strings are interpreted as hex and others as decimal. Used by tool
+providers, wrappers (find_function, read_bytes, _lookup_symbols), decompile_tool,
+callgraph_tool, and script namespace (toAddr/getAddress). Format addresses for JSON
+via AddressUtil.format_address for consistency.
+"""
 
 from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ghidra.program.model.address import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.address import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Address as GhidraAddress,
     )
-    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingTypeStubs, reportMissingImports, reportMissingModuleSource]
+    from ghidra.program.model.listing import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Data as GhidraData,
         Function as GhidraFunction,
         Program as GhidraProgram,
     )
-    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports, reportMissingTypeStubs]
+    from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
         Symbol as GhidraSymbol,
     )
 
-    # Type alias for convenience
     Symbol = GhidraSymbol
+
+
+def _looks_like_unprefixed_hex_literal(s: str) -> bool:
+    """True if ``s`` is only hex digits and contains a–f (any case).
+
+    Used to accept IDA-style addresses like ``007b5000`` without a ``0x`` prefix.
+    Pure-digit strings (e.g. ``100``) are excluded so decimal literals stay decimal;
+    use ``0x`` when an unprefixed value could be ambiguous.
+    """
+    if not s or not s.isascii():
+        return False
+    if not any(c in "abcdefABCDEF" for c in s):
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in s)
 
 
 class AddressUtil:
@@ -36,6 +61,7 @@ class AddressUtil:
         Returns:
             A hex string representation with "0x" prefix, or None if address is None
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.format_address")
         if address is None:
             return None
         return address.toString("0x")
@@ -44,7 +70,8 @@ class AddressUtil:
     def parse_address(program: GhidraProgram, address_string: str) -> GhidraAddress | None:
         """Parse an address string that may or may not have a "0x" prefix.
 
-        This handles user input that might come in either format.
+        If the string is prefixed by 0x or 0X, the remainder is parsed as base 16.
+        Otherwise the whole string is parsed as base 10.
 
         Args:
             program: The Ghidra program (provides address factory)
@@ -53,15 +80,24 @@ class AddressUtil:
         Returns:
             The parsed GhidraAddress object, or None if parsing fails
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.parse_address")
         if address_string is None or not address_string.strip():
             return None
 
-        clean_address = address_string.strip().removeprefix("0x").removeprefix("0X")
+        s = address_string.strip()
+        if s.lower().startswith("0x"):
+            clean = s[2:].lstrip()
+            base = 16
+        else:
+            clean = s
+            base = 10
+
+        if not clean:
+            return None
 
         try:
-            # Get the default address space and parse the address
             default_space = program.getAddressFactory().getDefaultAddressSpace()
-            return default_space.getAddress(int(clean_address, 16))
+            return default_space.getAddress(int(clean, base))
         except (ValueError, TypeError):
             return None
 
@@ -76,6 +112,7 @@ class AddressUtil:
         Returns:
             True if the address string can be parsed, False otherwise
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.is_valid_address")
         return AddressUtil.parse_address(program, address_string) is not None
 
     @staticmethod
@@ -92,12 +129,25 @@ class AddressUtil:
         Returns:
             The resolved GhidraAddress object, or None if neither symbol nor address is valid
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_address_or_symbol")
         if address_or_symbol is None or not address_or_symbol.strip():
             return None
 
         input_str = address_or_symbol.strip()
 
-        # First, try to find it as a symbol
+        # If input looks like a numeric address (0x-prefix, decimal digits, or unprefixed hex with a–f), parse first.
+        # Ghidra's symbol APIs can throw when given "0x48b17c" (e.g. int() in base 10).
+        addr_try: GhidraAddress | None = None
+        if input_str.lower().startswith("0x") or (
+            input_str and input_str.isascii() and (input_str.isdigit() or (input_str.startswith("-") and input_str[1:].isdigit()))
+        ):
+            addr_try = AddressUtil.parse_address(program, input_str)
+        elif _looks_like_unprefixed_hex_literal(input_str):
+            addr_try = AddressUtil.parse_address(program, f"0x{input_str}")
+        if addr_try is not None:
+            return addr_try
+
+        # Try to find it as a symbol
         symbol_table = program.getSymbolTable()
         symbols = symbol_table.getLabelOrFunctionSymbols(input_str, None)
 
@@ -116,8 +166,65 @@ class AddressUtil:
         except Exception:
             pass
 
-        # If not found as a symbol, try to parse as an address
-        return AddressUtil.parse_address(program, input_str)
+        # If not found as a symbol, try to parse as an address (decimal / 0x, then unprefixed hex with a–f)
+        final_addr = AddressUtil.parse_address(program, input_str)
+        if final_addr is None and _looks_like_unprefixed_hex_literal(input_str):
+            final_addr = AddressUtil.parse_address(program, f"0x{input_str}")
+        if final_addr is None:
+            logger.debug(
+                "addr_resolve_unresolved input_len=%s starts_0x=%s",
+                len(input_str),
+                input_str.lower().startswith("0x"),
+            )
+        return final_addr
+
+    @staticmethod
+    def resolve_iat_to_thunk(program: GhidraProgram, address: GhidraAddress) -> GhidraAddress | None:
+        """If the given address is an IAT slot (data holding a pointer to a thunk/external), return that thunk address.
+
+        Used so list-cross-references and get-call-graph accept both IAT addresses (e.g. 0x48f1fc)
+        and thunk addresses (e.g. CreateFileA @ 0x004011fc). When the user passes an IAT address,
+        we resolve to the thunk so queries use the same logical target.
+
+        Args:
+            program: The Ghidra program
+            address: The address that might be an IAT slot
+
+        Returns:
+            The thunk/external address the IAT points to, or None if not an IAT slot
+        """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_iat_to_thunk")
+        if program is None or address is None:
+            return None
+        ref_mgr = program.getReferenceManager()
+        fm = program.getFunctionManager()
+        # Refs FROM this address: for an IAT slot, Ghidra typically has a memory ref from the data to the thunk.
+        refs_from = ref_mgr.getReferencesFrom(address)
+        try:
+            for ref in refs_from:
+                to_addr = ref.getToAddress()
+                if to_addr is None:
+                    continue
+                func = fm.getFunctionAt(to_addr) or fm.getFunctionContaining(to_addr)
+                if func is not None:
+                    return func.getEntryPoint()
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def resolve_address_or_symbol_prefer_thunk(program: GhidraProgram, address_or_symbol: str) -> GhidraAddress | None:
+        """Resolve address or symbol; if the result is an IAT slot, return the thunk address instead.
+
+        Enables list-cross-references and get-call-graph to support both thunk addresses
+        (e.g. CreateFileA @ 0x004011fc) and IAT addresses (e.g. 0x48f1fc) by normalizing IAT to thunk.
+        """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.resolve_address_or_symbol_prefer_thunk")
+        addr = AddressUtil.resolve_address_or_symbol(program, address_or_symbol)
+        if addr is None:
+            return None
+        thunk = AddressUtil.resolve_iat_to_thunk(program, addr)
+        return thunk if thunk is not None else addr
 
     @staticmethod
     def get_containing_function(program: GhidraProgram, address: GhidraAddress) -> GhidraFunction | None:
@@ -130,6 +237,7 @@ class AddressUtil:
         Returns:
             The containing function, or None if the address is not within a function
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.get_containing_function")
         if program is None or address is None:
             return None
 
@@ -146,6 +254,7 @@ class AddressUtil:
         Returns:
             The data at or containing the address, or None if no data exists there
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.get_containing_data")
         if program is None or address is None:
             return None
 
@@ -175,6 +284,7 @@ class AddressUtil:
         Returns:
             True if this appears to be an undefined function location
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil.is_undefined_function_address")
         if program is None or address_or_symbol is None or not address_or_symbol.strip():
             return False
 
@@ -195,6 +305,7 @@ class AddressUtil:
         Returns:
             True if this appears to be an undefined function location
         """
+        logger.debug("diag.enter %s", "mcp_utils/address_util.py:AddressUtil._is_undefined_function_address")
         if program is None or address is None:
             return False
 
