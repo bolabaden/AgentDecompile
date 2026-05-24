@@ -2470,7 +2470,11 @@ class ToolProviderManager:
             requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
 
         session_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id)
-        effective_program_info: ProgramInfo | None = requested_program_info or session_program_info or self.program_info
+        if requested_program_key:
+            # Do not fall back to the session active program when the client named a specific path.
+            effective_program_info = requested_program_info
+        else:
+            effective_program_info = session_program_info or self.program_info
 
         # Auto-select: when no program is active and no programPath was requested, try to
         # auto-select from project binaries / domain files so tools don't fail with "No program loaded".
@@ -2550,7 +2554,10 @@ class ToolProviderManager:
             and not analysis_gate_exempt_tool(norm_name)
             and not norm_args.get("autoprereqinvocation")
         ):
-            from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_ready
+            from agentdecompile_cli.mcp_utils.program_analysis import (
+                ProgramAnalysisTimeout,
+                wait_for_program_analysis_ready,
+            )
 
             prog = effective_program_info.program
             prog_path = requested_program_key or SESSION_CONTEXTS.get_active_program_key(session_id)
@@ -2562,12 +2569,27 @@ class ToolProviderManager:
                         prog_path = pathname
             except Exception:
                 pass
-            await asyncio.to_thread(
-                wait_for_program_analysis_ready,
-                prog,
-                effective_program_info,
-                program_path=prog_path,
-            )
+            try:
+                await asyncio.to_thread(
+                    wait_for_program_analysis_ready,
+                    prog,
+                    effective_program_info,
+                    program_path=prog_path,
+                )
+            except ProgramAnalysisTimeout as exc:
+                return create_error_response(
+                    ActionableError(
+                        str(exc),
+                        context={
+                            "state": "analysis-timeout",
+                            "programPath": prog_path,
+                        },
+                        next_steps=[
+                            "Wait for Ghidra auto-analysis to finish, then retry this tool.",
+                            "Call analyze-program for this programPath (use force if analysis appears stuck).",
+                        ],
+                    ),
+                )
 
         # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)
