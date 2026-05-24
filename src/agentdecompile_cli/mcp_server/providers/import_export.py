@@ -428,29 +428,6 @@ class ImportExportToolProvider(ToolProvider):
         except Exception:
             return False
 
-    def _wait_for_program_analysis_idle(self, program: GhidraProgram, *, max_wait_sec: float = 90.0) -> None:
-        """If auto-analysis is running, block until it finishes or timeout (analysis holds DB transactions)."""
-        logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._wait_for_program_analysis_idle")
-        if program is None or max_wait_sec <= 0:
-            return
-        try:
-            st = program.getAnalysisState()
-            if st is None:
-                return
-            if hasattr(st, "isDone") and st.isDone():
-                return
-        except Exception:
-            return
-        deadline = time.time() + max_wait_sec
-        while time.time() < deadline:
-            try:
-                st2 = program.getAnalysisState()
-                if st2 is None or (hasattr(st2, "isDone") and st2.isDone()):
-                    return
-            except Exception:
-                return
-            time.sleep(0.25)
-
     def list_tools(self) -> list[types.Tool]:
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider.list_tools")
         return [
@@ -3364,7 +3341,9 @@ class ImportExportToolProvider(ToolProvider):
             if not still_clean:
                 return
             if program is not None:
-                self._wait_for_program_analysis_idle(program, max_wait_sec=90.0)
+                from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_idle
+
+                wait_for_program_analysis_idle(program, max_wait_sec=90.0)
             if gp_pre is not None and program is not None:
                 try:
                     gp_pre.save(program)
@@ -4050,7 +4029,9 @@ class ImportExportToolProvider(ToolProvider):
                     self._dispose_decompilers_for_domain_file(sid_loc, domain_file)
                     # Brief analysis wait — analysis creates nested txs that can delay save.
                     if program_for_ops is not None:
-                        self._wait_for_program_analysis_idle(program_for_ops, max_wait_sec=30.0)
+                        from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_idle
+
+                        wait_for_program_analysis_idle(program_for_ops, max_wait_sec=30.0)
                     gp_loc = getattr(self._manager, "ghidra_project", None) if self._manager else None
                     saved_ok = False
                     save_mode: str | None = None

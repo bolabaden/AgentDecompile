@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class ProgramAnalysisTimeout(TimeoutError):
+    """Ghidra auto-analysis did not become idle within the allowed wait."""
+
+
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -96,24 +101,31 @@ def program_needs_analysis(program: GhidraProgram, *, force: bool = False) -> bo
         return True
 
 
+def _program_analysis_still_running(program: GhidraProgram) -> bool:
+    state_done = _analysis_state_done(program)
+    if state_done is True:
+        return False
+    if state_done is False:
+        return True
+    try:
+        from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
+
+        return bool(GhidraProgramUtilities.shouldAskToAnalyze(program))
+    except Exception:
+        return state_done is not True
+
+
 def wait_for_program_analysis_idle(program: GhidraProgram, *, max_wait_sec: float = 600.0) -> None:
-    """Poll Ghidra analysis state until idle or timeout."""
+    """Poll Ghidra analysis state until idle or raise ProgramAnalysisTimeout."""
     if program is None or max_wait_sec <= 0:
         return
     deadline = time.time() + max_wait_sec
     while time.time() < deadline:
-        state_done = _analysis_state_done(program)
-        if state_done is True:
+        if not _program_analysis_still_running(program):
             return
-        if state_done is None:
-            try:
-                from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource]
-
-                if not GhidraProgramUtilities.shouldAskToAnalyze(program):
-                    return
-            except Exception:
-                return
         time.sleep(0.25)
+    if _program_analysis_still_running(program):
+        raise ProgramAnalysisTimeout(f"Ghidra analysis did not finish within {max_wait_sec}s")
 
 
 def mark_program_analysis_complete(program_info: ProgramInfo | None) -> None:

@@ -3687,14 +3687,7 @@ class ProjectToolProvider(ToolProvider):
     ) -> None:
         from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
 
-        try:
-            blocking_ensure_analyzed(program, program_info, program_path=program_path, force=force)
-        except Exception as exc:
-            logger.warning(
-                "blocking_ensure_analyzed failed path_tail=%s exc_type=%s",
-                basename_hint(program_path),
-                type(exc).__name__,
-            )
+        blocking_ensure_analyzed(program, program_info, program_path=program_path, force=force)
 
     def _ensure_project_folder(self, project_data: GhidraProjectData, folder_path: str):
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._ensure_project_folder")
