@@ -20,6 +20,7 @@ Consolidation Helpers (Phase 2b):
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import multiprocessing
@@ -36,6 +37,7 @@ from mcp import types  # pyright: ignore[reportMissingImports]
 
 from agentdecompile_cli.app_logger import basename_hint, norm_arg_keys, redact_session_id
 from agentdecompile_cli.launcher import ProgramInfo  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_utils.program_analysis import analysis_gate_exempt_tool
 
 # iter_items imported lazily in _resolve_function to avoid circular import
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
@@ -2541,6 +2543,23 @@ class ToolProviderManager:
                 provider.set_program_info(effective_program_info)
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
+
+        if (
+            effective_program_info is not None
+            and effective_program_info.program is not None
+            and not analysis_gate_exempt_tool(norm_name)
+            and not norm_args.get("autoprereqinvocation")
+        ):
+            from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_ready
+
+            prog = effective_program_info.program
+            prog_path = requested_program_key or SESSION_CONTEXTS.get_active_program_key(session_id)
+            await asyncio.to_thread(
+                wait_for_program_analysis_ready,
+                prog,
+                effective_program_info,
+                program_path=prog_path,
+            )
 
         # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)

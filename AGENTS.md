@@ -124,7 +124,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned Workspace Facts
 
 - When editing KOTOR or video-derived docs (e.g. docs/from_video), use correct terms: KOTOR (not Cotor), PyGhidra (Ghidra v12 Python wrapper), swkotor.exe (not sodtor.exe), CSWMinigame (not miniame).
-- open-project: `analyzeAfterImport` is optional and defaults to true.
+- open-project: `analyzeAfterImport` is optional and defaults to true. `open` and `import-binary` always run incremental Ghidra auto-analysis when needed (blocking); other program-scoped tools wait until analysis completes for that program.
 - Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
