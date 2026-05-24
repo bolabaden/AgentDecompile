@@ -1,6 +1,6 @@
 # AGENTS.md
 
-See [README.md](README.md) for project overview, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details.
+See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for product direction, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details.
 
 ## Documented solutions
 
