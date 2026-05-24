@@ -101,6 +101,7 @@ def wait_for_program_analysis_idle(program: GhidraProgram, *, max_wait_sec: floa
     if program is None or max_wait_sec <= 0:
         return
     deadline = time.time() + max_wait_sec
+    poll_interval_s = 0.05
     while time.time() < deadline:
         state_done = _analysis_state_done(program)
         if state_done is True:
@@ -113,7 +114,8 @@ def wait_for_program_analysis_idle(program: GhidraProgram, *, max_wait_sec: floa
                     return
             except Exception:
                 return
-        time.sleep(0.25)
+        time.sleep(poll_interval_s)
+        poll_interval_s = min(poll_interval_s * 1.5, 0.25)
 
 
 def mark_program_analysis_complete(program_info: ProgramInfo | None) -> None:
@@ -143,6 +145,10 @@ def blocking_ensure_analyzed(
     key = _program_lock_key(program, program_path)
     lock = _lock_for_key(key)
     with lock:
+        if not force and not program_needs_analysis(program, force=False):
+            mark_program_analysis_complete(program_info)
+            return {"skipped": True, "reason": "already-analyzed", "programKey": key}
+
         wait_for_program_analysis_idle(program)
         if not program_needs_analysis(program, force=force):
             mark_program_analysis_complete(program_info)
@@ -164,6 +170,8 @@ def wait_for_program_analysis_ready(
 ) -> None:
     """Block until any in-flight analysis for this program finishes."""
     if program is None:
+        return
+    if program_info is not None and bool(getattr(program_info, "ghidra_analysis_complete", False)):
         return
     key = _program_lock_key(program, program_path)
     lock = _lock_for_key(key)
