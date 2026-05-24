@@ -2031,7 +2031,7 @@ class ToolProviderManager:
             flat_api=None,
             decompiler=None,
             metadata={},
-            ghidra_analysis_complete=True,
+            ghidra_analysis_complete=False,
             file_path=None,
             load_time=None,
         )
@@ -2554,6 +2554,14 @@ class ToolProviderManager:
 
             prog = effective_program_info.program
             prog_path = requested_program_key or SESSION_CONTEXTS.get_active_program_key(session_id)
+            try:
+                df = prog.getDomainFile()
+                if df is not None:
+                    pathname = str(df.getPathname()).strip()
+                    if pathname:
+                        prog_path = pathname
+            except Exception:
+                pass
             await asyncio.to_thread(
                 wait_for_program_analysis_ready,
                 prog,
