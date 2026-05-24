@@ -13,6 +13,12 @@
 - Marked compound-refresh bootstrap plan **completed**; recorded maintenance Keep outcome
 - Created **STRATEGY.md** (first product anchor)
 
+## Post-merge pass (2026-05-24)
+
+- PR #39 merged; plan updated for post-merge landing of `STRATEGY.md`
+- Merged `origin/master` (empty-except fixes in gate modules); **38/38** unit tests pass
+- **ce-strategy:** `STRATEGY.md` reviewed — still aligned with shipped gate + CLI work (Keep)
+
 ## Open questions
 
-None blocking merge. Post-merge P3 items remain in [residual-review-findings/impl-blocking-analysis-gate-c2bc.md](../residual-review-findings/impl-blocking-analysis-gate-c2bc.md).
+None blocking. Post-merge P3 items remain in [residual-review-findings/impl-blocking-analysis-gate-c2bc.md](../residual-review-findings/impl-blocking-analysis-gate-c2bc.md).
