@@ -1487,7 +1487,7 @@ class ImportExportToolProvider(ToolProvider):
                         try:
                             _dec = open_decompiler_for_program(program)
                         except Exception:
-                            pass
+                            logger.debug("Failed to open decompiler for imported program '%s'; continuing without decompiler.", final_name, exc_info=True)
                         _pi = _ProgramInfo(
                             name=final_name,
                             program=program,
