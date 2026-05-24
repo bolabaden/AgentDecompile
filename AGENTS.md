@@ -2,6 +2,10 @@
 
 See [README.md](README.md) for project overview, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details.
 
+## Documented solutions
+
+`docs/solutions/` — documented solutions to past problems (MCP/Ghidra integration, analysis gate, CLI agents, workflows), organized by category with YAML frontmatter (`module`, `problem_type`, `component`, `tags`). Relevant when implementing or debugging in those areas; search by module or tag before changing `src/agentdecompile_cli/`.
+
 ## Cursor Cloud specific instructions
 
 ### Environment
