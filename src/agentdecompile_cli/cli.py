@@ -56,6 +56,15 @@ from agentdecompile_cli.executor import (
     normalize_backend_url,
     run_async,
 )
+from agentdecompile_cli.cli_agent_help import (
+    MAIN_AGENT_EPILOG,
+    TOOL_AGENT_EPILOG,
+    TOOL_MISSING_NAME_USAGE,
+    TOOL_SEQ_AGENT_EPILOG,
+    format_tool_list_output,
+    resolve_tool_seq_steps,
+    tool_seq_json_error_message,
+)
 from agentdecompile_cli.registry import (
     ADVERTISED_TOOLS,
     NON_ADVERTISED_TOOL_ALIASES,
@@ -1982,7 +1991,10 @@ def _ensure_dynamic_commands_registered() -> None:
     _dynamic_commands_registered = True
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=MAIN_AGENT_EPILOG,
+)
 @click.option("--host", default="127.0.0.1", help="Server host")
 @click.option("--port", type=int, default=8080, help="Server port")
 @click.option("--server-url", help="Full server URL (overrides --host/--port) (equivalent to AGENT_DECOMPILE_MCP_SERVER_URL)")
@@ -4910,10 +4922,14 @@ def alias_cmd(name: str) -> None:
             click.echo(f"  - {alias}")
 
 
-@main.command("tool", help='Call any MCP tool by name with JSON arguments. Example: tool get-data \'{"programPath":"/a","addressOrSymbol":"0x1000"}\'')
+@main.command(
+    "tool",
+    help="Call any MCP tool by name with a JSON arguments object.",
+    epilog=TOOL_AGENT_EPILOG,
+)
 @click.argument("name", required=False, default=None)
 @click.argument("arguments", required=False, default="{}")
-@click.option("--list-tools", is_flag=True, help="List valid tool names and exit")
+@click.option("--list-tools", is_flag=True, help="List valid tool names and exit (use -f json for machine-readable output)")
 @click.option(
     "--program-path",
     "--programpath",
@@ -4944,13 +4960,11 @@ def tool_cmd(
     logger.debug("diag.enter %s", "cli.py:tool_cmd")
     available_tools = tool_registry.get_tools()
     if list_tools:
-        click.echo("Valid tool names:")
-        for t in sorted(available_tools):
-            click.echo(f"  {t}")
+        click.echo(format_tool_list_output(available_tools, _fmt(ctx)))
         return
 
     if not name:
-        raise click.UsageError("Missing argument 'NAME'. Use --list-tools to see valid tool names.")
+        raise click.UsageError(TOOL_MISSING_NAME_USAGE)
 
     payload = _parse_tool_payload(arguments)
     _validate_known_tool(name)
@@ -4983,30 +4997,23 @@ def tool_cmd(
     _run_async(_run())
 
 
-def _load_tool_seq_steps_arg(steps: str) -> str:
-    """If steps starts with ``@path``, read JSON from that file (shell-friendly on Windows).
-
-    PowerShell/CMD often pass ``@C:\\temp\\steps.json`` literally; ``json.loads`` would fail on ``@``.
-    """
-    logger.debug("diag.enter %s", "cli.py:_load_tool_seq_steps_arg")
-    raw = (steps or "").strip()
-    if not raw.startswith("@"):
-        return steps
-    path_str = raw[1:].strip().strip('"').strip("'")
-    if not path_str:
-        return steps
-    path = Path(path_str).expanduser()
-    if not path.is_file():
-        click.echo(f"tool-seq: steps file not found: {path}", err=True)
-        sys.exit(1)
-    return path.read_text(encoding="utf-8")
-
-
 @main.command(
     "tool-seq",
-    help=('Run a sequence of MCP tool calls from JSON. Format: [{"name":"open","arguments":{...}}, ...]. Prefix the argument with @path to load steps from a UTF-8 file (recommended from PowerShell). Steps also fail on markdown ## Error / ## Modification conflict in text content (even if isError is false).'),
+    help=(
+        "Run a sequence of MCP tool calls from JSON. Format: "
+        '[{"name":"open-project","arguments":{...}}, ...]. '
+        "Pass @path to load from a file, - or --stdin to read from stdin. "
+        "Steps fail on markdown ## Error / ## Modification conflict in text content."
+    ),
+    epilog=TOOL_SEQ_AGENT_EPILOG,
 )
-@click.argument("steps", required=True)
+@click.argument("steps", required=False, default=None)
+@click.option(
+    "--stdin",
+    "read_steps_from_stdin",
+    is_flag=True,
+    help="Read the steps JSON array from stdin (same as passing STEPS as -).",
+)
 @click.option(
     "--continue-on-error",
     is_flag=True,
@@ -5032,7 +5039,12 @@ def _load_tool_seq_steps_arg(steps: str) -> str:
     help="Default binaryName for steps that omit it.",
 )
 @click.pass_context
-def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> None:
+def tool_seq_cmd(
+    ctx: click.Context,
+    steps: str | None,
+    read_steps_from_stdin: bool,
+    continue_on_error: bool,
+) -> None:
     """Invoke a sequence of tools without using ad-hoc python scripts.
 
     A step fails if the MCP response has isError, embedded JSON with success:false and error,
@@ -5040,11 +5052,14 @@ def tool_seq_cmd(ctx: click.Context, steps: str, continue_on_error: bool) -> Non
     Exits with code 1 when any step fails (unless the process already exited on the first failure).
     """
     logger.debug("diag.enter %s", "cli.py:tool_seq_cmd")
-    steps = _load_tool_seq_steps_arg(steps)
     try:
-        parsed_steps = json.loads(steps)
+        steps_text = resolve_tool_seq_steps(steps=steps, use_stdin=read_steps_from_stdin)
+    except click.UsageError:
+        raise
+    try:
+        parsed_steps = json.loads(steps_text)
     except json.JSONDecodeError as exc:
-        click.echo(f"Invalid JSON for steps: {exc}", err=True)
+        click.echo(tool_seq_json_error_message(exc), err=True)
         sys.exit(1)
     _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
 
@@ -5176,9 +5191,9 @@ def _run_parsed_tool_sequence(
         "Run a sequence of MCP tool calls from a JSON file. "
         "The file must contain a JSON array of step objects: "
         '[{"name":"tool-name","arguments":{...}}, ...]. '
-        "Equivalent to `tool-seq` but reads steps from a file path instead of inline JSON — "
-        "avoids shell quoting issues and is convenient for large or reusable payloads."
+        "Equivalent to `tool-seq @path` — avoids shell quoting for large payloads."
     ),
+    epilog=TOOL_SEQ_AGENT_EPILOG,
 )
 @click.argument("file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True))
 @click.option(

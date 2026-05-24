@@ -20,6 +20,7 @@ Consolidation Helpers (Phase 2b):
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import multiprocessing
@@ -36,6 +37,7 @@ from mcp import types  # pyright: ignore[reportMissingImports]
 
 from agentdecompile_cli.app_logger import basename_hint, norm_arg_keys, redact_session_id
 from agentdecompile_cli.launcher import ProgramInfo  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_utils.program_analysis import analysis_gate_exempt_tool
 
 # iter_items imported lazily in _resolve_function to avoid circular import
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
@@ -2029,7 +2031,7 @@ class ToolProviderManager:
             flat_api=None,
             decompiler=None,
             metadata={},
-            ghidra_analysis_complete=True,
+            ghidra_analysis_complete=False,
             file_path=None,
             load_time=None,
         )
@@ -2468,7 +2470,11 @@ class ToolProviderManager:
             requested_program_info = await self._activate_requested_program(session_id, requested_program_key)
 
         session_program_info: ProgramInfo | None = SESSION_CONTEXTS.get_active_program_info(session_id)
-        effective_program_info: ProgramInfo | None = requested_program_info or session_program_info or self.program_info
+        if requested_program_key:
+            # Do not fall back to the session active program when the client named a specific path.
+            effective_program_info = requested_program_info
+        else:
+            effective_program_info = session_program_info or self.program_info
 
         # Auto-select: when no program is active and no programPath was requested, try to
         # auto-select from project binaries / domain files so tools don't fail with "No program loaded".
@@ -2541,6 +2547,49 @@ class ToolProviderManager:
                 provider.set_program_info(effective_program_info)
             except Exception as e:
                 logger.warning(f"Failed to set session program info for {provider.__class__.__name__}: {e}")
+
+        if (
+            effective_program_info is not None
+            and effective_program_info.program is not None
+            and not analysis_gate_exempt_tool(norm_name)
+            and not norm_args.get("autoprereqinvocation")
+        ):
+            from agentdecompile_cli.mcp_utils.program_analysis import (
+                ProgramAnalysisTimeout,
+                wait_for_program_analysis_ready,
+            )
+
+            prog = effective_program_info.program
+            prog_path = requested_program_key or SESSION_CONTEXTS.get_active_program_key(session_id)
+            try:
+                df = prog.getDomainFile()
+                if df is not None:
+                    pathname = str(df.getPathname()).strip()
+                    if pathname:
+                        prog_path = pathname
+            except Exception as e:
+                logger.debug("Unable to resolve program path from DomainFile; using fallback program key/path: %s", e)
+            try:
+                await asyncio.to_thread(
+                    wait_for_program_analysis_ready,
+                    prog,
+                    effective_program_info,
+                    program_path=prog_path,
+                )
+            except ProgramAnalysisTimeout as exc:
+                return create_error_response(
+                    ActionableError(
+                        str(exc),
+                        context={
+                            "state": "analysis-timeout",
+                            "programPath": prog_path,
+                        },
+                        next_steps=[
+                            "Wait for Ghidra auto-analysis to finish, then retry this tool.",
+                            "Call analyze-program for this programPath (use force if analysis appears stuck).",
+                        ],
+                    ),
+                )
 
         # Dispatch to the provider that owns this tool; provider receives original name + normalized args
         result = await provider.call_tool(name, arguments)

@@ -25,7 +25,6 @@ from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from ghidrecomp.utility import analyze_program as run_analysis
 from mcp import types
 
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
@@ -429,29 +428,6 @@ class ImportExportToolProvider(ToolProvider):
         except Exception:
             return False
 
-    def _wait_for_program_analysis_idle(self, program: GhidraProgram, *, max_wait_sec: float = 90.0) -> None:
-        """If auto-analysis is running, block until it finishes or timeout (analysis holds DB transactions)."""
-        logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider._wait_for_program_analysis_idle")
-        if program is None or max_wait_sec <= 0:
-            return
-        try:
-            st = program.getAnalysisState()
-            if st is None:
-                return
-            if hasattr(st, "isDone") and st.isDone():
-                return
-        except Exception:
-            return
-        deadline = time.time() + max_wait_sec
-        while time.time() < deadline:
-            try:
-                st2 = program.getAnalysisState()
-                if st2 is None or (hasattr(st2, "isDone") and st2.isDone()):
-                    return
-            except Exception:
-                return
-            time.sleep(0.25)
-
     def list_tools(self) -> list[types.Tool]:
         logger.debug("diag.enter %s", "mcp_server/providers/import_export.py:ImportExportToolProvider.list_tools")
         return [
@@ -476,8 +452,8 @@ class ImportExportToolProvider(ToolProvider):
                         "maxDepth": {"type": "integer", "default": 16, "description": "How deep to recurse if importing a folder."},
                         "analyzeAfterImport": {
                             "type": "boolean",
-                            "default": False,
-                            "description": "Whether to immediately run Ghidra's heavy auto-analysis (can take a long time) right after importing.",
+                            "default": True,
+                            "description": "Legacy flag; analysis always runs incrementally after import when needed. When true, open/import blocks until analysis completes.",
                         },
                         "enableVersionControl": {
                             "type": "boolean",
@@ -1399,7 +1375,7 @@ class ImportExportToolProvider(ToolProvider):
         max_depth: int | None = self._get_int(args, "maxdepth", default=16)
         if max_depth is None:
             max_depth = 16
-        analyze_after_import: bool = self._get_bool(args, "analyzeafterimport", default=False)
+        analyze_after_import: bool = self._get_bool(args, "analyzeafterimport", default=True)
         enable_version_control: bool = self._get_bool(args, "enableversioncontrol", default=False)
         program_path_dest: str = self._get_str(args, "programpath")
         repo_program_name: str | None = (prog_name or "").strip()
@@ -1503,6 +1479,27 @@ class ImportExportToolProvider(ToolProvider):
                             program_name=final_name,
                             path_in_project=path_in_project,
                         )
+                        from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
+                        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
+                        from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+
+                        _dec = None
+                        try:
+                            _dec = open_decompiler_for_program(program)
+                        except Exception:
+                            logger.debug("Failed to open decompiler for imported program '%s'; continuing without decompiler.", final_name, exc_info=True)
+                        _pi = _ProgramInfo(
+                            name=final_name,
+                            program=program,
+                            flat_api=None,
+                            decompiler=_dec,
+                            metadata={},
+                            ghidra_analysis_complete=False,
+                            file_path=item,
+                            load_time=time.time(),
+                        )
+                        SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
+                        blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
                         # Leave program in project; do not release (we are not the consumer)
                     except Exception as exc:
                         errors.append({"path": str(item), "error": str(exc)})
@@ -1522,13 +1519,29 @@ class ImportExportToolProvider(ToolProvider):
                             if program is None:
                                 raise RuntimeError("import_binary returned None")
                             prog_name_final = program.getName() if hasattr(program, "getName") else item.name
+                            path_in_project = f"/{prog_name_final}"
                             imported_programs.append({"sourcePath": str(item), "programName": prog_name_final})
+                            from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
+                            from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+
+                            _pi = _ProgramInfo(
+                                name=prog_name_final,
+                                program=program,
+                                flat_api=None,
+                                decompiler=None,
+                                metadata={},
+                                ghidra_analysis_complete=False,
+                                file_path=str(item),
+                                load_time=time.time(),
+                            )
+                            SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
+                            blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
                             # Merge into session binaries so list-project-files can see it (even though
                             # the underlying project may be temporary).
                             self._merge_imported_program_into_session_binaries(
                                 session_id,
                                 program_name=prog_name_final,
-                                path_in_project=f"/{prog_name_final}",
+                                path_in_project=path_in_project,
                             )
                         except Exception as exc:
                             errors.append({"path": str(item), "error": str(exc)})
@@ -2041,13 +2054,26 @@ class ImportExportToolProvider(ToolProvider):
                     },
                 )
 
-            # Single code path: same as CLI/launcher (disables headless-unsafe analyzers, acquires bundle host, runs analysis)
+            from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+
+            program_path_hint = ""
+            try:
+                df = program.getDomainFile() if program is not None else None
+                if df is not None:
+                    program_path_hint = str(df.getPathname())
+            except Exception as exc:
+                # Best-effort hint only: auto-analysis can proceed without a path.
+                logger.debug("Unable to resolve program path hint for analysis: %s", exc)
+
             def _run_auto_analysis() -> None:
-                run_analysis(program, force_analysis=True)
+                blocking_ensure_analyzed(
+                    program,
+                    self.program_info,
+                    program_path=program_path_hint or None,
+                    force=force,
+                )
 
             self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
-            if hasattr(self.program_info, "ghidra_analysis_complete"):
-                self.program_info.ghidra_analysis_complete = True
 
             return create_success_response(
                 {
@@ -3316,7 +3342,9 @@ class ImportExportToolProvider(ToolProvider):
             if not still_clean:
                 return
             if program is not None:
-                self._wait_for_program_analysis_idle(program, max_wait_sec=90.0)
+                from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_idle
+
+                wait_for_program_analysis_idle(program, max_wait_sec=90.0)
             if gp_pre is not None and program is not None:
                 try:
                     gp_pre.save(program)
@@ -4002,7 +4030,9 @@ class ImportExportToolProvider(ToolProvider):
                     self._dispose_decompilers_for_domain_file(sid_loc, domain_file)
                     # Brief analysis wait — analysis creates nested txs that can delay save.
                     if program_for_ops is not None:
-                        self._wait_for_program_analysis_idle(program_for_ops, max_wait_sec=30.0)
+                        from agentdecompile_cli.mcp_utils.program_analysis import wait_for_program_analysis_idle
+
+                        wait_for_program_analysis_idle(program_for_ops, max_wait_sec=30.0)
                     gp_loc = getattr(self._manager, "ghidra_project", None) if self._manager else None
                     saved_ok = False
                     save_mode: str | None = None

@@ -2038,7 +2038,6 @@ class ProjectToolProvider(ToolProvider):
         )
 
         # Auto-open first program if available, or a specific requested program
-        analyze: bool = self._get_bool(args, "analyzeafterimport", default=True)
         open_all: bool = self._get_bool(args, "openallprograms", default=False)
         opened_program: str | None = None
         requested_program: str | None = self._get_str(args, "programpath", "binary", "binaryname")
@@ -2072,16 +2071,6 @@ class ProjectToolProvider(ToolProvider):
                             # Primary program: set as active (with decompiler)
                             self._set_active_program_info(program, item_path)
                             opened_program = item_path
-                            if analyze:
-                                try:
-                                    from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                                    flat_api = FlatProgramAPI(program)  # noqa: F841
-                                    from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                                    GhidraProgramUtilities.setAnalyzedFlag(program, True)
-                                except Exception as analysis_exc:
-                                    logger.warning("Post-open analysis for .gpr program failed: %s", analysis_exc)
                         else:
                             # Secondary programs: store in session with decompiler=None (lazy init)
                             from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
@@ -2092,11 +2081,12 @@ class ProjectToolProvider(ToolProvider):
                                 flat_api=None,
                                 decompiler=None,
                                 metadata={},
-                                ghidra_analysis_complete=True,
+                                ghidra_analysis_complete=False,
                                 file_path=None,
                                 load_time=time.time(),
                             )
                             SESSION_CONTEXTS.set_active_program_info(session_id, item_path, secondary_info)
+                            self._blocking_ensure_program_analyzed(program, item_path, secondary_info)
                             # Restore active key to the primary program (set_active_program_info changes it)
                             if opened_program:
                                 session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -2123,17 +2113,6 @@ class ProjectToolProvider(ToolProvider):
                     if program is not None:
                         self._set_active_program_info(program, target_path)
                         opened_program = target_path
-
-                        if analyze:
-                            try:
-                                from ghidra.program.flatapi import FlatProgramAPI  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                                flat_api = FlatProgramAPI(program)  # noqa: F841
-                                from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
-
-                                GhidraProgramUtilities.setAnalyzedFlag(program, True)
-                            except Exception as analysis_exc:
-                                logger.warning("Post-open analysis for .gpr program failed: %s", analysis_exc)
             except Exception as exc:
                 logger.warning("Failed to auto-open program from .gpr project: %s", exc)
 
@@ -3274,8 +3253,6 @@ class ProjectToolProvider(ToolProvider):
         recursive: bool = self._get_bool(args, "recursive", default=source.is_dir())
         res: int | None = self._get_int(args, "maxdepth", default=16)
         max_depth: int = 16 if res is None else res
-        analyze: bool = self._get_bool(args, "analyzeafterimport", default=True)
-
         discovered: list[Path] = []
         if source.is_file():
             discovered = [source]
@@ -3342,7 +3319,7 @@ class ProjectToolProvider(ToolProvider):
                     flat_api=None,
                     decompiler=decompiler,
                     metadata={},
-                    ghidra_analysis_complete=True,
+                    ghidra_analysis_complete=False,
                     file_path=Path(str(entry)),
                     load_time=time.time(),
                 )
@@ -3351,6 +3328,7 @@ class ProjectToolProvider(ToolProvider):
                     self._manager.set_program_info(program_info)
                 else:
                     self.set_program_info(program_info)
+                self._blocking_ensure_program_analyzed(program, program_path, program_info)
 
                 imported_count += 1
                 prog_name = program.getName() if hasattr(program, "getName") else entry.name
@@ -3461,7 +3439,7 @@ class ProjectToolProvider(ToolProvider):
                 "groupsCreated": 0,
                 "maxDepthUsed": max_depth,
                 "wasRecursive": recursive,
-                "analysisRequested": analyze,
+                "analysisRequested": True,
                 "errors": errors,
                 "programDetails": program_details,
                 "projectFiles": project_files_snapshot,
@@ -3677,7 +3655,7 @@ class ProjectToolProvider(ToolProvider):
             flat_api=None,
             decompiler=decompiler,
             metadata={},
-            ghidra_analysis_complete=True,
+            ghidra_analysis_complete=False,
             file_path=None,
             load_time=time.time(),
         )
@@ -3696,6 +3674,20 @@ class ProjectToolProvider(ToolProvider):
             self._manager.set_program_info(program_info)
         else:
             self.set_program_info(program_info)
+
+        self._blocking_ensure_program_analyzed(program, program_path, program_info)
+
+    def _blocking_ensure_program_analyzed(
+        self,
+        program: GhidraProgram,
+        program_path: str,
+        program_info: ProgramInfo | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+
+        blocking_ensure_analyzed(program, program_info, program_path=program_path, force=force)
 
     def _ensure_project_folder(self, project_data: GhidraProjectData, folder_path: str):
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._ensure_project_folder")
@@ -5223,7 +5215,7 @@ class ProjectToolProvider(ToolProvider):
                                     flat_api=None,
                                     decompiler=decompiler_local,
                                     metadata={},
-                                    ghidra_analysis_complete=True,
+                                    ghidra_analysis_complete=False,
                                     file_path=None,
                                     load_time=time.time(),
                                 )
@@ -5233,6 +5225,7 @@ class ProjectToolProvider(ToolProvider):
                                     self._manager.set_program_info(program_info)
                                 else:
                                     self.set_program_info(program_info)
+                                self._blocking_ensure_program_analyzed(program, program_path, program_info)
                                 session_ctx.open_programs[program_path] = program_info
                                 session_ctx.active_program_key = program_path
 
@@ -5730,7 +5723,7 @@ class ProjectToolProvider(ToolProvider):
             flat_api=None,
             decompiler=decompiler,
             metadata={},
-            ghidra_analysis_complete=True,
+            ghidra_analysis_complete=False,
             file_path=None,
             load_time=time.time(),
         )
@@ -5756,6 +5749,7 @@ class ProjectToolProvider(ToolProvider):
             self._manager.set_program_info(program_info)
         else:
             self.set_program_info(program_info)
+        self._blocking_ensure_program_analyzed(program, program_path, program_info)
 
         # Record JVM generation beside the project marker even when RepositoryAdapter.checkout threw and we
         # fell back to createFile/ProgramDB (epoch write inside the adapter try would be skipped).

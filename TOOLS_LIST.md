@@ -790,7 +790,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
   - Synonyms: `recursive`
 - `maxDepth` (integer, optional): Recursion depth (default: unlimited).
   - Synonyms: `maxDepth`, `maxd`, `depth`, `level`, `treeDepth`, `maxLevel`, `depthLimit`.
-- `analyzeAfterImport` (boolean, optional): Run analysis post-import (default: true).
+- `analyzeAfterImport` (boolean, optional): Legacy hint for headless/shared import paths (default: true). Local `open` / `import-binary` always run incremental Ghidra analysis when needed; other program-scoped tools block until analysis completes.
   - Synonyms: `analyzeAfterImport`, `analyzeai`.
 - `stripLeadingPath` (boolean, optional): Strip leading paths (default: false).
   - Synonyms: `stripLeadingPath`, `striplp`.
@@ -1366,7 +1366,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - `extensions` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `openAllPrograms` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `destinationFolder` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
-- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
+- `analyzeAfterImport` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS. Server always runs incremental analysis on `open` / `import-binary` when Ghidra reports it is needed; program-scoped tools wait on the analysis gate until complete.
 - `enableVersionControl` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `serverUsername` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
 - `serverPassword` (string, optional): See MCP schema / `registry.py` TOOL_PARAMS.
