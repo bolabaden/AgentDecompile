@@ -1,6 +1,6 @@
 ---
 title: Compound refresh bootstrap (empty docs/solutions)
-status: active
+status: completed
 created: 2026-05-24
 ---
 
@@ -46,5 +46,6 @@ flowchart TD
 
 ## Compound refresh outcome (autofix)
 
-- Scanned: 0 existing → bootstrapped 3 new (treated as Replace-from-evidence, not stale refresh)
-- Future runs refresh these against `src/agentdecompile_cli/mcp_utils/program_analysis.py`, `tool_providers.py`, `cli_agent_help.py`
+- Scanned: 0 existing → bootstrapped 3 new (commit `2338b41`)
+- 2026-05-24 maintenance pass: all three learnings **Keep** — references match `program_analysis.py`, `tool_providers.py`, `cli_agent_help.py`; 38 related unit tests pass
+- Future runs: `ce-compound-refresh` on `docs/solutions/` only

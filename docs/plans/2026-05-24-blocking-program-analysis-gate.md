@@ -61,12 +61,22 @@ flowchart TD
 2. **`src/agentdecompile_cli/mcp_server/providers/project.py`** — replace `setAnalyzedFlag`; call ensure after open/import/domain open and eager-open secondaries; fix `ghidra_analysis_complete` defaults
 3. **`src/agentdecompile_cli/mcp_server/providers/import_export.py`** — ensure after each local import and fallback import; schema default `analyzeAfterImport` true; shared analyzeHeadless may keep `-noanalysis` when false but in-session paths must ensure
 4. **`src/agentdecompile_cli/mcp_server/tool_providers.py`** — before provider dispatch, `wait_for_program_analysis_ready` for program-scoped tools; exempt normalized tools: `open`, `importbinary`, `analyzeprogram`, `listprojectfiles`, `listtools`, `connectsharedproject`, `syncproject`, `svradmin`, `debuginfo`, `getcurrentprogram` (see `_ANALYSIS_GATE_EXEMPT_TOOLS`)
-5. **Tests** — `tests/test_program_analysis_gate.py` (unit, mocked Ghidra); add `ToolProviderManager` gate integration test (residual)
-6. **Docs** — `TOOLS_LIST.md` / `AGENTS.md` note on always-on incremental analysis
+5. **Tests** — `tests/test_program_analysis_gate.py` and `tests/test_tool_providers_analysis_gate.py` (unit, mocked Ghidra + dispatch gate)
+6. **Docs** — `TOOLS_LIST.md` / `AGENTS.md` / `docs/solutions/` learnings for gate and coordinator pattern
+
+## Requirements traceability
+
+| ID | Requirement | Implementation |
+|----|-------------|----------------|
+| R1 | Real analysis on open/import; no fake analyzed flags | `program_analysis.py`, `project.py`, `import_export.py` |
+| R2 | Block non-exempt tools until analysis ready | `tool_providers.py` + `_ANALYSIS_GATE_EXEMPT_TOOLS` |
+| R3 | Fail-closed on analysis timeout | `ProgramAnalysisTimeout`, MCP `analysis-timeout` |
+| R4 | Requested `programPath` does not fall back to active program for gate | `tool_providers.py` resolution |
+| R5 | Unit coverage for gate and dispatch | `tests/test_program_analysis_gate.py`, `tests/test_tool_providers_analysis_gate.py` |
 
 ## Verification
 
-- `uv run pytest tests/test_program_analysis_gate.py -m unit -v`
+- `uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -v`
 - `uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/program_analysis.py src/agentdecompile_cli/mcp_server/providers/project.py src/agentdecompile_cli/mcp_server/providers/import_export.py src/agentdecompile_cli/mcp_server/tool_providers.py tests/test_program_analysis_gate.py`
 - Post-merge: canonical `/lfg` (`scripts/lfg_validation.py` or `scripts/lfg_cmd_sequence.ps1`) — step `01b` uses `analyzeAfterImport: false`; assert `search-symbols` for `sh_<RUN_ID>_L*` after checkout (step `02d` / `05`) before declaring done
 
