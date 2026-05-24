@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
-# Tools that manage analysis themselves or do not need a analyzed program yet.
+# Tools that manage analysis themselves or do not need an analyzed program yet.
 _ANALYSIS_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
     {
         "open",
@@ -162,12 +162,17 @@ def wait_for_program_analysis_ready(
     program_path: str | None = None,
     max_wait_sec: float = 600.0,
 ) -> None:
-    """Block until any in-flight analysis for this program finishes."""
+    """Block until analysis is complete; run incremental ensure if still needed."""
     if program is None:
         return
+    if program_info is not None and bool(getattr(program_info, "ghidra_analysis_complete", False)):
+        if not program_needs_analysis(program):
+            return
     key = _program_lock_key(program, program_path)
     lock = _lock_for_key(key)
     with lock:
         wait_for_program_analysis_idle(program, max_wait_sec=max_wait_sec)
-        if program_info is not None and not program_needs_analysis(program):
-            mark_program_analysis_complete(program_info)
+        if program_needs_analysis(program):
+            logger.info("program_analysis_wait_ensure key=%s", key)
+            _run_auto_analysis(program, force=False)
+        mark_program_analysis_complete(program_info)

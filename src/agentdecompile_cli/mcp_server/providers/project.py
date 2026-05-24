@@ -2071,7 +2071,6 @@ class ProjectToolProvider(ToolProvider):
                             # Primary program: set as active (with decompiler)
                             self._set_active_program_info(program, item_path)
                             opened_program = item_path
-                            self._blocking_ensure_program_analyzed(program, item_path)
                         else:
                             # Secondary programs: store in session with decompiler=None (lazy init)
                             from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
@@ -2113,7 +2112,6 @@ class ProjectToolProvider(ToolProvider):
                     if program is not None:
                         self._set_active_program_info(program, target_path)
                         opened_program = target_path
-                        self._blocking_ensure_program_analyzed(program, target_path)
             except Exception as exc:
                 logger.warning("Failed to auto-open program from .gpr project: %s", exc)
 
@@ -3440,7 +3438,7 @@ class ProjectToolProvider(ToolProvider):
                 "groupsCreated": 0,
                 "maxDepthUsed": max_depth,
                 "wasRecursive": recursive,
-                "analysisRequested": analyze,
+                "analysisRequested": True,
                 "errors": errors,
                 "programDetails": program_details,
                 "projectFiles": project_files_snapshot,
