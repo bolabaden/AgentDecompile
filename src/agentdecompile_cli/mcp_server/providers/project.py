@@ -2086,6 +2086,7 @@ class ProjectToolProvider(ToolProvider):
                                 load_time=time.time(),
                             )
                             SESSION_CONTEXTS.set_active_program_info(session_id, item_path, secondary_info)
+                            self._blocking_ensure_program_analyzed(program, item_path, secondary_info)
                             # Restore active key to the primary program (set_active_program_info changes it)
                             if opened_program:
                                 session = SESSION_CONTEXTS.get_or_create(session_id)

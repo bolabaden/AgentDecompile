@@ -11,10 +11,55 @@ from agentdecompile_cli.mcp_utils import program_analysis as pa
 
 
 @pytest.mark.unit
-def test_analysis_gate_exempt_tools() -> None:
-    assert pa.analysis_gate_exempt_tool("open") is True
-    assert pa.analysis_gate_exempt_tool("importbinary") is True
-    assert pa.analysis_gate_exempt_tool("getfunction") is False
+@pytest.mark.parametrize(
+    "tool_name",
+    sorted(pa._ANALYSIS_GATE_EXEMPT_TOOLS),
+)
+def test_analysis_gate_exempt_tools(tool_name: str) -> None:
+    assert pa.analysis_gate_exempt_tool(tool_name) is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tool_name", ["getfunction", "listfunctions", "decompilefunction"])
+def test_analysis_gate_non_exempt_tools(tool_name: str) -> None:
+    assert pa.analysis_gate_exempt_tool(tool_name) is False
+
+
+@pytest.mark.unit
+def test_wait_for_program_analysis_ready_marks_complete_only_when_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/bin.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+
+    with patch.object(pa, "program_needs_analysis", side_effect=[True, False]):
+        run_mock = MagicMock()
+        monkeypatch.setattr(pa, "run_analysis", run_mock)
+        pa.wait_for_program_analysis_ready(program, info, program_path="/bin.exe")
+
+    run_mock.assert_called_once()
+    assert info.ghidra_analysis_complete is True
+
+
+@pytest.mark.unit
+def test_wait_for_program_analysis_ready_does_not_mark_when_still_needs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/bin.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+
+    with patch.object(pa, "program_needs_analysis", return_value=True):
+        run_mock = MagicMock()
+        monkeypatch.setattr(pa, "run_analysis", run_mock)
+        pa.wait_for_program_analysis_ready(program, info, program_path="/bin.exe")
+
+    assert info.ghidra_analysis_complete is False
 
 
 @pytest.mark.unit

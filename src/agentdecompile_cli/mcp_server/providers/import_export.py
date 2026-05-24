@@ -1542,13 +1542,29 @@ class ImportExportToolProvider(ToolProvider):
                             if program is None:
                                 raise RuntimeError("import_binary returned None")
                             prog_name_final = program.getName() if hasattr(program, "getName") else item.name
+                            path_in_project = f"/{prog_name_final}"
                             imported_programs.append({"sourcePath": str(item), "programName": prog_name_final})
+                            from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
+                            from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+
+                            _pi = _ProgramInfo(
+                                name=prog_name_final,
+                                program=program,
+                                flat_api=None,
+                                decompiler=None,
+                                metadata={},
+                                ghidra_analysis_complete=False,
+                                file_path=str(item),
+                                load_time=time.time(),
+                            )
+                            SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
+                            blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
                             # Merge into session binaries so list-project-files can see it (even though
                             # the underlying project may be temporary).
                             self._merge_imported_program_into_session_binaries(
                                 session_id,
                                 program_name=prog_name_final,
-                                path_in_project=f"/{prog_name_final}",
+                                path_in_project=path_in_project,
                             )
                         except Exception as exc:
                             errors.append({"path": str(item), "error": str(exc)})

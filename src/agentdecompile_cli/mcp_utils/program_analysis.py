@@ -42,14 +42,14 @@ def analysis_gate_exempt_tool(norm_tool_name: str) -> bool:
 
 
 def _program_lock_key(program: GhidraProgram, program_path: str | None = None) -> str:
-    if program_path:
-        return program_path.strip().replace("\\", "/").lower()
     try:
         df = program.getDomainFile()
         if df is not None:
             return str(df.getPathname()).strip().replace("\\", "/").lower()
     except Exception:
         pass
+    if program_path:
+        return program_path.strip().replace("\\", "/").lower()
     try:
         return f"program:{int(program.hashCode())}"
     except Exception:
@@ -175,4 +175,6 @@ def wait_for_program_analysis_ready(
         if program_needs_analysis(program):
             logger.info("program_analysis_wait_ensure key=%s", key)
             _run_auto_analysis(program, force=False)
-        mark_program_analysis_complete(program_info)
+            wait_for_program_analysis_idle(program, max_wait_sec=max_wait_sec)
+        if not program_needs_analysis(program):
+            mark_program_analysis_complete(program_info)
