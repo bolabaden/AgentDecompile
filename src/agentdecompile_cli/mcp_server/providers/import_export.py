@@ -2061,8 +2061,9 @@ class ImportExportToolProvider(ToolProvider):
                 df = program.getDomainFile() if program is not None else None
                 if df is not None:
                     program_path_hint = str(df.getPathname())
-            except Exception:
-                pass
+            except Exception as exc:
+                # Best-effort hint only: auto-analysis can proceed without a path.
+                logger.debug("Unable to resolve program path hint for analysis: %s", exc)
 
             def _run_auto_analysis() -> None:
                 blocking_ensure_analyzed(
