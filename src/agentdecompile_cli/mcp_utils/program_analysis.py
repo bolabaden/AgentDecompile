@@ -77,8 +77,8 @@ def _analysis_state_done(program: GhidraProgram) -> bool | None:
         st = program.getAnalysisState()
         if st is not None and hasattr(st, "isDone"):
             return bool(st.isDone())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Unable to read analysis state; treating as unknown", exc_info=exc)
     return None
 
 
