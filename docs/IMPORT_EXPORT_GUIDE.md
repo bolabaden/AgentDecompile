@@ -64,7 +64,7 @@ agentdecompile-cli tool import-binary '{
 | `destinationFolder` | string | `/` | Project folder destination |
 | `recursive` | boolean | `false` | Import subdirectories |
 | `maxDepth` | integer | unlimited | Recursion depth limit |
-| `analyzeAfterImport` | boolean | `true` | Run Ghidra analysis post-import |
+| `analyzeAfterImport` | boolean | `true` | Legacy hint for headless/shared import (`-noanalysis` when `false`). **Does not** skip in-session ensure: `open` / `import-binary` still run incremental analysis when Ghidra reports it is needed. |
 | `stripLeadingPath` | boolean | `false` | Strip leading paths from names |
 | `stripAllContainerPath` | boolean | `false` | Strip all container paths |
 | `mirrorFs` | boolean | `false` | Mirror filesystem structure |
@@ -394,12 +394,23 @@ Use shared-project version control only when all of the following are true:
 
 If those conditions are not met, checkout/checkin remain unavailable and the tool returns a precise error.
 
-### Large Binary Handling
+### Analysis semantics (`analyzeAfterImport`)
 
-For large binaries:
-1. Import with `analyzeAfterImport=false`
-2. Analyze manually or in background
-3. Export when ready
+See also [AGENTS.md](../AGENTS.md) (Learned Workspace Facts — `open-project` / blocking ensure).
+
+| Path | `analyzeAfterImport=false` | When analysis runs |
+|------|---------------------------|-------------------|
+| Local `open` / `import-binary` | May skip headless `-noanalysis` on shared import only | **Always** `blocking_ensure_analyzed` in-session when Ghidra says analysis is needed |
+| Other program-scoped tools | N/A | Pre-dispatch gate waits until analysis is complete |
+| `analyze-program` | N/A | Manages analysis itself (`force` optional) |
+
+`analyzeAfterImport=false` speeds **headless/shared import**; it does **not** mean “never analyze.” Agents can still call `analyze-program` or rely on ensure-on-open.
+
+Shared version-control import responses may include `"inSessionAnalysisPending": true` when headless analysis was skipped — treat that as a signal that the next `open` / `checkout-program` in the same MCP session will run incremental ensure before listing/search tools succeed.
+
+### Large binary handling
+
+For very large binaries you may set `analyzeAfterImport=false` on **shared/headless import** to defer headless analysis, then use the program in-session:
 
 ```bash
 agentdecompile-cli tool import-binary '{
@@ -407,15 +418,12 @@ agentdecompile-cli tool import-binary '{
   "analyzeAfterImport": false
 }'
 
-# Later: analyze manually
+# open/checkout in session triggers blocking_ensure_analyzed when needed
+agentdecompile-cli tool open-project '{"path": "/large_binary.bin"}'
+
+# Optional explicit analyze (or force refresh)
 agentdecompile-cli tool analyze-program '{
   "programPath": "/large_binary.bin"
-}'
-
-# Only if you have a specific reason to rerun analysis
-agentdecompile-cli tool analyze-program '{
-  "programPath": "/large_binary.bin",
-  "force": true
 }'
 ```
 
@@ -439,7 +447,7 @@ agentdecompile-cli tool export '{
 
 ### SARIF Contains No Results
 
-**Cause:** Analysis incomplete. **Solution:** Re-run import with `analyzeAfterImport=true` or call `analyze-program`.
+**Cause:** Analysis incomplete. **Solution:** Open or import the program in-session (ensure runs automatically), or call `analyze-program`. Setting `analyzeAfterImport=true` on import alone does not replace in-session ensure.
 
 ### Analyze-Program Returns "Already Analyzed"
 

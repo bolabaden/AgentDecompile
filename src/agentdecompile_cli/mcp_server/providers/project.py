@@ -5577,13 +5577,11 @@ class ProjectToolProvider(ToolProvider):
                 try:
                     is_versioned = bool(domain_file.isVersioned()) if hasattr(domain_file, "isVersioned") else False
                     is_checked_out = bool(domain_file.isCheckedOut()) if hasattr(domain_file, "isCheckedOut") else False
-                    can_checkin = bool(domain_file.canCheckin()) if hasattr(domain_file, "canCheckin") else False
                 except Exception:
                     is_versioned = False
                     is_checked_out = False
-                    can_checkin = False
                 # Relink only when the checkout is not yet reflected locally (is_checked_out=False).
-                # After a fresh RepositoryAdapter.checkout(), is_checked_out=True and can_checkin=False
+                # After a fresh RepositoryAdapter.checkout(), is_checked_out=True and canCheckin()=False
                 # is NORMAL (nothing modified yet). Triggering relink here would call undoCheckout()
                 # which removes the server-side checkout we just registered.
                 needs_relink = is_versioned and (not is_checked_out)

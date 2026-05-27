@@ -17,11 +17,11 @@
 
 | Sev | Topic |
 |-----|--------|
-| P1 | Align `import_export.py` shared paths with plan semantics (`analyzeAfterImport=false`) |
-| P1 | `checkout-program` pre-dispatch gate vs VC latency |
-| P0 | `ToolProviderManager` gate integration test |
-| P2 | Analysis idle timeout should raise, not return silently |
-| P2 | `_blocking_ensure_program_analyzed` should not swallow failures |
+| ~~P1~~ | ~~Align `import_export.py` shared paths with plan semantics (`analyzeAfterImport=false`)~~ — headless `-noanalysis` + `inSessionAnalysisPending` on success ([#44](https://github.com/bolabaden/AgentDecompile/pull/44)) |
+| ~~P1~~ | ~~`checkout-program` pre-dispatch gate vs VC latency~~ — closed [#43](https://github.com/bolabaden/AgentDecompile/pull/43) (VC tools gate-exempt) |
+| ~~P0~~ | ~~`ToolProviderManager` gate integration test~~ — `tests/test_tool_providers_analysis_gate.py` |
+| ~~P2~~ | ~~Analysis idle timeout should raise, not return silently~~ — `ProgramAnalysisTimeout` |
+| ~~P2~~ | ~~`_blocking_ensure_program_analyzed` should not swallow failures~~ — fixed in branch |
 
 ## Coverage
 

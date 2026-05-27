@@ -14,7 +14,7 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 - **Ghidra 12.0.4** is installed at `/opt/ghidra-install/ghidra_12.0.4_PUBLIC`. Set `GHIDRA_INSTALL_DIR` accordingly.
 - **uv** package manager is at `~/.local/bin/uv`. Ensure `$HOME/.local/bin` is on `PATH`.
 - **PyGhidra** is installed from Ghidra's bundled pypkg (not PyPI). The update script reinstalls it from `$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg`.
-- **ruff** is installed for linting (not a project dependency, installed separately via `uv pip install ruff`).
+- **ruff** is in the `dev` dependency group (`uv sync --dev`); CI runs `uv run ruff check` via `test-unit.yml`.
 - chromadb (semantic search) is optional and not installed; the server logs a warning but operates normally without it.
 
 ### Injected secrets (environment variables)
@@ -86,6 +86,8 @@ CLI reuses the same server session across invocations when the same `--server-ur
 | Lint | `uv run ruff check --no-fix src/ tests/` |
 | Test (all) | `uv run pytest tests/ -v --timeout=180` |
 | Test (unit only) | `uv run pytest -m unit -v` |
+| Test (analysis gate) | `uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q` |
+| CI (unit, no Ghidra) | GitHub Actions workflow `test-unit.yml` on PRs to `master` |
 | Build | `uv build` |
 
 Pre-existing lint violations (36 errors) exist in the codebase; they are not caused by the development environment. Docker-dependent e2e tests require a running Docker environment to pass.
@@ -115,6 +117,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned User Preferences
 
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
+- After a merge or vague “continue”, infer the next slice from `STRATEGY.md`, open plans, and `docs/residual-review-findings/`; implement and open the next PR without waiting for a detailed task (see `.cursor/skills/lfg/SKILL.md` step 0).
 - Do not block the agent's main shell on long proof drivers (e.g. `scripts/lfg_cmd_sequence.ps1`): start them in a separate process, tee output to `.lfg_run/lfg_cmd_<RunId>/driver.log`, tail logs in parallel, and avoid overlapping runs without stopping the prior driver and its MCP server.
 - After fixing an issue, continue with the task without asking; run and verify, and if still broken fix and rerun until functional.
 - Fix the underlying behavior so the same user commands work unchanged; do not only improve error messages or documentation.

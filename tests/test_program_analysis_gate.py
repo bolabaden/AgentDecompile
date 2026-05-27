@@ -36,9 +36,9 @@ def test_wait_for_program_analysis_ready_marks_complete_only_when_done(
     info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
 
     monkeypatch.setattr(pa, "wait_for_program_analysis_idle", lambda *_a, **_k: None)
-    with patch.object(pa, "program_needs_analysis", side_effect=[True, False]):
+    with patch.object(pa, "program_needs_analysis", side_effect=[True, True, False]):
         run_mock = MagicMock()
-        monkeypatch.setattr(pa, "run_analysis", run_mock)
+        monkeypatch.setattr(pa, "_run_auto_analysis", run_mock)
         pa.wait_for_program_analysis_ready(program, info, program_path="/bin.exe")
 
     run_mock.assert_called_once()
@@ -46,7 +46,7 @@ def test_wait_for_program_analysis_ready_marks_complete_only_when_done(
 
 
 @pytest.mark.unit
-def test_wait_for_program_analysis_ready_does_not_mark_when_still_needs(
+def test_wait_for_program_analysis_ready_raises_when_still_needs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     program = MagicMock()
@@ -56,12 +56,55 @@ def test_wait_for_program_analysis_ready_does_not_mark_when_still_needs(
     info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
 
     monkeypatch.setattr(pa, "wait_for_program_analysis_idle", lambda *_a, **_k: None)
-    with patch.object(pa, "program_needs_analysis", return_value=True):
-        run_mock = MagicMock()
-        monkeypatch.setattr(pa, "run_analysis", run_mock)
+    with (
+        patch.object(pa, "program_needs_analysis", return_value=True),
+        patch.object(pa, "_run_auto_analysis", MagicMock()),
+        pytest.raises(pa.ProgramAnalysisTimeout, match="did not complete"),
+    ):
         pa.wait_for_program_analysis_ready(program, info, program_path="/bin.exe")
 
     assert info.ghidra_analysis_complete is False
+
+
+@pytest.mark.unit
+def test_program_needs_analysis_false_for_stub_without_analysis_state() -> None:
+    class _StubProgram:
+        def getName(self) -> str:
+            return "stub"
+
+    assert pa.program_needs_analysis(_StubProgram()) is False  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+def test_wait_for_ready_marks_stub_without_analysis_state_complete() -> None:
+    class _StubProgram:
+        def getName(self) -> str:
+            return "stub"
+
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+    pa.wait_for_program_analysis_ready(_StubProgram(), info)  # type: ignore[arg-type]
+    assert info.ghidra_analysis_complete is True
+    assert not pa._LOCKS
+
+
+@pytest.mark.unit
+def test_blocking_ensure_skips_stub_without_analysis_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StubProgram:
+        def getName(self) -> str:
+            return "stub"
+
+    run_mock = MagicMock()
+    monkeypatch.setattr(pa, "run_analysis", run_mock)
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+    result = pa.blocking_ensure_analyzed(_StubProgram(), info)  # type: ignore[arg-type]
+
+    run_mock.assert_not_called()
+    assert result.get("skipped") is True
+    assert result.get("reason") == "already-analyzed"
+    assert info.ghidra_analysis_complete is True
+    assert not pa._LOCKS
 
 
 @pytest.mark.unit
@@ -143,7 +186,7 @@ def test_wait_for_program_analysis_idle_raises_on_timeout(
 
 
 @pytest.mark.unit
-def test_blocking_ensure_does_not_mark_when_still_needs(
+def test_blocking_ensure_raises_when_still_needs_after_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     program = MagicMock()
@@ -152,11 +195,192 @@ def test_blocking_ensure_does_not_mark_when_still_needs(
     program.getDomainFile.return_value = df
 
     monkeypatch.setattr(pa, "wait_for_program_analysis_idle", lambda *_a, **_k: None)
-    with patch.object(pa, "program_needs_analysis", return_value=True):
+    with (
+        patch.object(pa, "program_needs_analysis", return_value=True),
+        pytest.raises(pa.ProgramAnalysisTimeout, match="did not complete"),
+    ):
         run_mock = MagicMock()
         monkeypatch.setattr(pa, "run_analysis", run_mock)
         info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+        pa.blocking_ensure_analyzed(program, info, program_path="/bin.exe")
+
+    run_mock.assert_called_once()
+    assert info.ghidra_analysis_complete is False
+
+
+@pytest.mark.unit
+def test_wait_for_ready_skips_when_session_marked_and_ghidra_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/session-done.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=True, analysis_complete=True)
+
+    idle_mock = MagicMock()
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", idle_mock)
+    with patch.object(pa, "program_needs_analysis", return_value=False):
+        pa.wait_for_program_analysis_ready(program, info, program_path="/session-done.exe")
+
+    idle_mock.assert_not_called()
+
+
+@pytest.mark.unit
+def test_wait_for_ready_skips_work_when_ghidra_already_analyzed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/already-done.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+
+    idle_mock = MagicMock()
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", idle_mock)
+    with patch.object(pa, "program_needs_analysis", return_value=False):
+        pa.wait_for_program_analysis_ready(program, info, program_path="/already-done.exe")
+
+    idle_mock.assert_not_called()
+    assert info.ghidra_analysis_complete is True
+
+
+@pytest.mark.unit
+def test_wait_for_ready_releases_lock_on_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/wait-timeout.exe"
+    program.getDomainFile.return_value = df
+
+    monkeypatch.setattr(
+        pa,
+        "wait_for_program_analysis_idle",
+        lambda *_a, **_k: (_ for _ in ()).throw(pa.ProgramAnalysisTimeout("idle timeout")),
+    )
+    with (
+        patch.object(pa, "program_needs_analysis", return_value=True),
+        pytest.raises(pa.ProgramAnalysisTimeout),
+    ):
+        pa.wait_for_program_analysis_ready(program, program_path="/wait-timeout.exe")
+
+    assert "/wait-timeout.exe" not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_blocking_ensure_releases_lock_on_analysis_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/release-on-error.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", lambda *_a, **_k: None)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("analysis failed")
+
+    monkeypatch.setattr(pa, "run_analysis", _boom)
+    with patch.object(pa, "program_needs_analysis", return_value=True):
+        with pytest.raises(RuntimeError, match="analysis failed"):
+            pa.blocking_ensure_analyzed(program, info, program_path="/release-on-error.exe")
+
+    assert "/release-on-error.exe" not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_blocking_ensure_releases_lock_after_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/release-after-ensure.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=False, analysis_complete=False)
+
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", lambda *_a, **_k: None)
+    with patch.object(pa, "program_needs_analysis", side_effect=[True, False]):
+        monkeypatch.setattr(pa, "run_analysis", MagicMock())
+        pa.blocking_ensure_analyzed(program, info, program_path="/release-after-ensure.exe")
+
+    assert "/release-after-ensure.exe" not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_blocking_ensure_skips_idle_wait_when_session_already_analyzed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/bin.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=True, analysis_complete=True)
+
+    idle_mock = MagicMock()
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", idle_mock)
+    with patch.object(pa, "program_needs_analysis", return_value=False):
         result = pa.blocking_ensure_analyzed(program, info, program_path="/bin.exe")
 
-    assert result.get("ran") is True
-    assert info.ghidra_analysis_complete is False
+    idle_mock.assert_not_called()
+    assert result.get("skipped") is True
+    assert result.get("programKey") == "/bin.exe"
+    assert "/bin.exe" not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_blocking_ensure_prelock_skip_when_session_marked_and_ghidra_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = MagicMock()
+    df = MagicMock()
+    df.getPathname.return_value = "/prelock-skip.exe"
+    program.getDomainFile.return_value = df
+    info = SimpleNamespace(ghidra_analysis_complete=True, analysis_complete=True)
+
+    idle_mock = MagicMock()
+    monkeypatch.setattr(pa, "wait_for_program_analysis_idle", idle_mock)
+    with patch.object(pa, "program_needs_analysis", return_value=False):
+        result = pa.blocking_ensure_analyzed(program, info, program_path="/prelock-skip.exe")
+
+    idle_mock.assert_not_called()
+    assert result == {
+        "skipped": True,
+        "reason": "already-analyzed",
+        "programKey": "/prelock-skip.exe",
+    }
+    assert "/prelock-skip.exe" not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_wait_for_program_analysis_idle_uses_adaptive_polling() -> None:
+    program = MagicMock()
+    sleeps: list[float] = []
+    with (
+        patch.object(pa.time, "time", side_effect=[0.0, 0.0, 0.1, 10.0]),
+        patch.object(pa.time, "sleep", side_effect=lambda sec: sleeps.append(sec)),
+        patch.object(pa, "_program_analysis_still_running", side_effect=[True, False]),
+    ):
+        pa.wait_for_program_analysis_idle(program, max_wait_sec=600.0)
+
+    assert len(sleeps) == 1
+    assert sleeps[0] == pa._POLL_INTERVAL_MIN_SEC
+
+
+@pytest.mark.unit
+def test_release_program_lock_prunes_idle_entry() -> None:
+    key = "/prune-test.exe"
+    lock = pa._lock_for_key(key)
+    assert key in pa._LOCKS
+    pa._release_program_lock(key, lock)
+    assert key not in pa._LOCKS
+
+
+@pytest.mark.unit
+def test_release_program_lock_keeps_locked_entry() -> None:
+    key = "/locked-test.exe"
+    lock = pa._lock_for_key(key)
+    lock.acquire()
+    try:
+        pa._release_program_lock(key, lock)
+        assert key in pa._LOCKS
+    finally:
+        lock.release()
+    pa._release_program_lock(key, lock)
+    assert key not in pa._LOCKS

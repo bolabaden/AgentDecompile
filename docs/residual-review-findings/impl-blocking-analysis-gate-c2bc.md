@@ -3,6 +3,7 @@
 **Plan:** [docs/plans/2026-05-24-blocking-program-analysis-gate.md](../plans/2026-05-24-blocking-program-analysis-gate.md)  
 **Code review plan:** [docs/plans/2026-05-24-blocking-analysis-code-review.md](../plans/2026-05-24-blocking-analysis-code-review.md)  
 **PR:** [#39](https://github.com/bolabaden/AgentDecompile/pull/39) — **merged** into `master`  
+**Open PR:** [#44](https://github.com/bolabaden/AgentDecompile/pull/44) — P3 hygiene, performance, CI unit tests (`impl/blocking-analysis-gate-c2bc`)  
 **LFG pass:** [docs/plans/2026-05-24-lfg-strategy-doc-code-review.md](../plans/2026-05-24-lfg-strategy-doc-code-review.md)  
 **Follow-up:** `STRATEGY.md` and doc-only commits land via `impl/post-merge-strategy-docs-c2bc`
 
@@ -19,12 +20,34 @@
 - **P2** | `tool_providers.py` | Requested `programPath` no longer falls back to session active program for gate/wait
 - **P0/P1** | `tests/test_tool_providers_analysis_gate.py` | Gate invoke/skip, autoprereq bypass, timeout error, programPath resolution
 
+### PR #44 merge verification
+
+Branch: `impl/blocking-analysis-gate-c2bc` → [#44](https://github.com/bolabaden/AgentDecompile/pull/44)  
+**HEAD:** `1ac2d9c` — merge-blocking CI **green** on `253bb4b` (re-run on `1ac2d9c` expected). **66** unit tests. PR **ready to merge**; live `/lfg` driver post-merge (P3).
+
+**Status:** PR #44 **ready for review**, **MERGEABLE**; checks include Unit tests, Test Headless Mode (ubuntu + macos × Ghidra 12.0/latest), Test Ghidra Extension.
+
+```bash
+uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
+uv run pytest -m unit -q --timeout=120
+uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/program_analysis.py src/agentdecompile_cli/mcp_server/tool_providers.py
+```
+
+After merge: optional `pytest tests/test_lfg_e2e.py -m lfg` with Ghidra Server (see `AGENTS.md`).
+
 ### Still open (downstream)
 
-- **P3** | e2e | Canonical `/lfg` post-merge (`scripts/lfg_validation.py` or driver)
-- **P3** | docs | Align `docs/IMPORT_EXPORT_GUIDE.md` with in-session ensure semantics
-- **P3** | `program_analysis.py` | Optional lock map pruning for long-lived servers
-- **P3** | `program_analysis.py` | Consider exempting VC tools (`checkout-program`, `checkin-program`) from redundant gate waits
+- **P3** | e2e | Canonical `/lfg` post-merge (`pytest tests/test_lfg_e2e.py -m lfg` or `scripts/lfg_validation.py` in CI)
+
+### Closed (2026-05-24 LFG)
+
+- **P3** | `tool_providers.py` | Provider-raised `ProgramAnalysisTimeout` (e.g. open/import ensure) returns structured `analysis-timeout` like gate path
+
+### Closed post-merge (2026-05-24, PR after #42)
+
+- **P3** | docs | `IMPORT_EXPORT_GUIDE.md` aligned with in-session ensure semantics — [plan](../plans/2026-05-24-post-merge-p3-hygiene.md)
+- **P3** | `program_analysis.py` | VC tools (`checkout-program`, `checkin-program`, `checkout-status`) exempt from redundant gate waits
+- **P3** | `program_analysis.py` | Idle per-program lock map pruning (`_release_program_lock`, cap 512)
 
 ### Filed (prior)
 

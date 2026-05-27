@@ -93,6 +93,18 @@ uv run pytest tests/ -m "not slow" -v
 
 GitHub Actions workflows under `.github/workflows/` run pytest and packaging checks (see workflow YAML for matrix and timeouts).
 
+**Unit tests (no Ghidra):** `.github/workflows/test-unit.yml` runs on pull requests to `master` / `main` / `develop`:
+
+```bash
+uv run pytest -m unit -q --timeout=120
+```
+
+**Program analysis gate** (fast, mocked — run before pushing gate changes):
+
+```bash
+uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
+```
+
 ## Writing New Tests
 
 Prefer tests that invoke **`tools/call`** (or provider `call_tool`) and assert on structured **results**, not only on `tools/list` or schema shape.

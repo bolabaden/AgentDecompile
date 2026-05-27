@@ -25,6 +25,8 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.registry import Tool
 
 if TYPE_CHECKING:
+    from agentdecompile_cli.context import ProgramInfo
+
     from ghidra.app.decompiler import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DecompInterface as GhidraDecompInterface,
     )

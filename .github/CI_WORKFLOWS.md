@@ -10,8 +10,8 @@ flowchart TD
     A --> E[publish-pypi.yml]
     A --> F[docker-push.yml]
     A --> G[claude.yml]
-    B --> H[Build Ghidra extension artifacts]
-    C --> I[Build extension install PyGhidra run pytest]
+    B --> H[PyGhidra import smoke on Ghidra matrix]
+    C --> I[Install PyGhidra run pytest]
     D --> J[Sign and publish Ghidra release zips]
     E --> K[Build and publish Python packages]
     F --> L[Build and publish container images]
@@ -22,23 +22,22 @@ flowchart TD
 
 ### `test-ghidra.yml`
 
-- Purpose: validate the Gradle-based Ghidra extension build.
-- Triggers: push and pull request activity targeting `main` or `develop`.
+- Purpose: smoke-test PyGhidra and `agentdecompile_cli` imports against downloaded Ghidra (no Java extension build).
+- Triggers: push and pull request activity targeting `master`, `main`, or `develop`.
 - Matrix: `ubuntu-latest` x Ghidra `12.0` and `latest`.
-- Runtime: Java 21, Gradle 8.14, Xvfb, downloaded Ghidra installation.
-- Output: extension build artifacts uploaded from each matrix job.
+- Runtime: Java 21, Xvfb, `uv`, PyGhidra from `$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg`.
 
-This workflow is the narrow extension-build check. It does not run the full Python test suite.
+This workflow does not run the full pytest suite.
 
 ### `test-headless.yml`
 
 - Purpose: exercise the Python and PyGhidra test stack in CI.
-- Triggers: push and pull request activity targeting `main` or `develop`, plus manual `workflow_dispatch`.
+- Triggers: push and pull request activity targeting `master`, `main`, or `develop`, plus manual `workflow_dispatch`.
 - Matrix: `ubuntu-latest` and `macos-latest` x Ghidra `12.0` and `latest`.
-- Runtime: Java 21, Python 3.10, Gradle 8.14, `uv`, downloaded Ghidra installation.
-- Test command: `uv run pytest tests/ -v --timeout=120 --tb=short --junitxml=test-results.xml`.
+- Runtime: Java 21, Python 3.12, `uv`, downloaded Ghidra installation, PyGhidra from bundled pypkg.
+- Test command: `uv run pytest tests/ -m "not e2e" -v --timeout=180 --tb=short --junitxml=test-results.xml`.
 
-The workflow builds the extension, installs it into the downloaded Ghidra directory, installs PyGhidra from that same installation, and then runs the Python test suite. That makes it the closest CI approximation of the supported headless runtime.
+The workflow installs PyGhidra from the downloaded Ghidra tree and runs the non-e2e pytest suite (unit, provider, and CLI tests). Live-server e2e modules (`test_e2e_*`, `test_get_function_live_decompilation`) are excluded; they require long-running subprocess MCP servers and are not suitable for the default matrix. Unit-only coverage also runs in `test-unit.yml`.
 
 ### `publish-ghidra.yml`
 

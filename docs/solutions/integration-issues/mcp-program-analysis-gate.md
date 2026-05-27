@@ -39,7 +39,9 @@ Centralize coordination in `src/agentdecompile_cli/mcp_utils/program_analysis.py
 
 - `blocking_ensure_analyzed()` after open, import, and checkout paths.
 - `wait_for_program_analysis_ready()` before non-exempt `ToolProviderManager.call_tool` dispatch.
-- Exempt tools that manage analysis themselves (`open`, `import-binary`, `analyze-program`, etc.).
+- Exempt tools that manage analysis themselves (`open`, `import-binary`, `analyze-program`, VC lifecycle tools, etc.).
+- Adaptive idle polling (50ms–1s backoff) and per-program lock pruning after ensure/wait.
+- Shared import with `analyzeAfterImport=false` uses headless `-noanalysis` and sets `inSessionAnalysisPending` on success; in-session ensure runs on open/checkout.
 
 Map `ProgramAnalysisTimeout` to a structured MCP error (`state: analysis-timeout`) in `tool_providers.py`.
 
@@ -56,4 +58,4 @@ Ghidra exposes real analysis state via `Program.getAnalysisState()` and `shouldA
 ## Related Issues
 
 - Plan: `docs/plans/2026-05-24-blocking-program-analysis-gate.md`
-- PR: https://github.com/bolabaden/AgentDecompile/pull/39
+- PR: https://github.com/bolabaden/AgentDecompile/pull/39 (merged); follow-up https://github.com/bolabaden/AgentDecompile/pull/44

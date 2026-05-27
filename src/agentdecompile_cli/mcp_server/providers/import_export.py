@@ -1317,7 +1317,7 @@ class ImportExportToolProvider(ToolProvider):
         binaries: list[dict[str, Any]] = self._list_repository_items(repository_adapter)
         SESSION_CONTEXTS.set_project_binaries(session_id, binaries)
 
-        return {
+        result: dict[str, Any] = {
             "action": "import",
             "importedFrom": str(source),
             "filesDiscovered": 1 if source.is_file() else len(list(self._iter_files_to_import(source, recursive, 16))),
@@ -1331,6 +1331,9 @@ class ImportExportToolProvider(ToolProvider):
             "programs": binaries,
             "stdout": stdout or None,
         }
+        if not analyze_after_import:
+            result["inSessionAnalysisPending"] = True
+        return result
 
     def _merge_imported_program_into_session_binaries(
         self,

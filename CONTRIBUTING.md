@@ -64,6 +64,8 @@ export GHIDRA_INSTALL_DIR=/path/to/ghidra
 
 - `src/agentdecompile_cli/` — CLI, server, providers, resources, utilities
 - `tests/` — pytest unit/integration/e2e coverage
+
+**Git note:** `.gitignore` matches `agentdecompile*/`, so new files under `src/agentdecompile_cli/` are ignored by default. After editing **already-tracked** Python there, stage with `git add -f path/to/file.py` (or `git add -f src/agentdecompile_cli/...`) before commit.
 - `docs/` — user, workflow, and architecture documentation
 - `docs/generated/` — machine-generated static call graph and entrypoint reachability artifacts
 - `vendor/` — upstream reference implementations used for parity checks
@@ -166,6 +168,8 @@ uv run pytest -m unit -v
 uv run pytest tests/ -v --timeout=120
 uv run pytest tests/test_e2e_cancelled_profile.py -v --timeout=300 -s
 ```
+
+Pull requests to `master` also run the **Unit tests (no Ghidra)** GitHub Actions workflow (`.github/workflows/test-unit.yml`), which runs `ruff check` on `src/` and `tests/` then `pytest -m unit` (install dev deps with `uv sync --dev`). Program analysis gate changes should pass `tests/test_program_analysis_gate.py` and `tests/test_tool_providers_analysis_gate.py` locally before push.
 
 Use markers when needed:
 

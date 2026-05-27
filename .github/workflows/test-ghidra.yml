@@ -2,12 +2,12 @@ name: Test Ghidra 🐉 Extension
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [master, main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [master, main, develop]
 
 permissions:
-  contents: write
+  contents: read
   actions: read
   checks: write
 
@@ -16,50 +16,51 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        ghidra-version: [
-            "12.0",
-            "latest",
-        ]
+        ghidra-version: ["12.0", "latest"]
     name: Build on Ghidra ${{ matrix.ghidra-version }}
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6
-      with:
-        lfs: true
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
 
-    - name: Set up Java 🍵
-      uses: actions/setup-java@v5
-      with:
-        java-version: "21"
-        distribution: "microsoft"
+      - name: Set up Java 🍵
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: "microsoft"
 
-    - name: Install Ghidra 🐉
-      uses: antoniovazquezblanco/setup-ghidra@v2.0.16
-      with:
-        version: ${{ matrix.ghidra-version }}
-        auth_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
-    - name: Setup Xvfb for headless testing
-      run: |
-        sudo apt-get update && sudo apt-get install -y xvfb
-        Xvfb :99 -nolisten tcp &
-        echo "DISPLAY=:99" >> $GITHUB_ENV
+      - name: Install Ghidra 🐉
+        uses: antoniovazquezblanco/setup-ghidra@v2.0.16
+        with:
+          version: ${{ matrix.ghidra-version }}
+          auth_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Xvfb for headless testing
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          Xvfb :99 -nolisten tcp &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
 
-    - name: Setup Gradle 🔧
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        gradle-version: "8.14"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
-    - name: Build Extension 🔨
-      run: gradle buildExtension
+      - name: Install Python dependencies
+        run: uv sync --all-extras --dev
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v7
-      if: always()
-      with:
-        name: extension-build-${{ matrix.ghidra-version }}
-        path: |
-          dist/*.zip
-          build/libs/
-        if-no-files-found: ignore
+      - name: Install PyGhidra from local Ghidra
+        run: uv pip install "${GHIDRA_INSTALL_DIR}/Ghidra/Features/PyGhidra/pypkg"
+
+      - name: PyGhidra and MCP import smoke
+        env:
+          GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
+        run: |
+          uv run python -c "import pyghidra; print('pyghidra', pyghidra.__version__)"
+          uv run python -c "import agentdecompile_cli; print('agentdecompile_cli ok')"
