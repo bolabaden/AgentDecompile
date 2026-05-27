@@ -81,6 +81,7 @@ uv run pytest tests/ -v -s
 @pytest.mark.unit        # Unit tests (mocked / no full Ghidra)
 @pytest.mark.integration # Integration tests (PyGhidra)
 @pytest.mark.e2e         # End-to-end tests
+@pytest.mark.lfg         # Strict /lfg stack (Ghidra Server + MCP; very slow)
 @pytest.mark.slow        # Slow tests
 ```
 
@@ -88,6 +89,23 @@ uv run pytest tests/ -v -s
 uv run pytest tests/ -m integration -v
 uv run pytest tests/ -m "not slow" -v
 ```
+
+### Strict `/lfg` (optional, not CI-default)
+
+`tests/test_lfg_e2e.py` loads `scripts/lfg_validation.run_lfg_cli`. Fast smoke tests run as **`unit`** (no Ghidra Server). The full collaboration stack is opt-in:
+
+```bash
+# Fast smoke only (CI unit job includes these)
+uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
+
+# Full stack — requires GHIDRA_INSTALL_DIR, shared server creds, long runtime
+LFG_RUN=1 uv run pytest tests/test_lfg_e2e.py -m lfg -v --timeout=900
+
+# Single-process driver (same code path as pytest full stack)
+uv run python scripts/lfg_validation.py --run-id <id> --manage-mcp --prepare-local-dir
+```
+
+See `.cursor/commands/lfg.md` for the canonical live proof sequence.
 
 ## CI Integration
 

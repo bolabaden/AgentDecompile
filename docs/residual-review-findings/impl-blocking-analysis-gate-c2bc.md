@@ -4,6 +4,7 @@
 **Code review plan:** [docs/plans/2026-05-24-blocking-analysis-code-review.md](../plans/2026-05-24-blocking-analysis-code-review.md)  
 **PR:** [#39](https://github.com/bolabaden/AgentDecompile/pull/39) — **merged** into `master`  
 **PR #44:** [#44](https://github.com/bolabaden/AgentDecompile/pull/44) — **merged** to `master` as `7359c6a` (2026-05-27, squash)  
+**PR #45:** [#45](https://github.com/bolabaden/AgentDecompile/pull/45) — **merged** to `master` as `00cfca2` (post-merge `program_analysis.__all__` + docs)  
 **LFG pass:** [docs/plans/2026-05-24-lfg-strategy-doc-code-review.md](../plans/2026-05-24-lfg-strategy-doc-code-review.md)  
 **Follow-up:** `STRATEGY.md` and doc-only commits land via `impl/post-merge-strategy-docs-c2bc`
 
@@ -22,7 +23,7 @@
 
 ### PR #44 — merged
 
-Squash merge: **`7359c6a`** on `master` (2026-05-27). **67** unit tests on `master` after merge. Feature branch `impl/blocking-analysis-gate-c2bc` superseded.
+Squash merge: **`7359c6a`** on `master` (2026-05-27). **68+** unit tests on `master` after PR #45 (`program_analysis.__all__` export test). Feature branch `impl/blocking-analysis-gate-c2bc` superseded.
 
 ```bash
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
@@ -30,11 +31,11 @@ uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/program_analysis.py src/agentdecompile_cli/mcp_server/tool_providers.py
 ```
 
-After merge: optional `pytest tests/test_lfg_e2e.py -m lfg` with Ghidra Server (see `AGENTS.md`).
+After merge: `tests/test_lfg_e2e.py` provides fast smoke (no `lfg` marker) and opt-in full stack when `LFG_RUN=1` (see `tests/README.md` and `.cursor/commands/lfg.md`).
 
 ### Still open (downstream)
 
-- **P3** | e2e | Canonical `/lfg` post-merge (`pytest tests/test_lfg_e2e.py -m lfg` or `scripts/lfg_validation.py` in CI)
+- **P3** | e2e | Run canonical `/lfg` in CI or nightly (`LFG_RUN=1 pytest -m lfg` or `scripts/lfg_validation.py --manage-mcp`)
 
 ### Closed (2026-05-24 LFG)
 
