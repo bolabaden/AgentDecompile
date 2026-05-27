@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "ProgramAnalysisTimeout",
+    "analysis_gate_exempt_tool",
+    "blocking_ensure_analyzed",
+    "mark_program_analysis_complete",
+    "program_needs_analysis",
+    "wait_for_program_analysis_idle",
+    "wait_for_program_analysis_ready",
+]
+
 
 class ProgramAnalysisTimeout(TimeoutError):
     """Ghidra auto-analysis did not become idle within the allowed wait."""

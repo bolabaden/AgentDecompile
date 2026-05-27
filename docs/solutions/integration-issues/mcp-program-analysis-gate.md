@@ -58,4 +58,4 @@ Ghidra exposes real analysis state via `Program.getAnalysisState()` and `shouldA
 ## Related Issues
 
 - Plan: `docs/plans/2026-05-24-blocking-program-analysis-gate.md`
-- PR: https://github.com/bolabaden/AgentDecompile/pull/39 (merged); follow-up https://github.com/bolabaden/AgentDecompile/pull/44
+- PR: https://github.com/bolabaden/AgentDecompile/pull/39 (merged); follow-up https://github.com/bolabaden/AgentDecompile/pull/44 (**merged** `7359c6a` on `master`, 2026-05-27)
