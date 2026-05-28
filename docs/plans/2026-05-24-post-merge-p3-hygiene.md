@@ -1,6 +1,7 @@
 ---
 title: Post-merge P3 hygiene after PR #42
-status: active
+status: completed
+superseded_by: docs/plans/2026-05-24-lfg-pr43-ship-c2bc.md
 created: 2026-05-24
 ---
 

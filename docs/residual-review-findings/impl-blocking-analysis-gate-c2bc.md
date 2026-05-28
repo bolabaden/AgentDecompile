@@ -3,6 +3,8 @@
 **Plan:** [docs/plans/2026-05-24-blocking-program-analysis-gate.md](../plans/2026-05-24-blocking-program-analysis-gate.md)  
 **Code review plan:** [docs/plans/2026-05-24-blocking-analysis-code-review.md](../plans/2026-05-24-blocking-analysis-code-review.md)  
 **PR:** [#39](https://github.com/bolabaden/AgentDecompile/pull/39) — **merged** into `master`  
+**PR #43:** [#43](https://github.com/bolabaden/AgentDecompile/pull/43) — **superseded on `master`** at `fa73c1f` (2026-05-28 LFG rebase); VC exempt tools, import docs, and LFG step 0 landed via #44/#45 and agent-native arc doc merges. Closeout: [plan](../plans/2026-05-24-lfg-pr43-ship-c2bc.md).
+
 **PR #44:** [#44](https://github.com/bolabaden/AgentDecompile/pull/44) — **merged** to `master` as `7359c6a` (2026-05-27, squash)  
 **PR #45:** [#45](https://github.com/bolabaden/AgentDecompile/pull/45) — **merged** to `master` as `00cfca2` (post-merge `program_analysis.__all__` + docs)  
 **LFG pass:** [docs/plans/2026-05-24-lfg-strategy-doc-code-review.md](../plans/2026-05-24-lfg-strategy-doc-code-review.md)  
