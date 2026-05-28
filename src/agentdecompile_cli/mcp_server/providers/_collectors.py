@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.data import (  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
         DataType as GhidraDataType,
         DataTypeManager as GhidraDataTypeManager,
+        Enum as GhidraEnum,
         StringDataInstance as GhidraStringDataInstance,
         Structure as GhidraStructure,
     )
@@ -890,6 +891,40 @@ def collect_structures(program: GhidraProgram, *, limit: int | None = None) -> l
         if limit is not None and len(results) >= limit:
             break
     return results
+
+
+def collect_enums(program: GhidraProgram, *, limit: int | None = None) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_enums")
+    dtm: GhidraDataTypeManager = program.getDataTypeManager()
+    results: list[dict[str, Any]] = []
+    enum_dt: GhidraEnum
+    for enum_dt in iter_items(dtm.getAllEnums()):
+        results.append(
+            {
+                "name": str(enum_dt.getName() or ""),
+                "categoryPath": str(enum_dt.getCategoryPath()),
+                "description": str(enum_dt.getDescription() or ""),
+                "memberCount": int(enum_dt.getCount()),
+                "enum": enum_dt,
+            },
+        )
+        if limit is not None and len(results) >= limit:
+            break
+    return results
+
+
+def collect_enum_members(enum_dt: GhidraEnum) -> list[dict[str, Any]]:
+    logger.debug("diag.enter %s", "mcp_server/providers/_collectors.py:collect_enum_members")
+    members: list[dict[str, Any]] = []
+    for index in range(enum_dt.getCount()):
+        member_name = str(enum_dt.getName(index) or "")
+        members.append(
+            {
+                "name": member_name,
+                "value": int(enum_dt.getValue(member_name)),
+            },
+        )
+    return members
 
 
 def collect_structure_fields(structure: GhidraStructure) -> list[dict[str, Any]]:

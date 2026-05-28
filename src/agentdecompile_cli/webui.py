@@ -27,6 +27,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from mcp import types
+
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.local_backend import LocalToolBackend
 from agentdecompile_cli.mcp_server import prompt_providers
@@ -508,32 +510,6 @@ class PromptRenderRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-class _FormatDict(dict[str, Any]):
-    def __missing__(self, key: str) -> str:
-        return ""
-
-
-def _prompt_render_args(prompt_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    rendered = dict(arguments or {})
-    keywords = (rendered.get("search_keywords") or "").strip()
-    rendered.setdefault("program_path", "(current project)")
-    rendered.setdefault("source_program_path", rendered.get("program_path", "(current project)"))
-    rendered.setdefault("target_program_path", "(target binary)")
-    rendered.setdefault("analysis_target", "reverse engineering target")
-    rendered.setdefault("prior_function_list", "")
-    rendered.setdefault("max_iterations", rendered.get("max_iterations") or 3)
-    rendered.setdefault("category_path", f"/RE_Analysis/{str(rendered['analysis_target']).replace(' ', '')}")
-    rendered.setdefault("bookmark_category", str(rendered["analysis_target"]).replace(" ", ""))
-    rendered.setdefault(
-        "keyword_clause",
-        f" using these keywords: {keywords}" if keywords else "",
-    )
-    if prompt_name == "re-bridge-builder":
-        rendered.setdefault("source_program_path", rendered.get("source_program_path") or "(source binary)")
-        rendered.setdefault("target_program_path", rendered.get("target_program_path") or "(target binary)")
-    return rendered
-
-
 def create_app(config: WebUiConfig, backend: WebUiBackend | None = None) -> FastAPI:
     assets = _asset_dir()
     app_state: dict[str, Any] = {"backend": backend, "config": config}
@@ -631,15 +607,29 @@ def create_app(config: WebUiConfig, backend: WebUiBackend | None = None) -> Fast
 
     @app.post("/api/prompts/render")
     async def render_prompt(request: PromptRenderRequest) -> dict[str, Any]:
-        prompt_defs = {prompt["name"]: prompt for prompt in _serialize_prompt_messages()}
-        prompt_def = prompt_defs.get(request.name)
-        if prompt_def is None:
-            raise HTTPException(status_code=404, detail=f"Unknown prompt: {request.name}")
-        render_args = _prompt_render_args(request.name, dict(request.arguments or {}))
-        messages = []
-        for message in prompt_def.get("messages", []):
-            text = str(message.get("text", "")).format_map(_FormatDict(render_args))
-            messages.append({"role": message.get("role", "user"), "text": text})
+        from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+        session_id = get_current_mcp_session_id()
+        try:
+            result = prompt_providers.get_prompt(
+                request.name,
+                dict(request.arguments or {}),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if detail.startswith("Unknown prompt:") else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        render_args = prompt_providers.build_prompt_render_args(
+            request.name,
+            dict(request.arguments or {}),
+            session_id=session_id,
+        )
+        messages = [
+            {"role": message.role, "text": message.content.text}
+            for message in result.messages
+            if isinstance(message.content, types.TextContent)
+        ]
         return {
             "name": request.name,
             "arguments": render_args,

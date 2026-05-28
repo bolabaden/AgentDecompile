@@ -22,6 +22,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     SessionContext,
     is_shared_server_handle,
 )
+from agentdecompile_cli.registry import normalize_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,92 @@ def collect_program_summary(program_info: ProgramInfo) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _analysis_complete_for_info(program_info: Any) -> bool | None:
+    if program_info is None:
+        return None
+    if hasattr(program_info, "analysis_complete"):
+        try:
+            return bool(program_info.analysis_complete)
+        except Exception:
+            pass
+    value = getattr(program_info, "ghidra_analysis_complete", None)
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _resolve_domain_file(program_info: Any) -> Any | None:
+    df = getattr(program_info, "domain_file", None)
+    if df is not None:
+        return df
+    program = getattr(program_info, "program", None)
+    if program is None:
+        return None
+    try:
+        return program.getDomainFile()
+    except Exception:
+        return None
+
+
+def _domain_file_checkout_flags(df: Any) -> tuple[bool, bool, bool] | None:
+    try:
+        return (
+            bool(df.isCheckedOut()),
+            bool(df.modifiedSinceCheckout()),
+            bool(df.canCheckin()),
+        )
+    except Exception:
+        return None
+
+
+def _compact_checkout_summary(
+    open_programs: dict[str, Any],
+    *,
+    is_shared: bool,
+) -> dict[str, Any] | None:
+    if not is_shared or not open_programs:
+        return None
+
+    checked_out = 0
+    modified = 0
+    can_checkin = 0
+    programs: list[dict[str, Any]] = []
+
+    for path, info in open_programs.items():
+        df = _resolve_domain_file(info)
+        if df is None:
+            continue
+        flags = _domain_file_checkout_flags(df)
+        if flags is None:
+            continue
+
+        is_checked_out, is_modified, can_ci = flags
+        entry: dict[str, Any] = {"program": str(path)}
+        if is_checked_out:
+            checked_out += 1
+            entry["isCheckedOut"] = True
+        if is_modified:
+            modified += 1
+            entry["modifiedSinceCheckout"] = True
+        if can_ci:
+            can_checkin += 1
+            entry["canCheckin"] = True
+        if len(entry) > 1:
+            programs.append(entry)
+
+    if checked_out == 0 and modified == 0 and can_checkin == 0:
+        return None
+
+    summary: dict[str, Any] = {
+        "checkedOutCount": checked_out,
+        "modifiedCount": modified,
+        "canCheckinCount": can_checkin,
+    }
+    if programs:
+        summary["programs"] = programs
+    return summary
+
+
 def collect_project_context(session_id: str) -> dict[str, Any] | None:
     """Build a compact project-context dict for the given session.
 
@@ -246,12 +333,15 @@ def collect_project_context(session_id: str) -> dict[str, Any] | None:
     handle = session.project_handle
     open_programs = session.open_programs or {}
     active_key = session.active_program_key
-    project_inventory = _collect_project_inventory_program_keys(session)
-    open_program_keys = _dedupe_program_keys(list(open_programs.keys()))
 
-    # Nothing loaded → skip
-    if not handle and not open_programs and not project_inventory:
-        return None
+    if not handle and not open_programs:
+        project_inventory = _collect_project_inventory_program_keys(session)
+        if not project_inventory:
+            return None
+    else:
+        project_inventory = _collect_project_inventory_program_keys(session)
+
+    open_program_keys = _dedupe_program_keys(list(open_programs.keys()))
 
     ctx: dict[str, Any] = {}
 
@@ -281,12 +371,22 @@ def collect_project_context(session_id: str) -> dict[str, Any] | None:
     if active_key:
         ctx["activeProgram"] = active_key
 
+    analysis_by_program: dict[str, bool] = {}
+    for key in open_program_keys:
+        complete = _analysis_complete_for_info(open_programs.get(key))
+        if complete is not None:
+            analysis_by_program[key] = complete
+    if len(analysis_by_program) > 1:
+        ctx["analysisByProgram"] = analysis_by_program
+    if active_key in analysis_by_program:
+        ctx["analysisComplete"] = analysis_by_program[active_key]
+
+    checkout_summary = _compact_checkout_summary(open_programs, is_shared=is_shared)
+    if checkout_summary:
+        ctx["checkoutSummary"] = checkout_summary
+
     return ctx
 
-
-# ---------------------------------------------------------------------------
-# Injection helper (for call_tool post-processing)
-# ---------------------------------------------------------------------------
 
 # Tools that should NOT receive the projectContext injection
 # (their response is meta/administrative, not program data).
@@ -294,6 +394,22 @@ _SKIP_CONTEXT_TOOLS: frozenset[str] = frozenset({
     "debuginfo",
     "listtools",
 })
+
+
+def attach_project_context_to_payload(
+    payload: dict[str, Any],
+    session_id: str,
+    *,
+    tool_name_normalized: str = "",
+) -> None:
+    """Attach ``projectContext`` to an error or ad-hoc JSON payload when absent."""
+    if tool_name_normalized in _SKIP_CONTEXT_TOOLS:
+        return
+    if "projectContext" in payload:
+        return
+    ctx = collect_project_context(session_id)
+    if ctx is not None:
+        payload["projectContext"] = ctx
 
 
 def inject_project_context(
@@ -326,9 +442,154 @@ def inject_project_context(
     if "projectContext" in data:
         return response_text
 
-    ctx = collect_project_context(session_id)
-    if ctx is None:
+    attach_project_context_to_payload(
+        data,
+        session_id,
+        tool_name_normalized=tool_name_normalized,
+    )
+    if "projectContext" not in data:
+        return response_text
+    return _json.dumps(data)
+
+
+# Tools whose successful responses should carry uiVisibility / guiHint.
+# Keep aligned with _AUTO_CHECKIN_TRIGGER_TOOLS in tool_providers.py.
+_MUTATING_UI_HINT_TOOLS: frozenset[str] = frozenset(
+    {
+        "managesymbols",
+        "managefunction",
+        "managecomments",
+        "managestructures",
+        "manageenums",
+        "applydatatype",
+        "managebookmarks",
+        "managefunctiontags",
+        "matchfunction",
+        "resolvemodificationconflict",
+    }
+)
+
+# Multi-mode tools: only attach UI hints / auto-checkin when payload action is mutating.
+_MUTATING_TOOL_ACTIONS: dict[str, frozenset[str]] = {
+    "manageenums": frozenset(
+        {
+            "create",
+            "addmember",
+            "editmember",
+            "removemember",
+            "delete",
+        },
+    ),
+}
+
+
+def payload_has_mutating_action(tool_name_normalized: str, payload: dict[str, Any]) -> bool:
+    """Return True when a multi-mode tool response represents a state mutation."""
+    allowed = _MUTATING_TOOL_ACTIONS.get(tool_name_normalized)
+    if allowed is None:
+        return True
+    action_raw = payload.get("action")
+    if action_raw in (None, ""):
+        return False
+    return normalize_identifier(str(action_raw)) in allowed
+
+
+def _is_successful_mutation_payload(payload: dict[str, Any]) -> bool:
+    if payload.get("success") is False:
+        return False
+    if payload.get("modificationConflict") is True:
+        return False
+    error_value = payload.get("error")
+    if error_value not in (None, "", False):
+        return False
+    return True
+
+
+def build_ui_visibility(session_id: str, *, auto_checkin_enabled: bool) -> dict[str, Any]:
+    """Structured UI visibility metadata for mutating tool responses."""
+    session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
+    handle = session.project_handle
+    is_shared = is_shared_server_handle(handle)
+    return {
+        "liveInCodeBrowser": False,
+        "codeBrowserSync": "reload-or-checkout",
+        "runtime": "headless-mcp",
+        "persistence": "shared-checkin" if is_shared else "local-save",
+        "autoCheckinEnabled": auto_checkin_enabled,
+    }
+
+
+def build_gui_hint(session_id: str, *, auto_checkin_enabled: bool) -> str:
+    """Human-readable hint for agents about GUI visibility after mutations."""
+    session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
+    is_shared = is_shared_server_handle(session.project_handle)
+    parts = [
+        "Mutation applied in the headless MCP session (separate JVM from CodeBrowser).",
+    ]
+    if is_shared:
+        parts.append(
+            "On shared server: check in or sync, then reload or checkout in CodeBrowser to view changes.",
+        )
+    else:
+        parts.append(
+            "On local project: changes save to the .gpr; reload the program in CodeBrowser to view.",
+        )
+    if auto_checkin_enabled:
+        parts.append("Auto-checkin is enabled — persistence runs automatically after modifying tools.")
+    else:
+        parts.append("Call checkin-program to persist before viewing in CodeBrowser.")
+    return " ".join(parts)
+
+
+def attach_ui_hints_to_payload(
+    payload: dict[str, Any],
+    session_id: str,
+    *,
+    tool_name_normalized: str = "",
+    auto_checkin_enabled: bool = False,
+) -> None:
+    """Attach ``uiVisibility`` and ``guiHint`` when this is a successful mutating tool."""
+    if tool_name_normalized in _SKIP_CONTEXT_TOOLS:
+        return
+    if tool_name_normalized not in _MUTATING_UI_HINT_TOOLS:
+        return
+    if not payload_has_mutating_action(tool_name_normalized, payload):
+        return
+    if "uiVisibility" in payload or "guiHint" in payload:
+        return
+    if not _is_successful_mutation_payload(payload):
+        return
+    payload["uiVisibility"] = build_ui_visibility(session_id, auto_checkin_enabled=auto_checkin_enabled)
+    payload["guiHint"] = build_gui_hint(session_id, auto_checkin_enabled=auto_checkin_enabled)
+
+
+def inject_ui_hints(
+    response_text: str,
+    session_id: str,
+    *,
+    tool_name_normalized: str = "",
+    auto_checkin_enabled: bool = False,
+) -> str:
+    """Parse JSON tool response and inject UI hint fields for mutating tools."""
+    if tool_name_normalized in _SKIP_CONTEXT_TOOLS:
         return response_text
 
-    data["projectContext"] = ctx
+    import json as _json
+
+    try:
+        data = _json.loads(response_text)
+    except Exception:
+        return response_text
+
+    if not isinstance(data, dict):
+        return response_text
+
+    attach_ui_hints_to_payload(
+        data,
+        session_id,
+        tool_name_normalized=tool_name_normalized,
+        auto_checkin_enabled=auto_checkin_enabled,
+    )
+    if "uiVisibility" not in data and "guiHint" not in data:
+        return response_text
     return _json.dumps(data)

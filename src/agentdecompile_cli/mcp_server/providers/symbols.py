@@ -1,11 +1,12 @@
 """Symbol Tool Provider - manage-symbols, search-symbols, list-imports, list-exports, create-label.
 
-- manage-symbols: mode = symbols|classes|namespaces|imports|exports|create_label|count|
+- manage-symbols: mode = symbols|classes|namespaces|imports|exports|create_label|delete_label|count|
   rename_data|demangle. List/search/rename symbols; filterDefaultNames skips auto-generated
   names like FUN_00101000.
 - search-symbols (search-symbols-by-name): Query symbols by name/pattern.
 - list-imports / list-exports: Aliases that delegate to manage-symbols with mode imports/exports.
 - create-label: Alias for manage-symbols mode create_label.
+- delete-label: Alias for manage-symbols mode delete_label.
 """
 
 from __future__ import annotations
@@ -57,9 +58,63 @@ logger = logging.getLogger(__name__)
 _DEFAULT_NAME_RE = re.compile(r"^(FUN|LAB|SUB|DAT|EXT|PTR|ARRAY)_[0-9a-fA-F]+$")
 
 
+def _is_deletable_label_symbol(sym: Any) -> bool:
+    """True when a symbol is a user/custom LABEL safe to delete via delete_label."""
+    try:
+        name = str(sym.getName()).strip()
+    except Exception:
+        return False
+    if not name or SymbolUtil.is_default_symbol_name(name):
+        return False
+    if SymbolUtil.get_symbol_type_name(sym) != "label":
+        return False
+    try:
+        src = str(sym.getSource()).upper()
+        if "USER_DEFINED" in src or src.endswith("_USER_DEFINED"):
+            return True
+    except Exception:
+        pass
+    return True
+
+
+def select_label_symbol_for_delete(
+    symbols_at_address: list[Any],
+    *,
+    label_name: str | None,
+    primary_symbol: Any | None,
+) -> Any | None:
+    """Pick the label symbol to delete at an address."""
+    candidates = [sym for sym in symbols_at_address if _is_deletable_label_symbol(sym)]
+    if label_name:
+        for sym in candidates:
+            try:
+                if str(sym.getName()) == label_name:
+                    return sym
+            except Exception:
+                continue
+        return None
+    if primary_symbol is not None and _is_deletable_label_symbol(primary_symbol):
+        return primary_symbol
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        names = []
+        for sym in candidates:
+            try:
+                names.append(str(sym.getName()))
+            except Exception:
+                continue
+        raise ValueError(
+            "Multiple deletable labels at address; specify labelName. "
+            f"Candidates: {', '.join(names) if names else '(unknown)'}"
+        )
+    return None
+
+
 class SymbolToolProvider(ToolProvider):
     HANDLERS = {
         "createlabel": "_handle_create_label_alias",
+        "deletelabel": "_handle_delete_label_alias",
         "listexports": "_handle_list_exports_alias",
         "listimports": "_handle_list_imports_alias",
         "managesymbols": "_handle",
@@ -85,6 +140,7 @@ class SymbolToolProvider(ToolProvider):
                         "imports",
                         "exports",
                         "create_label",
+                        "delete_label",
                         "count",
                         "rename_data",
                         "demangle",
@@ -259,10 +315,14 @@ class SymbolToolProvider(ToolProvider):
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_create_label_alias")
         return await self._create_label(args)
 
+    async def _handle_delete_label_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle_delete_label_alias")
+        return await self._delete_label(args)
+
     async def _handle(self, args: dict[str, Any]) -> list[types.TextContent]:
         """Dispatch to mode-specific handler.
 
-        Modes: symbols, classes, namespaces, imports, exports, create_label, count, rename_data, demangle.
+        Modes: symbols, classes, namespaces, imports, exports, create_label, delete_label, count, rename_data, demangle.
         Uses normalized mode string (lowercase a-z only) to select handler function.
         """
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._handle")
@@ -278,6 +338,7 @@ class SymbolToolProvider(ToolProvider):
             "imports": self._list_imports,
             "exports": self._list_exports,
             "createlabel": self._create_label,
+            "deletelabel": self._delete_label,
             "count": self._count,
             "renamedata": self._rename_data,
             "demangle": self._demangle,
@@ -886,6 +947,53 @@ class SymbolToolProvider(ToolProvider):
         self._notify_versioned_checkout_after_program_edit(program, label_pp)
         self._record_pending_versioned_label(label_pp, str(addr), str(label))
         return create_success_response({"mode": "create_label", "address": str(addr), "label": label, "success": True})
+
+    async def _delete_label(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._delete_label")
+        addr_str = self._require_str(args, "addressorsymbol", "address", "addr", name="addressOrSymbol")
+        label_name = self._get_str(args, "labelname", "label", "name", default="").strip() or None
+
+        assert self.program_info is not None  # for type checker
+        program: GhidraProgram = self.program_info.program
+        label_pp = (self._get_str(args, "programpath", "binary", "path") or "").strip() or None
+
+        addr: GhidraAddress = self._resolve_address(addr_str, program=program)
+        st: GhidraSymbolTable = self._get_symbol_table(program)
+        symbols_at_address: list[GhidraSymbol] = []
+        try:
+            sym_iter = st.getSymbols(addr)
+            if sym_iter is not None:
+                for sym in sym_iter:
+                    symbols_at_address.append(sym)
+        except Exception:
+            symbols_at_address = []
+        primary_symbol: GhidraSymbol | None = st.getPrimarySymbol(addr)
+        target = select_label_symbol_for_delete(
+            symbols_at_address,
+            label_name=label_name,
+            primary_symbol=primary_symbol,
+        )
+        if target is None:
+            if label_name:
+                raise ValueError(f"No deletable label named '{label_name}' at {addr_str}")
+            raise ValueError(f"No deletable label at {addr_str}")
+
+        removed_label = str(target.getName())
+
+        def _delete_label_single() -> None:
+            st.removeSymbolSpecial(target)
+            self._touch_listing_for_shared_checkin(program)
+
+        self._run_program_transaction(program, "delete-label", _delete_label_single)
+        self._notify_versioned_checkout_after_program_edit(program, label_pp)
+        return create_success_response(
+            {
+                "mode": "delete_label",
+                "address": str(addr),
+                "label": removed_label,
+                "success": True,
+            }
+        )
 
     async def _count(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/symbols.py:SymbolToolProvider._count")

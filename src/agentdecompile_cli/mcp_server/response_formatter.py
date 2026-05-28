@@ -142,6 +142,7 @@ _DISABLABLE_RECOMMENDATION_TOOLS: set[str] = {
     Tool.MANAGE_FILES.normalized,
     Tool.MANAGE_FUNCTION.normalized,
     Tool.MANAGE_STRUCTURES.normalized,
+    Tool.MANAGE_ENUMS.normalized,
     Tool.MANAGE_SYMBOLS.normalized,
     Tool.SEARCH_STRINGS.normalized,
 }
@@ -561,6 +562,27 @@ def _next_steps_structures(data: dict[str, Any]) -> list[str]:
     return steps
 
 
+def _next_steps_enums(data: dict[str, Any]) -> list[str]:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_enums")
+    action: str = data.get("action", "")
+    steps: list[str] = []
+    if action == "list":
+        enums: list[dict[str, Any]] = data.get("enums", [])
+        if enums:
+            steps.append(f"Inspect enum: `manage-enums mode=info name={enums[0].get('name', '')}`.")
+        steps.append("Create new: `manage-enums mode=create name=MyEnum members=[{name:FLAG_A,value:0}]`.")
+    elif action == "info":
+        name = data.get("name", "")
+        steps.append(f"Add member: `manage-enums mode=add_member name={name} memberName=NEW_FLAG memberValue=1`.")
+        steps.append(f"Apply type: `apply-data-type addressOrSymbol=0x... dataTypeName={name}`.")
+    elif action == "create":
+        name = data.get("name", "")
+        steps.append(f"Add members: `manage-enums mode=add_member name={name} memberName=SECOND_FLAG memberValue=1`.")
+    elif action in ("add_member", "edit_member", "remove_member"):
+        steps.append("Use `manage-enums mode=info` to verify member names and values.")
+    return steps
+
+
 def _next_steps_constants(data: dict[str, Any]) -> list[str]:
     logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_next_steps_constants")
     mode: str = data.get("mode", "")
@@ -889,6 +911,10 @@ TOOL_GUIDANCE: dict[str, tuple[str, Callable[[dict[str, Any]], list[str]]]] = {
     "managestructures": (
         "Create, modify, and apply C-style struct/union definitions. Structures let you type raw memory regions so the decompiler shows field names instead of byte offsets. Parse C header syntax or build field-by-field.",
         _next_steps_structures,
+    ),
+    "manageenums": (
+        "Create, list, inspect, and edit enumerated types with integer members. Use COBRA_CASE member names and apply enums with apply-data-type.",
+        _next_steps_enums,
     ),
     "searchconstants": (
         "Scans instructions for numeric constants/immediates. Finds magic numbers, buffer sizes, API flags, and crypto constants. Use `specific` for exact values, `range` for value ranges, `common` for frequently-occurring constants.",
@@ -1246,6 +1272,13 @@ def _render_symbols(data: dict[str, Any]) -> str:
         else:
             lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
             lines.append(_md_bold_kv("Label", _md_code_inline(data.get("label", ""))))
+        return "\n".join(lines)
+
+    if mode == "delete_label":
+        lines.append(_md_heading(2, "Label Deleted"))
+        lines.append("")
+        lines.append(_md_bold_kv("Address", _md_code_inline(data.get("address", ""))))
+        lines.append(_md_bold_kv("Label", _md_code_inline(data.get("label", ""))))
         return "\n".join(lines)
 
     if mode == "rename_data":
@@ -1904,6 +1937,59 @@ def _render_structures(data: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     return _render_generic(data, "manage-structures")
+
+
+def _render_enums(data: dict[str, Any]) -> str:
+    logger.debug("diag.enter %s", "mcp_server/response_formatter.py:_render_enums")
+    action = data.get("action", "")
+    lines: list[str] = []
+
+    if action == "list":
+        lines.append(_md_heading(2, "Enums"))
+        lines.append("")
+        enums: list[dict[str, Any]] = data.get("enums", [])
+        if enums:
+            headers = ["Name", "Category", "Members"]
+            rows = [[e.get("name", ""), e.get("path", ""), str(e.get("memberCount", 0))] for e in enums]
+            lines.append(_md_table(headers, rows))
+        else:
+            lines.append("*No enums found.*")
+        return "\n".join(lines)
+
+    if action == "info":
+        lines.append(_md_heading(2, "Enum Info"))
+        lines.append("")
+        name = data.get("name", "")
+        if name:
+            lines.append(_md_bold_kv("Enum", _md_code_inline(name)))
+        members: list[dict[str, Any]] = data.get("members", [])
+        if members:
+            headers = ["Member", "Value"]
+            rows = [[m.get("name", ""), str(m.get("value", ""))] for m in members]
+            lines.append(_md_table(headers, rows))
+        else:
+            lines.append("*No members defined.*")
+        return "\n".join(lines)
+
+    if action in ("create", "delete", "add_member", "edit_member", "remove_member"):
+        lines.append(_md_heading(2, f"Enum {action.replace('_', ' ').title()}"))
+        lines.append("")
+        name = data.get("name") or data.get("enum", "")
+        if name:
+            lines.append(_md_bold_kv("Enum", _md_code_inline(str(name))))
+        member = data.get("member")
+        if member:
+            lines.append(_md_bold_kv("Member", _md_code_inline(str(member))))
+        if "value" in data:
+            lines.append(_md_bold_kv("Value", str(data.get("value"))))
+        if data.get("batch"):
+            results: list[dict[str, Any]] = data.get("results", [])
+            for row in results:
+                status = "OK" if row.get("success") else f"FAIL: {row.get('error', '')}"
+                lines.append(f"- `{row.get('name', '')}`: {status}")
+        return "\n".join(lines)
+
+    return _render_generic(data, "manage-enums")
 
 
 def _render_constants(data: dict[str, Any]) -> str:
@@ -2985,6 +3071,7 @@ TOOL_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "managecomments": _render_comments,
     "managebookmarks": _render_bookmarks,
     "managestructures": _render_structures,
+    "manageenums": _render_enums,
     "searchconstants": _render_constants,
     "analyzedataflow": _render_dataflow,
     "managedatatypes": _render_datatypes,
@@ -3100,6 +3187,29 @@ def render_tool_response(normalized_tool_name: str, data: dict[str, Any]) -> str
             ctx_parts.append(f"shared: {sh}:{sp}/{repo}")
         if ctx_parts:
             lines.append(" | ".join(ctx_parts))
+
+    ui_visibility: dict[str, Any] | None = data.get("uiVisibility") if isinstance(data, dict) else None
+    gui_hint = data.get("guiHint") if isinstance(data, dict) else None
+    if ui_visibility or gui_hint:
+        lines.append("")
+        lines.append(_md_heading(3, "UI Visibility"))
+        if isinstance(ui_visibility, dict):
+            vis_parts: list[str] = []
+            if ui_visibility.get("liveInCodeBrowser") is False:
+                vis_parts.append("not live in CodeBrowser")
+            persistence = ui_visibility.get("persistence")
+            if persistence:
+                vis_parts.append(f"persistence: `{persistence}`")
+            sync = ui_visibility.get("codeBrowserSync")
+            if sync:
+                vis_parts.append(f"sync: `{sync}`")
+            if ui_visibility.get("autoCheckinEnabled"):
+                vis_parts.append("auto-checkin enabled")
+            if vis_parts:
+                lines.append(" | ".join(vis_parts))
+        if gui_hint:
+            lines.append("")
+            lines.append(str(gui_hint))
 
     if guidance:
         description, next_steps_fn = guidance

@@ -480,6 +480,104 @@ _PROMPTS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
+# Rendering helpers (shared with Web UI)
+# ---------------------------------------------------------------------------
+
+
+class _FormatDict(dict[str, Any]):
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def _find_prompt_definition(name: str) -> dict[str, Any] | None:
+    for prompt_def in _PROMPTS:
+        if prompt_def["name"] == name:
+            return prompt_def
+    return None
+
+
+def build_prompt_render_args(
+    prompt_name: str,
+    arguments: dict[str, Any] | None,
+    *,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Build substitution map for prompt template placeholders."""
+    rendered = dict(arguments or {})
+
+    program_path = str(rendered.get("program_path") or "").strip()
+    if not program_path and session_id:
+        from agentdecompile_cli.mcp_server.program_metadata import collect_project_context
+
+        ctx = collect_project_context(session_id)
+        active_program = (ctx or {}).get("activeProgram")
+        if active_program:
+            program_path = str(active_program)
+    if program_path:
+        rendered["program_path"] = program_path
+    else:
+        rendered.pop("program_path", None)
+
+    keywords = (rendered.get("search_keywords") or "").strip()
+    rendered.setdefault("program_path", "(current project)")
+    rendered.setdefault("source_program_path", rendered.get("program_path", "(current project)"))
+    rendered.setdefault("target_program_path", "(target binary)")
+    rendered.setdefault("analysis_target", "reverse engineering target")
+    rendered.setdefault("prior_function_list", "")
+    rendered.setdefault("max_iterations", rendered.get("max_iterations") or 3)
+    rendered.setdefault("category_path", f"/RE_Analysis/{str(rendered['analysis_target']).replace(' ', '')}")
+    rendered.setdefault("bookmark_category", str(rendered["analysis_target"]).replace(" ", ""))
+    rendered.setdefault(
+        "keyword_clause",
+        f" using these keywords: {keywords}" if keywords else "",
+    )
+    if prompt_name == "re-bridge-builder":
+        rendered.setdefault("source_program_path", rendered.get("source_program_path") or "(source binary)")
+        rendered.setdefault("target_program_path", rendered.get("target_program_path") or "(target binary)")
+    return rendered
+
+
+def _validate_required_arguments(prompt_def: dict[str, Any], arguments: dict[str, Any]) -> None:
+    for arg in prompt_def.get("arguments", []):
+        arg_name = str(arg.get("name", ""))
+        if arg.get("required") and not str(arguments.get(arg_name, "")).strip():
+            raise ValueError(f"Missing required prompt argument: {arg_name}")
+
+
+def get_prompt(
+    name: str,
+    arguments: dict[str, Any] | None = None,
+    *,
+    session_id: str | None = None,
+) -> types.GetPromptResult:
+    """Render an MCP prompt template with argument and session substitution."""
+    logger.debug("diag.enter %s name=%s", "mcp_server/prompt_providers.py:get_prompt", name)
+    prompt_def = _find_prompt_definition(name)
+    if prompt_def is None:
+        raise ValueError(f"Unknown prompt: {name}")
+
+    raw_args = dict(arguments or {})
+    _validate_required_arguments(prompt_def, raw_args)
+    render_args = build_prompt_render_args(name, raw_args, session_id=session_id)
+
+    messages: list[types.PromptMessage] = []
+    for message in prompt_def.get("messages", []):
+        text = str(message.get("text", "")).format_map(_FormatDict(render_args))
+        role = str(message.get("role", "user"))
+        messages.append(
+            types.PromptMessage(
+                role=role,
+                content=types.TextContent(type="text", text=text),
+            ),
+        )
+
+    return types.GetPromptResult(
+        description=prompt_def.get("description"),
+        messages=messages,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 

@@ -1,8 +1,8 @@
 """Suggestion Tool Provider - get-suggestions (tool name 'suggest').
 
-- suggestionType: comment_type, comment_text, function_name, function_tags, variable_name, data_type.
-- addressOrSymbol / functionIdentifier define the context; variableName used for variable_name suggestions.
-- maxContext, includeCallers, includeCallees control how much surrounding context is fed to the suggestion engine. Suggestions are advisory only (no automatic edits).
+Stub tool: no-args call lists legacy suggestionType values. Typed calls raise
+not-implemented — use decompile-function for context and rename-function /
+manage-symbols to apply names (see AGENTS.md naming conventions).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class SuggestionToolProvider(ToolProvider):
         return [
             types.Tool(
                 name="suggest",
-                description="Generate smart analysis suggestions based on the immediate function code context. Note: Only supplies localized advice without executing changes.",
+                description="Reserved for future automated naming suggestions. Not implemented — use decompile-function and apply renames with rename-function / manage-symbols. No-args call lists suggestionType values for legacy clients.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -78,11 +78,10 @@ class SuggestionToolProvider(ToolProvider):
                         "variable_name",
                         "data_type",
                     ],
-                    "note": "Pass suggestionType and addressOrSymbol to request a suggestion for a specific function.",
+                    "note": "The suggest engine is not implemented. Use decompile-function plus rename tools. No-args call lists legacy suggestionType values.",
                 }
             )
 
-        program_path = self._require_str(args, "programpath", "program", "binary", name="program_path")
         suggestion_type = n(suggestion_type_raw)
         valid_suggestion_types: set[str] = {
             "commenttype",
@@ -93,28 +92,13 @@ class SuggestionToolProvider(ToolProvider):
             "datatype",
         }
         if suggestion_type not in valid_suggestion_types:
-            raise ValueError("Invalid suggestion_type")
+            raise ValueError(
+                "Invalid suggestionType. Valid values: comment_type, comment_text, "
+                "function_name, function_tags, variable_name, data_type."
+            )
 
-        addr = self._get_address_or_symbol(args)
-        variable_name = self._get_str(args, "variablename", "variable", default="")
-        max_context = self._get_int(args, "maxcontext", default=5)
-        include_callers = self._get_bool(args, "includecallers", default=False)
-        include_callees = self._get_bool(args, "includecallees", default=False)
-
-        response_context: dict[str, Any] = {
-            "programPath": program_path,
-            "maxContext": max_context,
-            "includeCallers": include_callers,
-            "includeCallees": include_callees,
-        }
-        if self.program_info is None or self.program_info.program is None:
-            response_context["note"] = "Context unavailable: no program loaded"
-
-        return create_success_response(
-            {
-                "suggestionType": suggestion_type,
-                "address": addr,
-                "variableName": variable_name,
-                "context": response_context,
-            },
+        raise ValueError(
+            "The suggest tool is not implemented. Use decompile-function (or get-function) for "
+            "pseudocode context, then apply names with rename-function, rename-variable, or "
+            "manage-symbols. Follow AGENTS.md naming conventions (camelCase locals, PascalCase types)."
         )

@@ -42,6 +42,40 @@ logger = logging.getLogger(__name__)
 # Cookie name for MCP session (allowlist only this cookie when forwarding to backend).
 _MCP_SESSION_COOKIE_NAME = "mcp_session_id"
 
+PROXY_FORWARDABLE_SHARED_HEADER_NAMES: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "mcp-session-id",
+        "x-ghidra-server-host",
+        "x-ghidra-server-port",
+        "x-ghidra-repository",
+        "x-agent-server-username",
+        "x-agent-server-password",
+        "x-agent-server-repository",
+        "x-agentdecompile-auto-match-propagate",
+        "x-agentdecompile-auto-match-target-paths",
+        "x-agentdecompile-project-path",
+    }
+)
+
+
+def forwardable_shared_headers_from_scope(scope: dict[str, Any]) -> dict[str, str]:
+    """Extract allowlisted client headers from an ASGI HTTP scope for backend forwarding."""
+    forwarded: dict[str, str] = {}
+    if scope.get("type") != "http":
+        return forwarded
+
+    key_b: bytes
+    value_b: bytes
+    for key_b, value_b in scope.get("headers", []):
+        key = key_b.decode("latin1").lower()
+        if key in PROXY_FORWARDABLE_SHARED_HEADER_NAMES:
+            forwarded[key_b.decode("latin1")] = value_b.decode("latin1").strip()
+    cookie_sid = _parse_mcp_session_cookie_from_scope(scope)
+    if cookie_sid:
+        forwarded["Cookie"] = f"{_MCP_SESSION_COOKIE_NAME}={cookie_sid}"
+    return forwarded
+
 
 def _parse_mcp_session_cookie_from_scope(scope: dict[str, Any]) -> str | None:
     """Parse Cookie header and return the value for mcp_session_id, or None."""
@@ -262,6 +296,7 @@ class AgentDecompileMcpProxyServer:
                     "x-agent-server-username",
                     "x-agent-server-password",
                     "x-agent-server-repository",
+                    "x-agentdecompile-project-path",
                 ],
                 "shared_server_http_mapping": {
                     "request_url": "Use the proxy MCP URL itself, typically http://host:port/mcp",
@@ -273,6 +308,8 @@ class AgentDecompileMcpProxyServer:
                         "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": ["Authorization", "X-Agent-Server-Password"],
                         "AGENTDECOMPILE_AUTO_MATCH_PROPAGATE": ["X-AgentDecompile-Auto-Match-Propagate"],
                         "AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS": ["X-AgentDecompile-Auto-Match-Target-Paths"],
+                        "AGENTDECOMPILE_PROJECT_PATH": ["X-AgentDecompile-Project-Path"],
+                        "AGENT_DECOMPILE_PROJECT_PATH": ["X-AgentDecompile-Project-Path"],
                     },
                     "transport_headers": {
                         "content-type": "application/json",
@@ -323,35 +360,6 @@ class AgentDecompileMcpProxyServer:
 
         mcp_handle = self._session_manager.handle_request
 
-        def _forwardable_shared_headers(scope: dict[str, Any]) -> dict[str, str]:
-            forwarded: dict[str, str] = {}
-            if scope.get("type") != "http":
-                return forwarded
-
-            allowed_headers: set[str] = {
-                "authorization",
-                "mcp-session-id",
-                "x-ghidra-server-host",
-                "x-ghidra-server-port",
-                "x-ghidra-repository",
-                "x-agent-server-username",
-                "x-agent-server-password",
-                "x-agent-server-repository",
-                "x-agentdecompile-auto-match-propagate",
-                "x-agentdecompile-auto-match-target-paths",
-            }
-            key_b: bytes
-            value_b: bytes
-            for key_b, value_b in scope.get("headers", []):
-                key = key_b.decode("latin1").lower()
-                if key in allowed_headers:
-                    forwarded[key_b.decode("latin1")] = value_b.decode("latin1").strip()
-            # Forward only the MCP session cookie (allowlist) so backend receives session id via cookie.
-            cookie_sid = _parse_mcp_session_cookie_from_scope(scope)
-            if cookie_sid:
-                forwarded["Cookie"] = f"{_MCP_SESSION_COOKIE_NAME}={cookie_sid}"
-            return forwarded
-
         async def _mcp_asgi(scope: dict[str, Any], receive: Callable[[], Awaitable[Message]], send: Callable[[Message], Awaitable[None]]) -> None:
             session_id: str = "default"
             user_agent: str = ""
@@ -377,7 +385,7 @@ class AgentDecompileMcpProxyServer:
                         session_id = cookie_sid
                 session_id = _validate_session_id(session_id)
 
-            self._bridge._set_streamable_http_headers(session_id, _forwardable_shared_headers(scope))
+            self._bridge._set_streamable_http_headers(session_id, forwardable_shared_headers_from_scope(scope))
 
             pre_sessions: set[str] = set(session_manager._server_instances.keys())
 

@@ -44,6 +44,12 @@ from agentdecompile_cli.mcp_utils.program_analysis import (
 
 # iter_items imported lazily in _resolve_function to avoid circular import
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
+from agentdecompile_cli.mcp_server.program_metadata import (  # pyright: ignore[reportMissingImports]
+    attach_project_context_to_payload,
+    inject_project_context,
+    inject_ui_hints,
+    payload_has_mutating_action,
+)
 from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[reportMissingImports]
     SESSION_CONTEXTS,
     get_current_mcp_session_id,
@@ -151,6 +157,7 @@ _AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset(
         "managefunction",
         "managecomments",
         "managestructures",
+        "manageenums",
         "applydatatype",
         "managebookmarks",
         "managefunctiontags",
@@ -655,6 +662,8 @@ def create_error_response(
     *,
     context: dict[str, Any] | None = None,
     next_steps: list[str] | None = None,
+    session_id: str | None = None,
+    tool_name_normalized: str = "",
 ) -> list[types.TextContent]:
     """Create a standardized MCP error response with optional actionable metadata."""
     logger.debug("diag.enter %s", "mcp_server/tool_providers.py:create_error_response")
@@ -679,6 +688,15 @@ def create_error_response(
                 payload[key] = value
     if next_steps:
         payload["nextSteps"] = next_steps
+    try:
+        sid = session_id if session_id is not None else get_current_mcp_session_id()
+        attach_project_context_to_payload(
+            payload,
+            sid,
+            tool_name_normalized=tool_name_normalized,
+        )
+    except Exception as inject_exc:
+        logger.debug("project_context_error_inject_skip: %s", inject_exc)
     return [types.TextContent(type="text", text=_json.dumps(payload))]
 
 
@@ -888,18 +906,24 @@ class ToolProvider:
 
             # --- Inject projectContext into successful JSON responses ---
             try:
-                from agentdecompile_cli.mcp_server.program_metadata import inject_project_context
                 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id as _get_sid
 
                 sid = _get_sid()
                 if result and isinstance(result[0], types.TextContent):
+                    injected_text = inject_project_context(
+                        result[0].text,
+                        sid,
+                        tool_name_normalized=norm_name,
+                    )
+                    injected_text = inject_ui_hints(
+                        injected_text,
+                        sid,
+                        tool_name_normalized=norm_name,
+                        auto_checkin_enabled=_auto_checkin_enabled(),
+                    )
                     result[0] = types.TextContent(
                         type="text",
-                        text=inject_project_context(
-                            result[0].text,
-                            sid,
-                            tool_name_normalized=norm_name,
-                        ),
+                        text=injected_text,
                     )
             except Exception as inject_exc:
                 logger.debug("project_context_inject_skip: %s", inject_exc)
@@ -927,6 +951,7 @@ class ToolProvider:
                     },
                     extra_context,
                 ),
+                tool_name_normalized=norm_name,
             )
 
     @staticmethod
@@ -1744,6 +1769,7 @@ class ToolProviderManager:
             DataToolProvider,
             DataTypeToolProvider,
             DecompilerToolProvider,
+            EnumToolProvider,
             FunctionToolProvider,
             GetFunctionAioToolProvider,
             GetFunctionToolProvider,
@@ -1772,6 +1798,7 @@ class ToolProviderManager:
             DataToolProvider,
             DataTypeToolProvider,
             DecompilerToolProvider,
+            EnumToolProvider,
             GetFunctionAioToolProvider,
             FunctionToolProvider,
             GetFunctionToolProvider,
@@ -2727,6 +2754,9 @@ class ToolProviderManager:
                 tool_success = parsed.get("success", True) is not False and parsed.get("modificationConflict") is not True and "error" not in (parsed.get("error") or "")
             except Exception:
                 tool_success = False
+            if tool_success:
+                if not payload_has_mutating_action(norm_name, parsed):
+                    tool_success = False
             if tool_success:
                 try:
                     await self.call_tool(

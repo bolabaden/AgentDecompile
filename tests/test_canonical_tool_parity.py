@@ -359,7 +359,7 @@ def test_default_surface_advertises_all_non_gui_canonical_tools(monkeypatch: pyt
     advertised = _build_advertised_tools()
 
     assert get_active_tool_surface_profile() == "full"
-    assert len(advertised) == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS) == 55
+    assert len(advertised) == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS)
     assert {tool.value for tool in DISABLED_GUI_ONLY_TOOLS}.isdisjoint(advertised)
     assert "list-functions" in advertised
     assert "get-functions" in advertised

@@ -12,6 +12,7 @@ from .memory import MemoryToolProvider
 from .data import DataToolProvider
 from .strings import StringToolProvider
 from .structures import StructureToolProvider
+from .enums import EnumToolProvider
 from .xrefs import CrossReferencesToolProvider
 from .comments import CommentToolProvider
 from .conflict_resolution import ConflictResolutionToolProvider
@@ -52,6 +53,7 @@ __all__ = [
     "SearchEverythingToolProvider",
     "StringToolProvider",
     "StructureToolProvider",
+    "EnumToolProvider",
     "SuggestionToolProvider",
     "SymbolToolProvider",
     "VtableToolProvider",

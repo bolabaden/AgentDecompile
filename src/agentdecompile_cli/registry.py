@@ -141,6 +141,7 @@ class Tool(str, Enum):
     MANAGE_BOOKMARKS = "manage-bookmarks"
     MANAGE_COMMENTS = "manage-comments"
     MANAGE_DATA_TYPES = "manage-data-types"
+    MANAGE_ENUMS = "manage-enums"
     MANAGE_FILES = "manage-files"
     MANAGE_FUNCTION_TAGS = "manage-function-tags"
     MANAGE_FUNCTION = "manage-function"
@@ -401,6 +402,23 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.MANAGE_BOOKMARKS.value: _params("programPath", "mode", "addressOrSymbol", "type", "category", "comment", "bookmarks", "searchText", "maxResults", "removeAll", "addressRange", "categories", "types"),
     Tool.MANAGE_COMMENTS.value: _params("programPath", "mode", "addressOrSymbol", "function", "lineNumber", "comment", "commentType", "comments", "start", "end", "commentTypes", "searchText", "pattern", "caseSensitive", "maxResults", "overrideMaxFunctionsLimit", "addressRange"),
     Tool.MANAGE_DATA_TYPES.value: _params("programPath", "mode", "archiveName", "categoryPath", "includeSubcategories", "startIndex", "maxCount", "offset", "limit", "dataTypeString", "addressOrSymbol"),
+    Tool.MANAGE_ENUMS.value: _params(
+        "programPath",
+        "mode",
+        "name",
+        "enumName",
+        "categoryPath",
+        "description",
+        "memberName",
+        "newMemberName",
+        "memberValue",
+        "value",
+        "members",
+        "nameFilter",
+        "query",
+        "filter",
+        "maxResults",
+    ),
     Tool.MANAGE_FILES.value: _params(
         "mode",
         "path",
@@ -608,6 +626,12 @@ NON_ADVERTISED_TOOL_ALIASES: dict[str, str] = {
     "parse-c-header": Tool.MANAGE_STRUCTURES.value,
     "parse-c-structure": Tool.MANAGE_STRUCTURES.value,
     "validate-c-structure": Tool.MANAGE_STRUCTURES.value,
+    # manage-enums overloads
+    "create-enum": Tool.MANAGE_ENUMS.value,
+    "delete-enum": Tool.MANAGE_ENUMS.value,
+    "edit-enum": Tool.MANAGE_ENUMS.value,
+    "get-enum-info": Tool.MANAGE_ENUMS.value,
+    "list-enums": Tool.MANAGE_ENUMS.value,
     # manage-symbols overloads/legacy
     "list-classes": Tool.MANAGE_SYMBOLS.value,
     "list-namespaces": Tool.MANAGE_SYMBOLS.value,
@@ -939,8 +963,9 @@ _add_builtin_param_aliases()
 # Default advertised surface (MCP + CLI) is blacklist-driven.
 # All tools remain accepted via normalize/resolve/dispatch regardless of advertisement.
 # New tools are auto-advertised unless added to this hidden set.
-# Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols
-# (create_label, rename_data) are advertised by default for annotation and organization.
+# Curated surface (AGENTDECOMPILE_TOOL_SURFACE=curated) hides these; full/legacy still advertise them.
+# List/search primitives (list-functions, search-code, etc.) stay off this set so curated agents see them.
+# Workflow routers (search-everything, get-function) belong here so curated surface demotes them to full.
 _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
     {
         Tool.ANALYZE_DATA_FLOW,
@@ -948,14 +973,12 @@ _DEFAULT_HIDDEN_TOOLS: frozenset[Tool] = frozenset(
         Tool.DELETE_PROJECT_BINARY,
         Tool.GEN_CALLGRAPH,
         Tool.GET_DATA,
+        Tool.GET_FUNCTION,
         Tool.GET_FUNCTIONS,
-        Tool.LIST_EXPORTS,
         Tool.LIST_CROSS_REFERENCES,
         Tool.LIST_FALLBACK_PROJECTS,
-        Tool.LIST_FUNCTIONS,
-        Tool.LIST_IMPORTS,
-        Tool.LIST_STRINGS,
         Tool.REINTEGRATE_FALLBACK_PROJECTS,
+        Tool.SEARCH_EVERYTHING,
         Tool.SUGGEST,
     },
 )
@@ -992,6 +1015,7 @@ _MULTI_MODE_TOOLS: frozenset[Tool] = frozenset(
         Tool.MANAGE_BOOKMARKS,
         Tool.MANAGE_COMMENTS,
         Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_ENUMS,
         Tool.MANAGE_FILES,
         Tool.MANAGE_FUNCTION,
         Tool.MANAGE_FUNCTION_TAGS,
@@ -1017,6 +1041,7 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
         Tool.MANAGE_BOOKMARKS,
         Tool.MANAGE_COMMENTS,
         Tool.MANAGE_DATA_TYPES,
+        Tool.MANAGE_ENUMS,
         Tool.MANAGE_FILES,
         Tool.MANAGE_FUNCTION,
         Tool.MANAGE_FUNCTION_TAGS,

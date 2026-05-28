@@ -6,6 +6,8 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 
 `docs/solutions/` — documented solutions to past problems (MCP/Ghidra integration, analysis gate, CLI agents, workflows), organized by category with YAML frontmatter (`module`, `problem_type`, `component`, `tags`). Relevant when implementing or debugging in those areas; search by module or tag before changing `src/agentdecompile_cli/`.
 
+**Agent-native audit (2026-05-24):** [docs/audits/2026-05-24-agent-native-audit.md](docs/audits/2026-05-24-agent-native-audit.md) — scored MCP/CLI/GUI parity review; P1 follow-ups in [docs/residual-review-findings/impl-agent-native-audit-c2bc.md](docs/residual-review-findings/impl-agent-native-audit-c2bc.md). Patterns: [docs/solutions/architecture-patterns/agent-native-mcp-patterns.md](docs/solutions/architecture-patterns/agent-native-mcp-patterns.md).
+
 ## Cursor Cloud specific instructions
 
 ### Environment

@@ -223,6 +223,7 @@ def _mcp_post_openapi_extra() -> dict[str, Any]:
                                     "resources/list",
                                     "resources/read",
                                     "prompts/list",
+                                    "prompts/get",
                                 ],
                             },
                             "params": {"type": "object", "additionalProperties": True},
@@ -591,6 +592,17 @@ class PythonMcpServer:
             """List all available MCP prompts."""
             return prompt_providers.list_prompts()
 
+        @server.get_prompt()
+        async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+            """Render an MCP prompt with session-aware substitution."""
+            from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+
+            return prompt_providers.get_prompt(
+                name,
+                dict(arguments or {}),
+                session_id=get_current_mcp_session_id(),
+            )
+
         return server
 
     # Paths that the MCP session handler should serve.
@@ -695,6 +707,7 @@ class PythonMcpServer:
                         "resources/list",
                         "resources/read",
                         "prompts/list",
+                        "prompts/get",
                     ],
                 },
                 "auth_and_shared_project": {

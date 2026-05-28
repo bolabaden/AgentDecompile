@@ -40,6 +40,7 @@ from agentdecompile_cli.mcp_server.session_context import (
 )
 from agentdecompile_cli.mcp_server.tool_providers import (
     ToolProvider,
+    create_error_response,
     create_success_response,
 )
 from agentdecompile_cli.registry import Tool
@@ -1433,123 +1434,89 @@ class ImportExportToolProvider(ToolProvider):
                                 logger.warning("import-binary: open succeeded but ghidra_project is still None; imports may not persist to the expected project")
                     except Exception as e:
                         logger.warning(
-                            "import-binary: failed to auto-open project from %s: %s; will use temporary ProjectManager (imports may not persist)",
+                            "import-binary: failed to auto-open project from %s: %s",
                             project_path_str,
                             e,
                         )
 
+        if ghidra_project is None:
+            return create_error_response(
+                "No Ghidra project is open; import-binary cannot persist files to disk.",
+                next_steps=[
+                    "Call open with your project directory or .gpr path before import-binary.",
+                    "Set AGENT_DECOMPILE_PROJECT_PATH (or AGENTDECOMPILE_PROJECT_PATH) on the MCP server process.",
+                    "Pass binary paths as positional arguments to agentdecompile-server so the project opens at startup.",
+                ],
+                tool_name_normalized="importbinary",
+            )
+
         try:
-            if ghidra_project is not None:
-                from java.io import File  # pyright: ignore[reportMissingImports]
+            from java.io import File  # pyright: ignore[reportMissingImports]
 
-                for item in self._iter_files_to_import(source, recursive, max_depth):
-                    discovered_count += 1
-                    name = (prog_name or item.name or "").strip() or item.name
-                    try:
-                        program = ghidra_project.importProgram(File(str(item)))
-                        if program is None:
-                            raise RuntimeError("importProgram returned None")
-                        # Always saveAs into the project domain. Previously saveAs ran only when the
-                        # display name differed from the source filename, so imports like foo.exe
-                        # never persisted and list-project-files saw an empty tree (matches PyGhidraContext.import_binary).
-                        try:
-                            if hasattr(program, "setName"):
-                                program.setName(name)
-                            elif hasattr(program, "name"):
-                                setattr(program, "name", name)
-                        except Exception:
-                            pass
-                        ghidra_project.saveAs(program, dest_folder, name, True)
-                        final_name = name
-                        path_in_project = ""
-                        try:
-                            df = program.getDomainFile()
-                            if df is not None:
-                                path_in_project = str(df.getPathname())
-                        except Exception:
-                            pass
-                        if not path_in_project:
-                            path_in_project = f"/{final_name}" if dest_folder in ("/", "") else f"{dest_folder}/{final_name}"
-                        imported_programs.append(
-                            {
-                                "sourcePath": str(item),
-                                "programName": final_name,
-                                "programPath": path_in_project,
-                            },
-                        )
-                        self._merge_imported_program_into_session_binaries(
-                            session_id,
-                            program_name=final_name,
-                            path_in_project=path_in_project,
-                        )
-                        from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
-                        from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
-                        from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
-
-                        _dec = None
-                        try:
-                            _dec = open_decompiler_for_program(program)
-                        except Exception:
-                            logger.debug("Failed to open decompiler for imported program '%s'; continuing without decompiler.", final_name, exc_info=True)
-                        _pi = _ProgramInfo(
-                            name=final_name,
-                            program=program,
-                            flat_api=None,
-                            decompiler=_dec,
-                            metadata={},
-                            ghidra_analysis_complete=False,
-                            file_path=item,
-                            load_time=time.time(),
-                        )
-                        SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
-                        blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
-                        # Leave program in project; do not release (we are not the consumer)
-                    except Exception as exc:
-                        errors.append({"path": str(item), "error": str(exc)})
-            else:
-                # Fallback: no ghidra_project available. Create a temporary ProjectManager.
-                # WARNING: This creates a separate project that gets cleaned up, so imports won't
-                # persist to the main project. Users should open first or ensure
-                # AGENT_DECOMPILE_PROJECT_PATH is set.
-                from agentdecompile_cli.project_manager import ProjectManager
-
-                manager = ProjectManager()
+            for item in self._iter_files_to_import(source, recursive, max_depth):
+                discovered_count += 1
+                name = (prog_name or item.name or "").strip() or item.name
                 try:
-                    for item in self._iter_files_to_import(source, recursive, max_depth):
-                        discovered_count += 1
-                        try:
-                            program = manager.import_binary(item, program_name=prog_name or item.name)
-                            if program is None:
-                                raise RuntimeError("import_binary returned None")
-                            prog_name_final = program.getName() if hasattr(program, "getName") else item.name
-                            path_in_project = f"/{prog_name_final}"
-                            imported_programs.append({"sourcePath": str(item), "programName": prog_name_final})
-                            from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
-                            from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
+                    program = ghidra_project.importProgram(File(str(item)))
+                    if program is None:
+                        raise RuntimeError("importProgram returned None")
+                    # Always saveAs into the project domain. Previously saveAs ran only when the
+                    # display name differed from the source filename, so imports like foo.exe
+                    # never persisted and list-project-files saw an empty tree (matches PyGhidraContext.import_binary).
+                    try:
+                        if hasattr(program, "setName"):
+                            program.setName(name)
+                        elif hasattr(program, "name"):
+                            setattr(program, "name", name)
+                    except Exception:
+                        pass
+                    ghidra_project.saveAs(program, dest_folder, name, True)
+                    final_name = name
+                    path_in_project = ""
+                    try:
+                        df = program.getDomainFile()
+                        if df is not None:
+                            path_in_project = str(df.getPathname())
+                    except Exception:
+                        pass
+                    if not path_in_project:
+                        path_in_project = f"/{final_name}" if dest_folder in ("/", "") else f"{dest_folder}/{final_name}"
+                    imported_programs.append(
+                        {
+                            "sourcePath": str(item),
+                            "programName": final_name,
+                            "programPath": path_in_project,
+                        },
+                    )
+                    self._merge_imported_program_into_session_binaries(
+                        session_id,
+                        program_name=final_name,
+                        path_in_project=path_in_project,
+                    )
+                    from agentdecompile_cli.launcher import ProgramInfo as _ProgramInfo
+                    from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
+                    from agentdecompile_cli.mcp_utils.program_analysis import blocking_ensure_analyzed
 
-                            _pi = _ProgramInfo(
-                                name=prog_name_final,
-                                program=program,
-                                flat_api=None,
-                                decompiler=None,
-                                metadata={},
-                                ghidra_analysis_complete=False,
-                                file_path=str(item),
-                                load_time=time.time(),
-                            )
-                            SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
-                            blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
-                            # Merge into session binaries so list-project-files can see it (even though
-                            # the underlying project may be temporary).
-                            self._merge_imported_program_into_session_binaries(
-                                session_id,
-                                program_name=prog_name_final,
-                                path_in_project=path_in_project,
-                            )
-                        except Exception as exc:
-                            errors.append({"path": str(item), "error": str(exc)})
-                finally:
-                    manager.cleanup()
+                    _dec = None
+                    try:
+                        _dec = open_decompiler_for_program(program)
+                    except Exception:
+                        logger.debug("Failed to open decompiler for imported program '%s'; continuing without decompiler.", final_name, exc_info=True)
+                    _pi = _ProgramInfo(
+                        name=final_name,
+                        program=program,
+                        flat_api=None,
+                        decompiler=_dec,
+                        metadata={},
+                        ghidra_analysis_complete=False,
+                        file_path=item,
+                        load_time=time.time(),
+                    )
+                    SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
+                    blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
+                    # Leave program in project; do not release (we are not the consumer)
+                except Exception as exc:
+                    errors.append({"path": str(item), "error": str(exc)})
         except Exception as exc:
             return create_success_response(
                 {
