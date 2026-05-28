@@ -1,7 +1,9 @@
 ---
 title: DHH-style Python simplification (analysis gate)
-status: active
+status: completed
+completed: 2026-05-28
 created: 2026-05-24
+note: Landed via blocking-analysis-gate (#39–#45); program_analysis.py single coordinator
 ---
 
 # DHH-style Python simplification

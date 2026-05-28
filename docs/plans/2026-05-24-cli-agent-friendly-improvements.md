@@ -1,7 +1,9 @@
 ---
 title: CLI agent-friendly improvements
-status: active
+status: completed
+completed: 2026-05-28
 created: 2026-05-24
+note: Implemented on master (src/agentdecompile_cli/cli_agent_help.py, tests/test_cli_agent_help.py — 12 unit tests)
 ---
 
 # CLI agent-friendly improvements

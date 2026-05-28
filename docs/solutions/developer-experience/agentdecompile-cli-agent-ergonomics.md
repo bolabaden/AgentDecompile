@@ -54,5 +54,5 @@ agentdecompile-cli tool
 
 ## Related
 
-- Plan: `docs/plans/2026-05-24-cli-agent-friendly-improvements.md`
-- Tests: `tests/test_cli_agent_help.py`
+- Plan: `docs/plans/2026-05-24-cli-agent-friendly-improvements.md` (completed 2026-05-28)
+- Tests: `tests/test_cli_agent_help.py` (12 tests; 124 total in full unit suite)
