@@ -7,7 +7,7 @@
 
 **PR #44:** [#44](https://github.com/bolabaden/AgentDecompile/pull/44) — **merged** to `master` as `7359c6a` (2026-05-27, squash)  
 **PR #45:** [#45](https://github.com/bolabaden/AgentDecompile/pull/45) — **merged** to `master` as `00cfca2` (post-merge `program_analysis.__all__` + docs)  
-**PR #53:** [#53](https://github.com/bolabaden/AgentDecompile/pull/53) — **open** (`lfg-nightly.yml`; merge SHA pending squash merge)  
+**PR #53:** [#53](https://github.com/bolabaden/AgentDecompile/pull/53) — **merged** to `master` as `83dbf31` (2026-05-28, squash; `lfg-nightly.yml` weekly + dispatch)  
 **LFG pass:** [docs/plans/2026-05-24-lfg-strategy-doc-code-review.md](../plans/2026-05-24-lfg-strategy-doc-code-review.md)  
 **Follow-up:** `STRATEGY.md` and doc-only commits land via `impl/post-merge-strategy-docs-c2bc`
 

@@ -1,10 +1,11 @@
 ---
 title: LFG — ship PR #53 nightly CI workflow
 type: feat
-status: active
+status: completed
 date: 2026-05-28
 branch: impl/lfg-nightly-ci-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/53
+merge_commit: 83dbf31
 origin: docs/plans/2026-05-28-lfg-nightly-ci-c2bc.md
 ---
 

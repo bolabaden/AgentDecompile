@@ -1,10 +1,11 @@
 ---
 title: LFG nightly CI workflow
 type: feat
-status: implemented
+status: completed
 date: 2026-05-28
 branch: impl/lfg-nightly-ci-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/53
+merge_commit: 83dbf31
 origin: docs/residual-review-findings/impl-blocking-analysis-gate-c2bc.md
 ---
 
