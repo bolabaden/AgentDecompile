@@ -98,8 +98,10 @@ uv run pytest tests/ -m "not slow" -v
 # Fast smoke only (CI unit job includes these)
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 
-# Full stack — requires GHIDRA_INSTALL_DIR, shared server creds, long runtime
+# Full stack — requires GHIDRA_INSTALL_DIR; self-managed server via LFG_MANAGE_GHIDRA_SERVER=1 (see nightly CI)
 LFG_RUN=1 uv run pytest tests/test_lfg_e2e.py -m lfg -v --timeout=900
+
+# GitHub Actions: weekly + manual — `.github/workflows/lfg-nightly.yml`
 
 # Single-process driver (same code path as pytest full stack)
 uv run python scripts/lfg_validation.py --run-id <id> --manage-mcp --prepare-local-dir

@@ -1,0 +1,80 @@
+name: LFG nightly validation
+
+on:
+  schedule:
+    # Weekly Sunday 06:00 UTC — canonical /lfg stack (opt-in heavy job)
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+    inputs:
+      ghidra_version:
+        description: Ghidra version for setup-ghidra
+        required: false
+        default: "12.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lfg-full-stack:
+    name: pytest -m lfg (full /lfg stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: "microsoft"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Ghidra
+        uses: antoniovazquezblanco/setup-ghidra@v2.0.16
+        with:
+          version: ${{ inputs.ghidra_version || '12.0' }}
+          auth_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Install PyGhidra from local Ghidra
+        run: uv pip install "${GHIDRA_INSTALL_DIR}/Ghidra/Features/PyGhidra/pypkg"
+
+      - name: Run full /lfg stack (test_lfg_e2e -m lfg)
+        env:
+          GHIDRA_INSTALL_DIR: ${{ env.GHIDRA_INSTALL_DIR }}
+          LFG_RUN: "1"
+          LFG_MANAGE_GHIDRA_SERVER: "1"
+          LFG_RUN_ID: ci_${{ github.run_id }}
+          # Local self-managed Ghidra Server + MCP — do not inherit proxy/shared-server creds
+          AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME: ""
+          AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD: ""
+          AGENT_DECOMPILE_GHIDRA_SERVER_HOST: ""
+          AGENT_DECOMPILE_GHIDRA_SERVER_PORT: ""
+          AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY: ""
+        run: |
+          uv run pytest tests/test_lfg_e2e.py -m lfg -v --timeout=900 --tb=short
+
+      - name: Upload LFG artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lfg-run-${{ github.run_id }}
+          path: .lfg_run/
+          retention-days: 7
+          if-no-files-found: ignore
