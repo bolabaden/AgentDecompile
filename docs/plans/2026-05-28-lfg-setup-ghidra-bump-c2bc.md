@@ -1,9 +1,11 @@
 ---
 title: LFG — bump setup-ghidra to v2.1.2 and close stale plans
 type: chore
-status: active
+status: completed
 date: 2026-05-28
 branch: impl/setup-ghidra-bump-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/55
+merge_commit: 5adc8a3
 origin: dependabot PR #38
 ---
 
