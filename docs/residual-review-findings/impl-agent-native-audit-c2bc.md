@@ -8,7 +8,7 @@ audit: docs/audits/2026-05-24-agent-native-audit.md
 
 From [2026-05-24 agent-native audit](../audits/2026-05-24-agent-native-audit.md). Implementation is **out of scope** for the audit PR; track here for follow-up slices.
 
-**Residual actionable work: none.** (PR #49 merged squash `13200d6`, 2026-05-28.)
+**Residual actionable work: none.** Agent-native audit arc complete on `master` (PR #49 `13200d6`, PR #50 closeout `049a9f7`, 2026-05-28).
 
 ## P1 — high impact, low–medium effort
 
@@ -74,7 +74,7 @@ Optional polish from P1-1 review — status:
 
 **Verification:** `uv run pytest -m unit -q --timeout=120` · `gh pr checks 49`
 
-**Merged:** squash `13200d6` on `master` (2026-05-28).
+**Merged:** squash `13200d6` on `master` (2026-05-28). Post-merge closeout docs: squash `049a9f7` (PR #50, 2026-05-28).
 
 ## Final LFG verification (2026-05-24)
 
