@@ -72,4 +72,4 @@ Registry: **60 canonical**, **4 GUI-only hidden**, **56 advertised** by default.
 
 - Audit: `docs/audits/2026-05-24-agent-native-audit.md`
 - Residual tracker: `docs/residual-review-findings/impl-agent-native-audit-c2bc.md`
-- PR: https://github.com/bolabaden/AgentDecompile/pull/49
+- PR: https://github.com/bolabaden/AgentDecompile/pull/49 (merged squash `13200d6`, 2026-05-28)
