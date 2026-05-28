@@ -1,9 +1,11 @@
 ---
 title: LFG — batch CI GitHub Actions bumps
 type: chore
-status: active
+status: completed
 date: 2026-05-28
 branch: impl/ci-actions-bump-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/57
+merge_commit: 382698b
 origin: Dependabot PRs #25, #31, #36, #37
 ---
 
