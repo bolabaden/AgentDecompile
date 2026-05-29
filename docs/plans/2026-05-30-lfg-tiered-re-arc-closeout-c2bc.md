@@ -4,7 +4,8 @@ type: chore
 status: completed
 date: 2026-05-30
 branch: impl/tiered-re-arc-closeout-c2bc
-merge_sha: 7540604
+pr: https://github.com/bolabaden/AgentDecompile/pull/90
+merge_sha: a5a9e22
 ---
 
 # LFG — Tiered RE arc closeout + master verify
