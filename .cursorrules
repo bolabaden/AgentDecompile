@@ -2,7 +2,7 @@
 
 **What this is:** AgentDecompile provides a comprehensive Model Context Protocol (MCP) server for interactive reverse engineering with Ghidra/PyGhidra. The **Python implementation** (`src/agentdecompile_cli/`) is the **authoritative source of truth** and the Java implementation has been removed.
 
-**Canonical tool set:** 60 tools in `registry.py` (56 advertised by default; 4 GUI-only hidden), fully specified in [TOOLS_LIST.md](TOOLS_LIST.md).
+**Canonical tool set:** 66 tools in `registry.py` (62 advertised by default; 4 GUI-only hidden), fully specified in [TOOLS_LIST.md](TOOLS_LIST.md).
 
 ## Planning and Documentation Diagram Policy
 

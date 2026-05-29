@@ -6,8 +6,8 @@ Structured inventory of what agents can do with AgentDecompile. For workflow gui
 
 | Tier | Ghidra MCP? | When |
 |------|-------------|------|
-| 0 | No | File metadata, strings, headers, yara/capa — **before** `open-project` |
-| 1 | Batch CLI | `ghidrecomp`, export/SARIF — offline bulk |
+| 0 | No | `run-file-triage`, `run-external-re-scan` — file metadata, strings, yara/capa/binwalk — **before** `open-project` |
+| 1 | Batch MCP (or CLI) | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`; or `agentdecompile-cli ghidrecomp` — offline bulk |
 | 2 | Read-only MCP | `list-*`, `search-*`, xrefs — **`analysis_tier: 2`** in tool reference metadata |
 | 3 | Deep/mutate | `decompile-function`, `manage-*`, `match-function` — **`analysis_tier: 3`** |
 
@@ -18,17 +18,19 @@ Details: [tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture
 | Surface | Entry | Notes |
 |---------|-------|-------|
 | MCP resource | `resources/read` → **`agentdecompile://capabilities`** | Tier routing + full tool inventory with `analysis_tier` (no Ghidra session required) |
-| MCP tools | `tools/list` → `tools/call` | **56 advertised** tools (default surface); 4 GUI-only tools hidden |
+| MCP tools | `tools/list` → `tools/call` | **62 advertised** tools (default surface); 4 GUI-only tools hidden |
 | MCP prompts | `prompts/list` → **`prompts/get`** | 9 RE workflow prompts with session substitution |
 | CLI | `agentdecompile-cli tool`, `tool-seq` | Persists `mcp-session-id` per backend URL |
 | Slash commands | `/help`, `/capabilities`, `/lfg` | Cursor agent discovery + live proof |
 
-## Advertised MCP tools (56)
+## Advertised MCP tools (62)
 
-Canonical catalog: [TOOLS_LIST.md](../../TOOLS_LIST.md) (60 canonical; 56 advertised + 4 GUI-only hidden).
+Canonical catalog: [TOOLS_LIST.md](../../TOOLS_LIST.md) (66 canonical; 62 advertised + 4 GUI-only hidden).
 
 | Category | Tools |
 |----------|-------|
+| Tier 0 static (no Ghidra) | `run-file-triage` (optional `externalScanTools` embeds capa/yara/binwalk), `run-external-re-scan` |
+| Tier 1 batch (no MCP session) | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` |
 | Project & session | `open-project`, `import-binary`, `list-project-files`, `checkout-program`, `checkin-program`, `checkout-status`, `sync-project`, `get-current-program`, `analyze-program`, `change-processor`, `list-processors` |
 | Functions | `list-functions`, `get-function`, `get-functions`, `decompile-function`, `rename-function`, `set-function-prototype`, `manage-function`, `manage-function-tags`, `match-function` |
 | Symbols & labels | `manage-symbols`, `create-label`, `apply-data-type` |

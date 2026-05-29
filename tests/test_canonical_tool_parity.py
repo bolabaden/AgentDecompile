@@ -9,7 +9,7 @@ import agentdecompile_cli.mcp_server.providers.dissect as dissect_module
 import pytest
 
 from agentdecompile_cli.bridge import AgentDecompileMcpClient, ClientError
-from agentdecompile_cli.registry import DISABLED_GUI_ONLY_TOOLS, Tool, _build_advertised_tools, get_active_tool_surface_profile, resolve_tool_name
+from agentdecompile_cli.registry import DISABLED_GUI_ONLY_TOOLS, Tool, _build_advertised_tools, get_active_tool_surface_profile, get_advertised_tools_for_list, resolve_tool_name
 from agentdecompile_cli.mcp_server.providers.dataflow import DataFlowToolProvider
 from agentdecompile_cli.mcp_server.providers.decompiler import DecompilerToolProvider
 from agentdecompile_cli.mcp_server.providers.dissect import GetFunctionAioToolProvider
@@ -364,6 +364,23 @@ def test_default_surface_advertises_all_non_gui_canonical_tools(monkeypatch: pyt
     assert "list-functions" in advertised
     assert "get-functions" in advertised
     assert "search-code" in advertised
+
+
+TIER01_RUN_TOOLS = (
+    "run-file-triage",
+    "run-external-re-scan",
+    "run-batch-decompile",
+    "run-batch-export-gzf",
+    "run-batch-bsim-signatures",
+    "run-batch-sast-scan",
+)
+
+
+@pytest.mark.unit
+def test_all_tier01_run_tools_advertised() -> None:
+    advertised = set(get_advertised_tools_for_list())
+    missing = [name for name in TIER01_RUN_TOOLS if name not in advertised]
+    assert not missing, f"Tier 0–1 run-* tools not advertised: {missing}"
 
 
 def test_canonical_semantic_tool_names_do_not_resolve_to_replacements() -> None:

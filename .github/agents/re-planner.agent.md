@@ -25,8 +25,8 @@ Follow the **tiered RE analysis** skill (`.cursor/skills/tiered-re-analysis/SKIL
 
 **Cold binary (not yet in Ghidra session):**
 
-1. **Tier 0** — Run static triage with shell tools: `file`, `strings`, `readelf`/`objdump`, optional `yara`/`capa`/`binwalk`. Record hashes and keyword hits in the triage artifact.
-2. **Tier 1 (optional)** — If bulk offline search is cheaper than MCP loops, use `agentdecompile-cli ghidrecomp` export or SARIF paths before opening a long-lived MCP session.
+1. **Tier 0** — MCP **`run-file-triage`** (file, sha256, strings; optional **`externalScanTools`** for capa/yara/binwalk bundle) or **`run-external-re-scan`**. Fall back to shell `file`/`strings`/`readelf` when MCP is unavailable. Record hashes and keyword hits in the triage artifact.
+2. **Tier 1 (optional)** — MCP **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`**, **`run-batch-sast-scan`** when bulk offline search is cheaper than MCP loops; or `agentdecompile-cli ghidrecomp` CLI paths before opening a long-lived MCP session.
 3. **Escalate to Ghidra** — Call `open-project` / `import-binary` only when you need xrefs, analyzed function boundaries, shared-server checkout, or mutations.
 
 **Warm session (program already open and analyzed):** Skip Tier 0; use Tier 2 MCP list/search tools below.

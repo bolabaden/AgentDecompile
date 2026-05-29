@@ -55,7 +55,7 @@ Optional polish from P1-1 review — status:
 
 - [x] CI green (unit, headless, CodeQL)
 - [x] P1–P3 + P2-1 polish on branch
-- [x] Advertised-tool count test/docs aligned (56 tools after `manage-enums`)
+- [x] Advertised-tool count test/docs aligned (dynamic count; 62 advertised after Tier 0–1 MCP tools)
 - [x] P2-4 `/capabilities` discovery command
 - [x] **Merge-ready** — all agent-implementable gates satisfied (2026-05-24)
 - [x] Merge to `master` (squash `13200d6`, PR #49, 2026-05-28)
@@ -70,7 +70,7 @@ Optional polish from P1-1 review — status:
 | P1 | `projectContext` enrichment, `prompts/get`, UI hints, proxy project-path header |
 | P2 | Enum CRUD, symbol delete, curated surface, `/help`, `/capabilities`, COBRA_CASE + action-scoped hints |
 | P3 | Dual-JVM docs, `suggest` stub, import-binary project gate |
-| CI | Dynamic advertised-tool count (56); unit + headless green |
+| CI | Dynamic advertised-tool count (62); unit + headless green |
 
 **Verification:** `uv run pytest -m unit -q --timeout=120` · `gh pr checks 49`
 
@@ -78,7 +78,7 @@ Optional polish from P1-1 review — status:
 
 ## Final LFG verification (2026-05-24)
 
-- [x] `.cursorrules` tool count aligned (60 canonical / 56 advertised)
+- [x] `.cursorrules` tool count aligned (66 canonical / 62 advertised)
 - [x] Unit suite green locally
 - [x] PR #49 CI green on required checks (unit + headless)
 

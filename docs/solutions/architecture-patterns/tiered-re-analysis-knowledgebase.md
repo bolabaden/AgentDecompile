@@ -69,6 +69,8 @@ AgentDecompile implements a **Planner → Worker → Critic → Aggregator** pip
 
 | Technique | Example commands | Answers |
 |-----------|------------------|---------|
+| File triage (MCP) | `run-file-triage` (optional `externalScanTools` for capa/yara/binwalk) | Unified JSON: file type, sha256, strings, optional external scans |
+| External RE scan (MCP) | `run-external-re-scan` (`tool` or `tools` bundle) | capa/yara/binwalk results without Ghidra |
 | File metadata | `file`, `stat`, `sha256sum` | Format, bitness, integrity |
 | Strings | `strings -a`, `rg` on raw file | API names, URLs, error messages |
 | PE/ELF headers | `readelf -a`, `objdump -x`, `llvm-objdump -h` | Sections, imports (static), entry |
@@ -87,11 +89,12 @@ AgentDecompile implements a **Planner → Worker → Critic → Aggregator** pip
 
 | Technique | Entry point | Answers |
 |-----------|-------------|---------|
-| Batch decompile | `uv run agentdecompile-cli ghidrecomp decompile …` | C files for ripgrep/semgrep |
+| Batch decompile (MCP) | `run-batch-decompile` | C files for ripgrep/semgrep |
 | Call graph export | ghidrecomp / `gen-callgraph` after import | Mermaid/DOT graphs |
-| SAST on decomp | `ghidrecomp … --sast` (semgrep/CodeQL) | Vuln patterns in pseudocode |
-| Static analysis resource | MCP `export` / import-export SARIF paths | Downstream scanners |
-| Packed project snapshot | `.gzf` export | Share analyzed state |
+| SAST on decomp (MCP) | `run-batch-sast-scan` or `ghidrecomp … --sast` | Vuln patterns in pseudocode |
+| BSim signatures (MCP) | `run-batch-bsim-signatures` | Signature database generation |
+| Packed project snapshot (MCP) | `run-batch-export-gzf` | Share analyzed state |
+| Batch decompile (CLI) | `uv run agentdecompile-cli ghidrecomp decompile …` | C files when shell preferred |
 
 **Escalate to Tier 2+ when:** Interactive xref/decompile loops, session-stable multi-tool agents, shared Ghidra Server checkout, or live mutations.
 
@@ -192,7 +195,7 @@ Every canonical MCP tool exposes **`analysis_tier`** via `get_tool_metadata()` a
 | **2** | Ghidra MCP read-only / session bootstrap (prefer before decompile) |
 | **3** | Deep analysis, workflow bundles, or mutating tools |
 
-Tier 0–1 MCP tools: **`run-file-triage`**, **`run-external-re-scan`** (Tier 0), and **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`**, **`run-batch-sast-scan`** (Tier 1). Tier 1 ghidrecomp facade is complete (decompile, gzf, bsim, sast).
+Tier 0–1 MCP tools: **`run-file-triage`** (optional **`externalScanTools`** embeds capa/yara/binwalk in one call), **`run-external-re-scan`** (Tier 0), and **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`**, **`run-batch-sast-scan`** (Tier 1). Tier 1 ghidrecomp facade is complete (decompile, gzf, bsim, sast).
 
 Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registry.py`; tests in `tests/test_tool_analysis_tier.py`.
 

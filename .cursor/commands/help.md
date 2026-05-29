@@ -6,8 +6,8 @@ Quick reference for agents working with the AgentDecompile MCP server.
 
 ### Tiered analysis (prefer Ghidra only when necessary)
 
-1. **Tier 0 (no Ghidra)** — `file`, `strings`, `readelf`/`objdump`, optional `yara`/`capa` on the raw binary.
-2. **Tier 1 (batch)** — `agentdecompile-cli ghidrecomp` or export when offline bulk work is faster.
+1. **Tier 0 (no Ghidra)** — MCP `run-file-triage` (file, sha256, strings; optional `externalScanTools` for capa/yara/binwalk) or `run-external-re-scan`; shell `file`/`strings`/`readelf` when MCP is unavailable.
+2. **Tier 1 (batch)** — MCP `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`; or `agentdecompile-cli ghidrecomp` when offline bulk work is faster.
 3. **Tier 2–3 (MCP)** — After the binary is in a project and analyzed:
    - **`open-project`** — Connect to a local `.gpr` or shared Ghidra Server repository.
    - **`analyze-program`** — When `projectContext.analysisComplete` is false.
@@ -34,7 +34,7 @@ Every successful tool response (and most errors when programs are loaded) includ
 
 ## Tool categories
 
-See [TOOLS_LIST.md](../../TOOLS_LIST.md) for the canonical tool catalog (56 advertised by default; 4 GUI-only hidden).
+See [TOOLS_LIST.md](../../TOOLS_LIST.md) for the canonical tool catalog (66 canonical; 62 advertised by default; 4 GUI-only hidden).
 
 | Category | Examples |
 |----------|----------|

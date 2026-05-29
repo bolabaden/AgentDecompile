@@ -54,7 +54,7 @@ Do not hardcode tool counts. Assert:
 len(advertised) == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS)
 ```
 
-Registry: **60 canonical**, **4 GUI-only hidden**, **56 advertised** by default.
+Registry: **66 canonical**, **4 GUI-only hidden**, **62 advertised** by default.
 
 **Files:** `tests/test_canonical_tool_parity.py`, `registry.py`
 

@@ -68,8 +68,8 @@ Use Ghidra MCP **only when necessary**. Full matrix: `docs/solutions/architectur
 
 | Tier | Ghidra session? | Examples |
 |------|-----------------|----------|
-| 0 | No | `file`, `strings`, `readelf`, `yara`, `capa`, `binwalk` |
-| 1 | Batch/offline | `agentdecompile-cli ghidrecomp`, export/SARIF |
+| 0 | No | MCP `run-file-triage`, `run-external-re-scan`; shell `file`, `strings`, `readelf`, `yara`, `capa`, `binwalk` |
+| 1 | Batch/offline | MCP `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`; CLI `agentdecompile-cli ghidrecomp`, export/SARIF |
 | 2 | MCP read-only | `list-*`, `search-*`, `get-references`, `get-call-graph` |
 | 3 | MCP deep/mutate | `decompile-function`, `analyze-data-flow`, `manage-*`, `match-function` |
 
@@ -77,9 +77,19 @@ Use Ghidra MCP **only when necessary**. Full matrix: `docs/solutions/architectur
 
 ## MCP Tool Mapping
 
-These are the AgentDecompile MCP tools available for each analysis phase (mostly Tier 2–3):
+These are the AgentDecompile MCP tools available for each analysis phase:
 
-### Discovery / Read-Only
+### Tier 0 — Static file (no Ghidra session)
+- `run-file-triage` — file metadata, sha256, strings; optional `externalScanTools` embeds capa/yara/binwalk under `externalScans`
+- `run-external-re-scan` — capa, yara, and/or binwalk (single tool or `tools` bundle)
+
+### Tier 1 — Batch / offline (no long-lived MCP session)
+- `run-batch-decompile` — bulk decompile export via ghidrecomp
+- `run-batch-export-gzf` — packed Ghidra project snapshot
+- `run-batch-bsim-signatures` — BSim signature generation
+- `run-batch-sast-scan` — SAST on decompiled output
+
+### Discovery / Read-Only (Tier 2)
 - `list-functions` — enumerate functions (pagination: offset/limit)
 - `list-imports` / `list-exports` — external symbols
 - `list-strings` — embedded strings
@@ -94,7 +104,7 @@ These are the AgentDecompile MCP tools available for each analysis phase (mostly
 - `analyze-data-flow` — data flow analysis
 - `analyze-vtables` — C++ vtable recovery
 
-### Mutation (apply findings)
+### Mutation (Tier 3 — apply findings)
 - `manage-function` — rename, set prototype/return type/calling convention
 - `manage-comments` — set/get/search comments at addresses
 - `manage-symbols` / `create-label` — rename symbols, create labels
