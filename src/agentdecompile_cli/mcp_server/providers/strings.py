@@ -33,6 +33,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STRING_MUTATING_MODES: frozenset[str] = frozenset({"create", "update", "delete"})
+
+
+def normalize_string_encoding(encoding: str | None) -> str:
+    """Return ``ascii`` or ``utf16`` for supported program string encodings."""
+    enc = (encoding or "ascii").strip().lower()
+    if enc in {"utf16", "utf-16", "unicode", "wide"}:
+        return "utf16"
+    return "ascii"
+
+
+def encode_program_string(value: str, encoding: str) -> bytes:
+    """Encode a logical string value for writing into program memory."""
+    if encoding == "utf16":
+        return value.encode("utf-16-le") + b"\x00\x00"
+    return value.encode("utf-8") + b"\x00"
+
+
+def ghidra_string_type_name(encoding: str) -> str:
+    """Ghidra data-type name for a terminated string encoding."""
+    return "unicode" if encoding == "utf16" else "string"
+
 
 class StringToolProvider(ToolProvider):
     HANDLERS = {
@@ -47,12 +69,25 @@ class StringToolProvider(ToolProvider):
         return [
             types.Tool(
                 name=Tool.MANAGE_STRINGS.value,
-                description="Search, filter, list, and measure literal text strings embedded in the compiled program's data segments.",
+                description="Search, filter, list, create, update, delete, and measure literal text strings embedded in the compiled program's data segments.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "programPath": {"type": "string", "description": "The active program project."},
-                        "mode": {"type": "string", "description": "What operation to perform on the text data.", "enum": ["list", "search", "count"], "default": "list"},
+                        "mode": {
+                            "type": "string",
+                            "description": "What operation to perform on the text data.",
+                            "enum": ["list", "search", "count", "create", "update", "delete"],
+                            "default": "list",
+                        },
+                        "addressOrSymbol": {"type": "string", "description": "Memory address or symbol for create/update/delete."},
+                        "value": {"type": "string", "description": "String content to write for create/update."},
+                        "encoding": {
+                            "type": "string",
+                            "description": "String encoding for create/update.",
+                            "enum": ["ascii", "utf16"],
+                            "default": "ascii",
+                        },
                         "query": {"type": "string", "description": "Search query or regex pattern to look for in the program strings."},
                         "minLength": {"type": "integer", "default": 4, "description": "Ignore any text string shorter than this number of characters."},
                         "limit": {"type": "integer", "default": 100, "description": "Number of strings to return. Typical values are 100–500."},
@@ -188,6 +223,17 @@ class StringToolProvider(ToolProvider):
         logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle")
         self._require_program()
         mode = self._get_str(args, "mode", default="list")
+        if n(mode) in _STRING_MUTATING_MODES:
+            return await self._dispatch_handler(
+                args,
+                mode,
+                {
+                    "create": "_handle_create",
+                    "update": "_handle_update",
+                    "delete": "_handle_delete",
+                },
+            )
+
         pattern = self._get_str(args, "pattern", "query", "search", "text", "regex", "searchstring", "filter")
         min_len = self._get_int(args, "minlength", "minlen", default=4)
         offset, max_results = self._get_pagination_params(args, default_limit=100)
@@ -455,3 +501,79 @@ class StringToolProvider(ToolProvider):
         if pattern:
             extra["query"] = pattern
         return self._create_paginated_response(strings, offset, max_results, total=total, mode=mode, **extra)
+
+    async def _handle_create(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_write_string(args, action="create", allow_existing=False)
+
+    async def _handle_update(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_write_string(args, action="update", allow_existing=True)
+
+    async def _handle_delete(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_delete")
+        self._require_program()
+        addr_str = self._require_address_or_symbol(args)
+        assert self.program_info is not None
+        program = self.program_info.program
+        addr = self._resolve_address(addr_str, program=program)
+        listing = self._get_listing(program)
+        cleared = False
+
+        def _delete_string() -> None:
+            nonlocal cleared
+            data = listing.getDataAt(addr)
+            if data is None:
+                return
+            end = addr.add(max(int(data.getLength()), 1) - 1)
+            listing.clearCodeUnits(addr, end, False)
+            cleared = True
+
+        self._run_program_transaction(program, "manage-strings-delete", _delete_string)
+        return create_success_response(
+            {
+                "action": "delete",
+                "address": str(addr),
+                "cleared": cleared,
+                "success": True,
+            },
+        )
+
+    async def _handle_write_string(self, args: dict[str, Any], *, action: str, allow_existing: bool) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/strings.py:StringToolProvider._handle_write_string")
+        self._require_program()
+        addr_str = self._require_address_or_symbol(args)
+        value = self._require_str(args, "value", "text", "string", name="value")
+        encoding = normalize_string_encoding(self._get_str(args, "encoding", default="ascii"))
+        assert self.program_info is not None
+        program = self.program_info.program
+        addr = self._resolve_address(addr_str, program=program)
+        listing = self._get_listing(program)
+        existing = listing.getDataAt(addr)
+        if existing is not None and not allow_existing:
+            raise ValueError(f"Address {addr} already has defined data ({existing.getDataType()}). Use mode='update' to replace.")
+
+        raw = encode_program_string(value, encoding)
+        dt_name = ghidra_string_type_name(encoding)
+        from ghidra.util.data import DataTypeParser
+
+        dtm = program.getDataTypeManager()
+        parser = DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL)
+        dt = parser.parse(dt_name)
+        memory = self._get_memory(program)
+
+        def _write_string() -> None:
+            end = addr.add(len(raw) - 1)
+            listing.clearCodeUnits(addr, end, False)
+            memory.setBytes(addr, raw)
+            listing.createData(addr, dt)
+
+        self._run_program_transaction(program, f"manage-strings-{action}", _write_string)
+        return create_success_response(
+            {
+                "action": action,
+                "address": str(addr),
+                "value": value,
+                "encoding": encoding,
+                "dataType": dt_name,
+                "success": True,
+            },
+        )

@@ -225,11 +225,15 @@ class GetFunctionToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function."},
                         "mode": {
                             "type": "string",
-                            "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), or 'search' (find functions by tag).",
-                            "enum": ["list", "add", "remove", "search"],
+                            "description": "What to do with tags: 'list' (view tags), 'add' (attach a tag), 'remove' (detach a tag), 'set' (replace all tags on the function), or 'search' (find functions by tag).",
+                            "enum": ["list", "add", "remove", "set", "search"],
                         },
                         "tag": {"type": "string", "description": "The specific tag to add, remove, or search for (e.g. 'encryption')."},
                         "tagName": {"type": "string", "description": "Alternative parameter name for 'tag'."},
+                        "tags": {
+                            "type": "string",
+                            "description": "For mode 'set', comma-separated tag names that replace all existing tags on the function (e.g. 'crypto,network').",
+                        },
                     },
                     "required": [],
                 },
@@ -978,13 +982,36 @@ class GetFunctionToolProvider(ToolProvider):
             tags = [t.getName() for t in func.getTags()]
             return create_success_response(
                 {
+                    "action": "list",
                     "function": func.getName(),
                     "tags": tags,
                     "count": len(tags),
                 },
             )
 
-        if action_n in ("add", "set"):
+        if action_n == "set":
+            tag_names = self._parse_tag_names(args)
+            if not tag_names:
+                raise ValueError("tags, tag, or tagName required for set mode")
+
+            def _set_function_tags() -> None:
+                for existing in list(func.getTags()):
+                    func.removeTag(existing.getName())
+                for name in tag_names:
+                    func.addTag(name)
+
+            self._run_program_transaction(program, "set-function-tags", _set_function_tags)
+            return create_success_response(
+                {
+                    "action": "set",
+                    "function": func.getName(),
+                    "tags": tag_names,
+                    "count": len(tag_names),
+                    "success": True,
+                },
+            )
+
+        if action_n == "add":
             if not tag_name:
                 raise ValueError("tag or tagName required")
 
@@ -1019,6 +1046,16 @@ class GetFunctionToolProvider(ToolProvider):
             )
 
         raise ValueError(f"Unknown tag action: {action}")
+
+    def _parse_tag_names(self, args: dict[str, Any]) -> list[str]:
+        """Resolve tag name list from tags (list or comma-separated) or single tag."""
+        tag_list = self._get_list(args, "tags", "taglist")
+        if tag_list:
+            return [str(item).strip() for item in tag_list if str(item).strip()]
+        tag_name = self._get_str(args, "tag", "tagname", "name")
+        if tag_name:
+            return [tag_name]
+        return []
 
     def _get_match_index(
         self,
