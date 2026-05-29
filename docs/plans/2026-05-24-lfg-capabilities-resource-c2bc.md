@@ -3,6 +3,8 @@ title: LFG — agentdecompile://capabilities MCP resource
 status: completed
 date: 2026-05-24
 branch: impl/capabilities-resource-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/64
+merge_sha: cd4b069
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 ---
 

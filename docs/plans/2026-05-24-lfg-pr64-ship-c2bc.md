@@ -4,6 +4,7 @@ status: completed
 date: 2026-05-24
 branch: impl/capabilities-resource-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/64
+merge_sha: cd4b069
 ---
 
 # LFG — ship PR #64 capabilities resource (fix CI)
