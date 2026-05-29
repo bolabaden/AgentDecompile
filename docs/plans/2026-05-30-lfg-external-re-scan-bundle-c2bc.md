@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 0 run-external-re-scan multi-tool bundle
-status: active
+status: completed
+merge_sha: 682dc61
 date: 2026-05-30
 branch: impl/external-re-scan-bundle-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
