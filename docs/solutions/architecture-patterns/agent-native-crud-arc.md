@@ -43,7 +43,7 @@ flowchart LR
   subgraph tags [Function tags 4/4]
     C[add remove set]
   end
-  strings --> M[mega-stack PR]
+  strings --> M[mega-stack merged]
   dtypes --> M
   tags --> M
 ```
