@@ -1,6 +1,7 @@
 ---
 title: LFG — run-file-triage optional embedded external scans
-status: active
+status: completed
+merge_sha: 0c3c898
 date: 2026-05-30
 branch: impl/run-file-triage-external-scans-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
