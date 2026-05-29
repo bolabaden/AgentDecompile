@@ -1,10 +1,12 @@
 ---
 title: LFG — rename-variable and set-local-variable-type handlers
 type: feat
-status: active
+status: completed
 date: 2026-05-30
 origin: docs/residual-review-findings/impl-agent-native-audit-c2bc.md
 branch: impl/rename-variable-handlers-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/92
+merge_sha: ec53f4a
 ---
 
 # LFG — rename-variable and set-local-variable-type handlers
