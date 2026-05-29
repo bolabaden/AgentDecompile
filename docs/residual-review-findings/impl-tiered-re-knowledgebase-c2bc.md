@@ -21,15 +21,16 @@ plan: docs/plans/2026-05-24-tiered-re-knowledgebase-c2bc.md
 
 **None.**
 
-### Future (not blocking)
+### Future (not blocking) — all Done
 
-- MCP wrappers for capa/yara/binwalk (Tier 0)
-- `agentdecompile://capabilities` resource with tier summary
-- Runtime `tools/list` filter by max tier
+- ~~MCP wrappers for capa/yara/binwalk (Tier 0)~~ — **Done** (`run-file-triage`, `run-external-re-scan`, PRs #82–#85)
+- ~~`agentdecompile://capabilities` resource with tier summary~~ — **Done** (PR #64; tier 0–1 verify PR #88)
+- ~~Runtime `tools/list` filter by max tier~~ — **Done** (PR #66)
+- ~~Discovery doc sync (66/62 counts, MCP Tier 0–1)~~ — **Done** (PR #86)
 
 ## Verification
 
 ```bash
-uv run pytest tests/test_tool_analysis_tier.py -m unit -q
+uv run pytest tests/test_tool_analysis_tier.py tests/test_capabilities_resource.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```

@@ -84,3 +84,14 @@ def test_capabilities_summary_counts_match_registry(monkeypatch: pytest.MonkeyPa
     assert summary["canonical_tool_count"] == len(Tool)
     assert summary["advertised_tool_count"] == len(get_advertised_tools_for_list())
     assert summary["advertised_tool_count"] == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS)
+
+
+def test_capabilities_tier_routing_includes_mcp_run_tools() -> None:
+    payload = build_capabilities_payload()
+    tiers = {item["tier"]: item for item in payload["tiers"]}
+    tier0_examples = tiers[0]["examples"]
+    tier1_examples = tiers[1]["examples"]
+    assert "run-file-triage" in tier0_examples
+    assert "run-external-re-scan" in tier0_examples
+    assert "run-batch-decompile" in tier1_examples
+    assert "run-batch-sast-scan" in tier1_examples

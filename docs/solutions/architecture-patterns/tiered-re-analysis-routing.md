@@ -31,22 +31,22 @@ Agents treated Ghidra MCP as the only RE surface: cold binaries went straight to
 
 | Tier | Ghidra? | Agent action |
 |------|---------|--------------|
-| 0 | No | `file`, `strings`, headers, yara/capa before `open-project` |
-| 1 | Batch CLI | `ghidrecomp` export when offline bulk is faster |
+| 0 | No | MCP `run-file-triage`, `run-external-re-scan`; shell `file`/`strings` before `open-project` |
+| 1 | Batch MCP or CLI | MCP `run-batch-*`; or `ghidrecomp` when offline bulk is faster |
 | 2 | MCP read-only | `list-*`, `search-*`, xrefs after analysis gate |
 | 3 | MCP deep/mutate | decompile, `manage-*`, `match-function` |
 
-Full matrix: [tiered-re-analysis-knowledgebase.md](./tiered-re-analysis-knowledgebase.md). Skill: `.cursor/skills/tiered-re-analysis/SKILL.md`.
+Full matrix: [tiered-re-analysis-knowledgebase.md](./tiered-re-analysis-knowledgebase.md). Tier 0–1 MCP arc: [tier01-mcp-discovery-sync.md](./tier01-mcp-discovery-sync.md). Skill: `.cursor/skills/tiered-re-analysis/SKILL.md`.
 
 ### Code: `analysis_tier` metadata
 
-- `ToolMetadata.analysis_tier` — **2** (read-only/session) or **3** (deep/mutate)
+- `ToolMetadata.analysis_tier` — **0** (static), **1** (batch), **2** (read-only/session), **3** (deep/mutate)
 - `get_tool_analysis_tier()` in `registry.py`; exposed in OpenAPI tool-reference payload
 - Tests: `tests/test_tool_analysis_tier.py`
 
 ### Agents aligned
 
-- RE Planner Phase 0 shell triage before Ghidra
+- RE Planner Phase 0 MCP triage (`run-file-triage`) before Ghidra
 - Worker/Critic prefer Tier 2 before Tier 3
 - Artifact protocol tier table in `.github/instructions/re-artifact-protocol.instructions.md`
 
@@ -60,4 +60,5 @@ Full matrix: [tiered-re-analysis-knowledgebase.md](./tiered-re-analysis-knowledg
 
 - KB: [tiered-re-analysis-knowledgebase.md](./tiered-re-analysis-knowledgebase.md)
 - PR: https://github.com/bolabaden/AgentDecompile/pull/62 (merged squash `7471598`, 2026-05-29)
-- Plans: `docs/plans/2026-05-24-tiered-re-knowledgebase-c2bc.md`, `docs/plans/2026-05-29-lfg-pr62-analysis-tier-c2bc.md`
+- Tier 0–1 MCP + discovery: https://github.com/bolabaden/AgentDecompile/pull/86, https://github.com/bolabaden/AgentDecompile/pull/88
+- Plans: `docs/plans/2026-05-24-tiered-re-knowledgebase-c2bc.md`, `docs/plans/2026-05-29-lfg-pr62-analysis-tier-c2bc.md`, `docs/plans/2026-05-30-lfg-tier01-discovery-sync-c2bc.md`

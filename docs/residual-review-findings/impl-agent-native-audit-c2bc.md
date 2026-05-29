@@ -82,7 +82,14 @@ Optional polish from P1-1 review — status:
 - [x] Unit suite green locally
 - [x] PR #49 CI green on required checks (unit + headless)
 
-**Branch HEAD (merge traceability):** `adaa472` on `master` · **Solutions:** [agent-native-mcp-patterns.md](../solutions/architecture-patterns/agent-native-mcp-patterns.md)
+**Branch HEAD (merge traceability):** `b2c40d0` on `master` · **Solutions:** [agent-native-mcp-patterns.md](../solutions/architecture-patterns/agent-native-mcp-patterns.md)
+
+## Next agent-native gap (tracked, not blocking)
+
+| ID | Area | Action | Notes |
+|----|------|--------|-------|
+| P2-5 | `manage-function` / `rename-variable` | Implement decompiler variable rename handler | Registry alias exists; audit gap at `docs/audits/2026-05-24-agent-native-audit.md` line 180 |
+| P2-6 | `set-local-variable-type` | Implement variable type handler on `manage-function` | Same provider surface as P2-5 |
 
 ## Residual Review Findings (P2-1 manage-enums review c1641e4)
 
