@@ -47,7 +47,10 @@ from agentdecompile_cli.mcp_server.session_context import (
 )
 from agentdecompile_cli.mcp_server.tool_providers import UnifiedToolProviderManager
 from agentdecompile_cli.mcp_utils.debug_logger import DebugLogger
-from agentdecompile_cli.mcp_utils.tool_reference import build_tool_reference_payload
+from agentdecompile_cli.mcp_utils.tool_reference import (
+    build_initialize_instructions,
+    build_tool_reference_payload,
+)
 from agentdecompile_cli.registry import (
     Tool,
 )
@@ -400,7 +403,11 @@ class PythonMcpServer:
     def _create_mcp_server(self) -> MCPServer:
         """Create the MCP server instance."""
         logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._create_mcp_server")
-        server = Server(name=self.config.name, version=self.config.version)
+        server = Server(
+            name=self.config.name,
+            version=self.config.version,
+            instructions=build_initialize_instructions(),
+        )
 
         @server.list_tools()
         async def list_tools() -> list[types.Tool]:

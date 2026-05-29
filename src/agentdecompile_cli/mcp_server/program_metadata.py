@@ -593,3 +593,81 @@ def inject_ui_hints(
     if "uiVisibility" not in data and "guiHint" not in data:
         return response_text
     return _json.dumps(data)
+
+
+def summarize_auto_checkin_result(
+    checkin_payload: dict[str, Any],
+    *,
+    exception: str | None = None,
+) -> dict[str, Any]:
+    """Compact auto-checkin outcome for attachment to a mutating tool response."""
+    if exception:
+        return {
+            "performed": True,
+            "success": False,
+            "hint": f"Auto check-in failed: {exception}",
+            "error": exception,
+        }
+
+    results_raw = checkin_payload.get("results")
+    results: list[dict[str, Any]] = [r for r in results_raw if isinstance(r, dict)] if isinstance(results_raw, list) else []
+    succeeded = sum(1 for entry in results if entry.get("success"))
+    failed = len(results) - succeeded
+    aggregate_ok = checkin_payload.get("success", True) is not False and failed == 0
+
+    summary: dict[str, Any] = {
+        "performed": True,
+        "success": aggregate_ok,
+        "mode": checkin_payload.get("mode", "checkin_all"),
+        "count": checkin_payload.get("count", len(results)),
+        "succeededCount": succeeded,
+        "failedCount": failed,
+    }
+    if results:
+        summary["results"] = [
+            {
+                "programPath": entry.get("programPath"),
+                "success": entry.get("success"),
+                "mode": entry.get("mode"),
+                "error": entry.get("error"),
+            }
+            for entry in results[:10]
+        ]
+    error_value = checkin_payload.get("error")
+    if error_value:
+        summary["error"] = error_value
+
+    if aggregate_ok:
+        if succeeded == 0 and not results:
+            summary["hint"] = "Auto check-in ran; no open programs required persistence."
+        else:
+            summary["hint"] = f"Auto check-in completed for {succeeded} program(s)."
+    else:
+        summary["hint"] = (
+            f"Auto check-in had {failed} failure(s); review autoCheckin.results "
+            "or resolve checkout issues before reloading CodeBrowser."
+        )
+    return summary
+
+
+def attach_auto_checkin_to_payload(
+    parent_payload: dict[str, Any],
+    checkin_payload: dict[str, Any] | None,
+    *,
+    exception: str | None = None,
+) -> None:
+    """Merge silent auto-checkin outcome into the mutating tool JSON response."""
+    if exception:
+        parent_payload["autoCheckin"] = summarize_auto_checkin_result({}, exception=exception)
+    elif isinstance(checkin_payload, dict):
+        parent_payload["autoCheckin"] = summarize_auto_checkin_result(checkin_payload)
+    else:
+        return
+
+    hint = parent_payload.get("autoCheckin", {}).get("hint") if isinstance(parent_payload.get("autoCheckin"), dict) else None
+    if hint:
+        existing = parent_payload.get("guiHint")
+        if existing:
+            parent_payload["guiHint"] = f"{existing} {hint}"
+        else:
+            parent_payload["guiHint"] = str(hint)

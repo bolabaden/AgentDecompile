@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -312,6 +313,68 @@ def create_test_program():
 
     except Exception as e:
         print(f"Failed to create test program: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
+def ghidra_install_available() -> bool:
+    """Return True when GHIDRA_INSTALL_DIR points at an existing install."""
+    install_dir = os.environ.get("GHIDRA_INSTALL_DIR", "").strip()
+    return bool(install_dir) and os.path.isdir(install_dir)
+
+
+def create_test_program_with_stack_function():
+    """Create an x86 test program with one analyzed function and stack locals.
+
+    Returns:
+        ProgramBuilder instance, or None when assembly/analysis fails.
+    """
+    if not ghidra_install_available():
+        return None
+
+    try:
+        from ghidra.app.analyzers import AutoAnalysisManager  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.app.plugin.assembler import Assemblers  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.database import ProgramBuilder
+        from ghidra.program.model.symbol import SourceType
+        from ghidra.util.task import TaskMonitor
+        from jpype import JByte
+
+        builder = ProgramBuilder("VarRenameIntegrationProgram", ProgramBuilder._X86)
+        program = builder.getProgram()
+        addr_space = program.getAddressFactory().getDefaultAddressSpace()
+        entry = addr_space.getAddress(0x00401000)
+        tx_id = program.startTransaction("Create stack function")
+        try:
+            memory = program.getMemory()
+            nop_byte = JByte(0x90 - 256)
+            memory.createInitializedBlock(".text", entry, 0x1000, nop_byte, TaskMonitor.DUMMY, False)
+            assembler = Assemblers.getAssembler(program)
+            asm = (
+                "PUSH EBP; "
+                "MOV EBP, ESP; "
+                "SUB ESP, 0x10; "
+                "MOV dword ptr [EBP-0x4], 0x1; "
+                "MOV EAX, dword ptr [EBP-0x4]; "
+                "LEAVE; "
+                "RET"
+            )
+            assembler.assemble(entry, asm)
+            program.getSymbolTable().createLabel(entry, "test_func", SourceType.USER_DEFINED)
+            program.getFunctionManager().createFunction("test_func", entry, None, SourceType.USER_DEFINED)
+            program.endTransaction(tx_id, True)
+        except Exception:
+            program.endTransaction(tx_id, False)
+            raise
+
+        analysis = AutoAnalysisManager.getAnalysisManager(program)
+        analysis.startAnalysis(TaskMonitor.DUMMY)
+        analysis.waitForAnalysis(None, 120_000)
+        return builder
+    except Exception as exc:
+        print(f"Failed to create stack-function test program: {exc}")
         import traceback
 
         traceback.print_exc()

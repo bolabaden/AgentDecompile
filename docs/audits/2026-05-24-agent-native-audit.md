@@ -37,10 +37,12 @@ flowchart TD
 | Shared Workspace | 12/14 stores shared | 86% (6/6 persisted RE data) | ✅ |
 | CRUD Completeness | 9/12 entities full CRUD | 75% | ⚠️ |
 | UI Integration | 18/23 deferred GUI visibility | 78% deferred; 0% live | ⚠️ |
-| Capability Discovery | 5/7 mechanisms | 71% | ⚠️ |
+| Capability Discovery | 7/7 mechanisms | 100% | ✅ |
 | Prompt-Native Features | 1/6 audited features | 17% | ❌ |
 
-**Overall agent-native score (mean of percentages): ~74%**
+**Overall agent-native score (mean of percentages): ~76%**
+
+**Discovery arc (PRs [#96](https://github.com/bolabaden/AgentDecompile/pull/96)–[#100](https://github.com/bolabaden/AgentDecompile/pull/100), pending merge; audit sync [#101](https://github.com/bolabaden/AgentDecompile/pull/101)):** empty-session hints, auto-checkin footer, initialize preamble, variable-rename integration test. See [agent-native-discovery-arc.md](../solutions/architecture-patterns/agent-native-discovery-arc.md).
 
 ### Status legend
 
@@ -127,8 +129,8 @@ flowchart TD
 
 1. ~~Extend `collect_project_context()` with `analysisComplete` and compact `checkoutSummary`.~~ **Done (PR #49)**
 2. ~~Inject slim `projectContext` on **error** responses (analysis timeout, no program).~~ **Done (PR #49)**
-3. Implement MCP **`prompts/get`** with live session substitution.
-4. Add initialize instructions or `agentdecompile://capabilities` resource.
+3. ~~Implement MCP **`prompts/get`** with live session substitution.~~ **Done (PR #49)**
+4. ~~Add initialize instructions or `agentdecompile://capabilities` resource.~~ **Done** — `agentdecompile://capabilities` (PR #64) + MCP `initialize` instructions preamble (PR #99).
 
 ---
 
@@ -195,35 +197,35 @@ AgentDecompile uses a **headless MCP JVM** separate from CodeBrowser. Mutations 
 | File watching | ❌ |
 | Web UI listing mirror | ❌ (console only) |
 | Tool response feedback | ✅ (`uiVisibility` / `guiHint` on mutating tools) |
-| Auto-checkin (silent persist) | ⚠️ |
+| Auto-checkin (silent persist) | ✅ (`autoCheckin` footer on mutating tools when env enabled; PR #97) |
 
 ### Recommendations
 
 1. ~~Add **`uiVisibility`** / `guiHint` on mutating tool responses.~~ **Done (PR #49)**
-2. Surface auto-checkin in response footer when env enabled.
+2. ~~Surface auto-checkin in response footer when env enabled.~~ **Done (PR #97)** — `autoCheckin` summary on mutating tool responses.
 3. ~~Document dual-JVM model in README.~~ **Done (PR #49)**
 
 ---
 
 ## Capability Discovery Audit
 
-**Score: 5/7 (71%)**
+**Score: 7/7 (100%)**
 
 | Mechanism | Status |
 |-----------|--------|
 | Onboarding docs | ✅ README, AGENTS.md, cli_agent_help |
 | Help docs | ✅ TOOLS_LIST.md, OpenAPI `/docs` |
 | UI hints | ✅ TOOL_GUIDANCE, nextSteps |
-| Agent self-describes | ⚠️ per-tool; no initialize preamble |
+| Agent self-describes | ✅ initialize preamble (PR #99) + per-tool hints; `resources/read` → capabilities |
 | Suggested prompts | ✅ 9 MCP prompts; **`prompts/get` implemented** (session substitution) |
-| Empty state | ⚠️ reactive errors only |
+| Empty state | ✅ proactive hints on `get-current-program` / `list-project-files` (PR #96) |
 | Slash commands | ✅ `/help`, `/capabilities`, `/lfg` (proof) |
 
 ### Recommendations
 
 1. ~~Add `.cursor/commands/help.md` or `/capabilities` discovery command.~~ **Done (PR #49)** — `/help` and `/capabilities`.
 2. ~~Implement MCP **`prompts/get`**.~~ **Done (PR #49)**
-3. Proactive empty-session hints on `get-current-program` / `list-project-files`.
+3. ~~Proactive empty-session hints on `get-current-program` / `list-project-files`.~~ **Done (PR #96)** — `sessionEmpty`, `sessionHint`, bootstrap `nextSteps`.
 
 ---
 
@@ -281,6 +283,9 @@ The canonical **`/lfg`** proof (`.cursor/commands/lfg.md`, `scripts/lfg_validati
 | 8 | ~~Invert **curated** surface: advertise list/search primitives~~ **Done (PR #49)** | Tools as primitives | Medium |
 | 9 | ~~Document **dual-JVM + checkin-before-GUI-reload** workflow~~ **Done (PR #49)** | UI integration | Low |
 | 10 | ~~Fix or remove **`suggest`** stub~~ **Done (PR #49)** | Prompt-native clarity | Low |
+| 11 | ~~Proactive **empty-session** bootstrap hints~~ **Done (PR #96)** | Capability discovery | Low |
+| 12 | ~~MCP **initialize instructions** preamble~~ **Done (PR #99)** | Capability discovery | Low |
+| 13 | ~~**Auto-checkin** outcome footer~~ **Done (PR #97)** | UI integration | Low |
 
 ---
 

@@ -41,6 +41,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     get_current_mcp_session_id,
     is_shared_server_handle,
 )
+from agentdecompile_cli.mcp_server.response_formatter import enrich_empty_session_payload
 from agentdecompile_cli.mcp_server.tool_providers import (
     ActionableError,
     ToolProvider,
@@ -2286,7 +2287,11 @@ class ProjectToolProvider(ToolProvider):
                     return create_success_response(payload)
                 except Exception as e:
                     logger.warning("list-project-files (no program loaded): failed to list from ghidra_project: %s", e)
-            return create_success_response({"folder": folder, "files": [], "count": 0, "note": "No project loaded"})
+            return create_success_response(
+                enrich_empty_session_payload(
+                    {"action": "list", "folder": folder, "files": [], "count": 0, "note": "No project loaded"},
+                ),
+            )
 
         try:
             project_data: GhidraProjectData | None = self._get_active_project_data()
@@ -6088,6 +6093,8 @@ class ProjectToolProvider(ToolProvider):
             }
             if load_error:
                 payload["hint"] = "Pass programPath=<path> to auto-load, or call open with one of the availablePrograms paths above."
+            if not available:
+                enrich_empty_session_payload(payload)
             return create_success_response(payload)
 
         program: GhidraProgram = self.program_info.program

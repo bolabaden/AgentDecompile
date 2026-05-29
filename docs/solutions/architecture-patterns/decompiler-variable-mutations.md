@@ -49,6 +49,7 @@ flowchart LR
 - Decompile via `acquire_decompiler_for_program` → find `HighSymbol` by name → `HighFunctionDBUtil.updateDBVariable` inside program transaction
 - Modification conflict flow when overwriting custom variable names/types
 - Unit tests: `tests/test_manage_function_variables.py` (schema, aliases, mapping parser)
+- Integration test: `tests/test_variable_rename_integration.py` — see [variable-rename-integration-test.md](variable-rename-integration-test.md) (PR #100)
 
 ## Agent workflow (Tier 3)
 
@@ -78,3 +79,4 @@ variableMappings: var_1:itemCount,local_8:slotIndex
 - Residual: [impl-agent-native-audit-c2bc.md](../../residual-review-findings/impl-agent-native-audit-c2bc.md)
 - Audit: [2026-05-24-agent-native-audit.md](../../audits/2026-05-24-agent-native-audit.md)
 - PR #92: https://github.com/bolabaden/AgentDecompile/pull/92
+- PR #100 (integration test): https://github.com/bolabaden/AgentDecompile/pull/100

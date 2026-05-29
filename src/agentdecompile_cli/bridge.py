@@ -51,6 +51,7 @@ from mcp.types import (
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
 from agentdecompile_cli.executor import get_server_start_message, normalize_backend_url
 from agentdecompile_cli.mcp_server.session_context import get_current_mcp_session_id
+from agentdecompile_cli.mcp_utils.tool_reference import build_initialize_instructions
 from agentdecompile_cli.registry import resolve_tool_name
 
 logger = logging.getLogger(__name__)
@@ -1034,7 +1035,13 @@ class AgentDecompileStdioBridge:
             self.port = None
             self.url = normalize_backend_url(backend)
 
-        self.server: Server = Server("AgentDecompile")
+        from agentdecompile_cli import _version
+
+        self.server: Server = Server(
+            "AgentDecompile",
+            version=_version.__version__,
+            instructions=build_initialize_instructions(),
+        )
         self._backends: dict[str, RawMcpHttpBackend] = {}
         self._backend_locks: dict[str, asyncio.Lock] = {}
         self._backend_map_lock = asyncio.Lock()

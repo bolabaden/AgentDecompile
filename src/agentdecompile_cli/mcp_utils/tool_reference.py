@@ -182,6 +182,48 @@ def build_tool_reference_payload() -> dict[str, Any]:
     }
 
 
+def build_initialize_instructions() -> str:
+    """Build concise MCP initialize preamble (markdown) for InitializeResult.instructions."""
+    logger.debug("diag.enter %s", "mcp_utils/tool_reference.py:build_initialize_instructions")
+    profile = get_active_tool_surface_profile()
+    max_tier = get_effective_max_analysis_tier()
+    tier_lines: list[str] = []
+    for tier_info in _TIER_ROUTING:
+        tier_num = tier_info["tier"]
+        summary = tier_info["summary"]
+        examples = tier_info.get("examples") or []
+        example_hint = ", ".join(str(item) for item in examples[:3])
+        tier_lines.append(f"- **Tier {tier_num}** — {summary} (e.g. {example_hint})")
+
+    lines = [
+        "AgentDecompile MCP — Ghidra reverse-engineering for AI agents.",
+        "",
+        "## Tiered bootstrap (prefer Ghidra only when necessary)",
+        *tier_lines,
+        "",
+        "## First steps",
+        "1. Cold binary: `run-file-triage` or `run-external-re-scan` (Tier 0) before `open-project`.",
+        "2. `open-project` → wait for `projectContext.analysisComplete` (or call `analyze-program`).",
+        "3. Tier 2 discovery: `list-functions`, `get-references`, `search-*`.",
+        "4. Tier 3 deep work: `decompile-function`, `manage-comments`, `match-function`.",
+        "",
+        "## Discovery",
+        f"- `resources/read` → `{RESOURCE_URI_CAPABILITIES}` for tier routing + advertised tool inventory.",
+        "- `prompts/list` + `prompts/get` for guided RE workflows.",
+        "- Passive `projectContext` on tool responses when programs are loaded.",
+        "",
+        "## Session rules",
+        "- Send `mcp-session-id` on HTTP follow-ups; use `tool-seq` for multi-step flows.",
+        "- Respect the analysis gate before Tier 2–3 Ghidra tools.",
+        "- Modifying tools may return `conflictId` → use `resolve-modification-conflict`.",
+        "- Headless MCP persists via save/checkin; reload CodeBrowser to see GUI changes.",
+        f"- Active tool surface profile: `{profile}`.",
+    ]
+    if max_tier is not None:
+        lines.append(f"- Max analysis tier cap active: Tier {max_tier} (env or `X-AgentDecompile-Max-Analysis-Tier`).")
+    return "\n".join(lines)
+
+
 def build_capabilities_payload() -> dict[str, Any]:
     """Build agentdecompile://capabilities JSON (tier routing + tool inventory)."""
     logger.debug("diag.enter %s", "mcp_utils/tool_reference.py:build_capabilities_payload")

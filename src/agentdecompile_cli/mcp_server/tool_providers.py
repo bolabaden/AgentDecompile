@@ -45,6 +45,7 @@ from agentdecompile_cli.mcp_utils.program_analysis import (
 # iter_items imported lazily in _resolve_function to avoid circular import
 from agentdecompile_cli.mcp_server.response_formatter import render_tool_response  # pyright: ignore[reportMissingImports]
 from agentdecompile_cli.mcp_server.program_metadata import (  # pyright: ignore[reportMissingImports]
+    attach_auto_checkin_to_payload,
     attach_project_context_to_payload,
     inject_project_context,
     inject_ui_hints,
@@ -2763,12 +2764,40 @@ class ToolProviderManager:
                     tool_success = False
             if tool_success:
                 try:
-                    await self.call_tool(
+                    checkin_result = await self.call_tool(
                         Tool.CHECKIN_PROGRAM.value,
                         {"__auto_checkin_invocation": True, "comment": "Auto check-in after modification"},
                     )
+                    if result and isinstance(result[0], types.TextContent):
+                        try:
+                            parent_parsed = _json.loads(result[0].text)
+                        except Exception:
+                            parent_parsed = None
+                        if isinstance(parent_parsed, dict):
+                            checkin_payload: dict[str, Any] | None = None
+                            if checkin_result and isinstance(checkin_result[0], types.TextContent):
+                                try:
+                                    loaded = _json.loads(checkin_result[0].text)
+                                    if isinstance(loaded, dict):
+                                        checkin_payload = loaded
+                                except Exception:
+                                    pass
+                            attach_auto_checkin_to_payload(parent_parsed, checkin_payload)
+                            result[0] = types.TextContent(type="text", text=_json.dumps(parent_parsed))
                 except Exception as auto_checkin_exc:
                     logger.warning("Auto check-in after modify failed (best-effort): %s", auto_checkin_exc)
+                    if result and isinstance(result[0], types.TextContent):
+                        try:
+                            parent_parsed = _json.loads(result[0].text)
+                        except Exception:
+                            parent_parsed = None
+                        if isinstance(parent_parsed, dict):
+                            attach_auto_checkin_to_payload(
+                                parent_parsed,
+                                None,
+                                exception=str(auto_checkin_exc),
+                            )
+                            result[0] = types.TextContent(type="text", text=_json.dumps(parent_parsed))
 
         # Convert JSON response to rich markdown via response_formatter unless responseFormat/format=json.
         # Argument keys are normalized earlier, so responseFormat and response_format both map to responseformat.

@@ -62,6 +62,24 @@ Registry: **66 canonical**, **4 GUI-only hidden**, **62 advertised** by default.
 
 `.cursor/commands/help.md` (workflow) and `.cursor/commands/capabilities.md` (full inventory) for agent capability discovery without MCP initialize preamble.
 
+### 6. Proactive empty-session bootstrap hints
+
+`enrich_empty_session_payload()` on `list-project-files` and `get-current-program` when no project/programs are loaded — `sessionEmpty`, `sessionHint`, and bootstrap `nextSteps` in JSON and markdown.
+
+**Files:** `response_formatter.py`, `providers/project.py`, `tests/test_empty_session_hints.py` — see [empty-session-bootstrap-hints.md](empty-session-bootstrap-hints.md)
+
+### 7. Auto-checkin outcome footer
+
+`summarize_auto_checkin_result()` merges silent `checkin-program` outcomes into mutating tool responses — `autoCheckin` JSON field and markdown `### Auto Check-in` footer when `AGENTDECOMPILE_AUTO_CHECKIN` is enabled.
+
+**Files:** `program_metadata.py`, `tool_providers.py`, `response_formatter.py`, `tests/test_auto_checkin_footer.py` — see [auto-checkin-response-footer.md](auto-checkin-response-footer.md)
+
+### 8. MCP initialize instructions preamble
+
+`build_initialize_instructions()` injects tiered bootstrap, discovery URIs, and session rules into `InitializeResult.instructions` at MCP connect — HTTP server and stdio bridge share one builder.
+
+**Files:** `mcp_utils/tool_reference.py`, `mcp_server/server.py`, `bridge.py`, `tests/test_initialize_instructions.py` — see [mcp-initialize-instructions-preamble.md](mcp-initialize-instructions-preamble.md)
+
 ## Prevention
 
 - When adding tools to `Tool` enum, update dynamic parity test — not hardcoded counts.
