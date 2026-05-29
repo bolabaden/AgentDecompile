@@ -52,6 +52,7 @@ This index now reflects the files that actually exist in the repository. Referen
 
 - [../.cursor/skills/tiered-re-analysis/](../.cursor/skills/tiered-re-analysis/) — Route Tier 0–3 tools; use Ghidra MCP only when necessary.
 - [./solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](./solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md) — Full routing matrix and multi-agent workflow alignment.
+- [./solutions/architecture-patterns/tiered-re-analysis-routing.md](./solutions/architecture-patterns/tiered-re-analysis-routing.md) — Compound learning: tier routing problem/solution after PR #62.
 
 ### Historical and example docs
 

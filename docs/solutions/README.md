@@ -7,7 +7,7 @@ Searchable institutional learnings from solved problems in AgentDecompile. Each 
 | Directory | problem_type examples |
 |-----------|---------------------|
 | `integration-issues/` | MCP session, Ghidra import, tool dispatch |
-| `architecture-patterns/` | Coordinators, locking, fail-closed behavior, **tiered RE tool routing** |
+| `architecture-patterns/` | Coordinators, locking, fail-closed behavior, **tiered RE tool routing** (`tiered-re-analysis-routing.md`, `tiered-re-analysis-knowledgebase.md`) |
 | `developer-experience/` | CLI ergonomics for agents |
 | `logic-errors/` | Incorrect flags or state before analysis |
 | `workflow-issues/` | LFG, shared Ghidra server, check-in |

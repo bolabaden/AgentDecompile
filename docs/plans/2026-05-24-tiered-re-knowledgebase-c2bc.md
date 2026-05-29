@@ -3,6 +3,8 @@ title: Tiered RE analysis knowledge base and agent alignment
 status: completed
 date: 2026-05-24
 branch: impl/tiered-re-knowledgebase-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/62
+merge_sha: 7471598
 ---
 
 # Tiered RE analysis knowledge base and agent alignment

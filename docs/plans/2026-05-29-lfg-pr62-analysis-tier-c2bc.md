@@ -1,9 +1,8 @@
 ---
 title: LFG — PR #62 ship with analysis_tier registry metadata
 status: completed
-date: 2026-05-29
-branch: impl/tiered-re-knowledgebase-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/62
+merge_sha: 7471598
 ---
 
 # LFG — PR #62 ship with analysis_tier registry metadata
