@@ -3,6 +3,8 @@ title: LFG — runtime tools/list filter by max analysis_tier
 status: completed
 date: 2026-05-24
 branch: impl/max-analysis-tier-filter-c2bc
+merge_sha: 4b8110d
+pr: https://github.com/bolabaden/AgentDecompile/pull/66
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 ---
 
