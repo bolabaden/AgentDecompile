@@ -1,9 +1,11 @@
 ---
 title: LFG — Tier 0–1 MCP discovery sync (tool counts + agent docs)
 type: refactor
-status: active
+status: completed
 date: 2026-05-30
 branch: impl/tier01-discovery-sync-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/86
+merge_sha: beb673f
 ---
 
 # LFG — Tier 0–1 MCP discovery sync (tool counts + agent docs)
