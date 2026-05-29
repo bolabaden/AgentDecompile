@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 1 run-batch-bsim-signatures MCP tool
-status: active
+status: completed
+merge_sha: 5f7fd6f
 date: 2026-05-30
 branch: impl/run-batch-bsim-signatures-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
