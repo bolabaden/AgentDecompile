@@ -4,6 +4,8 @@ type: feat
 status: completed
 date: 2026-05-30
 branch: impl/tier01-capabilities-verify-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/88
+merge_sha: 3b6d8cb
 ---
 
 # LFG — Tier 0–1 capabilities verification + arc closeout
