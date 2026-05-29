@@ -1,9 +1,11 @@
 ---
 title: LFG — Agent-native variable handlers closeout + audit sync
 type: chore
-status: active
+status: completed
 date: 2026-05-30
 branch: impl/agent-native-variable-closeout-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/94
+merge_sha: d475a2d
 origin: docs/plans/2026-05-30-lfg-rename-variable-handlers-c2bc.md
 ---
 
