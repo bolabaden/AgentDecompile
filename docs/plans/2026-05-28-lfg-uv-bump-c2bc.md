@@ -1,9 +1,11 @@
 ---
 title: LFG — uv dependency group bump + plan hygiene
 type: chore
-status: active
+status: completed
 date: 2026-05-28
 branch: impl/uv-bump-c2bc
+pr: https://github.com/bolabaden/AgentDecompile/pull/59
+merge_commit: 68460d4
 origin: dependabot PR #35
 ---
 
