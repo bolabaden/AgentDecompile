@@ -38,7 +38,8 @@ class StaticAnalysisToolProvider(ToolProvider):
                 name=Tool.RUN_FILE_TRIAGE.value,
                 description=(
                     "Tier 0 static triage: file(1), SHA-256, strings sample, and optional yara/capa/binwalk "
-                    "probes when those tools are on PATH. Does not require Ghidra or an open program."
+                    "probes when those tools are on PATH. Optional externalScanTools embeds full external "
+                    "RE scans in one call. Does not require Ghidra or an open program."
                 ),
                 inputSchema={
                     "type": "object",
@@ -70,6 +71,25 @@ class StaticAnalysisToolProvider(ToolProvider):
                         "timeout": {
                             "type": "integer",
                             "description": "Per-command timeout in milliseconds (default 30000).",
+                        },
+                        "externalScanTools": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["yara", "capa", "binwalk", "all"]},
+                            "description": (
+                                "Optional external RE tools to run after triage (embeds run-external-re-scan bundle)."
+                            ),
+                        },
+                        "rulesPath": {
+                            "type": "string",
+                            "description": "YARA rules file when externalScanTools includes yara.",
+                        },
+                        "scanOutputLimit": {
+                            "type": "integer",
+                            "description": "Max output lines per embedded external scan (default 100).",
+                        },
+                        "scanTimeout": {
+                            "type": "integer",
+                            "description": "Embedded external scan timeout in milliseconds (default 60000).",
                         },
                     },
                     "required": ["binaryPath"],
@@ -139,6 +159,11 @@ class StaticAnalysisToolProvider(ToolProvider):
             try_capa = self._get_bool(args, "tryCapa", "try_capa", default=True)
             try_binwalk = self._get_bool(args, "tryBinwalk", "try_binwalk", default=True)
             timeout_ms = self._get_int(args, "timeout", default=30_000) or 30_000
+            raw_external_tools = self._get_list(args, "externalScanTools", "external_scan_tools")
+            external_scan_tools = [str(item) for item in raw_external_tools] if raw_external_tools else None
+            rules_path = self._get_str(args, "rulesPath", "rules_path", "rules")
+            scan_output_limit = self._get_int(args, "scanOutputLimit", "scan_output_limit", default=100) or 100
+            scan_timeout_ms = self._get_int(args, "scanTimeout", "scan_timeout", default=60_000) or 60_000
 
             payload = build_file_triage_payload(
                 Path(binary_path),
@@ -148,6 +173,10 @@ class StaticAnalysisToolProvider(ToolProvider):
                 try_capa=try_capa,
                 try_binwalk=try_binwalk,
                 timeout_ms=max(1000, int(timeout_ms)),
+                external_scan_tools=external_scan_tools,
+                rules_path=rules_path or None,
+                scan_output_limit=max(0, int(scan_output_limit)),
+                scan_timeout_ms=max(1000, int(scan_timeout_ms)),
             )
             return create_success_response(payload)
         except FileNotFoundError as exc:

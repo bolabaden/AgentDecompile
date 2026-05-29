@@ -19,8 +19,8 @@ Use this skill **before** calling Ghidra MCP tools. Full knowledge base: [docs/s
 
 | Tier | Ghidra? | Use for |
 |------|---------|---------|
-| **0** | No | `file`, `strings`, `readelf`/`objdump`, `yara`/`capa`, `binwalk`, `rg` on raw file |
-| **1** | Batch only | `agentdecompile-cli ghidrecomp`, export/SARIF, offline call graphs |
+| **0** | No | `run-file-triage`, `run-external-re-scan`, `file`, `strings`, `yara`/`capa`, `binwalk` |
+| **1** | Batch only | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` |
 | **2** | MCP read-only | After `open-project` + analysis complete: `list-*`, `search-*`, `get-references`, `get-call-graph` |
 | **3** | MCP deep/mutate | `decompile-function`, `analyze-data-flow`, `manage-*`, `match-function`, `execute-script` (last resort) |
 
@@ -37,10 +37,12 @@ Use this skill **before** calling Ghidra MCP tools. Full knowledge base: [docs/s
 Run when the binary path is known and Ghidra is not yet open:
 
 ```bash
+# Prefer MCP when available (no shell):
+# run-file-triage with optional externalScanTools: ["capa", "binwalk"]
+# run-external-re-scan with tool=all or tools array
 file "$BINARY"
 sha256sum "$BINARY"
 strings -a "$BINARY" | rg -i 'error|http|password|debug|\.dll' | head -50
-# PE: objdump -x / readelf -a for ELF
 ```
 
 Record results in `analysis/triage.json` (hash, format, notable strings, suggested Tier escalation).

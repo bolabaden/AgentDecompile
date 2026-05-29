@@ -160,6 +160,22 @@ def _suggest_tier_escalation(file_output: str) -> dict[str, Any]:
     }
 
 
+def _merge_tier_escalation(
+    triage: dict[str, Any],
+    bundle: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not bundle:
+        return triage
+    bundle_tier = bundle.get("suggestedTierEscalation") or {}
+    bundle_level = bundle_tier.get("recommendedTier")
+    if not isinstance(bundle_level, int):
+        return triage
+    triage_level = triage.get("recommendedTier")
+    if isinstance(triage_level, int) and triage_level >= bundle_level:
+        return triage
+    return bundle_tier
+
+
 def build_file_triage_payload(
     binary_path: Path,
     *,
@@ -169,6 +185,11 @@ def build_file_triage_payload(
     try_capa: bool = True,
     try_binwalk: bool = True,
     timeout_ms: int = _DEFAULT_TIMEOUT_MS,
+    external_scan_tools: list[str] | None = None,
+    rules_path: str | Path | None = None,
+    scan_output_limit: int = 100,
+    scan_timeout_ms: int = 60_000,
+    external_scan_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Build unified Tier 0 triage JSON for RE artifact protocol."""
     path = binary_path.expanduser().resolve()
@@ -193,7 +214,27 @@ def build_file_triage_payload(
         timeout_ms=timeout_ms,
     )
 
-    return {
+    triage_escalation = _suggest_tier_escalation(file_output)
+    external_scans: dict[str, Any] | None = None
+    if external_scan_tools:
+        from agentdecompile_cli.mcp_utils.external_re_scan import build_external_re_scan_bundle_payload
+
+        bundle = build_external_re_scan_bundle_payload(
+            path,
+            tools=external_scan_tools,
+            rules_path=rules_path,
+            output_limit=scan_output_limit,
+            timeout_ms=scan_timeout_ms,
+            command_runner=external_scan_runner,
+        )
+        external_scans = {
+            "tools": bundle.get("tools", []),
+            "scans": bundle.get("scans", {}),
+            "counts": bundle.get("counts", {}),
+        }
+        triage_escalation = _merge_tier_escalation(triage_escalation, bundle)
+
+    payload: dict[str, Any] = {
         "action": "run-file-triage",
         "binaryPath": str(path),
         "sha256": _sha256_file(path),
@@ -203,5 +244,8 @@ def build_file_triage_payload(
         },
         "strings": strings_result,
         "optionalTools": optional_tools,
-        "suggestedTierEscalation": _suggest_tier_escalation(file_output),
+        "suggestedTierEscalation": triage_escalation,
     }
+    if external_scans is not None:
+        payload["externalScans"] = external_scans
+    return payload

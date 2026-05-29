@@ -63,13 +63,14 @@ flowchart TD
 | Rename / comments / structures | `manage-function`, `manage-comments`, `manage-structures` | ✅ |
 | Shared VC loop (`/lfg`) | `checkout-program`, `create-label`, `checkin-program`, `sync-project` | ✅ |
 | Export SARIF | `export` | ✅ |
+| Cold binary triage / external scans | `run-file-triage` (optional `externalScanTools`), `run-external-re-scan` | ✅ |
 | GUI cursor / Code Browser launch | — | ❌ intentional (`DISABLED_GUI_ONLY_TOOLS`) |
-| `ghidrecomp` batch pipeline | CLI only | ❌ |
+| `ghidrecomp` batch pipeline | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` | ✅ |
 
 ### Gaps
 
 1. **GUI-only tools** — `get-current-address`, `get-current-function`, `open-program-in-code-browser` disabled headless.
-2. **`ghidrecomp`** — batch decompile/BSIM/SAST; no MCP wrapper.
+2. ~~**`ghidrecomp`** — batch decompile/BSIM/SAST; no MCP wrapper.~~ **Done:** Tier 1 `run-batch-*` tools (2026-05-30).
 3. **Curated surface** — 14 primitives hidden from `tools/list` when `AGENTDECOMPILE_TOOL_SURFACE=curated`; calls still work.
 4. **Auto-checkin** — `checkin-program` hidden when `AGENTDECOMPILE_AUTO_CHECKIN=1`; implicit persist only.
 
@@ -77,7 +78,7 @@ flowchart TD
 
 - Document canonical kebab-case tool map (legacy `rename-function` → `manage-function`).
 - Keep `.cursor/commands/lfg.md` synchronized with registry for regression proof.
-- Optional: MCP wrapper for `ghidrecomp` if batch export is an agent workflow.
+- ~~Optional: MCP wrapper for `ghidrecomp` if batch export is an agent workflow.~~ **Done:** Tier 1 batch tools.
 
 ---
 
