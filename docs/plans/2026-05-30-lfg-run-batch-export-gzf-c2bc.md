@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 1 run-batch-export-gzf MCP tool
-status: active
+status: completed
+merge_sha: d3b1cbc
 date: 2026-05-30
 branch: impl/run-batch-export-gzf-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
