@@ -200,7 +200,7 @@ Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registr
 
 Track in plans; prefer Tier 0 wrappers before new Ghidra providers:
 
-- MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema — **partial:** `run-file-triage` probes + `run-external-re-scan` (Tier 0 unified scan)
+- MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema — **Done:** `run-file-triage` probes + `run-external-re-scan` (single or `tools` bundle)
 - ~~`agentdecompile://capabilities` resource listing tier per tool~~ — **Done** (`CapabilitiesResource`, `agentdecompile://capabilities`)
 - Tier 1 MCP facade over `ghidrecomp` subcommands for agents without shell — **Done:** `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` (Tier 1)
 - ~~Optional runtime filter on `tools/list` by max tier~~ — **Done** (`AGENTDECOMPILE_MAX_ANALYSIS_TIER`, `X-AgentDecompile-Max-Analysis-Tier`, `get_advertised_tools_for_list()`)

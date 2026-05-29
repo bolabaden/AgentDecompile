@@ -13,7 +13,10 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_error_response,
     create_success_response,
 )
-from agentdecompile_cli.mcp_utils.external_re_scan import build_external_re_scan_payload
+from agentdecompile_cli.mcp_utils.external_re_scan import (
+    build_external_re_scan_bundle_payload,
+    build_external_re_scan_payload,
+)
 from agentdecompile_cli.mcp_utils.static_triage import build_file_triage_payload
 from agentdecompile_cli.registry import Tool
 
@@ -76,7 +79,8 @@ class StaticAnalysisToolProvider(ToolProvider):
                 name=Tool.RUN_EXTERNAL_RE_SCAN.value,
                 description=(
                     "Tier 0 external RE scan: run yara (with rulesPath), capa (--json), or binwalk "
-                    "against a file when the tool is on PATH. Does not require Ghidra or an open program."
+                    "against a file when the tool is on PATH. Pass tool=all or a tools array for "
+                    "multi-tool bundle. Does not require Ghidra or an open program."
                 ),
                 inputSchema={
                     "type": "object",
@@ -87,8 +91,19 @@ class StaticAnalysisToolProvider(ToolProvider):
                         },
                         "tool": {
                             "type": "string",
-                            "enum": ["yara", "capa", "binwalk"],
-                            "description": "External tool to invoke.",
+                            "enum": ["yara", "capa", "binwalk", "all"],
+                            "description": (
+                                "External tool to invoke, or 'all' for capa+binwalk+yara bundle "
+                                "(yara skipped without rulesPath)."
+                            ),
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["yara", "capa", "binwalk", "all"]},
+                            "description": (
+                                "Optional explicit tool list for bundle mode. When set, runs each tool "
+                                "and returns scans map (yara skipped without rulesPath)."
+                            ),
                         },
                         "rulesPath": {
                             "type": "string",
@@ -103,7 +118,7 @@ class StaticAnalysisToolProvider(ToolProvider):
                             "description": "Scan timeout in milliseconds (default 60000).",
                         },
                     },
-                    "required": ["binaryPath", "tool"],
+                    "required": ["binaryPath"],
                 },
             ),
         ]
@@ -155,18 +170,31 @@ class StaticAnalysisToolProvider(ToolProvider):
                 "path",
                 name="binaryPath",
             )
-            tool = self._require_str(args, "tool", name="tool")
+            tool = self._get_str(args, "tool")
             rules_path = self._get_str(args, "rulesPath", "rules_path", "rules")
             output_limit = self._get_int(args, "outputLimit", "output_limit", "limit", default=100) or 100
             timeout_ms = self._get_int(args, "timeout", default=60_000) or 60_000
+            raw_tools = self._get_list(args, "tools")
+            tools = [str(item) for item in raw_tools] if raw_tools else None
 
-            payload = build_external_re_scan_payload(
-                Path(binary_path),
-                tool=tool,
-                rules_path=rules_path or None,
-                output_limit=max(0, int(output_limit)),
-                timeout_ms=max(1000, int(timeout_ms)),
-            )
+            if tools:
+                payload = build_external_re_scan_bundle_payload(
+                    Path(binary_path),
+                    tools=tools,
+                    rules_path=rules_path or None,
+                    output_limit=max(0, int(output_limit)),
+                    timeout_ms=max(1000, int(timeout_ms)),
+                )
+            elif tool:
+                payload = build_external_re_scan_payload(
+                    Path(binary_path),
+                    tool=tool,
+                    rules_path=rules_path or None,
+                    output_limit=max(0, int(output_limit)),
+                    timeout_ms=max(1000, int(timeout_ms)),
+                )
+            else:
+                raise ValueError("Either tool or tools is required for run-external-re-scan.")
             return create_success_response(payload)
         except FileNotFoundError as exc:
             return create_error_response(exc)

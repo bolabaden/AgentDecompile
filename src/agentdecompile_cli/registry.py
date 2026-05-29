@@ -532,6 +532,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.RUN_EXTERNAL_RE_SCAN.value: _params(
         "binaryPath",
         "tool",
+        "tools",
         "rulesPath",
         "outputLimit",
         "timeout",

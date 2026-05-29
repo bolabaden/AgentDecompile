@@ -9,7 +9,10 @@ import pytest
 
 from agentdecompile_cli.mcp_server.providers.static_analysis import StaticAnalysisToolProvider
 from agentdecompile_cli.mcp_server.tool_providers import n
-from agentdecompile_cli.mcp_utils.external_re_scan import build_external_re_scan_payload
+from agentdecompile_cli.mcp_utils.external_re_scan import (
+    build_external_re_scan_bundle_payload,
+    build_external_re_scan_payload,
+)
 from agentdecompile_cli.registry import Tool, get_tool_analysis_tier
 
 pytestmark = pytest.mark.unit
@@ -159,3 +162,49 @@ def test_run_external_re_scan_advertised_with_max_tier_two(monkeypatch: pytest.M
     monkeypatch.setenv("AGENTDECOMPILE_MAX_ANALYSIS_TIER", "2")
     listed = get_advertised_tools_for_list()
     assert Tool.RUN_EXTERNAL_RE_SCAN.value in listed
+
+
+def test_build_external_re_scan_bundle_payload(
+    sample_binary: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agentdecompile_cli.mcp_utils.external_re_scan.shutil.which", lambda name: f"/usr/bin/{name}")
+    payload = build_external_re_scan_bundle_payload(
+        sample_binary,
+        tools=["capa", "binwalk", "yara"],
+        command_runner=_fake_runner("line one\nline two"),
+    )
+    assert payload["mode"] == "bundle"
+    assert payload["tools"] == ["capa", "binwalk", "yara"]
+    assert set(payload["scans"]) == {"capa", "binwalk", "yara"}
+    assert payload["scans"]["yara"]["scan"]["skipped"] == "rulesPath not provided for yara in bundle mode"
+    assert payload["counts"]["toolsRun"] == 2
+    assert payload["counts"]["toolsSkipped"] == 1
+
+
+def test_build_external_re_scan_tool_all_alias(
+    sample_binary: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agentdecompile_cli.mcp_utils.external_re_scan.shutil.which", lambda name: f"/usr/bin/{name}")
+    payload = build_external_re_scan_payload(
+        sample_binary,
+        tool="all",
+        command_runner=_fake_runner("ok"),
+    )
+    assert payload["mode"] == "bundle"
+    assert payload["tools"] == ["capa", "binwalk", "yara"]
+
+
+@pytest.mark.asyncio
+async def test_provider_run_external_re_scan_bundle(
+    sample_binary: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agentdecompile_cli.mcp_utils.external_re_scan.shutil.which", lambda _name: "/usr/bin/capa")
+    provider = StaticAnalysisToolProvider()
+    raw_args = {"binaryPath": str(sample_binary), "tools": ["capa", "binwalk"]}
+    result = await provider._handle_run_external_re_scan({n(k): v for k, v in raw_args.items()})
+    payload = json.loads(result[0].text)
+    assert payload["mode"] == "bundle"
+    assert "capa" in payload["scans"]
