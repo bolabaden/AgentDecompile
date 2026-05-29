@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 0 run-external-re-scan MCP tool
-status: active
+status: completed
+merge_sha: 4ca287f
 date: 2026-05-30
 branch: impl/run-external-re-scan-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
