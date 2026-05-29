@@ -1,9 +1,11 @@
 ---
 title: LFG — python-multipart + pip uv group bump
 type: chore
-status: active
+status: completed
 date: 2026-05-29
 branch: impl/python-multipart-bump-c2bc
+merge_sha: 3a3c70e
+pr: https://github.com/bolabaden/AgentDecompile/pull/68
 origin: dependabot PR #61
 ---
 
