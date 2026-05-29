@@ -188,11 +188,11 @@ Every canonical MCP tool exposes **`analysis_tier`** via `get_tool_metadata()` a
 | Value | Meaning |
 |-------|---------|
 | **0** | Static file / OS tools (`run-file-triage`, `run-external-re-scan`) |
-| **1** | Batch ghidrecomp export (`run-batch-decompile`, `run-batch-export-gzf`) |
+| **1** | Batch ghidrecomp export (`run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`) |
 | **2** | Ghidra MCP read-only / session bootstrap (prefer before decompile) |
 | **3** | Deep analysis, workflow bundles, or mutating tools |
 
-Tier 0–1 MCP tools: **`run-file-triage`**, **`run-external-re-scan`** (Tier 0), and **`run-batch-decompile`**, **`run-batch-export-gzf`** (Tier 1). Additional ghidrecomp flags (bsim, sast) remain CLI-only for now.
+Tier 0–1 MCP tools: **`run-file-triage`**, **`run-external-re-scan`** (Tier 0), and **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`** (Tier 1). ghidrecomp **sast** remains CLI-only for now.
 
 Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registry.py`; tests in `tests/test_tool_analysis_tier.py`.
 
@@ -202,7 +202,7 @@ Track in plans; prefer Tier 0 wrappers before new Ghidra providers:
 
 - MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema — **partial:** `run-file-triage` probes + `run-external-re-scan` (Tier 0 unified scan)
 - ~~`agentdecompile://capabilities` resource listing tier per tool~~ — **Done** (`CapabilitiesResource`, `agentdecompile://capabilities`)
-- Tier 1 MCP facade over `ghidrecomp` subcommands for agents without shell — **partial:** `run-batch-decompile`, `run-batch-export-gzf` (Tier 1); bsim/sast wrappers remain future work
+- Tier 1 MCP facade over `ghidrecomp` subcommands for agents without shell — **partial:** `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures` (Tier 1); sast wrapper remains future work
 - ~~Optional runtime filter on `tools/list` by max tier~~ — **Done** (`AGENTDECOMPILE_MAX_ANALYSIS_TIER`, `X-AgentDecompile-Max-Analysis-Tier`, `get_advertised_tools_for_list()`)
 
 ## Related docs

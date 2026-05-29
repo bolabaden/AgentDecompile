@@ -13,6 +13,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_error_response,
     create_success_response,
 )
+from agentdecompile_cli.mcp_utils.batch_bsim import build_batch_bsim_payload
 from agentdecompile_cli.mcp_utils.batch_decompile import build_batch_decompile_payload
 from agentdecompile_cli.mcp_utils.batch_gzf import build_batch_gzf_payload
 from agentdecompile_cli.registry import Tool
@@ -26,6 +27,7 @@ class BatchAnalysisToolProvider(ToolProvider):
     HANDLERS = {
         "runbatchdecompile": "_handle_run_batch_decompile",
         "runbatchexportgzf": "_handle_run_batch_export_gzf",
+        "runbatchbsimsignatures": "_handle_run_batch_bsim_signatures",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -112,6 +114,53 @@ class BatchAnalysisToolProvider(ToolProvider):
                     "required": ["binaryPath"],
                 },
             ),
+            types.Tool(
+                name=Tool.RUN_BATCH_BSIM_SIGNATURES.value,
+                description=(
+                    "Tier 1 batch BSim signatures via ghidrecomp: headless analyze + BSim XML "
+                    "signature export under bsimSigPath. Skips gracefully when BSim is not installed. "
+                    "Does not require an open MCP session program."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "binaryPath": {
+                            "type": "string",
+                            "description": "Path to the binary to analyze and sign.",
+                        },
+                        "outputPath": {
+                            "type": "string",
+                            "description": "Root directory for ghidrecomp results (default ghidrecomps).",
+                        },
+                        "bsimSigPath": {
+                            "type": "string",
+                            "description": "Directory for BSim XML signatures (default bsim-xmls under outputPath).",
+                        },
+                        "bsimTemplate": {
+                            "type": "string",
+                            "description": "BSim database template name (default medium_nosize).",
+                        },
+                        "bsimCategories": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional BSim categories as type:value strings (e.g. family:malware).",
+                        },
+                        "projectPath": {
+                            "type": "string",
+                            "description": "Ghidra project base path for batch analysis (default ghidra_projects).",
+                        },
+                        "functionFilter": {
+                            "type": "string",
+                            "description": "Optional regex filter applied to function names before signing.",
+                        },
+                        "forceAnalysis": {
+                            "type": "boolean",
+                            "description": "Force re-analysis even if the program was analyzed before (default false).",
+                        },
+                    },
+                    "required": ["binaryPath"],
+                },
+            ),
         ]
 
     async def _handle_run_batch_decompile(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -177,6 +226,46 @@ class BatchAnalysisToolProvider(ToolProvider):
                 project_path=project_path,
                 force_analysis=force_analysis,
                 skip_symbols=skip_symbols,
+            )
+            return create_success_response(payload)
+        except FileNotFoundError as exc:
+            return create_error_response(exc)
+        except ValueError as exc:
+            return create_error_response(exc)
+        except OSError as exc:
+            return create_error_response(exc)
+
+    async def _handle_run_batch_bsim_signatures(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug(
+            "diag.enter %s",
+            "mcp_server/providers/batch_analysis.py:BatchAnalysisToolProvider._handle_run_batch_bsim_signatures",
+        )
+        try:
+            binary_path = self._require_str(
+                args,
+                "binaryPath",
+                "binary_path",
+                "path",
+                name="binaryPath",
+            )
+            output_path = self._get_str(args, "outputPath", "output_path") or "ghidrecomps"
+            bsim_sig_path = self._get_str(args, "bsimSigPath", "bsim_sig_path") or "bsim-xmls"
+            bsim_template = self._get_str(args, "bsimTemplate", "bsim_template") or "medium_nosize"
+            project_path = self._get_str(args, "projectPath", "project_path") or "ghidra_projects"
+            function_filter = self._get_str(args, "functionFilter", "function_filter", "filter")
+            force_analysis = self._get_bool(args, "forceAnalysis", "force_analysis", "fa", default=False)
+            raw_categories = self._get_list(args, "bsimCategories", "bsim_categories", "bsimCat")
+            bsim_categories = [str(item) for item in raw_categories] if raw_categories else None
+
+            payload = build_batch_bsim_payload(
+                Path(binary_path),
+                output_path=output_path,
+                bsim_sig_path=bsim_sig_path,
+                bsim_template=bsim_template,
+                bsim_categories=bsim_categories,
+                project_path=project_path,
+                function_filter=function_filter or None,
+                force_analysis=force_analysis,
             )
             return create_success_response(payload)
         except FileNotFoundError as exc:
