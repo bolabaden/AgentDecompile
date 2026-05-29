@@ -177,7 +177,9 @@ Ghidra `Program` DB, local `.gpr`, Ghidra Server programs, `ProgramInfo.domain_f
 
 ### Top gaps
 
-- **Variable rename** — registry params exist; handlers missing on `manage-function`.
+- ~~**Variable rename / local type** — registry params existed; handlers missing on `manage-function`.~~ **Done (PR #92)** — `rename_variable`, `set_variable_type`, `change_datatypes` modes; see [decompiler-variable-mutations.md](../solutions/architecture-patterns/decompiler-variable-mutations.md).
+
+Remaining CRUD gaps (unchanged): data-type catalog create, strings CRUD.
 
 ---
 

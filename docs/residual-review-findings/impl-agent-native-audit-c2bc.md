@@ -8,7 +8,7 @@ audit: docs/audits/2026-05-24-agent-native-audit.md
 
 From [2026-05-24 agent-native audit](../audits/2026-05-24-agent-native-audit.md). Implementation is **out of scope** for the audit PR; track here for follow-up slices.
 
-**Residual actionable work: none.** Agent-native audit arc complete on `master` (PR #49 `13200d6`, PR #50 `049a9f7`, PR #51 `adaa472`, 2026-05-28).
+**Residual actionable work: none.** Agent-native audit arc complete on `master` (PR #49 `13200d6`, PR #50 `049a9f7`, PR #51 `adaa472`, 2026-05-28; variable handlers PR #92 `ec53f4a`, 2026-05-30).
 
 ## P1 — high impact, low–medium effort
 
@@ -27,6 +27,8 @@ From [2026-05-24 agent-native audit](../audits/2026-05-24-agent-native-audit.md)
 | P2-2 | `manage-symbols` | ~~`delete_label` / remove label mode~~ **Done** (PR #49) |
 | P2-3 | Curated tool surface | ~~Advertise list/search primitives; demote `search-everything` / `get-function` to `full`~~ **Done** (PR #49) |
 | P2-4 | Discovery | ~~`.cursor/commands/help.md`~~ **Done**; ~~`/capabilities` slash command~~ **Done** (PR #49) |
+| P2-5 | `manage-function` / `rename-variable` | ~~Decompiler variable rename handler~~ **Done** (PR #92) |
+| P2-6 | `set-local-variable-type` | ~~Variable type handler on `manage-function`~~ **Done** (PR #92) |
 
 ## P3 — docs / hygiene
 
@@ -82,14 +84,11 @@ Optional polish from P1-1 review — status:
 - [x] Unit suite green locally
 - [x] PR #49 CI green on required checks (unit + headless)
 
-**Branch HEAD (merge traceability):** `b2c40d0` on `master` · **Solutions:** [agent-native-mcp-patterns.md](../solutions/architecture-patterns/agent-native-mcp-patterns.md)
+**Branch HEAD (merge traceability):** `3c0fb20` on `master` · **Solutions:** [agent-native-mcp-patterns.md](../solutions/architecture-patterns/agent-native-mcp-patterns.md), [decompiler-variable-mutations.md](../solutions/architecture-patterns/decompiler-variable-mutations.md)
 
-## Next agent-native gap (tracked, not blocking)
+## P2-5 / P2-6 variable handlers (PR #92) — Done
 
-| ID | Area | Action | Notes |
-|----|------|--------|-------|
-| P2-5 | `manage-function` / `rename-variable` | ~~Implement decompiler variable rename handler~~ **Done** (pending PR) | Registry alias exists; audit gap at `docs/audits/2026-05-24-agent-native-audit.md` line 180 |
-| P2-6 | `set-local-variable-type` | ~~Implement variable type handler on `manage-function`~~ **Done** (pending PR) | Same provider surface as P2-5 |
+All tracked agent-native CRUD gaps from the 2026-05-24 audit are implemented. Optional future work (not blocking): Ghidra integration test for variable rename persistence; proactive empty-session hints (audit Capability Discovery §3).
 
 ## Residual Review Findings (P2-1 manage-enums review c1641e4)
 
