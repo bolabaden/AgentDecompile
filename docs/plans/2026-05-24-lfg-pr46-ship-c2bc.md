@@ -1,6 +1,8 @@
 ---
 title: LFG — ship PR #46 (test_lfg_e2e pytest entry)
-status: active
+status: completed
+completed: 2026-05-28
+note: Superseded by agent-native audit PR #49
 created: 2026-05-24
 branch: impl/lfg-e2e-pytest-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/46

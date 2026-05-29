@@ -1,6 +1,8 @@
 ---
 title: LFG — strategy, doc review, and code review
-status: active
+status: completed
+completed: 2026-05-28
+note: STRATEGY.md on master; PR #39 merged
 created: 2026-05-24
 post_merge: 2026-05-24
 ---

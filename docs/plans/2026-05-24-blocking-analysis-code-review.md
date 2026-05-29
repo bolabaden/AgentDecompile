@@ -1,6 +1,8 @@
 ---
 title: Blocking analysis branch — pre-merge code review
-status: active
+status: completed
+completed: 2026-05-28
+note: Pre-merge review complete; PR #39 merged (#39–#45 arc)
 created: 2026-05-24
 ---
 

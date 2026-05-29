@@ -1,7 +1,9 @@
 ---
 title: LFG — P1-2 MCP prompts/get with session substitution
 type: feat
-status: active
+status: completed
+completed: 2026-05-28
+note: P1-2 prompts/get shipped in PR #49
 date: 2026-05-24
 branch: impl/agent-native-audit-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/49

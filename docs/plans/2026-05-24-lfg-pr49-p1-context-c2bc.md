@@ -1,6 +1,8 @@
 ---
 title: LFG — ship PR #49 + P1-1 projectContext enrichment
-status: active
+status: completed
+completed: 2026-05-28
+note: P1-1 shipped in PR #49
 created: 2026-05-24
 branch: impl/agent-native-audit-c2bc
 pr: https://github.com/bolabaden/AgentDecompile/pull/49
