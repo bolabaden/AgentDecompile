@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 0 run-file-triage MCP tool
-status: active
+status: completed
+merge_sha: f5ecb1f
 date: 2026-05-29
 branch: impl/run-file-triage-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
