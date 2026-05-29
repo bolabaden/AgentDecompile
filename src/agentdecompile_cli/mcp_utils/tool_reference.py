@@ -28,8 +28,8 @@ _TIER_ROUTING: list[dict[str, Any]] = [
     },
     {
         "tier": 1,
-        "ghidra": "batch_cli",
-        "summary": "Batch ghidrecomp export when offline bulk is faster than live MCP",
+        "ghidra": "batch_mcp_or_cli",
+        "summary": "Batch MCP run-batch-* or ghidrecomp CLI when offline bulk is faster than live MCP",
         "examples": [
             "run-batch-decompile",
             "run-batch-export-gzf",

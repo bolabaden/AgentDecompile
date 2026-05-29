@@ -34,12 +34,27 @@ Use this skill **before** calling Ghidra MCP tools. Full knowledge base: [docs/s
 
 ## Triage checklist (Tier 0)
 
-Run when the binary path is known and Ghidra is not yet open:
+Run when the binary path is known and Ghidra is not yet open.
+
+**Prefer MCP (structured JSON for `analysis/triage.json`):**
+
+1. **`run-file-triage`** with `binaryPath` — returns `file`, `sha256`, `strings`, optional tool probes.
+2. Optional **`externalScanTools`**: `["capa", "yara", "binwalk"]` embeds `run-external-re-scan` results under `externalScans`.
+3. Or **`run-external-re-scan`** with `tool: "all"` when only external RE scans are needed.
+
+Map MCP response fields into triage artifact:
+
+| MCP field | `triage.json` |
+|-----------|---------------|
+| `sha256` | `hash` |
+| `file` | `format`, `architecture` hints |
+| `strings` | `notable_strings` |
+| `externalScans` | `capability_hints` |
+| `suggestedTierEscalation` | `priority_queue` seed |
+
+**Shell fallback** when MCP unavailable:
 
 ```bash
-# Prefer MCP when available (no shell):
-# run-file-triage with optional externalScanTools: ["capa", "binwalk"]
-# run-external-re-scan with tool=all or tools array
 file "$BINARY"
 sha256sum "$BINARY"
 strings -a "$BINARY" | rg -i 'error|http|password|debug|\.dll' | head -50

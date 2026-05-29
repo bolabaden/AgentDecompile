@@ -8,9 +8,18 @@ import pytest
 
 from agentdecompile_cli.mcp_server.resources.capabilities import CapabilitiesResource
 from agentdecompile_cli.mcp_utils.tool_reference import build_capabilities_payload
-from agentdecompile_cli.registry import RESOURCE_URI_CAPABILITIES, RESOURCE_URIS
+from agentdecompile_cli.registry import DISABLED_GUI_ONLY_TOOLS, RESOURCE_URI_CAPABILITIES, RESOURCE_URIS, Tool, get_advertised_tools_for_list
 
 pytestmark = pytest.mark.unit
+
+TIER01_RUN_TOOLS: dict[str, int] = {
+    "run-file-triage": 0,
+    "run-external-re-scan": 0,
+    "run-batch-decompile": 1,
+    "run-batch-export-gzf": 1,
+    "run-batch-bsim-signatures": 1,
+    "run-batch-sast-scan": 1,
+}
 
 
 def test_resource_uris_includes_capabilities() -> None:
@@ -53,3 +62,25 @@ async def test_read_unknown_uri_raises_not_implemented() -> None:
     provider = CapabilitiesResource()
     with pytest.raises(NotImplementedError):
         await provider.read_resource("agentdecompile://unknown")
+
+
+def test_capabilities_payload_includes_tier01_run_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENTDECOMPILE_MAX_ANALYSIS_TIER", raising=False)
+    monkeypatch.delenv("AGENT_DECOMPILE_MAX_ANALYSIS_TIER", raising=False)
+    payload = build_capabilities_payload()
+    tools_by_name = {item["name"]: item for item in payload["tools"]}
+    for name, expected_tier in TIER01_RUN_TOOLS.items():
+        assert name in tools_by_name, f"missing {name} in capabilities tools[]"
+        tool = tools_by_name[name]
+        assert tool["advertised"] is True
+        assert tool["metadata"]["analysis_tier"] == expected_tier
+
+
+def test_capabilities_summary_counts_match_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENTDECOMPILE_MAX_ANALYSIS_TIER", raising=False)
+    monkeypatch.delenv("AGENT_DECOMPILE_MAX_ANALYSIS_TIER", raising=False)
+    payload = build_capabilities_payload()
+    summary = payload["summary"]
+    assert summary["canonical_tool_count"] == len(Tool)
+    assert summary["advertised_tool_count"] == len(get_advertised_tools_for_list())
+    assert summary["advertised_tool_count"] == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS)

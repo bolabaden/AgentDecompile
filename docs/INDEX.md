@@ -55,6 +55,7 @@ This index now reflects the files that actually exist in the repository. Referen
 - [./solutions/architecture-patterns/tiered-re-analysis-routing.md](./solutions/architecture-patterns/tiered-re-analysis-routing.md) — Compound learning: tier routing problem/solution after PR #62.
 - [./solutions/architecture-patterns/capabilities-mcp-resource.md](./solutions/architecture-patterns/capabilities-mcp-resource.md) — MCP `agentdecompile://capabilities` discovery resource (PR #64).
 - [./solutions/architecture-patterns/max-analysis-tier-filter.md](./solutions/architecture-patterns/max-analysis-tier-filter.md) — Runtime `tools/list` filter by max `analysis_tier` (PR #66).
+- [./solutions/architecture-patterns/tier01-mcp-discovery-sync.md](./solutions/architecture-patterns/tier01-mcp-discovery-sync.md) — Tier 0–1 MCP tools + discovery sync (PRs #80–#86).
 
 ### Historical and example docs
 
