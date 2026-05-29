@@ -33,6 +33,7 @@ from agentdecompile_cli.bridge import (
     ServerNotRunningError,
 )
 from agentdecompile_cli.registry import (
+    RESOURCE_URI_CAPABILITIES,
     RESOURCE_URI_DEBUG_INFO,
     RESOURCE_URI_PROGRAMS,
     RESOURCE_URI_STATIC_ANALYSIS,
@@ -58,6 +59,7 @@ from agentdecompile_cli.executor import (
 
 __all__ = [
     "RESOURCE_URIS",
+    "RESOURCE_URI_CAPABILITIES",
     "RESOURCE_URI_DEBUG_INFO",
     "RESOURCE_URI_PROGRAMS",
     "RESOURCE_URI_STATIC_ANALYSIS",

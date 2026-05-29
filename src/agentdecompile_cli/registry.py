@@ -271,9 +271,11 @@ class ResourceUri(str, Enum):
     """Canonical resource URIs for read_resource."""
 
     DEBUG_INFO = "agentdecompile://debug-info"
+    CAPABILITIES = "agentdecompile://capabilities"
 
 
 RESOURCE_URI_DEBUG_INFO = ResourceUri.DEBUG_INFO.value
+RESOURCE_URI_CAPABILITIES = ResourceUri.CAPABILITIES.value
 RESOURCE_URI_PROGRAMS = "ghidra://programs"
 RESOURCE_URI_STATIC_ANALYSIS = "ghidra://static-analysis-results"
 

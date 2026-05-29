@@ -7,6 +7,7 @@ MermaidFlowchartResource (agentdecompile://mermaid-flowchart for function/call f
 ResourceProviderManager registers these and dispatches read_resource by URI.
 """
 
+from .capabilities import CapabilitiesResource
 from .programs import ProgramListResource
 from .static_analysis import StaticAnalysisResultsResource
 from .debug_info import DebugInfoResource
@@ -16,6 +17,7 @@ from .mermaid_flowchart import MermaidFlowchartResource
 
 __all__ = [
     "AnalysisDumpResource",
+    "CapabilitiesResource",
     "DebugInfoResource",
     "MermaidFlowchartResource",
     "ProgramListResource",

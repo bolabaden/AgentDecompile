@@ -85,12 +85,14 @@ class ResourceProviderManager:
     def _init_providers(self) -> None:
         """Register built-in resource providers: debug info, analysis dump, and tool-backed agentdecompile://<tool-name>."""
         logger.debug("diag.enter %s", "mcp_server/resource_providers.py:ResourceProviderManager._init_providers")
+        from agentdecompile_cli.mcp_server.resources.capabilities import CapabilitiesResource
         from agentdecompile_cli.mcp_server.resources import DebugInfoResource
         from agentdecompile_cli.mcp_server.resources.analysis_dump import AnalysisDumpResource
         from agentdecompile_cli.mcp_server.resources.tool_resources import ToolOutputResource
         from agentdecompile_cli.mcp_server.resources.mermaid_flowchart import MermaidFlowchartResource
 
         self.providers = [
+            CapabilitiesResource(),
             DebugInfoResource(),
             AnalysisDumpResource(),
             ToolOutputResource(),

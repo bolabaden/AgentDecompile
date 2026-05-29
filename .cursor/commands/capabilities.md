@@ -17,6 +17,7 @@ Details: [tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture
 
 | Surface | Entry | Notes |
 |---------|-------|-------|
+| MCP resource | `resources/read` → **`agentdecompile://capabilities`** | Tier routing + full tool inventory with `analysis_tier` (no Ghidra session required) |
 | MCP tools | `tools/list` → `tools/call` | **56 advertised** tools (default surface); 4 GUI-only tools hidden |
 | MCP prompts | `prompts/list` → **`prompts/get`** | 9 RE workflow prompts with session substitution |
 | CLI | `agentdecompile-cli tool`, `tool-seq` | Persists `mcp-session-id` per backend URL |
