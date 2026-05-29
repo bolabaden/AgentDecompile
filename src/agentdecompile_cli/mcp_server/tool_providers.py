@@ -1760,6 +1760,7 @@ class ToolProviderManager:
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.register_all_providers")
         from agentdecompile_cli.mcp_server.providers import (
             BookmarkToolProvider,
+            BatchAnalysisToolProvider,
             CallGraphToolProvider,
             CommentToolProvider,
             ConflictResolutionToolProvider,
@@ -1790,6 +1791,7 @@ class ToolProviderManager:
         # Register each provider; one failure does not block others
         for cls in (
             BookmarkToolProvider,
+            BatchAnalysisToolProvider,
             CallGraphToolProvider,
             CommentToolProvider,
             ConflictResolutionToolProvider,

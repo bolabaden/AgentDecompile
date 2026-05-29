@@ -24,13 +24,13 @@ _TIER_ROUTING: list[dict[str, Any]] = [
         "tier": 0,
         "ghidra": False,
         "summary": "Static file / OS tools — file, strings, headers, yara/capa before open-project",
-        "examples": ["file", "strings", "readelf", "yara", "capa", "binwalk"],
+        "examples": ["run-file-triage", "file", "strings", "yara", "capa", "binwalk"],
     },
     {
         "tier": 1,
         "ghidra": "batch_cli",
         "summary": "Batch ghidrecomp export when offline bulk is faster than live MCP",
-        "examples": ["ghidrecomp decompile", "ghidrecomp export"],
+        "examples": ["run-batch-decompile", "ghidrecomp decompile", "ghidrecomp export"],
     },
     {
         "tier": 2,
@@ -180,7 +180,7 @@ def build_capabilities_payload() -> dict[str, Any]:
     tool_ref = build_tool_reference_payload()
     listed_tools = get_advertised_tools_for_list()
     listed_set = set(listed_tools)
-    tier_counts = {2: 0, 3: 0}
+    tier_counts = {0: 0, 1: 0, 2: 0, 3: 0}
     tools = tool_ref.pop("canonical_tools")
     for item in tools:
         if item.get("name") not in listed_set:
@@ -193,9 +193,11 @@ def build_capabilities_payload() -> dict[str, Any]:
         "resourceUri": RESOURCE_URI_CAPABILITIES,
         "tiers": _TIER_ROUTING,
         "tier_tool_counts": {
+            "mcp_tier_0_static": tier_counts.get(0, 0),
+            "mcp_tier_1_batch": tier_counts.get(1, 0),
             "mcp_tier_2_read_only": tier_counts[2],
             "mcp_tier_3_deep_mutate": tier_counts[3],
-            "note": "Tier 0–1 are shell/ghidrecomp paths documented in tiers[]; not MCP tools.",
+            "note": "Tier 0–1 MCP tools include run-file-triage and run-batch-decompile; see tiers[] for routing.",
         },
         "discovery": {
             "skill": ".cursor/skills/tiered-re-analysis/SKILL.md",

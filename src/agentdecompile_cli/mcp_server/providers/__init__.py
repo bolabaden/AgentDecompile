@@ -29,11 +29,13 @@ from .search_everything import SearchEverythingToolProvider
 from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
 from .dissect import GetFunctionAioToolProvider
+from .batch_analysis import BatchAnalysisToolProvider
 from .prompts import PromptToolProvider
 from .static_analysis import StaticAnalysisToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
+    "BatchAnalysisToolProvider",
     "CallGraphToolProvider",
     "CommentToolProvider",
     "ConflictResolutionToolProvider",
