@@ -30,6 +30,7 @@ from .suggestions import SuggestionToolProvider
 from .datatypes import DataTypeToolProvider
 from .dissect import GetFunctionAioToolProvider
 from .prompts import PromptToolProvider
+from .static_analysis import StaticAnalysisToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
@@ -49,6 +50,7 @@ __all__ = [
     "MemoryToolProvider",
     "ProjectToolProvider",
     "ScriptToolProvider",
+    "StaticAnalysisToolProvider",
     "PromptToolProvider",
     "SearchEverythingToolProvider",
     "StringToolProvider",

@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
         (Tool.MANAGE_COMMENTS, 3),
         (Tool.MATCH_FUNCTION, 3),
         (Tool.EXECUTE_SCRIPT, 3),
+        (Tool.RUN_FILE_TRIAGE, 0),
     ],
 )
 def test_analysis_tier_examples(tool: Tool, expected_tier: int) -> None:
@@ -33,12 +34,12 @@ def test_analysis_tier_examples(tool: Tool, expected_tier: int) -> None:
     assert metadata.analysis_tier == expected_tier
 
 
-def test_every_canonical_tool_has_tier_two_or_three() -> None:
+def test_every_canonical_tool_has_known_analysis_tier() -> None:
     for tool in Tool:
         if tool in {Tool.GET_CURRENT_ADDRESS, Tool.GET_CURRENT_FUNCTION, Tool.OPEN_PROGRAM_IN_CODE_BROWSER, Tool.OPEN_ALL_PROGRAMS_IN_CODE_BROWSER}:
             continue
         tier = get_tool_analysis_tier(tool)
-        assert tier in {2, 3}, f"{tool.value} has unexpected tier {tier}"
+        assert tier in {0, 2, 3}, f"{tool.value} has unexpected tier {tier}"
 
 
 def test_metadata_analysis_tier_matches_helper() -> None:

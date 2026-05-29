@@ -156,6 +156,7 @@ class Tool(str, Enum):
     OPEN = "open"
     READ_BYTES = "read-bytes"
     RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
+    RUN_FILE_TRIAGE = "run-file-triage"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
     SEARCH_EVERYTHING = "search-everything"
@@ -523,6 +524,15 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.LIST_PROMPTS.value: _params(),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
     Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),
+    Tool.RUN_FILE_TRIAGE.value: _params(
+        "binaryPath",
+        "stringLimit",
+        "stringFilter",
+        "tryYara",
+        "tryCapa",
+        "tryBinwalk",
+        "timeout",
+    ),
     Tool.SEARCH_CODE.value: _params("programPath", "pattern", "maxResults", "offset", "caseSensitive", "searchMode", "includeFullCode", "previewLength", "similarityThreshold", "overrideMaxFunctionsLimit"),
     Tool.SEARCH_CONSTANTS.value: _params("programPath", "mode", "value", "minValue", "maxValue", "maxResults", "includeSmallValues", "topN"),
     Tool.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
@@ -1067,9 +1077,12 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
     },
 )
 
+# Tier 0 MCP tools: static file triage without Ghidra (file, strings, optional OS RE tools).
+_TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE})
+
 # Tier 3 Ghidra MCP tools: deep analysis, workflow bundles, or program/session mutation.
 # Tier 2 (default for other MCP tools): list/search/xref/read-only discovery.
-# Tiers 0–1 (shell/batch) are documented in tiered-re-analysis KB; not MCP tools.
+# Tier 1 (batch ghidrecomp) remains documented in tiered-re-analysis KB; not an MCP tool yet.
 _TIER3_GHIDRA_TOOLS: frozenset[Tool] = _STATE_WRITING_TOOLS | frozenset(
     {
         Tool.ANALYZE_DATA_FLOW,
@@ -1201,13 +1214,15 @@ def _resolve_canonical_tool_identity(tool_name: Tool | str) -> Tool | None:
 
 
 def get_tool_analysis_tier(tool_name: Tool | str) -> int:
-    """Return Ghidra MCP analysis tier (2 or 3) for routing agents to lighter tools first."""
+    """Return analysis tier (0, 2, or 3) for routing agents to lighter tools first."""
     logger.debug("diag.enter %s", "registry.py:get_tool_analysis_tier")
     tool = _resolve_canonical_tool_identity(tool_name)
     if tool is None:
         return 3
     if tool in DISABLED_GUI_ONLY_TOOLS:
         return 3
+    if tool in _TIER0_TOOLS:
+        return 0
     if tool in _TIER3_GHIDRA_TOOLS:
         return 3
     return 2

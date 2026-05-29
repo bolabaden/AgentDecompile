@@ -190,7 +190,7 @@ Every canonical MCP tool exposes **`analysis_tier`** via `get_tool_metadata()` a
 | **2** | Ghidra MCP read-only / session bootstrap (prefer before decompile) |
 | **3** | Deep analysis, workflow bundles, or mutating tools |
 
-Tier 0–1 remain shell/`ghidrecomp` paths documented above; they are not MCP tools.
+Tier 0–1: **`run-file-triage`** (Tier 0 MCP tool) wraps `file`, `strings`, and optional `yara`/`capa`/`binwalk` probes without Ghidra. Tier 1 remains batch **`ghidrecomp`** paths documented above.
 
 Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registry.py`; tests in `tests/test_tool_analysis_tier.py`.
 
@@ -198,7 +198,7 @@ Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registr
 
 Track in plans; prefer Tier 0 wrappers before new Ghidra providers:
 
-- MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema
+- MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema — **partial:** `run-file-triage` (Tier 0) probes when on PATH; dedicated per-tool MCP wrappers remain future work
 - ~~`agentdecompile://capabilities` resource listing tier per tool~~ — **Done** (`CapabilitiesResource`, `agentdecompile://capabilities`)
 - Tier 1 MCP facade over `ghidrecomp` subcommands for agents without shell
 - ~~Optional runtime filter on `tools/list` by max tier~~ — **Done** (`AGENTDECOMPILE_MAX_ANALYSIS_TIER`, `X-AgentDecompile-Max-Analysis-Tier`, `get_advertised_tools_for_list()`)

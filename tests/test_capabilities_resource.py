@@ -42,6 +42,7 @@ def test_build_capabilities_payload_has_analysis_tier_examples(monkeypatch: pyte
     monkeypatch.delenv("AGENT_DECOMPILE_MAX_ANALYSIS_TIER", raising=False)
     payload = build_capabilities_payload()
     tiers = {item["metadata"]["analysis_tier"] for item in payload["tools"]}
+    assert 0 in tiers
     assert 2 in tiers
     assert 3 in tiers
 
