@@ -1,6 +1,7 @@
 ---
 title: LFG — Tier 1 run-batch-decompile MCP tool
-status: active
+status: completed
+merge_sha: ac18152
 date: 2026-05-30
 branch: impl/run-batch-decompile-c2bc
 origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
