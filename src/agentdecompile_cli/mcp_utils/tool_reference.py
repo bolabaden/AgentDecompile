@@ -34,8 +34,10 @@ _TIER_ROUTING: list[dict[str, Any]] = [
             "run-batch-decompile",
             "run-batch-export-gzf",
             "run-batch-bsim-signatures",
+            "run-batch-sast-scan",
             "ghidrecomp decompile",
             "ghidrecomp --bsim",
+            "ghidrecomp --sast",
         ],
     },
     {
@@ -203,7 +205,7 @@ def build_capabilities_payload() -> dict[str, Any]:
             "mcp_tier_1_batch": tier_counts.get(1, 0),
             "mcp_tier_2_read_only": tier_counts[2],
             "mcp_tier_3_deep_mutate": tier_counts[3],
-            "note": "Tier 0–1 MCP tools include run-file-triage, run-external-re-scan, run-batch-decompile, run-batch-export-gzf, run-batch-bsim-signatures; see tiers[] for routing.",
+            "note": "Tier 0–1 MCP tools include run-file-triage, run-external-re-scan, run-batch-decompile, run-batch-export-gzf, run-batch-bsim-signatures, run-batch-sast-scan; see tiers[] for routing.",
         },
         "discovery": {
             "skill": ".cursor/skills/tiered-re-analysis/SKILL.md",

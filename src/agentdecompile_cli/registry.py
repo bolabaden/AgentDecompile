@@ -160,6 +160,7 @@ class Tool(str, Enum):
     RUN_BATCH_DECOMPILE = "run-batch-decompile"
     RUN_BATCH_EXPORT_GZF = "run-batch-export-gzf"
     RUN_BATCH_BSIM_SIGNATURES = "run-batch-bsim-signatures"
+    RUN_BATCH_SAST_SCAN = "run-batch-sast-scan"
     RUN_FILE_TRIAGE = "run-file-triage"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
@@ -561,6 +562,15 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "projectPath",
         "functionFilter",
         "forceAnalysis",
+    ),
+    Tool.RUN_BATCH_SAST_SCAN.value: _params(
+        "binaryPath",
+        "outputPath",
+        "projectPath",
+        "functionFilter",
+        "forceAnalysis",
+        "semgrepRules",
+        "codeqlRules",
     ),
     Tool.RUN_FILE_TRIAGE.value: _params(
         "binaryPath",
@@ -1120,12 +1130,17 @@ _TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE, Tool.RUN_EXTERN
 
 # Tier 1 MCP tools: batch ghidrecomp export without an open MCP session program.
 _TIER1_TOOLS: frozenset[Tool] = frozenset(
-    {Tool.RUN_BATCH_DECOMPILE, Tool.RUN_BATCH_EXPORT_GZF, Tool.RUN_BATCH_BSIM_SIGNATURES}
+    {
+        Tool.RUN_BATCH_DECOMPILE,
+        Tool.RUN_BATCH_EXPORT_GZF,
+        Tool.RUN_BATCH_BSIM_SIGNATURES,
+        Tool.RUN_BATCH_SAST_SCAN,
+    }
 )
 
 # Tier 3 Ghidra MCP tools: deep analysis, workflow bundles, or program/session mutation.
 # Tier 2 (default for other MCP tools): list/search/xref/read-only discovery.
-# Tier 1 (batch ghidrecomp) remains documented in tiered-re-analysis KB; not an MCP tool yet.
+# Tier 1 batch ghidrecomp tools are MCP-advertised via BatchAnalysisToolProvider.
 _TIER3_GHIDRA_TOOLS: frozenset[Tool] = _STATE_WRITING_TOOLS | frozenset(
     {
         Tool.ANALYZE_DATA_FLOW,

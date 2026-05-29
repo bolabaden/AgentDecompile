@@ -16,6 +16,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
 from agentdecompile_cli.mcp_utils.batch_bsim import build_batch_bsim_payload
 from agentdecompile_cli.mcp_utils.batch_decompile import build_batch_decompile_payload
 from agentdecompile_cli.mcp_utils.batch_gzf import build_batch_gzf_payload
+from agentdecompile_cli.mcp_utils.batch_sast import build_batch_sast_payload
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class BatchAnalysisToolProvider(ToolProvider):
         "runbatchdecompile": "_handle_run_batch_decompile",
         "runbatchexportgzf": "_handle_run_batch_export_gzf",
         "runbatchbsimsignatures": "_handle_run_batch_bsim_signatures",
+        "runbatchsastscan": "_handle_run_batch_sast_scan",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -161,6 +163,51 @@ class BatchAnalysisToolProvider(ToolProvider):
                     "required": ["binaryPath"],
                 },
             ),
+            types.Tool(
+                name=Tool.RUN_BATCH_SAST_SCAN.value,
+                description=(
+                    "Tier 1 batch SAST scan via ghidrecomp: headless analyze + decompile + "
+                    "Semgrep SARIF under sastPath. Skips gracefully when semgrep is not on PATH. "
+                    "Does not require an open MCP session program."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "binaryPath": {
+                            "type": "string",
+                            "description": "Path to the binary to analyze and scan.",
+                        },
+                        "outputPath": {
+                            "type": "string",
+                            "description": "Root directory for ghidrecomp results (default ghidrecomps).",
+                        },
+                        "projectPath": {
+                            "type": "string",
+                            "description": "Ghidra project base path for batch analysis (default ghidra_projects).",
+                        },
+                        "functionFilter": {
+                            "type": "string",
+                            "description": "Optional regex filter applied to function names before decompile.",
+                        },
+                        "forceAnalysis": {
+                            "type": "boolean",
+                            "description": "Force re-analysis even if the program was analyzed before (default false).",
+                        },
+                        "semgrepRules": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Optional Semgrep rule paths or pack names (default p/c when omitted)."
+                            ),
+                        },
+                        "codeqlRules": {
+                            "type": "string",
+                            "description": "Comma-separated CodeQL query directory paths (placeholder in ghidrecomp).",
+                        },
+                    },
+                    "required": ["binaryPath"],
+                },
+            ),
         ]
 
     async def _handle_run_batch_decompile(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -266,6 +313,44 @@ class BatchAnalysisToolProvider(ToolProvider):
                 project_path=project_path,
                 function_filter=function_filter or None,
                 force_analysis=force_analysis,
+            )
+            return create_success_response(payload)
+        except FileNotFoundError as exc:
+            return create_error_response(exc)
+        except ValueError as exc:
+            return create_error_response(exc)
+        except OSError as exc:
+            return create_error_response(exc)
+
+    async def _handle_run_batch_sast_scan(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug(
+            "diag.enter %s",
+            "mcp_server/providers/batch_analysis.py:BatchAnalysisToolProvider._handle_run_batch_sast_scan",
+        )
+        try:
+            binary_path = self._require_str(
+                args,
+                "binaryPath",
+                "binary_path",
+                "path",
+                name="binaryPath",
+            )
+            output_path = self._get_str(args, "outputPath", "output_path") or "ghidrecomps"
+            project_path = self._get_str(args, "projectPath", "project_path") or "ghidra_projects"
+            function_filter = self._get_str(args, "functionFilter", "function_filter", "filter")
+            force_analysis = self._get_bool(args, "forceAnalysis", "force_analysis", "fa", default=False)
+            codeql_rules = self._get_str(args, "codeqlRules", "codeql_rules")
+            raw_rules = self._get_list(args, "semgrepRules", "semgrep_rules")
+            semgrep_rules = [str(item) for item in raw_rules] if raw_rules else None
+
+            payload = build_batch_sast_payload(
+                Path(binary_path),
+                output_path=output_path,
+                project_path=project_path,
+                function_filter=function_filter or None,
+                force_analysis=force_analysis,
+                semgrep_rules=semgrep_rules,
+                codeql_rules=codeql_rules,
             )
             return create_success_response(payload)
         except FileNotFoundError as exc:
