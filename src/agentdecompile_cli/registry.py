@@ -1329,6 +1329,54 @@ def get_advertised_tools() -> list[str]:
     return list(ADVERTISED_TOOLS)
 
 
+def parse_max_analysis_tier_value(raw: str | None) -> int | None:
+    """Parse max analysis tier from env or header; returns 2, 3, or None when unset/invalid."""
+    logger.debug("diag.enter %s", "registry.py:parse_max_analysis_tier_value")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        tier = int(text)
+    except ValueError:
+        logger.debug("max_analysis_tier_invalid raw_len=%s", len(text))
+        return None
+    if tier in {2, 3}:
+        return tier
+    logger.debug("max_analysis_tier_out_of_range value=%s", tier)
+    return None
+
+
+def _get_env_max_analysis_tier() -> int | None:
+    """Return process env max analysis tier (AGENTDECOMPILE_MAX_ANALYSIS_TIER or legacy alias)."""
+    logger.debug("diag.enter %s", "registry.py:_get_env_max_analysis_tier")
+    raw = os.environ.get("AGENTDECOMPILE_MAX_ANALYSIS_TIER") or os.environ.get("AGENT_DECOMPILE_MAX_ANALYSIS_TIER") or ""
+    return parse_max_analysis_tier_value(raw)
+
+
+def get_effective_max_analysis_tier() -> int | None:
+    """Return active max analysis tier: per-request header override, then env; None = no filter."""
+    logger.debug("diag.enter %s", "registry.py:get_effective_max_analysis_tier")
+    from agentdecompile_cli.mcp_server.session_context import get_current_request_max_analysis_tier
+
+    request_raw = get_current_request_max_analysis_tier()
+    if request_raw is not None:
+        parsed = parse_max_analysis_tier_value(request_raw)
+        if parsed is not None:
+            return parsed
+    return _get_env_max_analysis_tier()
+
+
+def get_advertised_tools_for_list() -> list[str]:
+    """Advertised tools for MCP tools/list, optionally filtered by max analysis tier."""
+    logger.debug("diag.enter %s", "registry.py:get_advertised_tools_for_list")
+    max_tier = get_effective_max_analysis_tier()
+    if max_tier is None:
+        return list(ADVERTISED_TOOLS)
+    return [tool_name for tool_name in ADVERTISED_TOOLS if get_tool_analysis_tier(tool_name) <= max_tier]
+
+
 def _build_advertised_tool_params() -> dict[str, list[str]]:
     logger.debug("diag.enter %s", "registry.py:_build_advertised_tool_params")
     advertised: dict[str, list[str]] = {}

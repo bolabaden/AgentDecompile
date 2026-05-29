@@ -51,6 +51,10 @@ CURRENT_REQUEST_AUTO_MATCH_PROPAGATE: ContextVar[str | None] = ContextVar("curre
 # Comma-separated program paths; when set, overrides AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS for this request.
 CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS: ContextVar[str | None] = ContextVar("current_request_auto_match_target_paths", default=None)
 
+# Per-request max analysis tier for tools/list (X-AgentDecompile-Max-Analysis-Tier header).
+# When set, overrides AGENTDECOMPILE_MAX_ANALYSIS_TIER for this request (values: 2 or 3).
+CURRENT_REQUEST_MAX_ANALYSIS_TIER: ContextVar[str | None] = ContextVar("current_request_max_analysis_tier", default=None)
+
 # Default grace period in seconds.  Overridden by AGENTDECOMPILE_SESSION_GRACE_PERIOD
 _DEFAULT_GRACE_PERIOD: int = 300
 # How frequently the reaper thread checks for expired entries (seconds)
@@ -91,6 +95,12 @@ def get_current_request_auto_match_target_paths() -> str | None:
     """Return the current request's auto-match target paths (X-AgentDecompile-Auto-Match-Target-Paths), if any."""
     logger.debug("diag.enter %s", "mcp_server/session_context.py:get_current_request_auto_match_target_paths")
     return CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.get()
+
+
+def get_current_request_max_analysis_tier() -> str | None:
+    """Return the current request's max analysis tier (X-AgentDecompile-Max-Analysis-Tier), if any."""
+    logger.debug("diag.enter %s", "mcp_server/session_context.py:get_current_request_max_analysis_tier")
+    return CURRENT_REQUEST_MAX_ANALYSIS_TIER.get()
 
 
 def get_current_mcp_session_id() -> str:

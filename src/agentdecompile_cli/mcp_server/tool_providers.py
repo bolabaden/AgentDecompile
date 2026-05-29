@@ -58,8 +58,8 @@ from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[r
     is_shared_server_handle,
 )
 from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
-    ADVERTISED_TOOLS,
     ADVERTISED_TOOL_PARAMS,
+    get_advertised_tools_for_list,
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
     Tool,
@@ -2338,7 +2338,7 @@ class ToolProviderManager:
         return results
 
     def list_tools(self) -> list[types.Tool]:
-        """Build the MCP tools/list response: merge all providers' tools, then return only ADVERTISED_TOOLS with normalized params and format option."""
+        """Build the MCP tools/list response: merge providers' tools, then return advertised tools (optionally tier-filtered) with normalized params and format option."""
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager.list_tools")
         provider_tools: list[types.Tool] = []
         for p in self.providers:
@@ -2350,7 +2350,7 @@ class ToolProviderManager:
             by_norm.setdefault(n(tool.name), tool)
 
         advertised_tools: list[types.Tool] = []
-        for canonical_name in ADVERTISED_TOOLS:
+        for canonical_name in get_advertised_tools_for_list():
             canonical_params: list[str] = ADVERTISED_TOOL_PARAMS.get(canonical_name, [])
 
             normalized_name: str = n(canonical_name)

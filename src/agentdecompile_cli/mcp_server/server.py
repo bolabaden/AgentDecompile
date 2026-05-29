@@ -41,6 +41,7 @@ from agentdecompile_cli.mcp_server.session_context import (
     CURRENT_MCP_SESSION_ID,
     CURRENT_REQUEST_AUTO_MATCH_PROPAGATE,
     CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS,
+    CURRENT_REQUEST_MAX_ANALYSIS_TIER,
     CURRENT_REQUEST_PROJECT_PATH_OVERRIDE,
     SESSION_CONTEXTS,
 )
@@ -691,6 +692,7 @@ class PythonMcpServer:
             project_path_override: str | None = None
             auto_match_propagate: str | None = None
             auto_match_target_paths: str | None = None
+            max_analysis_tier: str | None = None
             request_scheme: str = "http"
             if scope.get("type") == "http":
                 request_scheme = scope.get("scheme", "http")
@@ -711,6 +713,8 @@ class PythonMcpServer:
                         auto_match_propagate = value_b.decode("latin1").strip() or None
                     elif header_name == "x-agentdecompile-auto-match-target-paths":
                         auto_match_target_paths = value_b.decode("latin1").strip() or None
+                    elif header_name == "x-agentdecompile-max-analysis-tier":
+                        max_analysis_tier = value_b.decode("latin1").strip() or None
                 client_info: tuple[int, int] | None = scope.get("client")
                 if client_info:
                     remote_addr = str(client_info[0]) if isinstance(client_info, (list, tuple)) else ""
@@ -735,12 +739,15 @@ class PythonMcpServer:
             project_path_token: Token[str | None] | None = None
             auto_match_propagate_token: Token[str | None] | None = None
             auto_match_target_paths_token: Token[str | None] | None = None
+            max_analysis_tier_token: Token[str | None] | None = None
             if project_path_override:
                 project_path_token = CURRENT_REQUEST_PROJECT_PATH_OVERRIDE.set(project_path_override)
             if auto_match_propagate is not None:
                 auto_match_propagate_token = CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.set(auto_match_propagate)
             if auto_match_target_paths is not None:
                 auto_match_target_paths_token = CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.set(auto_match_target_paths)
+            if max_analysis_tier is not None:
+                max_analysis_tier_token = CURRENT_REQUEST_MAX_ANALYSIS_TIER.set(max_analysis_tier)
 
             # Inject mcp-session-id in response so CLI can persist and resend it (two-command session persistence)
             session_id_for_response: str = session_id
@@ -778,6 +785,8 @@ class PythonMcpServer:
                     CURRENT_REQUEST_AUTO_MATCH_PROPAGATE.reset(auto_match_propagate_token)
                 if auto_match_target_paths_token is not None:
                     CURRENT_REQUEST_AUTO_MATCH_TARGET_PATHS.reset(auto_match_target_paths_token)
+                if max_analysis_tier_token is not None:
+                    CURRENT_REQUEST_MAX_ANALYSIS_TIER.reset(max_analysis_tier_token)
                 if auth_token is not None:
                     CURRENT_AUTH_CONTEXT.reset(auth_token)
 

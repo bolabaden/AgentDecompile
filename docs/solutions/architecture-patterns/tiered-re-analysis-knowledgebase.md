@@ -201,7 +201,7 @@ Track in plans; prefer Tier 0 wrappers before new Ghidra providers:
 - MCP or CLI wrappers for `capa`, `yara`, `binwalk` with unified JSON schema
 - ~~`agentdecompile://capabilities` resource listing tier per tool~~ — **Done** (`CapabilitiesResource`, `agentdecompile://capabilities`)
 - Tier 1 MCP facade over `ghidrecomp` subcommands for agents without shell
-- Optional runtime filter on `tools/list` by max tier
+- ~~Optional runtime filter on `tools/list` by max tier~~ — **Done** (`AGENTDECOMPILE_MAX_ANALYSIS_TIER`, `X-AgentDecompile-Max-Analysis-Tier`, `get_advertised_tools_for_list()`)
 
 ## Related docs
 

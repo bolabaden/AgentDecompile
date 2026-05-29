@@ -38,6 +38,18 @@ def test_forwardable_shared_headers_preserves_header_casing() -> None:
 
 
 @pytest.mark.unit
+def test_forwardable_shared_headers_includes_max_analysis_tier() -> None:
+    assert "x-agentdecompile-max-analysis-tier" in PROXY_FORWARDABLE_SHARED_HEADER_NAMES
+
+
+@pytest.mark.unit
+def test_forwardable_shared_headers_extracts_max_analysis_tier() -> None:
+    scope = _http_scope([(b"x-agentdecompile-max-analysis-tier", b"2")])
+    forwarded = forwardable_shared_headers_from_scope(scope)
+    assert forwarded["x-agentdecompile-max-analysis-tier"] == "2"
+
+
+@pytest.mark.unit
 def test_forwardable_shared_headers_non_http_scope_returns_empty() -> None:
     assert forwardable_shared_headers_from_scope({"type": "websocket"}) == {}
 

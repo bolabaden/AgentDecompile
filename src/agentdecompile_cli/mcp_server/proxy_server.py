@@ -54,6 +54,7 @@ PROXY_FORWARDABLE_SHARED_HEADER_NAMES: frozenset[str] = frozenset(
         "x-agent-server-repository",
         "x-agentdecompile-auto-match-propagate",
         "x-agentdecompile-auto-match-target-paths",
+        "x-agentdecompile-max-analysis-tier",
         "x-agentdecompile-project-path",
     }
 )
@@ -297,6 +298,7 @@ class AgentDecompileMcpProxyServer:
                     "x-agent-server-password",
                     "x-agent-server-repository",
                     "x-agentdecompile-project-path",
+                    "x-agentdecompile-max-analysis-tier",
                 ],
                 "shared_server_http_mapping": {
                     "request_url": "Use the proxy MCP URL itself, typically http://host:port/mcp",
@@ -308,6 +310,8 @@ class AgentDecompileMcpProxyServer:
                         "AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD": ["Authorization", "X-Agent-Server-Password"],
                         "AGENTDECOMPILE_AUTO_MATCH_PROPAGATE": ["X-AgentDecompile-Auto-Match-Propagate"],
                         "AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS": ["X-AgentDecompile-Auto-Match-Target-Paths"],
+                        "AGENTDECOMPILE_MAX_ANALYSIS_TIER": ["X-AgentDecompile-Max-Analysis-Tier"],
+                        "AGENT_DECOMPILE_MAX_ANALYSIS_TIER": ["X-AgentDecompile-Max-Analysis-Tier"],
                         "AGENTDECOMPILE_PROJECT_PATH": ["X-AgentDecompile-Project-Path"],
                         "AGENT_DECOMPILE_PROJECT_PATH": ["X-AgentDecompile-Project-Path"],
                     },

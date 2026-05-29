@@ -37,7 +37,9 @@ async def test_read_capabilities_returns_json_with_tiers_and_tools() -> None:
     assert payload["summary"]["canonical_tool_count"] > 0
 
 
-def test_build_capabilities_payload_has_analysis_tier_examples() -> None:
+def test_build_capabilities_payload_has_analysis_tier_examples(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENTDECOMPILE_MAX_ANALYSIS_TIER", raising=False)
+    monkeypatch.delenv("AGENT_DECOMPILE_MAX_ANALYSIS_TIER", raising=False)
     payload = build_capabilities_payload()
     tiers = {item["metadata"]["analysis_tier"] for item in payload["tools"]}
     assert 2 in tiers

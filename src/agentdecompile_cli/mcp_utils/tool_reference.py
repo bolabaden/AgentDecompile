@@ -6,11 +6,12 @@ import logging
 from typing import Any
 
 from agentdecompile_cli.registry import (
-    ADVERTISED_TOOLS,
     RESOURCE_URI_CAPABILITIES,
     TOOLS,
     TOOL_ALIASES,
     get_active_tool_surface_profile,
+    get_advertised_tools_for_list,
+    get_effective_max_analysis_tier,
     get_tool_metadata,
     get_tool_params,
     get_tool_profiles,
@@ -64,6 +65,8 @@ def build_tool_reference_payload() -> dict[str, Any]:
     """Build the /tool-reference OpenAPI payload (canonical tools + transport metadata)."""
     logger.debug("diag.enter %s", "mcp_utils/tool_reference.py:build_tool_reference_payload")
     alias_index = build_tool_alias_index()
+    listed_tools = set(get_advertised_tools_for_list())
+    max_tier = get_effective_max_analysis_tier()
     canonical_tools: list[dict[str, Any]] = []
     for canonical_name in sorted(TOOLS):
         params = [str(param) for param in get_tool_params(canonical_name)]
@@ -71,7 +74,7 @@ def build_tool_reference_payload() -> dict[str, Any]:
         canonical_tools.append(
             {
                 "name": canonical_name,
-                "advertised": canonical_name in ADVERTISED_TOOLS,
+                "advertised": canonical_name in listed_tools,
                 "parameters": params,
                 "aliases": alias_index.get(canonical_name, []),
                 "profiles": get_tool_profiles(canonical_name),
@@ -95,10 +98,11 @@ def build_tool_reference_payload() -> dict[str, Any]:
     return {
         "summary": {
             "canonical_tool_count": len(TOOLS),
-            "advertised_tool_count": len(ADVERTISED_TOOLS),
+            "advertised_tool_count": len(listed_tools),
             "alias_count": sum(len(item["aliases"]) for item in canonical_tools),
             "active_tool_surface_profile": get_active_tool_surface_profile(),
             "profile_counts": profile_counts,
+            **({"max_analysis_tier": max_tier} if max_tier is not None else {}),
         },
         "transport": {
             "canonical_endpoint": "/mcp",
@@ -159,7 +163,12 @@ def build_tool_reference_payload() -> dict[str, Any]:
                 "AGENTDECOMPILE_DISABLE_TOOLS",
                 "AGENTDECOMPILE_ENABLE_LEGACY_TOOLS",
                 "AGENTDECOMPILE_SHOW_LEGACY_TOOLS",
+                "AGENTDECOMPILE_MAX_ANALYSIS_TIER",
+                "AGENT_DECOMPILE_MAX_ANALYSIS_TIER",
             ],
+        },
+        "request_headers": {
+            "max_analysis_tier": "X-AgentDecompile-Max-Analysis-Tier (values 2 or 3; per-request override of env)",
         },
         "canonical_tools": canonical_tools,
     }
@@ -169,9 +178,13 @@ def build_capabilities_payload() -> dict[str, Any]:
     """Build agentdecompile://capabilities JSON (tier routing + tool inventory)."""
     logger.debug("diag.enter %s", "mcp_utils/tool_reference.py:build_capabilities_payload")
     tool_ref = build_tool_reference_payload()
+    listed_tools = get_advertised_tools_for_list()
+    listed_set = set(listed_tools)
     tier_counts = {2: 0, 3: 0}
     tools = tool_ref.pop("canonical_tools")
     for item in tools:
+        if item.get("name") not in listed_set:
+            continue
         tier = int(item.get("metadata", {}).get("analysis_tier", 3))
         if tier in tier_counts:
             tier_counts[tier] += 1
@@ -193,5 +206,5 @@ def build_capabilities_payload() -> dict[str, Any]:
         "summary": tool_ref["summary"],
         "transport": tool_ref["transport"],
         "environment_variables": tool_ref["environment_variables"],
-        "tools": tools,
+        "tools": [item for item in tools if item.get("name") in listed_set],
     }
