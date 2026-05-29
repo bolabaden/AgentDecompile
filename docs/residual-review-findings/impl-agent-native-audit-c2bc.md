@@ -105,29 +105,30 @@ Capability Discovery **7/7** on `master`. Compound: [agent-native-discovery-arc.
 
 | Item | Status |
 |------|--------|
-| [#111](https://github.com/bolabaden/AgentDecompile/pull/111) mega-stack | **Open** — squash merge to `master` |
-| [#112](https://github.com/bolabaden/AgentDecompile/pull/112) hygiene docs | Open (optional; supersedes #108) |
-| [#107](https://github.com/bolabaden/AgentDecompile/pull/107)–[#110](https://github.com/bolabaden/AgentDecompile/pull/110) | Superseded by #111 — close when convenient |
+| [#111](https://github.com/bolabaden/AgentDecompile/pull/111) mega-stack | **Merged** squash `b72a932` on `master` (2026-05-29) |
+| [#112](https://github.com/bolabaden/AgentDecompile/pull/112) hygiene docs | Open (conflicting after #111 merge; close or refresh manually) |
+| [#107](https://github.com/bolabaden/AgentDecompile/pull/107)–[#110](https://github.com/bolabaden/AgentDecompile/pull/110) | Superseded by #111 — `gh pr close` blocked (integration token) |
 | [#105](https://github.com/bolabaden/AgentDecompile/pull/105)–[#106](https://github.com/bolabaden/AgentDecompile/pull/106) | Superseded by mega-stack lineage |
 
-CRUD completeness **12/12 (100%)** when #111 lands. Compound: [agent-native-crud-arc.md](../solutions/architecture-patterns/agent-native-crud-arc.md).
+CRUD completeness **12/12 (100%)** on `master`. Compound: [agent-native-crud-arc.md](../solutions/architecture-patterns/agent-native-crud-arc.md).
+
+**Residual actionable work: none** for CRUD arc implementation.
 
 ### Ship gate (PR #111)
 
 Ship verify plan: [2026-05-24-lfg-crud-mega-stack-ship-verify-c2bc.md](../plans/2026-05-24-lfg-crud-mega-stack-ship-verify-c2bc.md)  
 CI gate plan: [2026-05-24-lfg-crud-mega-stack-ci-gate-c2bc.md](../plans/2026-05-24-lfg-crud-mega-stack-ci-gate-c2bc.md)  
-Merge-ready PR body: [2026-05-29-pr111-crud-mega-stack-merge-ready.md](../pr-bodies/2026-05-29-pr111-crud-mega-stack-merge-ready.md)
+Post-merge closeout: [2026-05-29-lfg-crud-post-merge-closeout-c2bc.md](../plans/2026-05-29-lfg-crud-post-merge-closeout-c2bc.md)
 
 - [x] Strings, catalog, function-tags CRUD modes implemented
-- [x] Audit updated to 12/12 on branch
-- [x] `uv run pytest -m unit -q --timeout=120` — 254 passed locally (re-verified 2026-05-29)
-- [x] CRUD trio unit tests — 17 passed locally (re-verified 2026-05-29)
-- [x] `ruff check` on CRUD provider paths — clean (re-verified 2026-05-29)
-- [ ] PR #111 body merge-ready refresh — paste from [pr111 merge-ready body](../pr-bodies/2026-05-29-pr111-crud-mega-stack-merge-ready.md) (`gh pr edit` blocked)
-- [ ] CI green on #111 — **pending/queued** ([run 26637466155](https://github.com/bolabaden/AgentDecompile/actions/runs/26637466155)); local verify 254 pass
-- [ ] Squash merge #111 to `master`
-- [ ] Post-merge closeout (residual **Merged**, compound doc merge SHA)
-- [ ] Close superseded #105–#110, #108
+- [x] Audit updated to 12/12 on `master`
+- [x] `uv run pytest -m unit -q --timeout=120` — 254 passed on `master` (2026-05-29)
+- [x] CRUD trio unit tests — 17 passed locally
+- [x] `ruff check` on CRUD provider paths — clean
+- [x] CI `pytest -m unit` green on #111 ([run 26637614327](https://github.com/bolabaden/AgentDecompile/actions/runs/26637614327))
+- [x] Squash merge #111 to `master` (`b72a932`)
+- [x] Post-merge closeout (residual **Merged**, compound doc merge SHA)
+- [ ] Close superseded #105–#110, #108 — `gh pr close` blocked (integration token lacks `closePullRequest`)
 
 ## Residual Review Findings (P2-1 manage-enums review c1641e4)
 

@@ -30,7 +30,7 @@ The 2026-05-24 audit listed **strings CRUD**, **data-type catalog create**, **ca
 
 ## Solution (mega-stack PR #111)
 
-Branch **`impl/crud-mega-stack-c2bc`**. **Ship PR:** [#111](https://github.com/bolabaden/AgentDecompile/pull/111) — single squash merge to `master`; supersedes #105–#110.
+**Merged** squash `b72a932` (PR [#111](https://github.com/bolabaden/AgentDecompile/pull/111), 2026-05-29) on `master`. Supersedes #105–#110.
 
 ```mermaid
 flowchart LR
