@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
         (Tool.RUN_FILE_TRIAGE, 0),
         (Tool.RUN_EXTERNAL_RE_SCAN, 0),
         (Tool.RUN_BATCH_DECOMPILE, 1),
+        (Tool.RUN_BATCH_EXPORT_GZF, 1),
     ],
 )
 def test_analysis_tier_examples(tool: Tool, expected_tier: int) -> None:

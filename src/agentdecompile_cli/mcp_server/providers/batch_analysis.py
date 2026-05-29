@@ -14,16 +14,18 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_success_response,
 )
 from agentdecompile_cli.mcp_utils.batch_decompile import build_batch_decompile_payload
+from agentdecompile_cli.mcp_utils.batch_gzf import build_batch_gzf_payload
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
 
 
 class BatchAnalysisToolProvider(ToolProvider):
-    """Provider for run-batch-decompile (Tier 1 ghidrecomp batch export)."""
+    """Provider for Tier 1 ghidrecomp batch tools (no open MCP session program)."""
 
     HANDLERS = {
         "runbatchdecompile": "_handle_run_batch_decompile",
+        "runbatchexportgzf": "_handle_run_batch_export_gzf",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -70,6 +72,46 @@ class BatchAnalysisToolProvider(ToolProvider):
                     "required": ["binaryPath"],
                 },
             ),
+            types.Tool(
+                name=Tool.RUN_BATCH_EXPORT_GZF.value,
+                description=(
+                    "Tier 1 batch gzf export via ghidrecomp: headless analyze + packed .gzf snapshot "
+                    "under gzfPath. Does not require an open MCP session program."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "binaryPath": {
+                            "type": "string",
+                            "description": "Path to the binary to analyze and export as .gzf.",
+                        },
+                        "outputPath": {
+                            "type": "string",
+                            "description": "Root directory for ghidrecomp results (default ghidrecomps).",
+                        },
+                        "gzfPath": {
+                            "type": "string",
+                            "description": (
+                                "Directory for .gzf archives (default gzfs under outputPath, "
+                                "or absolute/custom path matching ghidrecomp --gzf-path)."
+                            ),
+                        },
+                        "projectPath": {
+                            "type": "string",
+                            "description": "Ghidra project base path for batch analysis (default ghidra_projects).",
+                        },
+                        "forceAnalysis": {
+                            "type": "boolean",
+                            "description": "Force re-analysis even if the program was analyzed before (default false).",
+                        },
+                        "skipSymbols": {
+                            "type": "boolean",
+                            "description": "When true, skip PDB/symbol application (default true).",
+                        },
+                    },
+                    "required": ["binaryPath"],
+                },
+            ),
         ]
 
     async def _handle_run_batch_decompile(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -100,6 +142,41 @@ class BatchAnalysisToolProvider(ToolProvider):
                 skip_cache=skip_cache,
                 force_analysis=force_analysis,
                 callgraphs=callgraphs,
+            )
+            return create_success_response(payload)
+        except FileNotFoundError as exc:
+            return create_error_response(exc)
+        except ValueError as exc:
+            return create_error_response(exc)
+        except OSError as exc:
+            return create_error_response(exc)
+
+    async def _handle_run_batch_export_gzf(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug(
+            "diag.enter %s",
+            "mcp_server/providers/batch_analysis.py:BatchAnalysisToolProvider._handle_run_batch_export_gzf",
+        )
+        try:
+            binary_path = self._require_str(
+                args,
+                "binaryPath",
+                "binary_path",
+                "path",
+                name="binaryPath",
+            )
+            output_path = self._get_str(args, "outputPath", "output_path") or "ghidrecomps"
+            gzf_path = self._get_str(args, "gzfPath", "gzf_path") or "gzfs"
+            project_path = self._get_str(args, "projectPath", "project_path") or "ghidra_projects"
+            force_analysis = self._get_bool(args, "forceAnalysis", "force_analysis", "fa", default=False)
+            skip_symbols = self._get_bool(args, "skipSymbols", "skip_symbols", default=True)
+
+            payload = build_batch_gzf_payload(
+                Path(binary_path),
+                output_path=output_path,
+                gzf_path=gzf_path,
+                project_path=project_path,
+                force_analysis=force_analysis,
+                skip_symbols=skip_symbols,
             )
             return create_success_response(payload)
         except FileNotFoundError as exc:

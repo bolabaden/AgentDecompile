@@ -158,6 +158,7 @@ class Tool(str, Enum):
     RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
     RUN_EXTERNAL_RE_SCAN = "run-external-re-scan"
     RUN_BATCH_DECOMPILE = "run-batch-decompile"
+    RUN_BATCH_EXPORT_GZF = "run-batch-export-gzf"
     RUN_FILE_TRIAGE = "run-file-triage"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
@@ -541,6 +542,14 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "skipCache",
         "forceAnalysis",
         "callgraphs",
+    ),
+    Tool.RUN_BATCH_EXPORT_GZF.value: _params(
+        "binaryPath",
+        "outputPath",
+        "gzfPath",
+        "projectPath",
+        "forceAnalysis",
+        "skipSymbols",
     ),
     Tool.RUN_FILE_TRIAGE.value: _params(
         "binaryPath",
@@ -1099,7 +1108,7 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
 _TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE, Tool.RUN_EXTERNAL_RE_SCAN})
 
 # Tier 1 MCP tools: batch ghidrecomp export without an open MCP session program.
-_TIER1_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_BATCH_DECOMPILE})
+_TIER1_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_BATCH_DECOMPILE, Tool.RUN_BATCH_EXPORT_GZF})
 
 # Tier 3 Ghidra MCP tools: deep analysis, workflow bundles, or program/session mutation.
 # Tier 2 (default for other MCP tools): list/search/xref/read-only discovery.
