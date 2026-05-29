@@ -42,7 +42,7 @@ flowchart TD
 
 **Overall agent-native score (mean of percentages): ~76%**
 
-**Discovery arc (PRs [#96](https://github.com/bolabaden/AgentDecompile/pull/96)–[#100](https://github.com/bolabaden/AgentDecompile/pull/100), pending merge; audit sync [#101](https://github.com/bolabaden/AgentDecompile/pull/101)):** empty-session hints, auto-checkin footer, initialize preamble, variable-rename integration test. See [agent-native-discovery-arc.md](../solutions/architecture-patterns/agent-native-discovery-arc.md).
+**Discovery arc:** merged squash **`d3c0c4e`** ([PR #102](https://github.com/bolabaden/AgentDecompile/pull/102)) — empty-session hints, auto-checkin footer, initialize preamble, variable-rename integration test, audit sync. See [agent-native-discovery-arc.md](../solutions/architecture-patterns/agent-native-discovery-arc.md).
 
 ### Status legend
 

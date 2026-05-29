@@ -27,7 +27,9 @@ tags:
 
 After the PR #49 agent-native audit follow-up (~74% score), four discovery and UI-integration gaps remained: reactive empty-session responses, silent auto-checkin with no outcome feedback, no MCP `initialize` preamble, and missing Ghidra integration proof for variable rename persistence.
 
-## Solution (PRs #96–#100)
+## Solution (PR #102, merged `d3c0c4e`)
+
+Supersedes individual PRs #96–#101 in one squash merge to `master`.
 
 ```mermaid
 flowchart LR
@@ -41,10 +43,9 @@ flowchart LR
   subgraph test [Test coverage]
     D[PR #100 rename integration]
   end
-  discovery --> E[Audit sync PR #101]
+  discovery --> E[Merged PR #102]
   ui --> E
   test --> E
-  E --> F[Merge to master]
 ```
 
 | PR | Deliverable | Key files |
@@ -53,13 +54,7 @@ flowchart LR
 | [#97](https://github.com/bolabaden/AgentDecompile/pull/97) | `autoCheckin` summary on mutating tools | `program_metadata.py`, `tool_providers.py` |
 | [#99](https://github.com/bolabaden/AgentDecompile/pull/99) | `InitializeResult.instructions` tiered preamble | `tool_reference.py`, `server.py`, `bridge.py` |
 | [#100](https://github.com/bolabaden/AgentDecompile/pull/100) | PyGhidra integration test for rename persistence | `tests/test_variable_rename_integration.py` |
-| [#101](https://github.com/bolabaden/AgentDecompile/pull/101) | Audit + residual sync to post-merge scores | `docs/audits/2026-05-24-agent-native-audit.md` |
-
-## Recommended merge
-
-**Preferred:** merge stack PR (single squash) — supersedes #96–#101.
-
-**Alternative (sequential):** #96 → #97 → #99 → #100 → #101
+| [#102](https://github.com/bolabaden/AgentDecompile/pull/102) | **Stack merge** — all below | `master` @ `d3c0c4e` |
 
 ## Agent connect workflow (post-merge)
 
