@@ -88,8 +88,8 @@ Optional polish from P1-1 review — status:
 
 | ID | Area | Action | Notes |
 |----|------|--------|-------|
-| P2-5 | `manage-function` / `rename-variable` | Implement decompiler variable rename handler | Registry alias exists; audit gap at `docs/audits/2026-05-24-agent-native-audit.md` line 180 |
-| P2-6 | `set-local-variable-type` | Implement variable type handler on `manage-function` | Same provider surface as P2-5 |
+| P2-5 | `manage-function` / `rename-variable` | ~~Implement decompiler variable rename handler~~ **Done** (pending PR) | Registry alias exists; audit gap at `docs/audits/2026-05-24-agent-native-audit.md` line 180 |
+| P2-6 | `set-local-variable-type` | ~~Implement variable type handler on `manage-function`~~ **Done** (pending PR) | Same provider surface as P2-5 |
 
 ## Residual Review Findings (P2-1 manage-enums review c1641e4)
 

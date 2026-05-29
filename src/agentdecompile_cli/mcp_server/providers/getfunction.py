@@ -22,6 +22,7 @@ from __future__ import annotations
 import heapq
 import json
 import logging
+import re
 import uuid
 
 from collections import defaultdict
@@ -58,6 +59,44 @@ from agentdecompile_cli.mcp_utils.symbol_util import SymbolUtil
 from agentdecompile_cli.registry import Tool
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DECOMP_VAR_PATTERNS = (
+    re.compile(r"^local_[0-9a-fA-F]+$"),
+    re.compile(r"^[a-z]Var[0-9]+$"),
+    re.compile(r"^param_[0-9]+$"),
+    re.compile(r"^unaff_[a-zA-Z0-9_]+$"),
+    re.compile(r"^in_[a-zA-Z0-9_]+$"),
+    re.compile(r"^out_[a-zA-Z0-9_]+$"),
+)
+
+
+def parse_colon_mappings(raw: str, *, label: str) -> list[tuple[str, str]]:
+    """Parse comma-separated ``left:right`` mapping strings (CLI/registry format)."""
+    if not raw or not str(raw).strip():
+        return []
+    pairs: list[tuple[str, str]] = []
+    for part in str(raw).split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        if ":" not in entry:
+            raise ValueError(f"Invalid {label} entry {entry!r}; expected key:value pairs separated by commas")
+        left, right = entry.split(":", 1)
+        left = left.strip()
+        right = right.strip()
+        if not left or not right:
+            raise ValueError(f"Invalid {label} entry {entry!r}; both sides of ':' must be non-empty")
+        pairs.append((left, right))
+    return pairs
+
+
+def is_default_decompiler_var_name(name: str) -> bool:
+    """True for Ghidra-generated decompiler names (local_8, uVar2, etc.)."""
+    if not name:
+        return True
+    if SymbolUtil.is_default_symbol_name(name):
+        return True
+    return any(pattern.match(name) for pattern in _DEFAULT_DECOMP_VAR_PATTERNS)
 
 
 def _detail_limits(result_count: int) -> tuple[int | None, int | None, int]:
@@ -119,6 +158,10 @@ class GetFunctionToolProvider(ToolProvider):
         "managefunctiontags": "_handle_tags",
         "matchfunction": "_handle_match",
         "migratemetadata": "_handle_migrate_metadata",
+        "renamevariable": "_handle_rename_variable_alias",
+        "renamevariables": "_handle_rename_variable_alias",
+        "setlocalvariabletype": "_handle_set_variable_type_alias",
+        "changevariabledatatypes": "_handle_change_datatypes_alias",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -135,10 +178,31 @@ class GetFunctionToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function's starting address."},
                         "mode": {
                             "type": "string",
-                            "description": "What modification you want to make: 'rename' (change name), 'set_prototype' (change arguments), 'set_calling_convention' (how arguments are passed), 'set_return_type', 'delete', or 'create'.",
-                            "enum": ["rename", "set_prototype", "set_calling_convention", "set_return_type", "delete", "create"],
+                            "description": "What modification you want to make: 'rename' (function name), 'set_prototype', 'set_calling_convention', 'set_return_type', 'rename_variable', 'set_variable_type', 'change_datatypes', 'delete', or 'create'.",
+                            "enum": [
+                                "rename",
+                                "set_prototype",
+                                "set_calling_convention",
+                                "set_return_type",
+                                "rename_variable",
+                                "set_variable_type",
+                                "change_datatypes",
+                                "delete",
+                                "create",
+                            ],
                         },
-                        "newName": {"type": "string", "description": "If mode is 'rename', the new name you want to give the function."},
+                        "newName": {"type": "string", "description": "If mode is 'rename', the new function name; if mode is 'rename_variable', the new variable name."},
+                        "oldName": {"type": "string", "description": "For rename_variable: current decompiler variable name (alias for variableName)."},
+                        "variableName": {"type": "string", "description": "Decompiler variable to rename or retype."},
+                        "newType": {"type": "string", "description": "For set_variable_type or change_datatypes: C type string (e.g. 'uint32_t', 'char *')."},
+                        "variableMappings": {
+                            "type": "string",
+                            "description": "Batch rename: comma-separated oldName:newName pairs (e.g. 'var_1:itemCount,local_8:slotIndex').",
+                        },
+                        "datatypeMappings": {
+                            "type": "string",
+                            "description": "Batch retype: comma-separated varName:type pairs (e.g. 'local_10:uint32_t').",
+                        },
                         "prototype": {
                             "type": "string",
                             "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)').",
@@ -301,12 +365,105 @@ class GetFunctionToolProvider(ToolProvider):
                 "callingconvention": "_handle_set_calling_convention",
                 "setreturntype": "_handle_set_return_type",
                 "returntype": "_handle_set_return_type",
+                "renamevariable": "_handle_rename_variable",
+                "setvariabletype": "_handle_set_variable_type",
+                "changevariabledatatypes": "_handle_change_datatypes",
+                "changedatatypes": "_handle_change_datatypes",
                 "delete": "_handle_delete",
             },
             program=program,
             func=func,
             func_id=func_id,
         )
+
+    async def _handle_mode_alias(self, args: dict[str, Any], mode: str) -> list[types.TextContent]:
+        forwarded_args = dict(args)
+        forwarded_args.setdefault("mode", mode)
+        return await self._handle_manage(forwarded_args)
+
+    async def _handle_rename_variable_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_mode_alias(args, "rename_variable")
+
+    async def _handle_set_variable_type_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_mode_alias(args, "set_variable_type")
+
+    async def _handle_change_datatypes_alias(self, args: dict[str, Any]) -> list[types.TextContent]:
+        return await self._handle_mode_alias(args, "change_datatypes")
+
+    def _session_decompiler(self) -> Any | None:
+        if self.program_info is None:
+            return None
+        getter = getattr(self.program_info, "get_decompiler", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                return getattr(self.program_info, "decompiler", None)
+        return getattr(self.program_info, "decompiler", None)
+
+    def _decompile_high_function(self, program: GhidraProgram, func: GhidraFunction, timeout_s: int = 60) -> Any:
+        from agentdecompile_cli.mcp_utils.decompiler_util import acquire_decompiler_for_program
+
+        session_decomp = self._session_decompiler()
+        with acquire_decompiler_for_program(session_decomp, program) as lease:
+            result = lease.decompiler.decompileFunction(func, timeout_s, make_task_monitor())
+            if result is None or not result.decompileCompleted():
+                msg = ""
+                try:
+                    msg = str(result.getErrorMessage() or "") if result is not None else ""
+                except Exception:
+                    msg = ""
+                detail = msg.strip() or "decompilation failed or timed out"
+                raise ValueError(f"Decompilation failed for {func.getName()}: {detail}")
+            hfunc = result.getHighFunction()
+            if hfunc is None:
+                raise ValueError(f"No high-level function available for {func.getName()}")
+            return hfunc
+
+    @staticmethod
+    def _find_high_symbol(hfunc: Any, variable_name: str) -> Any:
+        target = variable_name.strip()
+        if not target:
+            raise ValueError("variableName is required")
+        exact: Any | None = None
+        case_insensitive: Any | None = None
+        target_lower = target.lower()
+        for sym in hfunc.getLocalSymbolMap().getSymbols():
+            name = str(sym.getName() or "")
+            if name == target:
+                exact = sym
+                break
+            if case_insensitive is None and name.lower() == target_lower:
+                case_insensitive = sym
+        found = exact if exact is not None else case_insensitive
+        if found is None:
+            raise ValueError(f"Variable not found in function: {variable_name}")
+        return found
+
+    def _store_variable_conflict(
+        self,
+        args: dict[str, Any],
+        summary: str,
+    ) -> list[types.TextContent]:
+        from agentdecompile_cli.mcp_server.conflict_store import store as conflict_store_store
+
+        conflict_id = str(uuid.uuid4())
+        next_step = (
+            f'To apply this change, call `resolve-modification-conflict` with `conflictId` = "{conflict_id}" '
+            f'and `resolution` = "overwrite". To discard, use `resolution` = "skip".'
+        )
+        program_path = args.get(n("programPath")) or (getattr(self.program_info, "path", None) if self.program_info else None) or (
+            getattr(self.program_info, "file_path", None) if self.program_info else None
+        )
+        conflict_store_store(
+            get_current_mcp_session_id(),
+            conflict_id,
+            tool=Tool.MANAGE_FUNCTION.value,
+            arguments=dict(args),
+            program_path=str(program_path) if program_path else None,
+            summary=summary,
+        )
+        return create_conflict_response(conflict_id, Tool.MANAGE_FUNCTION.value, summary, next_step)
 
     async def _handle_rename(
         self,
@@ -561,6 +718,210 @@ class GetFunctionToolProvider(ToolProvider):
                 "action": "set_return_type",
                 "function": func.getName(),
                 "returnType": rt_str,
+                "success": True,
+            },
+        )
+
+    async def _handle_rename_variable(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_rename_variable")
+        mappings = parse_colon_mappings(self._get_str(args, "variablemappings", "variableMappings", default=""), label="variableMappings")
+        if mappings:
+            results: list[dict[str, Any]] = []
+            for old_name, new_name in mappings:
+                item_args = dict(args)
+                item_args["variableName"] = old_name
+                item_args["newName"] = new_name
+                response = await self._apply_single_variable_rename(item_args, program, func, old_name, new_name)
+                if isinstance(response, list):
+                    return response
+                results.append(response)
+            self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
+            return create_success_response(
+                {
+                    "action": "rename_variable",
+                    "function": func.getName(),
+                    "count": len(results),
+                    "results": results,
+                    "success": True,
+                },
+            )
+
+        variable_name = self._get_str(args, "variablename", "variableName", "oldname", "oldName", default="").strip()
+        new_name = self._get_str(args, "newname", "newName", "name", default="").strip()
+        if not variable_name or not new_name:
+            raise ValueError("variableName (or oldName) and newName are required for rename_variable")
+        result = await self._apply_single_variable_rename(args, program, func, variable_name, new_name)
+        if isinstance(result, list):
+            return result
+        self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
+        return create_success_response(
+            {
+                "action": "rename_variable",
+                "function": func.getName(),
+                **result,
+                "success": True,
+            },
+        )
+
+    async def _apply_single_variable_rename(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        variable_name: str,
+        new_name: str,
+    ) -> dict[str, Any] | list[types.TextContent]:
+        hfunc = self._decompile_high_function(program, func)
+        high_symbol = self._find_high_symbol(hfunc, variable_name)
+        current_name = str(high_symbol.getName() or variable_name)
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY) and current_name != new_name and not is_default_decompiler_var_name(current_name):
+            summary = (
+                f"Rename variable would overwrite existing custom name in {func.getName()}:\n\n"
+                f"```diff\n- {current_name}\n+ {new_name}\n```"
+            )
+            return self._store_variable_conflict(args, summary)
+
+        from ghidra.program.model.pcode import HighFunctionDBUtil  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
+        def _rename_variable_tx() -> None:
+            HighFunctionDBUtil.updateDBVariable(high_symbol, new_name, None, SourceType.USER_DEFINED)
+            self._touch_listing_for_shared_checkin(program)
+
+        self._run_program_transaction(program, "rename-variable", _rename_variable_tx)
+        return {"variableName": current_name, "newName": new_name}
+
+    async def _handle_set_variable_type(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_set_variable_type")
+        mappings = parse_colon_mappings(self._get_str(args, "datatypemappings", "datatypeMappings", default=""), label="datatypeMappings")
+        if mappings:
+            results: list[dict[str, Any]] = []
+            for var_name, type_str in mappings:
+                item_args = dict(args)
+                item_args["variableName"] = var_name
+                item_args["newType"] = type_str
+                response = await self._apply_single_variable_type(item_args, program, func, var_name, type_str)
+                if isinstance(response, list):
+                    return response
+                results.append(response)
+            self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
+            return create_success_response(
+                {
+                    "action": "set_variable_type",
+                    "function": func.getName(),
+                    "count": len(results),
+                    "results": results,
+                    "success": True,
+                },
+            )
+
+        variable_name = self._get_str(args, "variablename", "variableName", default="").strip()
+        new_type = self._get_str(args, "newtype", "newType", "type", default="").strip()
+        if not variable_name or not new_type:
+            raise ValueError("variableName and newType are required for set_variable_type")
+        result = await self._apply_single_variable_type(args, program, func, variable_name, new_type)
+        if isinstance(result, list):
+            return result
+        self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
+        return create_success_response(
+            {
+                "action": "set_variable_type",
+                "function": func.getName(),
+                **result,
+                "success": True,
+            },
+        )
+
+    async def _apply_single_variable_type(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        variable_name: str,
+        new_type: str,
+    ) -> dict[str, Any] | list[types.TextContent]:
+        from ghidra.util.data import DataTypeParser  # pyright: ignore[reportMissingModuleSource]
+
+        hfunc = self._decompile_high_function(program, func)
+        high_symbol = self._find_high_symbol(hfunc, variable_name)
+        current_type = ""
+        try:
+            current_type = str(high_symbol.getDataType() or "")
+        except Exception:
+            current_type = ""
+
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY) and current_type and current_type != new_type and not is_default_decompiler_var_name(variable_name):
+            summary = (
+                f"Set variable type would overwrite existing type for {variable_name} in {func.getName()}:\n\n"
+                f"```diff\n- {current_type}\n+ {new_type}\n```"
+            )
+            return self._store_variable_conflict(args, summary)
+
+        dtm = program.getDataTypeManager()
+        parser = DataTypeParser(dtm, dtm, cast("Any", None), DataTypeParser.AllowedDataTypes.ALL)
+        parsed_type = parser.parse(new_type)
+
+        from ghidra.program.model.pcode import HighFunctionDBUtil  # pyright: ignore[reportMissingModuleSource]
+        from ghidra.program.model.symbol import SourceType  # pyright: ignore[reportMissingModuleSource]
+
+        def _set_variable_type_tx() -> None:
+            HighFunctionDBUtil.updateDBVariable(high_symbol, None, parsed_type, SourceType.USER_DEFINED)
+            self._touch_listing_for_shared_checkin(program)
+
+        self._run_program_transaction(program, "set-variable-type", _set_variable_type_tx)
+        return {"variableName": variable_name, "newType": new_type}
+
+    async def _handle_change_datatypes(
+        self,
+        args: dict[str, Any],
+        program: GhidraProgram,
+        func: GhidraFunction,
+        func_id: str,
+    ) -> list[types.TextContent]:
+        logger.debug("diag.enter %s", "mcp_server/providers/getfunction.py:GetFunctionToolProvider._handle_change_datatypes")
+        datatype_mappings = parse_colon_mappings(self._get_str(args, "datatypemappings", "datatypeMappings", default=""), label="datatypeMappings")
+        rename_mappings = parse_colon_mappings(self._get_str(args, "variablemappings", "variableMappings", default=""), label="variableMappings")
+        if not datatype_mappings and not rename_mappings:
+            raise ValueError("change_datatypes requires datatypeMappings and/or variableMappings")
+
+        results: list[dict[str, Any]] = []
+        for var_name, type_str in datatype_mappings:
+            item_args = dict(args)
+            item_args["variableName"] = var_name
+            item_args["newType"] = type_str
+            response = await self._apply_single_variable_type(item_args, program, func, var_name, type_str)
+            if isinstance(response, list):
+                return response
+            results.append({"kind": "type", **response})
+        for old_name, new_name in rename_mappings:
+            item_args = dict(args)
+            item_args["variableName"] = old_name
+            item_args["newName"] = new_name
+            response = await self._apply_single_variable_rename(item_args, program, func, old_name, new_name)
+            if isinstance(response, list):
+                return response
+            results.append({"kind": "rename", **response})
+
+        self._notify_versioned_checkout_after_program_edit(program, self._get_str(args, "programpath", "program_path", "path"))
+        return create_success_response(
+            {
+                "action": "change_datatypes",
+                "function": func.getName(),
+                "count": len(results),
+                "results": results,
                 "success": True,
             },
         )
