@@ -24,7 +24,7 @@ _TIER_ROUTING: list[dict[str, Any]] = [
         "tier": 0,
         "ghidra": False,
         "summary": "Static file / OS tools — file, strings, headers, yara/capa before open-project",
-        "examples": ["run-file-triage", "file", "strings", "yara", "capa", "binwalk"],
+        "examples": ["run-file-triage", "run-external-re-scan", "file", "strings", "yara", "capa", "binwalk"],
     },
     {
         "tier": 1,

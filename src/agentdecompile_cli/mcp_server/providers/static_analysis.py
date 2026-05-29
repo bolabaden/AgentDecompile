@@ -13,6 +13,7 @@ from agentdecompile_cli.mcp_server.tool_providers import (
     create_error_response,
     create_success_response,
 )
+from agentdecompile_cli.mcp_utils.external_re_scan import build_external_re_scan_payload
 from agentdecompile_cli.mcp_utils.static_triage import build_file_triage_payload
 from agentdecompile_cli.registry import Tool
 
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 class StaticAnalysisToolProvider(ToolProvider):
-    """Provider for run-file-triage (no open Ghidra program required)."""
+    """Provider for Tier 0 static tools (no open Ghidra program required)."""
 
     HANDLERS = {
         "runfiletriage": "_handle_run_file_triage",
+        "runexternalrescan": "_handle_run_external_re_scan",
     }
 
     def list_tools(self) -> list[types.Tool]:
@@ -70,6 +72,40 @@ class StaticAnalysisToolProvider(ToolProvider):
                     "required": ["binaryPath"],
                 },
             ),
+            types.Tool(
+                name=Tool.RUN_EXTERNAL_RE_SCAN.value,
+                description=(
+                    "Tier 0 external RE scan: run yara (with rulesPath), capa (--json), or binwalk "
+                    "against a file when the tool is on PATH. Does not require Ghidra or an open program."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "binaryPath": {
+                            "type": "string",
+                            "description": "Path to the binary or artifact to scan.",
+                        },
+                        "tool": {
+                            "type": "string",
+                            "enum": ["yara", "capa", "binwalk"],
+                            "description": "External tool to invoke.",
+                        },
+                        "rulesPath": {
+                            "type": "string",
+                            "description": "YARA rules file path (required when tool is yara).",
+                        },
+                        "outputLimit": {
+                            "type": "integer",
+                            "description": "Maximum output lines to return (default 100).",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Scan timeout in milliseconds (default 60000).",
+                        },
+                    },
+                    "required": ["binaryPath", "tool"],
+                },
+            ),
         ]
 
     async def _handle_run_file_triage(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -96,6 +132,39 @@ class StaticAnalysisToolProvider(ToolProvider):
                 try_yara=try_yara,
                 try_capa=try_capa,
                 try_binwalk=try_binwalk,
+                timeout_ms=max(1000, int(timeout_ms)),
+            )
+            return create_success_response(payload)
+        except FileNotFoundError as exc:
+            return create_error_response(exc)
+        except ValueError as exc:
+            return create_error_response(exc)
+        except OSError as exc:
+            return create_error_response(exc)
+
+    async def _handle_run_external_re_scan(self, args: dict[str, Any]) -> list[types.TextContent]:
+        logger.debug(
+            "diag.enter %s",
+            "mcp_server/providers/static_analysis.py:StaticAnalysisToolProvider._handle_run_external_re_scan",
+        )
+        try:
+            binary_path = self._require_str(
+                args,
+                "binaryPath",
+                "binary_path",
+                "path",
+                name="binaryPath",
+            )
+            tool = self._require_str(args, "tool", name="tool")
+            rules_path = self._get_str(args, "rulesPath", "rules_path", "rules")
+            output_limit = self._get_int(args, "outputLimit", "output_limit", "limit", default=100) or 100
+            timeout_ms = self._get_int(args, "timeout", default=60_000) or 60_000
+
+            payload = build_external_re_scan_payload(
+                Path(binary_path),
+                tool=tool,
+                rules_path=rules_path or None,
+                output_limit=max(0, int(output_limit)),
                 timeout_ms=max(1000, int(timeout_ms)),
             )
             return create_success_response(payload)

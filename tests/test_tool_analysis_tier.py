@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
         (Tool.MATCH_FUNCTION, 3),
         (Tool.EXECUTE_SCRIPT, 3),
         (Tool.RUN_FILE_TRIAGE, 0),
+        (Tool.RUN_EXTERNAL_RE_SCAN, 0),
         (Tool.RUN_BATCH_DECOMPILE, 1),
     ],
 )

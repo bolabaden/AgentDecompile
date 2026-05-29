@@ -156,6 +156,7 @@ class Tool(str, Enum):
     OPEN = "open"
     READ_BYTES = "read-bytes"
     RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
+    RUN_EXTERNAL_RE_SCAN = "run-external-re-scan"
     RUN_BATCH_DECOMPILE = "run-batch-decompile"
     RUN_FILE_TRIAGE = "run-file-triage"
     SEARCH_CODE = "search-code"
@@ -525,6 +526,13 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.LIST_PROMPTS.value: _params(),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
     Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),
+    Tool.RUN_EXTERNAL_RE_SCAN.value: _params(
+        "binaryPath",
+        "tool",
+        "rulesPath",
+        "outputLimit",
+        "timeout",
+    ),
     Tool.RUN_BATCH_DECOMPILE.value: _params(
         "binaryPath",
         "outputPath",
@@ -1088,7 +1096,7 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
 )
 
 # Tier 0 MCP tools: static file triage without Ghidra (file, strings, optional OS RE tools).
-_TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE})
+_TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE, Tool.RUN_EXTERNAL_RE_SCAN})
 
 # Tier 1 MCP tools: batch ghidrecomp export without an open MCP session program.
 _TIER1_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_BATCH_DECOMPILE})
