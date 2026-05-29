@@ -4,9 +4,19 @@ Quick reference for agents working with the AgentDecompile MCP server.
 
 ## Start here
 
-1. **`open-project`** — Connect to a local `.gpr` or shared Ghidra Server repository.
-2. **`analyze-program`** — Run Ghidra analysis when `projectContext.analysisComplete` is false.
-3. **`list-functions`** / **`decompile-function`** — Core reverse-engineering workflow.
+### Tiered analysis (prefer Ghidra only when necessary)
+
+1. **Tier 0 (no Ghidra)** — `file`, `strings`, `readelf`/`objdump`, optional `yara`/`capa` on the raw binary.
+2. **Tier 1 (batch)** — `agentdecompile-cli ghidrecomp` or export when offline bulk work is faster.
+3. **Tier 2–3 (MCP)** — After the binary is in a project and analyzed:
+   - **`open-project`** — Connect to a local `.gpr` or shared Ghidra Server repository.
+   - **`analyze-program`** — When `projectContext.analysisComplete` is false.
+   - **`list-functions`** / **`search-*`** / **`get-references`** — Discovery (Tier 2).
+   - **`decompile-function`** — Deep semantics (Tier 3).
+
+Skill: [.cursor/skills/tiered-re-analysis/SKILL.md](../skills/tiered-re-analysis/SKILL.md) · KB: [tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)
+
+Multi-agent RE: `.github/agents/re-planner.agent.md` (Planner → Worker → Critic → Aggregator).
 
 Every successful tool response (and most errors when programs are loaded) includes passive **`projectContext`**:
 

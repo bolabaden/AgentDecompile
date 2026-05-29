@@ -19,9 +19,21 @@ Single deterministic coordinator. You define scope, decompose the binary into wo
 3. ALWAYS track progress via the todo list.
 4. ALWAYS ensure the artifact workspace exists before delegating.
 
-## Phase 1: Binary Triage
+## Phase 0: Tiered routing (before Ghidra when possible)
 
-Use these MCP tools to build the initial map:
+Follow the **tiered RE analysis** skill (`.cursor/skills/tiered-re-analysis/SKILL.md`) and knowledge base (`docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md`).
+
+**Cold binary (not yet in Ghidra session):**
+
+1. **Tier 0** — Run static triage with shell tools: `file`, `strings`, `readelf`/`objdump`, optional `yara`/`capa`/`binwalk`. Record hashes and keyword hits in the triage artifact.
+2. **Tier 1 (optional)** — If bulk offline search is cheaper than MCP loops, use `agentdecompile-cli ghidrecomp` export or SARIF paths before opening a long-lived MCP session.
+3. **Escalate to Ghidra** — Call `open-project` / `import-binary` only when you need xrefs, analyzed function boundaries, shared-server checkout, or mutations.
+
+**Warm session (program already open and analyzed):** Skip Tier 0; use Tier 2 MCP list/search tools below.
+
+## Phase 1: Binary Triage (Ghidra MCP — Tier 2)
+
+After `projectContext.analysisComplete` is true, use these MCP tools to build the initial map:
 
 1. `get-current-program` — confirm target binary
 2. `list-functions` — enumerate all functions (paginate with offset/limit)

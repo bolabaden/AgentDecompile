@@ -62,9 +62,22 @@ The analysis is **complete** when:
 3. Call graph is fully consistent
 4. Remaining gaps are marked `UNKNOWN` with justification
 
+## Tiered tool routing
+
+Use Ghidra MCP **only when necessary**. Full matrix: `docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md` and skill `.cursor/skills/tiered-re-analysis/SKILL.md`.
+
+| Tier | Ghidra session? | Examples |
+|------|-----------------|----------|
+| 0 | No | `file`, `strings`, `readelf`, `yara`, `capa`, `binwalk` |
+| 1 | Batch/offline | `agentdecompile-cli ghidrecomp`, export/SARIF |
+| 2 | MCP read-only | `list-*`, `search-*`, `get-references`, `get-call-graph` |
+| 3 | MCP deep/mutate | `decompile-function`, `analyze-data-flow`, `manage-*`, `match-function` |
+
+**Planner:** Tier 0 triage before `open-project` on cold binaries. **Worker/Critic:** Tier 2 before Tier 3. **Aggregator:** Tier 3 mutations only when confidence ≥ 0.7.
+
 ## MCP Tool Mapping
 
-These are the AgentDecompile MCP tools available for each analysis phase:
+These are the AgentDecompile MCP tools available for each analysis phase (mostly Tier 2–3):
 
 ### Discovery / Read-Only
 - `list-functions` — enumerate functions (pagination: offset/limit)

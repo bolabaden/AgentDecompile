@@ -48,6 +48,11 @@ This index now reflects the files that actually exist in the repository. Referen
 
 - [../.cursor/skills/mcp-debugging/](../.cursor/skills/mcp-debugging/) — MCP debug CLIs, meta-debug loop, workflows, and Claude-oriented prompts. Invoke via `/mcp-debugging` or from AGENTS.md.
 
+### Tiered RE analysis (agent skill)
+
+- [../.cursor/skills/tiered-re-analysis/](../.cursor/skills/tiered-re-analysis/) — Route Tier 0–3 tools; use Ghidra MCP only when necessary.
+- [./solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](./solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md) — Full routing matrix and multi-agent workflow alignment.
+
 ### Historical and example docs
 
 The following files are useful research artifacts, examples, or retrospectives rather than current operational guides:

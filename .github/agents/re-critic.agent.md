@@ -20,6 +20,16 @@ Adversarial verifier. Given one or more Worker artifacts for the same function, 
 4. If you CANNOT verify a claim, mark it `unverified` — do not assume correct.
 5. ALWAYS produce a structured review record, never freeform text.
 
+## Tier routing
+
+Verify claims with the **lowest sufficient tier**:
+
+- String/import/header claims → Tier 0 evidence if Worker cited file tools; else Tier 2 `list-strings` / `list-imports`.
+- Xref/call-graph claims → Tier 2 `get-references`, `get-call-graph`.
+- Semantic/type claims → Tier 3 fresh decompile/disassemble.
+
+See `.cursor/skills/tiered-re-analysis/SKILL.md`.
+
 ## Verification Procedure
 
 ### Step 1: Independent Evidence Gathering

@@ -206,6 +206,12 @@ class Tool(str, Enum):
         logger.debug("diag.enter %s", "registry.py:Tool.is_advertised")
         return any(normalize_identifier(t) == self.normalized for t in ADVERTISED_TOOLS)
 
+    @property
+    def analysis_tier(self) -> int:
+        """Ghidra MCP cost tier: 2 = read-only/session bootstrap, 3 = deep analysis or mutate."""
+        logger.debug("diag.enter %s", "registry.py:Tool.analysis_tier")
+        return get_tool_analysis_tier(self)
+
     @classmethod
     def from_string(cls, s: str) -> Tool | None:
         """Resolve any alias/variant to canonical Tool, or None if unknown."""
@@ -241,6 +247,7 @@ class ToolMetadata:
     single_purpose: bool
     writes_state: bool
     legacy: bool
+    analysis_tier: int
     replacement: tuple[str, ...] = ()
 
 
@@ -1058,6 +1065,24 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
     },
 )
 
+# Tier 3 Ghidra MCP tools: deep analysis, workflow bundles, or program/session mutation.
+# Tier 2 (default for other MCP tools): list/search/xref/read-only discovery.
+# Tiers 0–1 (shell/batch) are documented in tiered-re-analysis KB; not MCP tools.
+_TIER3_GHIDRA_TOOLS: frozenset[Tool] = _STATE_WRITING_TOOLS | frozenset(
+    {
+        Tool.ANALYZE_DATA_FLOW,
+        Tool.ANALYZE_VTABLES,
+        Tool.DECOMPILE_FUNCTION,
+        Tool.EXPORT,
+        Tool.GEN_CALLGRAPH,
+        Tool.GET_FUNCTION,
+        Tool.GET_FUNCTIONS,
+        Tool.MANAGE_STRINGS,
+        Tool.SEARCH_EVERYTHING,
+        Tool.SUGGEST,
+    },
+)
+
 _LEGACY_TOOLS: frozenset[Tool] = _DEFAULT_HIDDEN_TOOLS
 
 _TOOL_REPLACEMENTS: dict[Tool, tuple[str, ...]] = {
@@ -1173,6 +1198,19 @@ def _resolve_canonical_tool_identity(tool_name: Tool | str) -> Tool | None:
     return Tool.from_string(raw)
 
 
+def get_tool_analysis_tier(tool_name: Tool | str) -> int:
+    """Return Ghidra MCP analysis tier (2 or 3) for routing agents to lighter tools first."""
+    logger.debug("diag.enter %s", "registry.py:get_tool_analysis_tier")
+    tool = _resolve_canonical_tool_identity(tool_name)
+    if tool is None:
+        return 3
+    if tool in DISABLED_GUI_ONLY_TOOLS:
+        return 3
+    if tool in _TIER3_GHIDRA_TOOLS:
+        return 3
+    return 2
+
+
 def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
     """Return machine-readable metadata for a canonical tool name."""
     logger.debug("diag.enter %s", "registry.py:get_tool_metadata")
@@ -1184,6 +1222,7 @@ def get_tool_metadata(tool_name: Tool | str) -> ToolMetadata | None:
         single_purpose=tool not in _MULTI_MODE_TOOLS,
         writes_state=tool in _STATE_WRITING_TOOLS,
         legacy=tool in _LEGACY_TOOLS,
+        analysis_tier=get_tool_analysis_tier(tool),
         replacement=_TOOL_REPLACEMENTS.get(tool, ()),
     )
 

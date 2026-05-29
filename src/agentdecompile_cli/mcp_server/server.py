@@ -112,6 +112,7 @@ def _build_tool_reference_payload() -> dict[str, Any]:
                     "single_purpose": bool(metadata.single_purpose) if metadata is not None else False,
                     "writes_state": bool(metadata.writes_state) if metadata is not None else False,
                     "legacy": bool(metadata.legacy) if metadata is not None else False,
+                    "analysis_tier": int(metadata.analysis_tier) if metadata is not None else 3,
                     "replacement": list(metadata.replacement) if metadata is not None else [],
                 },
             },

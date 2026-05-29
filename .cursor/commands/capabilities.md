@@ -2,6 +2,17 @@
 
 Structured inventory of what agents can do with AgentDecompile. For workflow guidance, see [`/help`](./help.md).
 
+## Tiered RE routing
+
+| Tier | Ghidra MCP? | When |
+|------|-------------|------|
+| 0 | No | File metadata, strings, headers, yara/capa — **before** `open-project` |
+| 1 | Batch CLI | `ghidrecomp`, export/SARIF — offline bulk |
+| 2 | Read-only MCP | `list-*`, `search-*`, xrefs — **`analysis_tier: 2`** in tool reference metadata |
+| 3 | Deep/mutate | `decompile-function`, `manage-*`, `match-function` — **`analysis_tier: 3`** |
+
+Details: [tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md) · skill `/tiered-re-analysis` (`.cursor/skills/tiered-re-analysis/`).
+
 ## Surfaces
 
 | Surface | Entry | Notes |

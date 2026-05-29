@@ -154,6 +154,10 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 
 Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set) may return a **conflict** when the change would overwrite existing custom data. In that case, the response includes a `conflictId` and a udiff-style summary. Use **`resolve-modification-conflict`** with that `conflictId` and `resolution=overwrite` to apply the change or `resolution=skip` to discard. Do not retry the modifying tool with the same args to force overwrite—only `resolve-modification-conflict` completes the flow.
 
+## Tiered reverse-engineering analysis
+
+Agents should **not default to Ghidra** for every task. Use the **tiered-re-analysis** skill ([.cursor/skills/tiered-re-analysis/SKILL.md](.cursor/skills/tiered-re-analysis/SKILL.md)) and knowledge base ([docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)): Tier 0 shell/static tools → Tier 1 batch `ghidrecomp` → Tier 2 MCP read-only → Tier 3 decompile/mutations. Multi-agent RE agents (`.github/agents/re-*.agent.md`) follow this routing in Planner triage and Worker/Critic verification.
+
 ## MCP server debugging & self-healing
 
 When investigating or fixing MCP server issues (timeouts, schema, GUI/coords, sandbox), use the **mcp-debugging** skill: open [.cursor/skills/mcp-debugging/SKILL.md](.cursor/skills/mcp-debugging/SKILL.md) or invoke `/mcp-debugging` in Agent chat. The skill references the meta-debug loop and the five CLIs (MCP Inspector, mcptools, mcp-debug, mcp-trace, FastMCP CLI). Detailed docs: [references/CLIS_AND_META_DEBUG.md](.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md), [references/WORKFLOWS.md](.cursor/skills/mcp-debugging/references/WORKFLOWS.md), [references/CLAUDE_MCP_DEBUG.md](.cursor/skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md).

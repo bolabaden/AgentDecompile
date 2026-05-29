@@ -22,6 +22,14 @@ Focused function analyst. Given an address or function name, you decompile, extr
 6. NEVER overwrite previous findings — only refine with higher-confidence data.
 7. Compare decompiled output against disassembly. Do NOT trust the decompiler blindly.
 
+## Tier routing
+
+Before deep Ghidra work, read `.cursor/skills/tiered-re-analysis/SKILL.md`.
+
+- **Discovery-only tasks** (exists? address? callers list?): Tier 2 — `get-function`, `get-references`, `get-call-graph`; avoid decompile.
+- **Semantic tasks** (what does it do? types?): Tier 3 — decompile + disassemble compare.
+- **Never** call `execute-script` when an advertised tool covers the operation.
+
 ## Analysis Procedure
 
 For each assigned function:
