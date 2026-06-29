@@ -203,8 +203,12 @@ def mark_program_analysis_complete(program_info: ProgramInfo | None) -> None:
     if program_info is None:
         return
     program_info.ghidra_analysis_complete = True
-    if hasattr(program_info, "analysis_complete"):
+    try:
         program_info.analysis_complete = True
+    except AttributeError:
+        # Some ProgramInfo implementations expose analysis_complete as a
+        # read-only property derived from ghidra_analysis_complete.
+        pass
 
 
 def _run_auto_analysis(program: GhidraProgram, *, force: bool) -> None:

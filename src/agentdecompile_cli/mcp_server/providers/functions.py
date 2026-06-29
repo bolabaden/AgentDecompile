@@ -44,6 +44,57 @@ class FunctionToolProvider(ToolProvider):
         "getfunctions": "_handle_get",
     }
 
+    def list_tools(self) -> list[types.Tool]:
+        logger.debug("diag.enter %s", "mcp_server/providers/functions.py:FunctionToolProvider.list_tools")
+        return [
+            types.Tool(
+                name="list-functions",
+                description="List functions in the current program with optional filtering and pagination.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Path to the program containing the functions."},
+                        "namePattern": {"type": "string", "description": "Regex pattern used to filter function names."},
+                        "pattern": {"type": "string", "description": "Alias for namePattern."},
+                        "includeExternals": {"type": "boolean", "default": True, "description": "Include external/imported functions."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
+                        "limit": {"type": "integer", "default": 100, "description": "Maximum functions to return."},
+                    },
+                    "required": [],
+                },
+            ),
+            types.Tool(
+                name="get-functions",
+                description="Get detailed information, decompilation, disassembly, or call data for one or more functions.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "programPath": {"type": "string", "description": "Path to the program containing the function."},
+                        "function": {"type": "string", "description": "Function name or address."},
+                        "addressOrSymbol": {"type": "string", "description": "Alternative function name or address selector."},
+                        "identifier": {"type": "string", "description": "Alternative function identifier."},
+                        "functions": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "One or more function identifiers.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "default": "info",
+                            "enum": ["info", "decompile", "disassemble", "calls", "all"],
+                            "description": "Which function view to return.",
+                        },
+                        "timeout": {"type": "integer", "default": 60, "description": "Decompiler timeout in seconds."},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset for batch results."},
+                        "limit": {"type": "integer", "default": 100, "description": "Maximum results to return."},
+                    },
+                    "required": [],
+                },
+            ),
+        ]
+
     async def _handle_list(self, args: dict[str, Any]) -> list[types.TextContent]:
         """List functions in the current program, with optional filtering and pagination.
 
