@@ -102,6 +102,8 @@ It's designed to be your pair programmer for assembly and decompiled code.
 
 This checkout now also carries Mizuchi's resumable recovery and source-parity pipeline stack inside the AgentDecompile repo.
 
+- `agentdecompile-cli recover ...` forwards into the integrated staged recovery CLI
+- `agentdecompile-cli mizuchi ...` forwards into the integrated one-shot front door
 - `agentdecompile-recover` runs the generic staged recovery orchestrator from `src/mizuchi_re/cli.py`
 - `agentdecompile-mizuchi` runs the installable one-shot front door from `src/mizuchi_re/mizuchi_cli.py`
 - `scripts/decomp-cli.sh` exposes the imported recovery helpers, queue/vacuum loop, one-shot source packaging, and source-parity synthesis utilities

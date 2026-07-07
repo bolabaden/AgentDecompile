@@ -76,6 +76,12 @@ class TestToolSeqJsonErrorMessage:
 
 
 class TestCliAgentHelpIntegration:
+    def test_main_help_lists_integrated_recovery_commands(self) -> None:
+        result = CliRunner().invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "recover" in result.output
+        assert "mizuchi" in result.output
+
     def test_tool_missing_name_shows_examples(self) -> None:
         result = CliRunner().invoke(main, ["tool"])
         assert result.exit_code != 0
@@ -107,3 +113,15 @@ class TestCliAgentHelpIntegration:
         assert result.exit_code == 0
         assert "Examples:" in result.output
         assert "tool-seq --stdin" in result.output
+
+    def test_recover_help_forwards_to_integrated_cli(self) -> None:
+        result = CliRunner().invoke(main, ["recover", "--help"])
+        assert result.exit_code == 0
+        assert "agentdecompile-recover" in result.output
+        assert "source-parity-synthesize" in result.output
+
+    def test_mizuchi_help_forwards_to_integrated_cli(self) -> None:
+        result = CliRunner().invoke(main, ["mizuchi", "--help"])
+        assert result.exit_code == 0
+        assert "agentdecompile-mizuchi" in result.output
+        assert "One-shot binary recovery/source-parity packaging front door." in result.output

@@ -5243,6 +5243,37 @@ def tool_seq_file_cmd(ctx: click.Context, file: str, continue_on_error: bool) ->
     _run_parsed_tool_sequence(ctx, parsed_steps, continue_on_error=continue_on_error)
 
 
+def _run_embedded_cli(entrypoint: Any, args: tuple[str, ...]) -> None:
+    forwarded = list(args) or ["--help"]
+    raise SystemExit(int(entrypoint(forwarded) or 0))
+
+
+@main.command(
+    "recover",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    add_help_option=False,
+    help="Run the integrated Mizuchi staged recovery CLI. Pass subcommand args directly, for example `agentdecompile-cli recover inspect <path>`.",
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def recover_passthrough_cmd(args: tuple[str, ...]) -> None:
+    from mizuchi_re.cli import main as mizuchi_recover_main
+
+    _run_embedded_cli(mizuchi_recover_main, args)
+
+
+@main.command(
+    "mizuchi",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    add_help_option=False,
+    help="Run the integrated Mizuchi one-shot front door. Pass arguments directly, for example `agentdecompile-cli mizuchi <binary>` or `agentdecompile-cli mizuchi self-check`.",
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def mizuchi_passthrough_cmd(args: tuple[str, ...]) -> None:
+    from mizuchi_re.mizuchi_cli import main as mizuchi_frontdoor_main
+
+    _run_embedded_cli(mizuchi_frontdoor_main, args)
+
+
 # ---------------------------------------------------------------------------
 # Entry (click group is invoked directly)
 # ---------------------------------------------------------------------------
