@@ -1,7 +1,7 @@
-# Mizuchi configuration — Odyssey / x86 template
-# Copy to mizuchi.yaml in your actual decomp project root and edit paths.
+# AgentDecompile configuration — Odyssey / x86 template
+# Copy to agentdecompile.yaml in your actual decomp project root and edit paths.
 # All relative paths resolve from this file's directory.
-# See also: upstream mizuchi.example.yaml in github.com/macabeus/mizuchi
+# See also: upstream matching decompilation runner example config
 
 global:
   # Prepends context to every compile (m2ctx output, headers, typedefs).
@@ -141,9 +141,9 @@ plugins:
 
   # integrator:
   #   enable: true
-  #   integratorModule: ./mizuchi-integrator.mjs
+  #   integratorModule: ./recovery-integrator.mjs
   #   verifyBuildScript: |
   #     cd {{worktreePath}} && make compare
   #   autoAction: commit
   #   commitMessageTemplate: "match {{functionName}}"
-  #   branchTemplate: "mizuchi/{{functionName}}"
+  #   branchTemplate: "recovery/{{functionName}}"

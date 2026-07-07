@@ -307,7 +307,7 @@ class RecoveryRunner:
         target = self.load_target()
         out_path = self.run_dir / "analysis-target.json"
         summary: dict[str, Any] = {
-            "schema": "mizuchi.analysis-target.v1",
+            "schema": "agentdecompile.analysis-target.v1",
             "originalBinaryPath": str(target.binary_path),
             "analysisBinaryPath": str(target.binary_path),
             "status": "original",
@@ -467,7 +467,7 @@ class RecoveryRunner:
         tasks_path = self.run_dir / "source-generation" / "tasks.jsonl"
         if mode == "none":
             summary = {
-                "schema": "mizuchi.source-parity-synthesis-summary.v1",
+                "schema": "agentdecompile.source-parity-synthesis-summary.v1",
                 "status": "skipped",
                 "reason": "disabled with --source-synthesis none",
                 "sourceTasks": [str(tasks_path)],
@@ -477,7 +477,7 @@ class RecoveryRunner:
             return summary
         if not tasks_path.exists():
             summary = {
-                "schema": "mizuchi.source-parity-synthesis-summary.v1",
+                "schema": "agentdecompile.source-parity-synthesis-summary.v1",
                 "status": "skipped",
                 "reason": "source-generation/tasks.jsonl missing",
                 "sourceTasks": [str(tasks_path)],
@@ -593,7 +593,7 @@ class RecoveryRunner:
                 summaries.append(Path(str(value)))
         if not summaries:
             return {
-                "schema": "mizuchi.recovered-source-export.v1",
+                "schema": "agentdecompile.recovered-source-export.v1",
                 "status": "skipped",
                 "reason": "source synthesis did not publish match JSONL paths",
                 "claimBoundary": "no recovered source export was produced",
@@ -657,7 +657,7 @@ class RecoveryRunner:
 
     def stage_report(self, _stage: Stage) -> dict[str, Any]:
         report = {
-            "schema": "mizuchi.recover.report.v1",
+            "schema": "agentdecompile.recover.report.v1",
             "generatedAt": now(),
             "state": str(self.state.state_path),
             "events": str(self.state.events_path),

@@ -40,7 +40,7 @@ class RunState:
         if self.state_path.exists():
             return read_json(self.state_path)
         return {
-            "schema": "mizuchi.recover.state.v1",
+            "schema": "agentdecompile.recover.state.v1",
             "createdAt": now(),
             "updatedAt": now(),
             "stages": {},

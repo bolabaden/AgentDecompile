@@ -163,7 +163,7 @@ def sweep_recovered_source_package(
     matched_functions = sum(1 for row in function_results if row.get("matched"))
     semantic_matched_functions = sum(1 for row in function_results if row.get("semanticMatched"))
     report = {
-        "schema": "mizuchi.recovered-source-sweep.v1",
+        "schema": "agentdecompile.recovered-source-sweep.v1",
         "status": sweep_status(len(function_results), matched_functions, semantic_matched_functions),
         "package": str(package_dir),
         "manifest": str(manifest_path),
@@ -243,7 +243,7 @@ def attempt_cache_key(
     clang_target: str | None,
 ) -> str:
     payload = {
-        "schema": "mizuchi.recovered-source-sweep-attempt-key.v1",
+        "schema": "agentdecompile.recovered-source-sweep-attempt-key.v1",
         "name": meta.get("name"),
         "address": meta.get("address"),
         "variant": variant.get("name"),
@@ -1071,7 +1071,7 @@ def summarize_attempt(
 ) -> dict[str, Any]:
     code_compare = result.get("codeCompare") or {}
     attempt = {
-        "schema": "mizuchi.recovered-source-sweep-attempt.v1",
+        "schema": "agentdecompile.recovered-source-sweep-attempt.v1",
         "name": meta.get("name") or result.get("name"),
         "address": meta.get("address") or result.get("address"),
         "variant": variant["name"],

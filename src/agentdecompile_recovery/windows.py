@@ -91,7 +91,7 @@ def run_recovery_windows(
         offsets = offsets[: max(0, max_windows)]
 
     aggregate = {
-        "schema": "mizuchi.recovery-windows.v1",
+        "schema": "agentdecompile.recovery-windows.v1",
         "status": "running",
         "startedAt": now(),
         "input": str(base_config.input_path),
@@ -190,7 +190,7 @@ def load_resume_summary(summary_path: Path, base_config: RecoveryConfig, window_
     summary = read_json(summary_path)
     if not summary:
         return {}
-    if summary.get("schema") != "mizuchi.recovery-windows.v1":
+    if summary.get("schema") != "agentdecompile.recovery-windows.v1":
         return {}
     if str(summary.get("input") or "") != str(base_config.input_path):
         return {}
@@ -308,7 +308,7 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
     matched_rows, unmatched_rows = semantic_coverage_rows(sweep)
     parity_rows = source_parity_coverage_rows(manifest)
     coverage = {
-        "schema": "mizuchi.recovery-window-coverage.v1",
+        "schema": "agentdecompile.recovery-window-coverage.v1",
         "status": coverage_status(
             recoverable_total,
             source_functions,
@@ -498,7 +498,7 @@ def coverage_next_action(
             "kind": "continue-window-recovery",
             "reason": "not all recoverable function candidates have packaged source candidates",
             "suggestedCommand": [
-                "mizuchi-recover",
+                "recovery-recover",
                 "recover-windows",
                 str(aggregate.get("input") or "<input>"),
                 "--work-dir",
@@ -550,7 +550,7 @@ def render_coverage_markdown(coverage: dict[str, Any]) -> str:
     source = coverage["sourceCoverage"]
     semantic = coverage["semanticCoverage"]
     lines = [
-        "# Mizuchi Recovery Coverage",
+        "# Recovery Recovery Coverage",
         "",
         f"Status: `{coverage['status']}`",
         f"Full source parity: `{str(coverage['fullSourceParity']).lower()}`",
@@ -612,7 +612,7 @@ def run_source_parity_synthesis(
     progress_every: int,
     compiler_profiles: list[str] | None = None,
 ) -> dict[str, Any]:
-    schema = "mizuchi.recovery-windows-source-parity-synthesis.v1"
+    schema = "agentdecompile.recovery-windows-source-parity-synthesis.v1"
     if not enabled:
         return {"schema": schema, "enabled": False, "status": "disabled"}
     if queue is None or inventory is None:
@@ -712,7 +712,7 @@ def run_source_parity_synthesis(
 
 
 def promote_source_parity_accepts(source_package: dict[str, Any], source_parity: dict[str, Any]) -> dict[str, Any]:
-    schema = "mizuchi.recovery-windows-source-parity-promotion.v1"
+    schema = "agentdecompile.recovery-windows-source-parity-promotion.v1"
     if not source_parity.get("enabled"):
         return {"schema": schema, "enabled": False, "status": "disabled"}
     accepted_path_value = source_parity.get("acceptedPath")
@@ -747,7 +747,7 @@ def promote_source_parity_accepts(source_package: dict[str, Any], source_parity:
         copied_json = functions_dir / f"{stem}.json"
         shutil.copy2(source, copied_c)
         metadata = {
-            "schema": "mizuchi.recovered-source-function.v1",
+            "schema": "agentdecompile.recovered-source-function.v1",
             "name": row.get("name"),
             "entry": row.get("entry"),
             "address": row.get("entry"),
@@ -828,13 +828,13 @@ def run_source_package_semantic_sweep(
     objdump: str,
 ) -> dict[str, Any]:
     if not enabled:
-        return {"schema": "mizuchi.recovery-windows-semantic-sweep.v1", "enabled": False, "status": "disabled"}
+        return {"schema": "agentdecompile.recovery-windows-semantic-sweep.v1", "enabled": False, "status": "disabled"}
     package_dir_value = source_package.get("packageDir")
     if not package_dir_value:
-        return {"schema": "mizuchi.recovery-windows-semantic-sweep.v1", "enabled": True, "status": "missing-package", "reason": "source package has no packageDir"}
+        return {"schema": "agentdecompile.recovery-windows-semantic-sweep.v1", "enabled": True, "status": "missing-package", "reason": "source package has no packageDir"}
     function_count = int(source_package.get("functionCount") or 0)
     if function_count <= 0:
-        return {"schema": "mizuchi.recovery-windows-semantic-sweep.v1", "enabled": True, "status": "skipped-no-functions", "reason": "source package contains no generated function candidates"}
+        return {"schema": "agentdecompile.recovery-windows-semantic-sweep.v1", "enabled": True, "status": "skipped-no-functions", "reason": "source package contains no generated function candidates"}
 
     resolution = resolve_semantic_sweep_compiler(compiler, msvc_root, wine)
     selected_compiler = str(resolution["compiler"])
@@ -856,14 +856,14 @@ def run_source_package_semantic_sweep(
         )
     except Exception as exc:
         return {
-            "schema": "mizuchi.recovery-windows-semantic-sweep.v1",
+            "schema": "agentdecompile.recovery-windows-semantic-sweep.v1",
             "enabled": True,
             "status": "failed",
             "compilerResolution": resolution,
             "reason": str(exc),
         }
     return {
-        "schema": "mizuchi.recovery-windows-semantic-sweep.v1",
+        "schema": "agentdecompile.recovery-windows-semantic-sweep.v1",
         "enabled": True,
         "status": report.get("status"),
         "compilerResolution": resolution,
@@ -1005,7 +1005,7 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
                 tasks_out.write(json.dumps(task, sort_keys=True) + "\n")
 
     manifest = {
-        "schema": "mizuchi.recovered-source-package.v1",
+        "schema": "agentdecompile.recovered-source-package.v1",
         "status": "complete",
         "packageDir": str(package_dir),
         "functionsDir": str(functions_dir),
@@ -1078,7 +1078,7 @@ def safe_function_file_stem(task: dict[str, Any]) -> str:
 
 def render_source_index(manifest: dict[str, Any]) -> str:
     lines = [
-        "# Mizuchi Recovered Source Package",
+        "# Recovery Recovered Source Package",
         "",
         f"Status: {manifest['status']}",
         f"Functions: {manifest['functionCount']}",

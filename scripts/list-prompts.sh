@@ -68,7 +68,7 @@ get_case_field() {
 }
 
 get_readiness_summary() {
-  local prompts_dir="${1:-${MIZUCHI_PROMPTS_DIR:-$root_dir/prompts}}"
+  local prompts_dir="${1:-${AGENTDECOMPILE_PROMPTS_DIR:-$root_dir/prompts}}"
   if [[ "$READINESS_CACHE_KEY" == "$prompts_dir" && -n "$READINESS_CACHE_VALUE" ]]; then
     printf '%s' "$READINESS_CACHE_VALUE"
     return
@@ -84,7 +84,7 @@ get_readiness_summary() {
     printf '%s' "$READINESS_CACHE_VALUE"
   else
     READINESS_CACHE_KEY="$prompts_dir"
-    READINESS_CACHE_VALUE="$(jq -n '{schema: "mizuchi.decomp-readiness-summary.v1", status: "error", prompts: []}')"
+    READINESS_CACHE_VALUE="$(jq -n '{schema: "agentdecompile.decomp-readiness-summary.v1", status: "error", prompts: []}')"
     printf '%s' "$READINESS_CACHE_VALUE"
   fi
 }
@@ -142,7 +142,7 @@ get_last_updated() {
 
 # Build prompts array
 build_prompts_array() {
-  local prompts_dir="${MIZUCHI_PROMPTS_DIR:-$root_dir/prompts}"
+  local prompts_dir="${AGENTDECOMPILE_PROMPTS_DIR:-$root_dir/prompts}"
   local readiness_summary="${1:-}"
   local prompts=()
   if [[ -z "$readiness_summary" ]]; then
@@ -277,7 +277,7 @@ main() {
   status_filter=$(parse_arguments "$@")
 
   local readiness_summary
-  readiness_summary="$(get_readiness_summary "${MIZUCHI_PROMPTS_DIR:-$root_dir/prompts}")"
+  readiness_summary="$(get_readiness_summary "${AGENTDECOMPILE_PROMPTS_DIR:-$root_dir/prompts}")"
   
   local prompts_array
   prompts_array=$(build_prompts_array "$readiness_summary")

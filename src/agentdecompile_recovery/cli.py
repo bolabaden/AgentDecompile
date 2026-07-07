@@ -1,4 +1,4 @@
-"""Command-line entrypoint for the Mizuchi recovery orchestrator."""
+"""Command-line entrypoint for the recovery orchestrator."""
 
 from __future__ import annotations
 

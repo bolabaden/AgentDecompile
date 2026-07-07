@@ -566,7 +566,7 @@ def stage_compile_source(profile: ProfileConfig, state: dict[str, Any]) -> None:
     manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     if int(manifest_data.get("functionCount") or 0) == 0:
         empty_summary = {
-            "schema": "mizuchi.recovered-source-compile-summary.v1",
+            "schema": "agentdecompile.recovered-source-compile-summary.v1",
             "compiled": 0,
             "failed": 0,
             "verifiedMatchedFunctionCount": 0,

@@ -123,7 +123,7 @@ class ContextExporter:
         (self.out_dir / "TREE.md").write_text(render_context_tree_markdown(self.root, tree), encoding="utf-8")
         (self.out_dir / "LLM_CONTEXT.md").write_text(render_llm_context_markdown(llm_index), encoding="utf-8")
         manifest = {
-            "schema": "mizuchi.context-export.v1",
+            "schema": "agentdecompile.context-export.v1",
             "createdAt": now(),
             "inputPath": str(self.root),
             "outputDirectory": str(self.out_dir),
@@ -338,7 +338,7 @@ def try_extract_embedded_archive(path: Path, extract_root: Path, listing: dict[s
         return {"status": "skipped", "reason": "no embedded archive candidates", "returnCode": -1}
     attempts: list[dict[str, Any]] = []
     successes: list[dict[str, Any]] = []
-    with tempfile.TemporaryDirectory(prefix="mizuchi-embedded-carve-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="recovery-embedded-carve-") as tmp:
         temp_root = Path(tmp)
         for index, candidate in enumerate(candidates, start=1):
             carved_name = f"embedded-{index:02d}.{candidate['type']}"
@@ -675,7 +675,7 @@ def is_low_signal_member_path(value: str) -> bool:
 
 
 def build_context_tree(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    root: dict[str, Any] = {"schema": "mizuchi.context-tree.v1", "name": ".", "kind": "directory", "children": {}}
+    root: dict[str, Any] = {"schema": "agentdecompile.context-tree.v1", "name": ".", "kind": "directory", "children": {}}
     for row in rows:
         parts = [part for part in str(row.get("path") or "").split("/") if part]
         if not parts:
@@ -794,7 +794,7 @@ def build_llm_context_index(input_path: Path, rows: list[dict[str, Any]], config
         }
         entries.append({key: value for key, value in item.items() if value not in (None, "", [], {})})
     return {
-        "schema": "mizuchi.llm-context-index.v1",
+        "schema": "agentdecompile.llm-context-index.v1",
         "createdAt": now(),
         "inputPath": str(input_path),
         "outputFormat": config.output_format,
@@ -835,7 +835,7 @@ def freeze_tree(node: dict[str, Any]) -> dict[str, Any]:
 
 def render_context_tree_markdown(input_path: Path, tree: dict[str, Any]) -> str:
     lines = [
-        "# Mizuchi Context Tree",
+        "# Recovery Context Tree",
         "",
         f"Input: `{input_path}`",
         "",
@@ -871,7 +871,7 @@ def render_tree_node(node: dict[str, Any], lines: list[str], *, depth: int) -> N
 
 def render_llm_context_markdown(index: dict[str, Any]) -> str:
     lines = [
-        "# Mizuchi LLM Context",
+        "# Recovery LLM Context",
         "",
         f"Input: `{index.get('inputPath')}`",
         f"Entries: `{index.get('entryCount')}`",
@@ -924,7 +924,7 @@ def render_summary_markdown(summary: Any, lines: list[str]) -> None:
 
 def build_file_payload(path: Path, rel: str, kind: str, digest: str, size: int, config: ExportConfig) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema": "mizuchi.context-file.v1",
+        "schema": "agentdecompile.context-file.v1",
         "path": rel,
         "sourcePath": str(path),
         "kind": kind,
@@ -1002,7 +1002,7 @@ def container_listing(path: Path) -> dict[str, Any]:
 def pdf_text(path: Path, max_bytes: int) -> str:
     if shutil.which("pdftotext") is None:
         return ""
-    with tempfile.TemporaryDirectory(prefix="mizuchi-pdf-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="recovery-pdf-") as tmp:
         out = Path(tmp) / "out.txt"
         result = run_command(["pdftotext", "-layout", str(path), str(out)], timeout=60)
         if result["returnCode"] != 0 or not out.exists():

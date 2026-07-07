@@ -22,7 +22,7 @@ def discover_function_candidates(inventory: dict[str, Any]) -> dict[str, Any]:
     candidates = dedupe_same_address_candidates(candidates)
     candidates = sorted(candidates, key=lambda row: (int(row.get("address") or row.get("rva") or 0), row.get("name", "")))
     return {
-        "schema": "mizuchi.function-candidates.v1",
+        "schema": "agentdecompile.function-candidates.v1",
         "format": fmt,
         "target": inventory.get("target"),
         "status": "complete" if inventory.get("status") == "complete" else "inventory-incomplete",

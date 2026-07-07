@@ -100,7 +100,7 @@ def run_source_plugin_pipeline(config: SourcePluginRunConfig) -> dict[str, Any]:
             function_name=str(row.get("name") or row.get("entry") or f"row_{inspected}"),
             target_object_path="",
             asm="",
-            config={"schema": "mizuchi.source-plugin-pipeline-config.v1"},
+            config={"schema": "agentdecompile.source-plugin-pipeline-config.v1"},
             initial_context={
                 "sourceParityRow": row,
                 "outDir": str(config.out_dir),
@@ -145,7 +145,7 @@ def run_source_plugin_pipeline(config: SourcePluginRunConfig) -> dict[str, Any]:
     exported_quality_counts = count_manifest_function_values(Path(str(export.get("manifest") or "")), "sourceQuality", default="unknown")
     exported_scope_counts = count_manifest_function_values(Path(str(export.get("manifest") or "")), "sourceRecoveryScope", default="unknown")
     summary = {
-        "schema": "mizuchi.source-plugin-pipeline-summary.v1",
+        "schema": "agentdecompile.source-plugin-pipeline-summary.v1",
         "status": "generated-only" if config.dry_run else "complete",
         "outDir": str(config.out_dir),
         "queue": str(config.queue) if config.queue else None,

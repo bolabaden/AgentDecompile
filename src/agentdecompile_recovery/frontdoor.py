@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
 def build_self_check_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentdecompile-reconstruct self-check",
-        description="Verify install-time Mizuchi assets and local recovery tool availability.",
+        description="Verify install-time Recovery assets and local recovery tool availability.",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[2], help="Checkout root used for script discovery.")

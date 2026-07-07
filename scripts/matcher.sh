@@ -11,7 +11,7 @@ usage() {
 usage: matcher.sh --prompt <prompt-dir|name> [--prompts-dir <dir>] [--response-file <file>] [--runner-command <cmd>]
 
 Builds a fixed one-shot prompt and writes <prompt>/trial.c from a fenced C
-response. Without --response-file, set --runner-command or MIZUCHI_MATCHER_COMMAND.
+response. Without --response-file, set --runner-command or AGENTDECOMPILE_MATCHER_COMMAND.
 The command may contain {{promptFile}} and {{responseFile}} placeholders.
 EOF
 }
@@ -19,7 +19,7 @@ EOF
 prompt_arg=""
 prompts_dir="$ROOT/prompts"
 response_file=""
-runner_command="${MIZUCHI_MATCHER_COMMAND:-}"
+runner_command="${AGENTDECOMPILE_MATCHER_COMMAND:-}"
 prompt_out=""
 trial_out=""
 result_out=""
@@ -59,7 +59,7 @@ write_result() {
   local trial_exists=false
   [[ -f "$trial_out" ]] && trial_exists=true
   jq -n \
-    --arg schema "mizuchi.matcher.v1" \
+    --arg schema "agentdecompile.matcher.v1" \
     --arg status "$status" \
     --arg prompt "$prompt_name" \
     --arg prompt_dir "$prompt_dir" \
@@ -130,7 +130,7 @@ else
   write_result "manual-required" 3 "no matcher runner configured" ""
   cat >&2 <<EOF
 matcher: no matcher runner configured.
-Set MIZUCHI_MATCHER_COMMAND or pass --runner-command with {{promptFile}} and {{responseFile}},
+Set AGENTDECOMPILE_MATCHER_COMMAND or pass --runner-command with {{promptFile}} and {{responseFile}},
 or pass --response-file for an offline one-shot response.
 Prompt written to: $prompt_out
 EOF

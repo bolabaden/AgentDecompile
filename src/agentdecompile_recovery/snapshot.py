@@ -125,7 +125,7 @@ def snapshot_existing_recovery(binary_sha256: str, out_dir: Path, label: str) ->
             )
 
     manifest = {
-        "schema": "mizuchi.recovery-snapshot.v1",
+        "schema": "agentdecompile.recovery-snapshot.v1",
         "label": label,
         "binarySha256": binary_sha256,
         "sourceParityReport": str(report.relative_to(ROOT)),

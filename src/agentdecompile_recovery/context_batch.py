@@ -142,7 +142,7 @@ def export_context_batch(
             }
         )
     report = {
-        "schema": "mizuchi.context-batch-export.v1",
+        "schema": "agentdecompile.context-batch-export.v1",
         "createdAt": now(),
         "inputPath": str(root),
         "outputDirectory": str(out_dir),

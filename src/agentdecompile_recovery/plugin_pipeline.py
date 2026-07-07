@@ -1,6 +1,6 @@
 """Upstream-style plugin pipeline orchestration for Python recovery flows.
 
-This ports the core Mizuchi lifecycle from the TypeScript upstream:
+This ports the core Recovery lifecycle from the TypeScript upstream:
 setup phase, staged programmatic phase, retrying main phase, and post-match
 phase. Plugins exchange a mutable context and emit structured results so
 compiler/objdiff/source-generation steps can be composed without hardcoding a

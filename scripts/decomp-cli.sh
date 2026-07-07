@@ -52,7 +52,7 @@ EOF
 }
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-prompt_root="${MIZUCHI_PROMPTS_DIR:-$root_dir/prompts}"
+prompt_root="${AGENTDECOMPILE_PROMPTS_DIR:-$root_dir/prompts}"
 cmd="${1:-}"
 
 json_field() {
@@ -207,7 +207,7 @@ case "$cmd" in
     prompt_dir="$prompt_root/$prompt_name"
     # Guide pipeline order: phase 1-2 programmatic (get-context -> m2c ->
     # compile/objdiff -> permuter); if that does not reach objdiff 0, fall
-    # through to phase 3 (AI Claude loop). Matches the Macabeus/Mizuchi article.
+    # through to phase 3 (AI Claude loop). Matches the Macabeus/Recovery article.
     if "$root_dir/scripts/run-programmatic-phase.sh" --prompt "$prompt_dir"; then
       write_decomp_function_report "$prompt_dir" "matched" 0 "programmatic"
       exit 0

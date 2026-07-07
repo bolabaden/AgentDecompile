@@ -98,7 +98,7 @@ Reverse engineering is hard. There are thousands of functions, cryptic variable 
 
 It's designed to be your pair programmer for assembly and decompiled code.
 
-## Mizuchi Recovery Pipelines
+## Recovery Recovery Pipelines
 
 This checkout now also carries a generalized recovery and reconstruction pipeline stack inside the AgentDecompile repo.
 

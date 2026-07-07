@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a vendored upstream Mizuchi tree against its audit manifest."""
+"""Verify a vendored upstream Recovery tree against its audit manifest."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def main() -> int:
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=Path("docs/upstream-audit/macabeus-mizuchi-main-218ecfe-vendor-manifest.json"),
+        default=Path("docs/upstream-audit/macabeus-recovery-main-218ecfe-vendor-manifest.json"),
     )
     args = parser.parse_args()
 
@@ -59,7 +59,7 @@ def main() -> int:
             changed.append({"path": str(path), "expected": expected, "actual": actual})
 
     report = {
-        "schema": "mizuchi.upstream-vendor-verification.v1",
+        "schema": "agentdecompile.upstream-vendor-verification.v1",
         "manifest": str(args.manifest),
         "upstream": manifest.get("upstream"),
         "upstreamCommit": manifest.get("upstreamCommit"),

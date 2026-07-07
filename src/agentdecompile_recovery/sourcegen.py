@@ -239,7 +239,7 @@ def generate_source_candidates(
         blockers = ["function facts were present, but no decompiler C text matched current candidates"]
 
     return {
-        "schema": "mizuchi.source-generation.v1",
+        "schema": "agentdecompile.source-generation.v1",
         "status": status,
         "target": target,
         "tasks": str(tasks_path),
@@ -306,7 +306,7 @@ def nonsemantic_catalog_row(task: dict[str, Any], data: bytes | None, generator_
     boundary_quality = target_slice.get("boundaryQuality") if isinstance(target_slice.get("boundaryQuality"), dict) else {}
     opportunity = classify_nonsemantic_opportunity(body)
     return {
-        "schema": "mizuchi.source-generation.nonsemantic-slice.v1",
+        "schema": "agentdecompile.source-generation.nonsemantic-slice.v1",
         "name": task.get("name"),
         "entry": task.get("entry"),
         "address": task.get("address"),
@@ -756,7 +756,7 @@ def write_source_coverage_artifacts(
             fh.write(json.dumps(row, sort_keys=True) + "\n")
     write_json(opportunities_path, opportunity_summary)
     coverage = {
-        "schema": "mizuchi.source-generation.semantic-coverage.v1",
+        "schema": "agentdecompile.source-generation.semantic-coverage.v1",
         "taskCount": task_count,
         "targetSlices": target_slice_count,
         "generatedSourceCandidates": generated_count,
@@ -788,7 +788,7 @@ def write_source_coverage_artifacts(
     }
     write_json(coverage_path, coverage)
     return {
-        "schema": "mizuchi.source-generation.coverage-artifacts.v1",
+        "schema": "agentdecompile.source-generation.coverage-artifacts.v1",
         "status": "complete",
         "semanticCoverage": str(coverage_path),
         "nonsemanticCatalog": str(catalog_path),
@@ -943,7 +943,7 @@ def write_boundary_repair_artifacts(
         counts_by_action[action] = counts_by_action.get(action, 0) + 1
         counts_by_class[cls] = counts_by_class.get(cls, 0) + 1
     summary = {
-        "schema": "mizuchi.source-generation.boundary-repair-summary.v1",
+        "schema": "agentdecompile.source-generation.boundary-repair-summary.v1",
         "status": "complete",
         "fragmentCount": len(rows),
         "appliedRepairCount": len(applied_boundary_repairs),
@@ -955,7 +955,7 @@ def write_boundary_repair_artifacts(
     }
     write_json(summary_path, summary)
     return {
-        "schema": "mizuchi.source-generation.boundary-repair-artifacts.v1",
+        "schema": "agentdecompile.source-generation.boundary-repair-artifacts.v1",
         "status": "complete",
         "fragmentCount": len(rows),
         "appliedRepairCount": len(applied_boundary_repairs),
@@ -988,7 +988,7 @@ def boundary_repair_manifest_row(row: dict[str, Any]) -> dict[str, Any] | None:
         return None
     boundary_quality = row.get("boundaryQuality") if isinstance(row.get("boundaryQuality"), dict) else {}
     return {
-        "schema": "mizuchi.source-generation.boundary-repair-row.v1",
+        "schema": "agentdecompile.source-generation.boundary-repair-row.v1",
         "name": row.get("name"),
         "entry": row.get("entry"),
         "address": coerce_int(row.get("address")),
@@ -1028,7 +1028,7 @@ def build_address_alias_metadata(candidates: list[dict[str, Any]]) -> tuple[dict
         canonical_name = str(primary.get("name") or f"sub_{address:x}")
         canonical_entry = primary.get("entry")
         group = {
-            "schema": "mizuchi.address-alias-group.v1",
+            "schema": "agentdecompile.address-alias-group.v1",
             "canonicalAddress": f"0x{address:08x}",
             "canonicalName": canonical_name,
             "canonicalEntry": canonical_entry,
@@ -1043,7 +1043,7 @@ def build_address_alias_metadata(candidates: list[dict[str, Any]]) -> tuple[dict
         for row in rows:
             role = "primary" if address_alias_entry_matches(row, primary) else "alias"
             metadata[address_alias_key(row)] = {
-                "schema": "mizuchi.address-alias.v1",
+                "schema": "agentdecompile.address-alias.v1",
                 "canonicalAddress": f"0x{address:08x}",
                 "canonicalName": canonical_name,
                 "canonicalEntry": canonical_entry,
@@ -1126,7 +1126,7 @@ def write_address_alias_artifacts(out_dir: Path, groups: list[dict[str, Any]]) -
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     groups_path = artifacts_dir / "address-alias-groups.json"
     summary = {
-        "schema": "mizuchi.address-alias-groups.v1",
+        "schema": "agentdecompile.address-alias-groups.v1",
         "status": "complete",
         "aliasGroups": len(groups),
         "duplicateAddressAliases": sum(int(group.get("duplicateAddressAliases") or 0) for group in groups),
@@ -1137,7 +1137,7 @@ def write_address_alias_artifacts(out_dir: Path, groups: list[dict[str, Any]]) -
     }
     write_json(groups_path, summary)
     return {
-        "schema": "mizuchi.address-alias-artifacts.v1",
+        "schema": "agentdecompile.address-alias-artifacts.v1",
         "status": "complete",
         "aliasGroups": summary["aliasGroups"],
         "duplicateAddressAliases": summary["duplicateAddressAliases"],
@@ -1178,7 +1178,7 @@ def summarize_generator_opportunities(nonsemantic_catalog: list[dict[str, Any]])
             ],
         }
     return {
-        "schema": "mizuchi.source-generation.generator-opportunities.v1",
+        "schema": "agentdecompile.source-generation.generator-opportunities.v1",
         "classes": classes,
         "claimBoundary": "opportunity classes prioritize future generator work; they are not semantic source or match proof",
     }
@@ -1248,7 +1248,7 @@ def write_normalized_function_facts(out_dir: Path, facts: dict[str, dict[str, An
             bucket[value] = bucket.get(value, 0) + 1
 
     summary = {
-        "schema": "mizuchi.normalized-function-facts.summary.v1",
+        "schema": "agentdecompile.normalized-function-facts.summary.v1",
         "status": "complete" if unique else "empty",
         "factCount": len(unique),
         "factsJsonl": str(facts_path),
@@ -1258,7 +1258,7 @@ def write_normalized_function_facts(out_dir: Path, facts: dict[str, dict[str, An
     }
     write_json(summary_path, summary)
     return {
-        "schema": "mizuchi.normalized-function-facts.artifacts.v1",
+        "schema": "agentdecompile.normalized-function-facts.artifacts.v1",
         "status": summary["status"],
         "factCount": len(unique),
         "factsJsonl": str(facts_path),
@@ -1295,7 +1295,7 @@ def normalize_function_fact(fact: dict[str, Any]) -> dict[str, Any]:
     )
     language = first_non_empty(fact.get("language"), prototype.get("language"), compiler_hints.get("language"))
     return {
-        "schema": "mizuchi.normalized-function-fact.v1",
+        "schema": "agentdecompile.normalized-function-fact.v1",
         "name": fact.get("name"),
         "entry": fact.get("entry"),
         "entryOffset": fact.get("entryOffset"),
@@ -1362,7 +1362,7 @@ def load_compiler_profile_artifacts(out_dir: Path, target: dict[str, Any]) -> di
             }
         )
     return {
-        "schema": "mizuchi.compiler-profile-artifacts.v1",
+        "schema": "agentdecompile.compiler-profile-artifacts.v1",
         "status": "available" if loaded else "missing",
         "artifacts": loaded,
         "claimBoundary": "compiler-profile evidence ranks future source candidates; it is not a source match",
@@ -1527,7 +1527,7 @@ def apply_tail_fragment_extent_repairs(
         previous_candidate = previous["candidate"]
         current_candidate = item["candidate"]
         repair = {
-            "schema": "mizuchi.source-generation.applied-boundary-repair.v1",
+            "schema": "agentdecompile.source-generation.applied-boundary-repair.v1",
             "repair": "append-tail-fragment-to-previous-function",
             "ownerName": previous_candidate.get("name"),
             "ownerAddress": previous.get("address"),
@@ -1623,7 +1623,7 @@ def apply_prefix_fragment_extent_repairs(
         next_candidate = next_item["candidate"]
         repaired_size = current_size + next_size
         repair = {
-            "schema": "mizuchi.source-generation.applied-boundary-repair.v1",
+            "schema": "agentdecompile.source-generation.applied-boundary-repair.v1",
             "repair": "append-terminal-continuation-to-prefix-fragment",
             "ownerName": current_candidate_row.get("name"),
             "ownerAddress": item.get("address"),
@@ -3503,16 +3503,16 @@ def stack_arg_range_global_mode_setter_candidate(task: dict[str, Any], data: byt
     range_value = int(decoded["rangeValue"])
     source = "\n".join(
         [
-            "typedef unsigned int mizuchi_u32;",
+            "typedef unsigned int recovery_u32;",
             f"void __cdecl {c_name}(int mode)",
             "{",
             "    switch (mode) {",
             "    case 1:",
-            f"        *(volatile mizuchi_u32 *)0x{global_address:08x} = 0x{equal_one_value:02x}u;",
+            f"        *(volatile recovery_u32 *)0x{global_address:08x} = 0x{equal_one_value:02x}u;",
             "        return;",
             "    case 2:",
             "    case 3:",
-            f"        *(volatile mizuchi_u32 *)0x{global_address:08x} = 0x{range_value:02x}u;",
+            f"        *(volatile recovery_u32 *)0x{global_address:08x} = 0x{range_value:02x}u;",
             "        return;",
             "    default:",
             "        return;",
@@ -17374,7 +17374,7 @@ def build_task(
 ) -> dict[str, Any]:
     fact_binary = fact.get("binaryPath") if fact else None
     task = {
-        "schema": "mizuchi.source-task.v1",
+        "schema": "agentdecompile.source-task.v1",
         "status": "waiting-for-automatic-source-generator",
         "targetStableId": target.get("stableId"),
         "targetFormat": target.get("format"),
@@ -17392,7 +17392,7 @@ def build_task(
         "verificationTier": "candidate-queued",
         "acceptanceGate": "target-object objdiff zero is required before this task can be marked as recovered source",
         "compilerProfileArtifacts": profile_artifacts or {
-            "schema": "mizuchi.compiler-profile-artifacts.v1",
+            "schema": "agentdecompile.compiler-profile-artifacts.v1",
             "status": "missing",
             "artifacts": [],
         },

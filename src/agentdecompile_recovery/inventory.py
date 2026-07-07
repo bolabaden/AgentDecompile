@@ -61,7 +61,7 @@ def build_binary_inventory(target: TargetIdentity) -> dict[str, Any]:
     if target.format == "macho":
         return macho_inventory(target, view)
     return {
-        "schema": "mizuchi.binary-inventory.v1",
+        "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
         "format": target.format,
         "status": "unsupported-format",
@@ -152,7 +152,7 @@ def pe_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
         if not section["executable"] and (section["readable"] or section["writable"])
     ]
     return {
-        "schema": "mizuchi.binary-inventory.v1",
+        "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
         "format": "pe",
         "status": "complete",
@@ -460,7 +460,7 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
     imported_symbols = [sym for sym in symbols if sym["table"] == ".dynsym" and sym["sectionIndex"] == 0 and sym["name"]]
     imports = [{"library": "dynamic-symbol-table", "symbols": [{"kind": "name", "name": sym["name"]} for sym in imported_symbols]}]
     return {
-        "schema": "mizuchi.binary-inventory.v1",
+        "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
         "format": "elf",
         "status": "complete",
@@ -560,7 +560,7 @@ def macho_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     ]
     function_symbols = [sym for sym in symbols if sym.get("type") == 2]
     return {
-        "schema": "mizuchi.binary-inventory.v1",
+        "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
         "format": "macho",
         "status": "complete",

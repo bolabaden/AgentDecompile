@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Guide phase 3 — AI-powered matching loop (Claude Runner).
 #
-# The Macabeus/Mizuchi article runs, after the programmatic phase fails:
+# The matching-decompilation guide runs, after the programmatic phase fails:
 #   Claude Runner -> compile -> objdiff  (decomp-permuter in background),
 # iterating until objdiff reports 0 differences.
 #
 # This script wires that phase into the CLI. The real Claude loop lives in the
-# upstream `mizuchi run` runner (bundled in docker.io/bolabaden/mizuchi). We
-# prefer it; if unavailable we fall back to the Cursor-native sandbox tool
+# upstream runner command. We prefer a native or containerized runner when
+# available; if unavailable we fall back to the Cursor-native sandbox tool
 # (`compile-and-view-assembly.sh`) so a human/agent can drive the same loop.
 set -euo pipefail
 
@@ -15,22 +15,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/case-metadata.sh
 . "$ROOT/scripts/lib/case-metadata.sh"
 PROMPT_DIR=""
-CONFIG="${MIZUCHI_CONFIG:-$ROOT/mizuchi.yaml}"
-IMAGE="${MIZUCHI_IMAGE:-docker.io/bolabaden/mizuchi:latest}"
+CONFIG="${AGENTDECOMPILE_CONFIG:-$ROOT/agentdecompile.yaml}"
+IMAGE="${AGENTDECOMPILE_IMAGE:-docker.io/bolabaden/agentdecompile-runner:latest}"
+RUNNER_BIN="${AGENTDECOMPILE_RUNNER_BIN:-agentdecompile-runner}"
 REPORT_JSON=""
 PROMPT_NAME=""
 
 usage() {
   cat <<'EOF'
-Usage: run-ai-phase.sh --prompt <prompt-dir> [--config <mizuchi.yaml>]
+Usage: run-ai-phase.sh --prompt <prompt-dir> [--config <agentdecompile.yaml>]
 
 Runs the guide's AI matching loop (Claude -> compile -> objdiff) for one prompt
 folder. Requires ANTHROPIC_API_KEY. Exit 0 only on objdiff 0.
 
 Runner resolution (first available):
-  1. `mizuchi` on PATH           -> mizuchi run --config <cfg>
-  2. docker/podman + $MIZUCHI_IMAGE -> containerized mizuchi run
-  3. MIZUCHI_MATCHER_COMMAND     -> one-shot matcher.sh + build-and-verify
+  1. $AGENTDECOMPILE_RUNNER_BIN on PATH -> <runner> run --config <cfg>
+  2. docker/podman + $AGENTDECOMPILE_IMAGE -> containerized runner
+  3. AGENTDECOMPILE_MATCHER_COMMAND -> one-shot matcher.sh + build-and-verify
   4. fallback: print Cursor-native loop instructions (compile-and-view-assembly.sh)
 EOF
 }
@@ -53,7 +54,7 @@ mkdir -p "$PROMPT_DIR/build"
 write_report() {
   local status="$1" exit_code="$2" runner="${3:-}" reason="${4:-}"
   jq -n \
-    --arg schema "mizuchi.ai-phase.v1" \
+    --arg schema "agentdecompile.ai-phase.v1" \
     --arg status "$status" \
     --arg prompt "$PROMPT_NAME" \
     --arg prompt_dir "$PROMPT_DIR" \
@@ -89,28 +90,28 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "WARN: ANTHROPIC_API_KEY not set — the AI phase needs it." >&2
 fi
 
-# 1. native mizuchi
-if command -v mizuchi >/dev/null 2>&1; then
-  echo "==> AI phase via native mizuchi run" >&2
-  write_report "started" "" "native-mizuchi" "mizuchi run started"
+# 1. native runner
+if command -v "$RUNNER_BIN" >/dev/null 2>&1; then
+  echo "==> AI phase via native runner $RUNNER_BIN" >&2
+  write_report "started" "" "native-runner" "native runner started"
   set +e
-  mizuchi run --config "$CONFIG"
+  "$RUNNER_BIN" run --config "$CONFIG"
   rc=$?
   set -e
   if [[ "$rc" -eq 0 ]]; then
-    write_report "matched" 0 "native-mizuchi" "mizuchi run completed with objdiff 0"
+    write_report "matched" 0 "native-runner" "native runner completed with objdiff 0"
   else
-    write_report "failed" "$rc" "native-mizuchi" "mizuchi run failed"
+    write_report "failed" "$rc" "native-runner" "native runner failed"
   fi
   exit "$rc"
 fi
 
-# 2. containerized mizuchi (the image we build/publish)
+# 2. containerized runner
 for engine in docker podman; do
   if command -v "$engine" >/dev/null 2>&1 && "$engine" image exists "$IMAGE" 2>/dev/null || \
      { command -v "$engine" >/dev/null 2>&1 && "$engine" image inspect "$IMAGE" >/dev/null 2>&1; }; then
     echo "==> AI phase via $engine image $IMAGE" >&2
-    write_report "started" "" "$engine" "containerized mizuchi run started"
+    write_report "started" "" "$engine" "containerized runner started"
     set +e
     "$engine" run --rm \
       -e ANTHROPIC_API_KEY \
@@ -119,16 +120,16 @@ for engine in docker podman; do
     rc=$?
     set -e
     if [[ "$rc" -eq 0 ]]; then
-      write_report "matched" 0 "$engine" "containerized mizuchi run completed with objdiff 0"
+      write_report "matched" 0 "$engine" "containerized runner completed with objdiff 0"
     else
-      write_report "failed" "$rc" "$engine" "containerized mizuchi run failed"
+      write_report "failed" "$rc" "$engine" "containerized runner failed"
     fi
     exit "$rc"
   fi
 done
 
 # 3. one-shot matcher command fallback
-if [[ -n "${MIZUCHI_MATCHER_COMMAND:-}" ]]; then
+if [[ -n "${AGENTDECOMPILE_MATCHER_COMMAND:-}" ]]; then
   echo "==> AI phase via one-shot matcher command" >&2
   write_report "started" "" "one-shot-matcher" "matcher command started"
   set +e
@@ -155,15 +156,15 @@ fi
 
 # 4. fallback: Cursor-native loop
 cat >&2 <<EOF
-==> No mizuchi runner found; use the Cursor-native AI loop:
+==> No recovery runner found; use the Cursor-native AI loop:
 
   ./scripts/compile-and-view-assembly.sh --prompt "$PROMPT_DIR" --code-file trial.c
 
 Iterate: write trial.c, run the tool, read the objdiff delta, repeat until
 0 differences, then: ./scripts/decomp-cli.sh decomp-integrate <name> <target.o>
 
-To enable the automated loop, set ANTHROPIC_API_KEY and either install mizuchi
+To enable the automated loop, set ANTHROPIC_API_KEY and either install a compatible runner
 or build the image (docker build -t $IMAGE .).
 EOF
-write_report "manual-required" 3 "cursor-native" "no mizuchi runner found"
+write_report "manual-required" 3 "cursor-native" "no recovery runner found"
 exit 3

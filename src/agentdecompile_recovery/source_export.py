@@ -118,7 +118,7 @@ def export_recovered_source(
         out_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = out_dir / "simple_matches.manifest.json"
         manifest = {
-            "schema": "mizuchi.swkotor-recovered-source-shard.v1",
+            "schema": "agentdecompile.swkotor-recovered-source-shard.v1",
             "status": "empty",
             "summaries": [str(summary) for summary in summaries],
             "functionCount": 0,
@@ -128,7 +128,7 @@ def export_recovered_source(
         }
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return {
-            "schema": "mizuchi.recovered-source-export.v1",
+            "schema": "agentdecompile.recovered-source-export.v1",
             "status": "empty",
             "manifest": str(manifest_path),
             "functionCount": 0,
@@ -222,7 +222,7 @@ def export_recovered_source(
     build_manifest_path = out_dir / "build_manifest.json"
     source_path.write_text("\n".join(chunks), encoding="utf-8")
     build_manifest = {
-        "schema": "mizuchi.recovered-source-build-manifest.v1",
+        "schema": "agentdecompile.recovered-source-build-manifest.v1",
         "status": "complete",
         "functionCount": len(build_units),
         "claimBoundary": "Compile units reproduce verified function/source-slice objects only. This is not a whole executable link recipe.",
@@ -230,7 +230,7 @@ def export_recovered_source(
     }
     build_manifest_path.write_text(json.dumps(build_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest = {
-        "schema": "mizuchi.swkotor-recovered-source-shard.v1",
+        "schema": "agentdecompile.swkotor-recovered-source-shard.v1",
         "status": "complete",
         "summaries": [str(summary) for summary in summaries],
         "combinedSource": str(source_path),
@@ -243,7 +243,7 @@ def export_recovered_source(
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
-        "schema": "mizuchi.recovered-source-export.v1",
+        "schema": "agentdecompile.recovered-source-export.v1",
         "status": "complete",
         "source": str(source_path),
         "sourceRoot": str(functions_dir),
@@ -326,7 +326,7 @@ def vacuum_row_from_verify(prompt_name: str, verify: dict[str, Any]) -> dict[str
         return None
     entry = entry_for_function_name(function_name)
     return {
-        "schema": "mizuchi.vacuum-prompt-match.v1",
+        "schema": "agentdecompile.vacuum-prompt-match.v1",
         "status": "matched",
         "differences": 0,
         "name": canonical_export_name(function_name),
@@ -361,7 +361,7 @@ def collect_vacuum_prompt_matches(
                 function_name = str(verify.get("function_name") or prompt_name.split("_", 1)[-1])
                 entry = entry_for_function_name(function_name)
                 row = {
-                    "schema": "mizuchi.vacuum-prompt-match.v1",
+                    "schema": "agentdecompile.vacuum-prompt-match.v1",
                     "status": "matched",
                     "differences": 0,
                     "name": canonical_export_name(function_name),

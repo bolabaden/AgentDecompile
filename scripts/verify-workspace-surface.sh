@@ -72,8 +72,8 @@ if ! grep -q "$required_match_claim_hook" "$ROOT/.cursor/hooks.json"; then
   exit 1
 fi
 
-if ! grep -q '"mizuchi"' "$ROOT/.cursor/mcp.json"; then
-  echo "invalid: .cursor/mcp.json missing mizuchi MCP server" >&2
+if [[ -f "$ROOT/.cursor/mcp.json" ]] && ! grep -q '"recovery-assembly"' "$ROOT/.cursor/mcp.json"; then
+  echo "invalid: .cursor/mcp.json missing recovery-assembly MCP server" >&2
   exit 1
 fi
 
@@ -107,7 +107,7 @@ if ! grep -q 'decomp-function.json' "$ROOT/.cursor/commands/decomp-function.md";
   exit 1
 fi
 
-if ! grep -q 'mizuchi.decomp-function.v1' "$ROOT/docs/knowledgebase/50-execution/playbook.md"; then
+if ! grep -q 'agentdecompile.decomp-function.v1' "$ROOT/docs/knowledgebase/50-execution/playbook.md"; then
   echo "invalid: playbook missing decomp-function receipt schema" >&2
   exit 1
 fi

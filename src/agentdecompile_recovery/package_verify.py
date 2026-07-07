@@ -48,7 +48,7 @@ def run_command(
     env: dict[str, str] | None = None,
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory(prefix="mizuchi-verify-run-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="recovery-verify-run-") as tmp:
         stdout_path = Path(tmp) / "stdout.txt"
         stderr_path = Path(tmp) / "stderr.txt"
         with stdout_path.open("w+", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
@@ -195,7 +195,7 @@ def verify_recovered_source_package(
     )
     verification_tier = verification_tier_for_package_status(aggregate_status, "not-run")
     report = {
-        "schema": "mizuchi.recovered-source-verification.v1",
+        "schema": "agentdecompile.recovered-source-verification.v1",
         "status": aggregate_status,
         "verificationTier": verification_tier,
         "acceptanceGate": acceptance_gate_for_tier(verification_tier),
@@ -488,7 +488,7 @@ def compile_with_msvc(
     else:
         command = [wine, str(cl_exe), "/nologo", "/c", *args, f"/Fo{out_name}", source_name]
     env = msvc_environment(root, wineprefix)
-    with tempfile.TemporaryDirectory(prefix=f"mizuchi-msvc-{stem}-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"recovery-msvc-{stem}-") as tmp:
         work_dir = Path(tmp)
         local_source = work_dir / source_name
         local_source.write_text(source_text, encoding="utf-8")
@@ -520,7 +520,7 @@ def resolve_msvc_root(msvc_root: Path | None) -> Path:
     env_root = os.environ.get("VC_ROOT")
     if env_root:
         return Path(env_root)
-    return Path("/run/media/brunner56/MyBook/MizuchiSource/toolchains/msvc8.0-main")
+    return Path("/run/media/brunner56/MyBook/Toolchains/msvc8.0-main")
 
 
 def msvc_environment(msvc_root: Path, wineprefix: Path | None) -> dict[str, str]:

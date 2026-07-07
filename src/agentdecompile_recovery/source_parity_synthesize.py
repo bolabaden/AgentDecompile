@@ -143,7 +143,7 @@ def default_profile_set(compiler: str) -> list[tuple[str, list[str]]]:
 
 
 def run(args: list[str], *, env: dict[str, str] | None = None, timeout: int = 90) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory(prefix="mizuchi-run-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="recovery-run-") as tmp:
         stdout_path = Path(tmp) / "stdout.txt"
         stderr_path = Path(tmp) / "stderr.txt"
         with stdout_path.open("w+", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
@@ -265,7 +265,7 @@ def source_task_to_queue_row(task: dict[str, Any]) -> dict[str, Any] | None:
     entry = task.get("entry") or format_entry(address)
     fact = task.get("functionFact") if isinstance(task.get("functionFact"), dict) else {}
     row = {
-        "schema": "mizuchi.source-parity-synthesis-row.v1",
+        "schema": "agentdecompile.source-parity-synthesis-row.v1",
         "sourceTask": True,
         "sourceTaskSchema": task.get("schema"),
         "sourceTaskStatus": task.get("status"),
@@ -299,7 +299,7 @@ def source_task_to_queue_row(task: dict[str, Any]) -> dict[str, Any] | None:
             if key not in {"bytesHex"}
         },
         "tags": source_task_tags(task),
-        "sourceOrigin": "converted from mizuchi source-generation task",
+        "sourceOrigin": "converted from recovery source-generation task",
     }
     return row
 
@@ -617,10 +617,10 @@ def import_call_self_stdcall(row: dict[str, Any], c_name: str, data: bytes) -> l
     addr = u32(data[3:7])
     source = header("import-call-self-stdcall", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportSelf)(void *);",
+            "typedef void (__stdcall *RecoveryImportSelf)(void *);",
             "",
             f"void __fastcall {c_name}(void *self) {{",
-            f"    (*(MizuchiImportSelf *)0x{addr:08x})(self);",
+            f"    (*(RecoveryImportSelf *)0x{addr:08x})(self);",
             "}",
             "",
         ]
@@ -647,10 +647,10 @@ def virtual_call_push_imm_forward_edx(row: dict[str, Any], c_name: str, data: by
     slot = method_offset // 4
     source = header("virtual-call-push-imm-forward-edx", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodArg)(void *, int, int);",
+            "typedef void (__fastcall *RecoveryVMethodArg)(void *, int, int);",
             "",
             f"void __fastcall {c_name}(void *self, int forwarded_edx) {{",
-            f"    ((MizuchiVMethodArg *)*(void **)self)[{slot}](self, forwarded_edx, {value});",
+            f"    ((RecoveryVMethodArg *)*(void **)self)[{slot}](self, forwarded_edx, {value});",
             "}",
             "",
         ]
@@ -8528,10 +8528,10 @@ def call_indirect_zero(row: dict[str, Any], c_name: str, data: bytes) -> list[Ge
     addr = u32(data[4:8])
     direct_source = header("call-indirect-zero", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportIntArg)(unsigned int);",
+            "typedef void (__stdcall *RecoveryImportIntArg)(unsigned int);",
             "",
             f"void {c_name}(void) {{",
-            f"    MizuchiImportIntArg *slot = (MizuchiImportIntArg *)0x{addr:08x};",
+            f"    RecoveryImportIntArg *slot = (RecoveryImportIntArg *)0x{addr:08x};",
             "    (*slot)(0);",
             "}",
             "",
@@ -8539,10 +8539,10 @@ def call_indirect_zero(row: dict[str, Any], c_name: str, data: bytes) -> list[Ge
     )
     loaded_source = header("call-indirect-zero", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportIntArg)(unsigned int);",
+            "typedef void (__stdcall *RecoveryImportIntArg)(unsigned int);",
             "",
             f"void {c_name}(void) {{",
-            f"    MizuchiImportIntArg fn = *(MizuchiImportIntArg *)0x{addr:08x};",
+            f"    RecoveryImportIntArg fn = *(RecoveryImportIntArg *)0x{addr:08x};",
             "    fn(0);",
             "}",
             "",
@@ -8947,10 +8947,10 @@ def import_call_global_arg(row: dict[str, Any], c_name: str, data: bytes) -> lis
     call_addr = u32(data[8:12])
     source = header("import-call-global-arg", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportU32)(unsigned int);",
+            "typedef void (__stdcall *RecoveryImportU32)(unsigned int);",
             "",
             f"void {c_name}(void) {{",
-            f"    (*(MizuchiImportU32 *)0x{call_addr:08x})(*(unsigned int *)0x{arg_addr:08x});",
+            f"    (*(RecoveryImportU32 *)0x{call_addr:08x})(*(unsigned int *)0x{arg_addr:08x});",
             "}",
             "",
         ]
@@ -9128,12 +9128,12 @@ def nullable_virtual_call_imm(row: dict[str, Any], c_name: str, data: bytes) -> 
     value = data[9]
     source_fastcall = header("nullable-virtual-call-imm", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodImm)(void *, int, int);",
+            "typedef void (__fastcall *RecoveryVMethodImm)(void *, int, int);",
             "",
             f"void __fastcall {c_name}(void *self) {{",
             "    void *obj = *(void **)self;",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethodImm *)*(void **)obj)[0](obj, 0, {value});",
+            f"        ((RecoveryVMethodImm *)*(void **)obj)[0](obj, 0, {value});",
             "    }",
             "}",
             "",
@@ -9141,12 +9141,12 @@ def nullable_virtual_call_imm(row: dict[str, Any], c_name: str, data: bytes) -> 
     )
     source_thiscall = header("nullable-virtual-call-imm", row) + "\n".join(
         [
-            "typedef void (__thiscall *MizuchiVMethodImm)(void *, int);",
+            "typedef void (__thiscall *RecoveryVMethodImm)(void *, int);",
             "",
             f"void __fastcall {c_name}(void *self) {{",
             "    void *obj = *(void **)self;",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethodImm *)*(void **)obj)[0](obj, {value});",
+            f"        ((RecoveryVMethodImm *)*(void **)obj)[0](obj, {value});",
             "    }",
             "}",
             "",
@@ -9380,21 +9380,21 @@ def virtual_call_eq_global(row: dict[str, Any], c_name: str, data: bytes) -> lis
     slot_index = slot_bytes // 4
     source_direct = header("virtual-call-eq-global", row) + "\n".join(
         [
-            "typedef unsigned int (__fastcall *MizuchiVMethodU32)(void *);",
+            "typedef unsigned int (__fastcall *RecoveryVMethodU32)(void *);",
             "",
             f"unsigned char __fastcall {c_name}(void *self) {{",
-            f"    return ((MizuchiVMethodU32 *)*(void **)self)[{slot_index}](self) == *(unsigned int *)0x{addr:08x};",
+            f"    return ((RecoveryVMethodU32 *)*(void **)self)[{slot_index}](self) == *(unsigned int *)0x{addr:08x};",
             "}",
             "",
         ]
     )
     source_char_temp = header("virtual-call-eq-global", row) + "\n".join(
         [
-            "typedef unsigned int (__fastcall *MizuchiVMethodU32)(void *);",
+            "typedef unsigned int (__fastcall *RecoveryVMethodU32)(void *);",
             "",
             f"unsigned char __fastcall {c_name}(void *self) {{",
             "    unsigned char result;",
-            f"    result = ((MizuchiVMethodU32 *)*(void **)self)[{slot_index}](self) == *(unsigned int *)0x{addr:08x};",
+            f"    result = ((RecoveryVMethodU32 *)*(void **)self)[{slot_index}](self) == *(unsigned int *)0x{addr:08x};",
             "    return result;",
             "}",
             "",
@@ -9517,10 +9517,10 @@ def import_call_return_self(row: dict[str, Any], c_name: str, data: bytes) -> li
     addr = u32(data[6:10])
     source = header("import-call-return-self", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportSelf)(void *);",
+            "typedef void (__stdcall *RecoveryImportSelf)(void *);",
             "",
             f"void *__fastcall {c_name}(void *self) {{",
-            f"    (*(MizuchiImportSelf *)0x{addr:08x})(self);",
+            f"    (*(RecoveryImportSelf *)0x{addr:08x})(self);",
             "    return self;",
             "}",
             "",
@@ -11609,26 +11609,26 @@ def bink_buffer_set_direct_draw_forwarder(row: dict[str, Any], c_name: str, data
     refresh_target = int(str(decoded["refreshCallTargetAddress"]), 16)
     refresh_c_name = safe_c_name(f"sub_{refresh_target:08x}")
     refresh_symbol = f"_{refresh_c_name}@0"
-    mode_symbol = "_mizuchi_global_30068c68"
-    direct_draw_symbol = "_mizuchi_global_30068c6c"
-    surface_symbol = "_mizuchi_global_30068c70"
+    mode_symbol = "_recovery_global_30068c68"
+    direct_draw_symbol = "_recovery_global_30068c6c"
+    surface_symbol = "_recovery_global_30068c70"
     source = header("bink-buffer-set-direct-draw-forwarder", row) + "\n".join(
         [
-            "extern unsigned int mizuchi_global_30068c68;",
-            "extern void *mizuchi_global_30068c6c;",
-            "extern void *mizuchi_global_30068c70;",
+            "extern unsigned int recovery_global_30068c68;",
+            "extern void *recovery_global_30068c6c;",
+            "extern void *recovery_global_30068c70;",
             f"extern void __stdcall {refresh_c_name}(void);",
             f"int __stdcall {c_name}(void *direct_draw, void *surface) {{",
             "    if (direct_draw != 0 && surface != 0) {",
-            "        mizuchi_global_30068c6c = direct_draw;",
-            "        mizuchi_global_30068c70 = surface;",
-            "        mizuchi_global_30068c68 = 0x08000000u;",
+            "        recovery_global_30068c6c = direct_draw;",
+            "        recovery_global_30068c70 = surface;",
+            "        recovery_global_30068c68 = 0x08000000u;",
             f"        {refresh_c_name}();",
             "        return 1;",
             "    }",
-            "    mizuchi_global_30068c6c = 0;",
-            "    mizuchi_global_30068c70 = 0;",
-            "    mizuchi_global_30068c68 = 0;",
+            "    recovery_global_30068c6c = 0;",
+            "    recovery_global_30068c70 = 0;",
+            "    recovery_global_30068c68 = 0;",
             "    return 1;",
             "}",
             "",
@@ -15390,16 +15390,16 @@ def stack_arg_range_global_mode_setter(row: dict[str, Any], c_name: str, data: b
     range_value = int(decoded["rangeValue"])
     source = "\n".join(
         [
-            "typedef unsigned int mizuchi_u32;",
+            "typedef unsigned int recovery_u32;",
             f"void __cdecl {c_name}(int mode)",
             "{",
             "    switch (mode) {",
             "    case 1:",
-            f"        *(volatile mizuchi_u32 *)0x{global_address:08x} = 0x{equal_one_value:02x}u;",
+            f"        *(volatile recovery_u32 *)0x{global_address:08x} = 0x{equal_one_value:02x}u;",
             "        return;",
             "    case 2:",
             "    case 3:",
-            f"        *(volatile mizuchi_u32 *)0x{global_address:08x} = 0x{range_value:02x}u;",
+            f"        *(volatile recovery_u32 *)0x{global_address:08x} = 0x{range_value:02x}u;",
             "        return;",
             "    default:",
             "        return;",
@@ -17017,11 +17017,11 @@ def import_call_arg_return_one_stdcall8(row: dict[str, Any], c_name: str, data: 
     addr = u32(data[6:10])
     source_direct = header("import-call-arg-return-one-stdcall8", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportArg)(void *);",
+            "typedef void (__stdcall *RecoveryImportArg)(void *);",
             "",
             f"int __stdcall {c_name}(void *arg, int unused) {{",
             "    (void)unused;",
-            f"    (*(MizuchiImportArg *)0x{addr:08x})(arg);",
+            f"    (*(RecoveryImportArg *)0x{addr:08x})(arg);",
             "    return 1;",
             "}",
             "",
@@ -17029,12 +17029,12 @@ def import_call_arg_return_one_stdcall8(row: dict[str, Any], c_name: str, data: 
     )
     source_inc = header("import-call-arg-return-one-stdcall8", row) + "\n".join(
         [
-            "typedef void (__stdcall *MizuchiImportArg)(void *);",
+            "typedef void (__stdcall *RecoveryImportArg)(void *);",
             "",
             f"int __stdcall {c_name}(void *arg, int unused) {{",
             "    int result = 0;",
             "    (void)unused;",
-            f"    (*(MizuchiImportArg *)0x{addr:08x})(arg);",
+            f"    (*(RecoveryImportArg *)0x{addr:08x})(arg);",
             "    ++result;",
             "    return result;",
             "}",
@@ -17136,12 +17136,12 @@ def nullable_field_virtual_tailcall_stack8(row: dict[str, Any], c_name: str, dat
     slot_index = slot_bytes // 4
     source = header("nullable-field-virtual-tailcall-stack8", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethod)(void *, int, unsigned int, unsigned int);",
+            "typedef void (__fastcall *RecoveryVMethod)(void *, int, unsigned int, unsigned int);",
             "",
             f"void __fastcall {c_name}(void *self, int forwarded_edx, unsigned int a, unsigned int b) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethod *)*(void **)obj)[{slot_index}](obj, forwarded_edx, a, b);",
+            f"        ((RecoveryVMethod *)*(void **)obj)[{slot_index}](obj, forwarded_edx, a, b);",
             "    }",
             "}",
             "",
@@ -17170,12 +17170,12 @@ def nullable_field_virtual_tailcall_stack4(row: dict[str, Any], c_name: str, dat
     slot_index = slot_bytes // 4
     source = header("nullable-field-virtual-tailcall-stack4", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethod)(void *, int, unsigned int);",
+            "typedef void (__fastcall *RecoveryVMethod)(void *, int, unsigned int);",
             "",
             f"void __fastcall {c_name}(void *self, int forwarded_edx, unsigned int value) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethod *)*(void **)obj)[{slot_index}](obj, forwarded_edx, value);",
+            f"        ((RecoveryVMethod *)*(void **)obj)[{slot_index}](obj, forwarded_edx, value);",
             "    }",
             "}",
             "",
@@ -17204,12 +17204,12 @@ def nullable_field_virtual_return_or_zero(row: dict[str, Any], c_name: str, data
     slot_index = slot_bytes // 4
     source = header("nullable-field-virtual-return-or-zero", row) + "\n".join(
         [
-            "typedef unsigned int (__fastcall *MizuchiVMethodU32)(void *);",
+            "typedef unsigned int (__fastcall *RecoveryVMethodU32)(void *);",
             "",
             f"unsigned int __fastcall {c_name}(void *self) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj == 0) return 0;",
-            f"    return ((MizuchiVMethodU32 *)*(void **)obj)[{slot_index}](obj);",
+            f"    return ((RecoveryVMethodU32 *)*(void **)obj)[{slot_index}](obj);",
             "}",
             "",
         ]
@@ -17235,11 +17235,11 @@ def nullable_stack_virtual_call_imm(row: dict[str, Any], c_name: str, data: byte
     value = data[11]
     source = header("nullable-stack-virtual-call-imm", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodImm)(void *, int, int);",
+            "typedef void (__fastcall *RecoveryVMethodImm)(void *, int, int);",
             "",
             f"void {c_name}(void *obj) {{",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethodImm *)*(void **)obj)[0](obj, 0, {value});",
+            f"        ((RecoveryVMethodImm *)*(void **)obj)[0](obj, 0, {value});",
             "    }",
             "}",
             "",
@@ -17431,12 +17431,12 @@ def field_virtual_tailcall(row: dict[str, Any], c_name: str, data: bytes) -> lis
     slot_index = slot_bytes // 4
     source = header("field-virtual-tailcall", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethod)(void *);",
+            "typedef void (__fastcall *RecoveryVMethod)(void *);",
             "",
             f"void __fastcall {c_name}(void *self) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethod *)*(void **)obj)[{slot_index}](obj);",
+            f"        ((RecoveryVMethod *)*(void **)obj)[{slot_index}](obj);",
             "    }",
             "}",
             "",
@@ -17558,22 +17558,22 @@ def global_virtual_call_stack_arg(row: dict[str, Any], c_name: str, data: bytes)
     slot_index = slot // 4
     source_value_first = header("global-virtual-call-stack-arg", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodArg)(void *, int, unsigned int);",
+            "typedef void (__fastcall *RecoveryVMethodArg)(void *, int, unsigned int);",
             "",
             f"void {c_name}(unsigned int value) {{",
             f"    void *obj = *(void **)0x{addr:08x};",
-            f"    ((MizuchiVMethodArg *)*(void **)obj)[{slot_index}](obj, 0, value);",
+            f"    ((RecoveryVMethodArg *)*(void **)obj)[{slot_index}](obj, 0, value);",
             "}",
             "",
         ]
     )
     source_obj_first = header("global-virtual-call-stack-arg", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodArg)(void *, int, unsigned int);",
+            "typedef void (__fastcall *RecoveryVMethodArg)(void *, int, unsigned int);",
             "",
             f"void {c_name}(unsigned int value) {{",
             f"    void *obj = *(void * volatile *)0x{addr:08x};",
-            f"    ((MizuchiVMethodArg *)*(void **)obj)[{slot_index}](obj, 0, value);",
+            f"    ((RecoveryVMethodArg *)*(void **)obj)[{slot_index}](obj, 0, value);",
             "}",
             "",
         ]
@@ -17799,12 +17799,12 @@ def nullable_field_virtual_tailcall_ret(row: dict[str, Any], c_name: str, data: 
     fn_params = ["void *", "int", *(["unsigned int"] * (stack // 4))]
     source = header("nullable-field-virtual-tailcall-ret", row) + "\n".join(
         [
-            f"typedef unsigned int (__fastcall *MizuchiVMethod)({', '.join(fn_params)});",
+            f"typedef unsigned int (__fastcall *RecoveryVMethod)({', '.join(fn_params)});",
             "",
             f"unsigned int __fastcall {c_name}({', '.join(params)}) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj == 0) return 0;",
-            f"    return ((MizuchiVMethod *)*(void **)obj)[{slot_index}]({', '.join(call_args)});",
+            f"    return ((RecoveryVMethod *)*(void **)obj)[{slot_index}]({', '.join(call_args)});",
             "}",
             "",
         ]
@@ -17832,11 +17832,11 @@ def field_virtual_call_push_zeros(row: dict[str, Any], c_name: str, data: bytes)
     slot_index = slot // 4
     source = header("field-virtual-call-push-zeros", row) + "\n".join(
         [
-            "typedef void (__fastcall *MizuchiVMethodZeros)(void *, int, unsigned int, unsigned int, unsigned int, unsigned int);",
+            "typedef void (__fastcall *RecoveryVMethodZeros)(void *, int, unsigned int, unsigned int, unsigned int, unsigned int);",
             "",
             f"void __fastcall {c_name}(void *self) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
-            f"    ((MizuchiVMethodZeros *)*(void **)obj)[{slot_index}](obj, 0, 0, 0, 0, 0);",
+            f"    ((RecoveryVMethodZeros *)*(void **)obj)[{slot_index}](obj, 0, 0, 0, 0, 0);",
             "}",
             "",
         ]
@@ -18031,12 +18031,12 @@ def nullable_field_virtual_tailcall_ret32(row: dict[str, Any], c_name: str, data
         symbol = fastcall_symbol(c_name, 4)
     source = header("nullable-field-virtual-tailcall-ret32", row) + "\n".join(
         [
-            f"typedef void (__fastcall *MizuchiVMethod)({fn_params});",
+            f"typedef void (__fastcall *RecoveryVMethod)({fn_params});",
             "",
             f"void __fastcall {c_name}({params}) {{",
             f"    void *obj = *(void **)({self_offset(field)});",
             "    if (obj != 0) {",
-            f"        ((MizuchiVMethod *)*(void **)obj)[{slot_index}]({call_args});",
+            f"        ((RecoveryVMethod *)*(void **)obj)[{slot_index}]({call_args});",
             "    }",
             "}",
             "",
@@ -19308,7 +19308,7 @@ def attempt_candidate(
     candidate_c.write_text(candidate.source, encoding="utf-8")
 
     base_record = {
-        "schema": "mizuchi.source-parity-synthesis-attempt.v1",
+        "schema": "agentdecompile.source-parity-synthesis-attempt.v1",
         "name": row.get("name"),
         "entry": row.get("entry"),
         "section": row.get("section"),
@@ -19388,7 +19388,7 @@ def attempt_candidate(
         [
             sys.executable,
             "-m",
-            "mizuchi_re.swkotor_inventory_slice",
+            "agentdecompile_recovery.swkotor_inventory_slice",
             "--inventory",
             str(inventory),
             "--function",
@@ -20000,7 +20000,7 @@ def run_source_shape_search(
         )
     best = max(attempts, key=lambda item: (bool(item.get("byteIdentical")), int(item.get("commonPrefixBytes") or 0)), default=None)
     report = {
-        "schema": "mizuchi.source-shape-search.v1",
+        "schema": "agentdecompile.source-shape-search.v1",
         "status": "matched" if best and best.get("byteIdentical") else "no-match",
         "rule": candidate.rule,
         "variant": candidate.variant,
@@ -20106,7 +20106,7 @@ def run_msvc_source_shape_search(
             break
     best = max(attempts, key=lambda item: (bool(item.get("byteIdentical")), int(item.get("commonPrefixBytes") or 0)), default=None)
     report = {
-        "schema": "mizuchi.source-shape-search.v1",
+        "schema": "agentdecompile.source-shape-search.v1",
         "status": "matched" if best and best.get("byteIdentical") else "no-match",
         "rule": candidate.rule,
         "variant": candidate.variant,
@@ -20168,27 +20168,27 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 "source": header("source-shape-bink-buffer-set-scale-result-local", row)
                 + "\n".join(
                     [
-                        "typedef unsigned int mizuchi_u32;",
-                        f"int __stdcall {c_name}(void *buffer, mizuchi_u32 width, mizuchi_u32 height) {{",
+                        "typedef unsigned int recovery_u32;",
+                        f"int __stdcall {c_name}(void *buffer, recovery_u32 width, recovery_u32 height) {{",
                         "    char *base;",
-                        "    mizuchi_u32 source_width;",
-                        "    mizuchi_u32 source_height;",
-                        "    mizuchi_u32 flags;",
-                        "    mizuchi_u32 mask;",
-                        "    mizuchi_u32 result;",
+                        "    recovery_u32 source_width;",
+                        "    recovery_u32 source_height;",
+                        "    recovery_u32 flags;",
+                        "    recovery_u32 mask;",
+                        "    recovery_u32 result;",
                         "    if (buffer == 0) {",
                         "        return 0;",
                         "    }",
                         "    base = (char *)buffer;",
                         "    result = 1u;",
                         "    if (width == 0u) {",
-                        f"        width = *(volatile mizuchi_u32 *)0x{global_width:08x};",
+                        f"        width = *(volatile recovery_u32 *)0x{global_width:08x};",
                         "    }",
                         "    if (height == 0u) {",
-                        f"        height = *(volatile mizuchi_u32 *)0x{global_height:08x};",
+                        f"        height = *(volatile recovery_u32 *)0x{global_height:08x};",
                         "    }",
-                        f"    source_width = *(mizuchi_u32 *)(base + 0x{source_width:x});",
-                        f"    source_height = *(mizuchi_u32 *)(base + 0x{source_height:x});",
+                        f"    source_width = *(recovery_u32 *)(base + 0x{source_width:x});",
+                        f"    source_height = *(recovery_u32 *)(base + 0x{source_height:x});",
                         "    mask = 0u;",
                         "    if (width != source_width) {",
                         "        if ((width % source_width) == 0u) {",
@@ -20201,9 +20201,9 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "            mask = 0x10000000u;",
                         "        }",
                         "    }",
-                        f"    flags = *(mizuchi_u32 *)(base + 0x{scale_flags:x});",
+                        f"    flags = *(recovery_u32 *)(base + 0x{scale_flags:x});",
                         "    if ((flags & mask) == mask) {",
-                        f"        *(mizuchi_u32 *)(base + 0x{scaled_width:x}) = width;",
+                        f"        *(recovery_u32 *)(base + 0x{scaled_width:x}) = width;",
                         "    } else {",
                         "        result = 0u;",
                         "    }",
@@ -20220,12 +20220,12 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "        }",
                         "    }",
                         "    if ((flags & mask) == mask) {",
-                        f"        *(mizuchi_u32 *)(base + 0x{scaled_height:x}) = height;",
+                        f"        *(recovery_u32 *)(base + 0x{scaled_height:x}) = height;",
                         "    } else {",
                         "        result = 0u;",
                         "    }",
-                        f"    *(mizuchi_u32 *)(base + 0x{right:x}) = *(mizuchi_u32 *)(base + 0x{scaled_width:x}) + *(mizuchi_u32 *)(base + 0x{x_offset:x});",
-                        f"    *(mizuchi_u32 *)(base + 0x{bottom:x}) = *(mizuchi_u32 *)(base + 0x{scaled_height:x}) + *(mizuchi_u32 *)(base + 0x{y_offset:x});",
+                        f"    *(recovery_u32 *)(base + 0x{right:x}) = *(recovery_u32 *)(base + 0x{scaled_width:x}) + *(recovery_u32 *)(base + 0x{x_offset:x});",
+                        f"    *(recovery_u32 *)(base + 0x{bottom:x}) = *(recovery_u32 *)(base + 0x{scaled_height:x}) + *(recovery_u32 *)(base + 0x{y_offset:x});",
                         "    return (int)result;",
                         "}",
                         "",
@@ -20238,24 +20238,24 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 "source": header("source-shape-bink-buffer-set-scale-height-first-local", row)
                 + "\n".join(
                     [
-                        "typedef unsigned int mizuchi_u32;",
-                        f"int __stdcall {c_name}(void *buffer, mizuchi_u32 width, mizuchi_u32 height) {{",
+                        "typedef unsigned int recovery_u32;",
+                        f"int __stdcall {c_name}(void *buffer, recovery_u32 width, recovery_u32 height) {{",
                         "    char *base;",
-                        "    mizuchi_u32 source_width;",
-                        "    mizuchi_u32 source_height;",
-                        "    mizuchi_u32 flags;",
-                        "    mizuchi_u32 horizontal_mask;",
-                        "    mizuchi_u32 vertical_mask;",
-                        "    mizuchi_u32 result;",
+                        "    recovery_u32 source_width;",
+                        "    recovery_u32 source_height;",
+                        "    recovery_u32 flags;",
+                        "    recovery_u32 horizontal_mask;",
+                        "    recovery_u32 vertical_mask;",
+                        "    recovery_u32 result;",
                         "    if (buffer == 0) {",
                         "        return 0;",
                         "    }",
                         "    base = (char *)buffer;",
                         "    result = 1u;",
-                        f"    width = width ? width : *(volatile mizuchi_u32 *)0x{global_width:08x};",
-                        f"    height = height ? height : *(volatile mizuchi_u32 *)0x{global_height:08x};",
-                        f"    source_width = *(mizuchi_u32 *)(base + 0x{source_width:x});",
-                        f"    source_height = *(mizuchi_u32 *)(base + 0x{source_height:x});",
+                        f"    width = width ? width : *(volatile recovery_u32 *)0x{global_width:08x};",
+                        f"    height = height ? height : *(volatile recovery_u32 *)0x{global_height:08x};",
+                        f"    source_width = *(recovery_u32 *)(base + 0x{source_width:x});",
+                        f"    source_height = *(recovery_u32 *)(base + 0x{source_height:x});",
                         "    horizontal_mask = 0u;",
                         "    vertical_mask = 0u;",
                         "    if (width != source_width) {",
@@ -20264,19 +20264,19 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "    if (height != source_height) {",
                         "        vertical_mask = ((width % source_height) == 0u) ? 0x08000000u : (((source_height % height) == 0u) ? 0x02000000u : ((height > source_height) ? 0x04000000u : 0x01000000u));",
                         "    }",
-                        f"    flags = *(mizuchi_u32 *)(base + 0x{scale_flags:x});",
+                        f"    flags = *(recovery_u32 *)(base + 0x{scale_flags:x});",
                         "    if ((flags & horizontal_mask) == horizontal_mask) {",
-                        f"        *(mizuchi_u32 *)(base + 0x{scaled_width:x}) = width;",
+                        f"        *(recovery_u32 *)(base + 0x{scaled_width:x}) = width;",
                         "    } else {",
                         "        result = 0u;",
                         "    }",
                         "    if ((flags & vertical_mask) == vertical_mask) {",
-                        f"        *(mizuchi_u32 *)(base + 0x{scaled_height:x}) = height;",
+                        f"        *(recovery_u32 *)(base + 0x{scaled_height:x}) = height;",
                         "    } else {",
                         "        result = 0u;",
                         "    }",
-                        f"    *(mizuchi_u32 *)(base + 0x{right:x}) = *(mizuchi_u32 *)(base + 0x{x_offset:x}) + *(mizuchi_u32 *)(base + 0x{scaled_width:x});",
-                        f"    *(mizuchi_u32 *)(base + 0x{bottom:x}) = *(mizuchi_u32 *)(base + 0x{y_offset:x}) + *(mizuchi_u32 *)(base + 0x{scaled_height:x});",
+                        f"    *(recovery_u32 *)(base + 0x{right:x}) = *(recovery_u32 *)(base + 0x{x_offset:x}) + *(recovery_u32 *)(base + 0x{scaled_width:x});",
+                        f"    *(recovery_u32 *)(base + 0x{bottom:x}) = *(recovery_u32 *)(base + 0x{y_offset:x}) + *(recovery_u32 *)(base + 0x{scaled_height:x});",
                         "    return (int)result;",
                         "}",
                         "",
@@ -20293,11 +20293,11 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 "source": header("source-shape-u96-signed-divmod-then-tail-loop", row)
                 + "\n".join(
                     [
-                        "typedef unsigned int mizuchi_u32;",
-                        f"int __cdecl {c_name}(mizuchi_u32 *base, int bit) {{",
+                        "typedef unsigned int recovery_u32;",
+                        f"int __cdecl {c_name}(recovery_u32 *base, int bit) {{",
                         "    int word = bit / 32;",
                         "    int remainder = bit % 32;",
-                        "    mizuchi_u32 mask = ~((mizuchi_u32)-1 << (31 - remainder));",
+                        "    recovery_u32 mask = ~((recovery_u32)-1 << (31 - remainder));",
                         "    if ((base[word] & mask) != 0u) {",
                         "        return 0;",
                         "    }",
@@ -20318,12 +20318,12 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 "source": header("source-shape-u96-volatile-divisor-signed-divmod-then-tail-loop", row)
                 + "\n".join(
                     [
-                        "typedef unsigned int mizuchi_u32;",
-                        f"int __cdecl {c_name}(mizuchi_u32 *base, int bit) {{",
+                        "typedef unsigned int recovery_u32;",
+                        f"int __cdecl {c_name}(recovery_u32 *base, int bit) {{",
                         "    volatile int divisor = 32;",
                         "    int word = bit / divisor;",
                         "    int remainder = bit % divisor;",
-                        "    mizuchi_u32 mask = ~((mizuchi_u32)-1 << (31 - remainder));",
+                        "    recovery_u32 mask = ~((recovery_u32)-1 << (31 - remainder));",
                         "    if ((base[word] & mask) != 0u) {",
                         "        return 0;",
                         "    }",
@@ -20344,14 +20344,14 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 "source": header("source-shape-u96-for-loop-post-increment-tail-check", row)
                 + "\n".join(
                     [
-                        "typedef unsigned int mizuchi_u32;",
-                        f"int __cdecl {c_name}(mizuchi_u32 *base, int bit) {{",
+                        "typedef unsigned int recovery_u32;",
+                        f"int __cdecl {c_name}(recovery_u32 *base, int bit) {{",
                         "    int word;",
                         "    int remainder;",
-                        "    mizuchi_u32 mask;",
+                        "    recovery_u32 mask;",
                         "    word = bit / 32;",
                         "    remainder = bit % 32;",
-                        "    mask = ~((mizuchi_u32)-1 << (31 - remainder));",
+                        "    mask = ~((recovery_u32)-1 << (31 - remainder));",
                         "    if ((base[word] & mask) != 0u) {",
                         "        return 0;",
                         "    }",
@@ -20939,7 +20939,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
             return []
         callee = safe_c_name(f"sub_{int(str(fallback), 16):08x}")
         c_name = safe_c_name(candidate.c_name)
-        typedef = "typedef void (__stdcall *mizuchi_rad_custom_free)(void *ptr);"
+        typedef = "typedef void (__stdcall *recovery_rad_custom_free)(void *ptr);"
         extern = f"extern void __cdecl {callee}(void *ptr);"
         return [
             {
@@ -20955,7 +20955,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "        unsigned int delta = bytes[-1];",
                         "        void *base = bytes - delta;",
                         "        if (bytes[-2] == 3) {",
-                        "            (*(mizuchi_rad_custom_free *)(bytes - 8))(base);",
+                        "            (*(recovery_rad_custom_free *)(bytes - 8))(base);",
                         "        } else {",
                         f"            {callee}(base);",
                         "        }",
@@ -20979,7 +20979,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "        unsigned int delta = bytes[-1];",
                         "        if (marker == 3) {",
                         "            void *base = bytes - delta;",
-                        "            (*(mizuchi_rad_custom_free *)(bytes - 8))(base);",
+                        "            (*(recovery_rad_custom_free *)(bytes - 8))(base);",
                         "        } else {",
                         "            void *base = bytes - delta;",
                         f"            {callee}(base);",
@@ -21007,7 +21007,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "    delta = bytes[-1];",
                         "    ptr = bytes - delta;",
                         "    if (bytes[-2] == 3) {",
-                        "        (*(mizuchi_rad_custom_free *)(bytes - 8))(ptr);",
+                        "        (*(recovery_rad_custom_free *)(bytes - 8))(ptr);",
                         "        return;",
                         "    }",
                         f"    {callee}(ptr);",
@@ -21033,7 +21033,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "    if (bytes[-2] == 3) {",
                         "        delta = bytes[-1];",
                         "        ptr = bytes - delta;",
-                        "        (*(mizuchi_rad_custom_free *)(bytes - 8))(ptr);",
+                        "        (*(recovery_rad_custom_free *)(bytes - 8))(ptr);",
                         "        return;",
                         "    }",
                         "    delta = bytes[-1];",
@@ -21061,7 +21061,7 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                         "    if (bytes[-2] == 3) {",
                         "        delta = bytes[-1];",
                         "        ptr = bytes - delta;",
-                        "        (*(volatile mizuchi_rad_custom_free *)(bytes - 8))(ptr);",
+                        "        (*(volatile recovery_rad_custom_free *)(bytes - 8))(ptr);",
                         "        return;",
                         "    }",
                         "    delta = bytes[-1];",
@@ -21213,12 +21213,12 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
             "source": header("source-shape-struct-overlay", row)
             + "\n".join(
                 [
-                    "struct MizuchiGlobals {",
+                    "struct RecoveryGlobals {",
                     "    volatile unsigned int first;",
                     "    volatile unsigned int second;",
                     "};",
                     f"void __stdcall {c_name}(unsigned int first, unsigned int second) {{",
-                    f"    struct MizuchiGlobals *globals = (struct MizuchiGlobals *){first};",
+                    f"    struct RecoveryGlobals *globals = (struct RecoveryGlobals *){first};",
                     "    globals->first = first;",
                     "    globals->second = second;",
                     "}",
@@ -21528,7 +21528,7 @@ def run_objdiff(target_obj: Path, candidate_obj: Path, case_dir: Path, *, timeou
     stderr_path = case_dir / "verify.stderr"
     if not target_obj.exists() or not candidate_obj.exists():
         report = {
-            "schema": "mizuchi.verify-objdiff.v1",
+            "schema": "agentdecompile.verify-objdiff.v1",
             "status": "error",
             "differences": -1,
             "message": "target or candidate object is missing",
@@ -21576,7 +21576,7 @@ def parse_objdiff_report(returncode: int, output: str) -> dict[str, Any]:
     status = "matched" if differences == 0 else ("mismatched" if returncode == 0 and differences > 0 else "error")
     message = "Object files match" if status == "matched" else ("Object files do not match" if status == "mismatched" else "objdiff exited with error")
     return {
-        "schema": "mizuchi.verify-objdiff.v1",
+        "schema": "agentdecompile.verify-objdiff.v1",
         "status": status,
         "differences": differences,
         "message": message,
@@ -21596,7 +21596,7 @@ def compare_objdump_code_bytes(target_obj: Path, candidate_obj: Path, case_dir: 
         return None
     matched = target_bytes == candidate_bytes
     return {
-        "schema": "mizuchi.verify-objdiff.v1",
+        "schema": "agentdecompile.verify-objdiff.v1",
         "status": "matched" if matched else "mismatched",
         "differences": 0 if matched else 1,
         "message": "Object code bytes match via objdump fallback" if matched else "Object code bytes differ via objdump fallback",
@@ -21902,7 +21902,7 @@ def matched_source_shape_record(record: dict[str, Any], search_path: str) -> dic
         return None
     compile_info = matched.get("compile") if isinstance(matched.get("compile"), dict) else {}
     return {
-        "schema": "mizuchi.source-shape-code-slice-match.v1",
+        "schema": "agentdecompile.source-shape-code-slice-match.v1",
         "status": "source-shape-code-slice-matched",
         "name": record.get("name"),
         "entry": record.get("entry"),
@@ -22111,7 +22111,7 @@ def write_high_level_promotion_targets(
 
     path = out_dir / "high-level-promotion-targets.json"
     report = {
-        "schema": "mizuchi.source-parity.high-level-promotion-targets.v1",
+        "schema": "agentdecompile.source-parity.high-level-promotion-targets.v1",
         "status": "complete",
         "sourceSynthesisSummary": {
             "summaryPath": str(out_dir / "summary.json"),
@@ -22277,7 +22277,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.skip_boundary_suspect and is_boundary_suspect(row):
             skipped_boundary_suspect += 1
             record = {
-                "schema": "mizuchi.source-parity-synthesis-attempt.v1",
+                "schema": "agentdecompile.source-parity-synthesis-attempt.v1",
                 "name": row.get("name"),
                 "entry": row.get("entry"),
                 "section": row.get("section"),
@@ -22331,7 +22331,7 @@ def main(argv: list[str] | None = None) -> int:
                 record_status = "unsupported-pattern"
                 record_origin = "no source emitted; no byte-pattern generator currently supports this function"
             record = {
-                "schema": "mizuchi.source-parity-synthesis-attempt.v1",
+                "schema": "agentdecompile.source-parity-synthesis-attempt.v1",
                 "name": row.get("name"),
                 "entry": row.get("entry"),
                 "section": row.get("section"),
@@ -22451,7 +22451,7 @@ def main(argv: list[str] | None = None) -> int:
 
     promotion_targets_path = args.out_dir / "high-level-promotion-targets.json"
     summary = {
-        "schema": "mizuchi.source-parity-synthesis-summary.v1",
+        "schema": "agentdecompile.source-parity-synthesis-summary.v1",
         "status": "generated-only" if args.dry_run else "complete",
         "queue": str(args.queue),
         "sourceTasks": [str(path) for path in args.source_tasks],

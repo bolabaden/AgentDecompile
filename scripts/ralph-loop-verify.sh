@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Machine-readable gate for the Mizuchi source-parity Ralph loop.
+# Machine-readable gate for the Recovery source-parity Ralph loop.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

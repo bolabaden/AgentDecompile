@@ -345,5 +345,7 @@ ralphy-spec/
 openspec/
 os/
 lib/
+!scripts/lib/
+!scripts/lib/agentdecompile-config.sh
 META-INF/
 test_shared_project/

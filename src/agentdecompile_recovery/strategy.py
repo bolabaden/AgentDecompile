@@ -185,7 +185,7 @@ def build_strategy(
         },
     ]
     return {
-        "schema": "mizuchi.recovery-strategy.v1",
+        "schema": "agentdecompile.recovery-strategy.v1",
         "target": target.to_json(),
         "inventorySummary": inventory_summary,
         "functionCandidateSummary": function_summary,

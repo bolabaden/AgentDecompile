@@ -133,7 +133,7 @@ def default_profiles() -> list[tuple[str, Path]]:
     vc71 = Path("target/toolchain-acquire/vctoolkit2003/msitools-extract/Program Files/Microsoft Visual C++ Toolkit 2003")
     if (vc71 / "bin" / "cl.exe").exists():
         profiles.append(("vc71", vc71.resolve()))
-    vc80 = Path("/run/media/brunner56/MyBook/MizuchiSource/toolchains/msvc8.0-main")
+    vc80 = Path("/run/media/brunner56/MyBook/Toolchains/msvc8.0-main")
     if (vc80 / "bin" / "cl.exe").exists():
         profiles.append(("vc80", vc80.resolve()))
     return profiles
@@ -199,7 +199,7 @@ def summarize(summary_jsonl: Path) -> dict[str, Any]:
 
 def select_report(selected: list[dict[str, Any]], matched_examples: Path, max_cases: int) -> dict[str, Any]:
     return {
-        "schema": "mizuchi.source-parity-profile-corpus-selection.v1",
+        "schema": "agentdecompile.source-parity-profile-corpus-selection.v1",
         "matchedExamples": str(matched_examples),
         "maxCases": max_cases,
         "selectedCount": len(selected),
@@ -241,7 +241,7 @@ def run_sweep(
             append_jsonl(
                 summary_jsonl,
                 {
-                    "schema": "mizuchi.source-parity-profile-corpus-attempt.v1",
+                    "schema": "agentdecompile.source-parity-profile-corpus-attempt.v1",
                     "case": row.get("name"),
                     "status": "missing-input",
                     "reason": "no compiler profiles available; pass --profile NAME=VC_ROOT or set VC_ROOT",
@@ -258,7 +258,7 @@ def run_sweep(
             append_jsonl(
                 summary_jsonl,
                 {
-                    "schema": "mizuchi.source-parity-profile-corpus-attempt.v1",
+                    "schema": "agentdecompile.source-parity-profile-corpus-attempt.v1",
                     "case": case_name,
                     "status": "missing-input",
                     "candidate": str(candidate),
@@ -289,7 +289,7 @@ def run_sweep(
                     append_jsonl(
                         summary_jsonl,
                         {
-                            "schema": "mizuchi.source-parity-profile-corpus-attempt.v1",
+                            "schema": "agentdecompile.source-parity-profile-corpus-attempt.v1",
                             "case": case_name,
                             "profile": profile_name,
                             "flagSet": flag_name,
@@ -306,7 +306,7 @@ def run_sweep(
                 append_jsonl(
                     summary_jsonl,
                     {
-                        "schema": "mizuchi.source-parity-profile-corpus-attempt.v1",
+                        "schema": "agentdecompile.source-parity-profile-corpus-attempt.v1",
                         "case": case_name,
                         "profile": profile_name,
                         "flagSet": flag_name,
@@ -346,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.select_only:
         summary = {
-            "schema": "mizuchi.source-parity-profile-corpus-summary.v1",
+            "schema": "agentdecompile.source-parity-profile-corpus-summary.v1",
             "status": "selected-only",
             "selectedCases": len(selected),
             "selectedCasesPath": str(selected_path),
@@ -369,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         clean=args.clean,
     )
     summary = {
-        "schema": "mizuchi.source-parity-profile-corpus-summary.v1",
+        "schema": "agentdecompile.source-parity-profile-corpus-summary.v1",
         "status": "complete",
         "selectedCases": len(selected),
         "selectedCasesPath": str(selected_path),

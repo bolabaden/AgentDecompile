@@ -11,7 +11,7 @@ from typing import Any
 
 
 DEFAULT_STEAMLESS = Path("target/steamless-release/extracted/Steamless.CLI.exe")
-STEAMLESS_ENV = "MIZUCHI_STEAMLESS_CLI"
+STEAMLESS_ENV = "AGENTDECOMPILE_STEAMLESS_CLI"
 
 
 def inspect_tool(name: str, command: list[str] | None = None) -> dict[str, Any]:
