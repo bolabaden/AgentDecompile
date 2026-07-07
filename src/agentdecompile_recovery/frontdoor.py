@@ -1,12 +1,12 @@
-"""Installable one-shot CLI front door.
+"""Installable reconstruction CLI front door.
 
-This module intentionally keeps the old subcommand CLI available while adding
-the command shape users expect from an installable tool:
+This module keeps the full subcommand recovery CLI available while also
+exposing a direct binary-or-folder entry shape:
 
-    mizuchi-cli path/to/binary
+    agentdecompile-reconstruct path/to/binary
 
-The default path runs the generic recovery orchestrator with byte-authority
-packaging enabled and the upstream-style plugin synthesis engine selected.
+The default path runs the generic recovery orchestrator with proof packaging
+enabled and the plugin synthesis engine selected.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def run_decomp_cli_bridge(args: list[str]) -> int:
     root = repo_root()
     decomp = root / "scripts" / "decomp-cli.sh"
     if not decomp.exists():
-        print(f"mizuchi-cli: missing workspace bridge {decomp}", file=sys.stderr)
+        print(f"agentdecompile-reconstruct: missing workspace bridge {decomp}", file=sys.stderr)
         return 1
     proc = subprocess.run([str(decomp), *args], cwd=root)
     return int(proc.returncode or 0)
@@ -63,7 +63,7 @@ def run_upstream_command(command: str, argv: list[str]) -> int:
         return run_decomp_cli_bridge(bridge_args)
     if command == "atlas":
         if not argv:
-            print("Usage: mizuchi-cli atlas <prompt-name>", file=sys.stderr)
+            print("Usage: agentdecompile-reconstruct atlas <prompt-name>", file=sys.stderr)
             return 2
         return run_decomp_cli_bridge(["decomp-atlas", argv[0], *argv[1:]])
     if command == "index-codebase":
@@ -73,17 +73,17 @@ def run_upstream_command(command: str, argv: list[str]) -> int:
 
 def default_work_dir(target_path: Path, preferred_name: str | None = None) -> Path:
     identity = identify_binary(target_path, preferred_name)
-    return Path("target/mizuchi-cli") / identity.stable_id
+    return Path("target/agentdecompile-reconstruct") / identity.stable_id
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentdecompile-mizuchi",
-        description="One-shot binary recovery/source-parity packaging front door.",
+        prog="agentdecompile-reconstruct",
+        description="One-shot binary recovery packaging front door.",
     )
     parser.add_argument("input", type=Path, help="Binary, archive, installer, or app directory to recover.")
     parser.add_argument("--preferred-name", help="Preferred executable basename when input is a folder.")
-    parser.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/mizuchi-cli/<stable-target-id>.")
+    parser.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-reconstruct/<stable-target-id>.")
     parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
@@ -156,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_self_check_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentdecompile-mizuchi self-check",
+        prog="agentdecompile-reconstruct self-check",
         description="Verify install-time Mizuchi assets and local recovery tool availability.",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
@@ -166,8 +166,8 @@ def build_self_check_parser() -> argparse.ArgumentParser:
 
 def build_upstream_status_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentdecompile-mizuchi upstream-status",
-        description="Report how this package maps upstream macabeus/mizuchi surfaces.",
+        prog="agentdecompile-reconstruct upstream-status",
+        description="Report how this package maps the vendored reference implementation surfaces.",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     return parser
@@ -239,31 +239,31 @@ def run_one_shot(args: argparse.Namespace) -> int:
 
 def upstream_status() -> dict[str, Any]:
     return {
-        "schema": "mizuchi.upstream-status.v1",
+        "schema": "agentdecompile.recovery.upstream-status.v1",
         "upstream": {
-            "repository": "https://github.com/macabeus/mizuchi",
+            "repository": "vendored reference implementation",
             "vendoredCommit": "218ecfe220ec9559ec914657f882b4e617cffe43",
             "commands": ["run", "atlas", "index-codebase"],
         },
         "mappedSurfaces": [
             {
                 "upstreamSurface": "plugin lifecycle",
-                "localSurface": "mizuchi_re.plugin_pipeline.PluginPipeline",
+                "localSurface": "agentdecompile_recovery.plugin_pipeline.PluginPipeline",
                 "status": "ported",
             },
             {
                 "upstreamSurface": "programmatic source/objdiff phase",
-                "localSurface": "mizuchi_re.source_plugin_runner.run_source_plugin_pipeline",
+                "localSurface": "agentdecompile_recovery.source_plugin_runner.run_source_plugin_pipeline",
                 "status": "ported-for-source-slices",
             },
             {
                 "upstreamSurface": "installable CLI front door",
-                "localSurface": "mizuchi-cli <binary-or-folder>",
+                "localSurface": "agentdecompile-reconstruct <binary-or-folder>",
                 "status": "adapted-for-binary-recovery",
             },
             {
                 "upstreamSurface": "JSON reports",
-                "localSurface": "target/mizuchi-cli/<target-id>/report.json and stage receipts",
+                "localSurface": "target/agentdecompile-reconstruct/<target-id>/report.json and stage receipts",
                 "status": "ported-for-binary-recovery",
             },
             {
@@ -297,7 +297,7 @@ def run_upstream_status(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(status, indent=2, sort_keys=True))
         return 0
-    print("Upstream macabeus/mizuchi surface mapping")
+    print("Upstream reference surface mapping")
     print(f"- Vendored commit: {status['upstream']['vendoredCommit']}")
     for row in status["mappedSurfaces"]:
         print(f"- mapped: {row['upstreamSurface']} -> {row['localSurface']} ({row['status']})")
@@ -330,7 +330,7 @@ def run_self_check(args: argparse.Namespace) -> int:
     }
     ok = all(item["available"] for item in scripts.values())
     report = {
-        "schema": "mizuchi.install-self-check.v1",
+        "schema": "agentdecompile.recovery.install-self-check.v1",
         "status": "ok" if ok else "missing-assets",
         "repoRoot": str(repo_root),
         "scriptAssets": scripts,
@@ -354,10 +354,10 @@ def run_upstream_command_guard(command: str) -> int:
     print(
         "\n".join(
             [
-                f"mizuchi-cli: upstream command '{command}' is not packaged in this Python front door.",
-                "Use `mizuchi-cli upstream-status` for the exact surface mapping.",
-                "For direct binary recovery use: `mizuchi-cli <path/to/binary-or-folder>`.",
-                "The vendored upstream TypeScript implementation remains under `vendor/upstream-mizuchi/` in this checkout.",
+                f"agentdecompile-reconstruct: upstream command '{command}' is not packaged in this Python front door.",
+                "Use `agentdecompile-reconstruct upstream-status` for the exact surface mapping.",
+                "For direct binary recovery use: `agentdecompile-reconstruct <path/to/binary-or-folder>`.",
+                "The vendored upstream TypeScript implementation remains under the repo's vendor tree in this checkout.",
             ]
         ),
         file=sys.stderr,

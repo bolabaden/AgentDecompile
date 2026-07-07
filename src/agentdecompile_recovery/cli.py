@@ -27,7 +27,7 @@ from .windows import run_recovery_windows
 
 def default_work_dir(target_path: Path) -> Path:
     identity = identify_binary(target_path)
-    return Path("target/mizuchi-recover") / identity.stable_id
+    return Path("target/agentdecompile-recover") / identity.stable_id
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     recover = sub.add_parser("recover", help="Run the resumable recovery orchestration pipeline.")
     recover.add_argument("input", type=Path, help="Folder or binary path.")
     recover.add_argument("--preferred-name", help="Preferred executable basename when input is a folder.")
-    recover.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/mizuchi-recover/<stable-target-id>.")
+    recover.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-recover/<stable-target-id>.")
     recover.add_argument("--resume", action="store_true", help="Reuse complete stage receipts with matching config.")
     recover.add_argument("--force", action="store_true", help="Rerun selected stages even when receipts exist.")
     recover.add_argument("--stop-after", choices=["discover", "inspect-capabilities", "prepare-analysis-image", "export-context", "inventory-binary", "discover-functions", "analyze-functions", "generate-source-candidates", "synthesize-source-tasks", "plan-strategy", "byte-authority", "legacy-adapter", "snapshot-existing-recovery", "report"])
@@ -117,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     windows = sub.add_parser("recover-windows", help="Run recovery across deterministic function-candidate windows.")
     windows.add_argument("input", type=Path, help="Folder or binary path.")
     windows.add_argument("--preferred-name", help="Preferred executable basename when input is a folder.")
-    windows.add_argument("--work-dir", type=Path, help="Window run/state directory. Defaults to target/mizuchi-recover/<stable-target-id>-windows.")
+    windows.add_argument("--work-dir", type=Path, help="Window run/state directory. Defaults to target/agentdecompile-recover/<stable-target-id>-windows.")
     windows.add_argument("--resume", action="store_true", help="Reuse complete stage receipts and advance to incomplete windows while preserving prior windows in the recovered-source package.")
     windows.add_argument("--force", action="store_true", help="Rerun selected window stages even when receipts exist.")
     windows.add_argument("--json", action="store_true", help="Emit per-stage progress as JSON lines.")
@@ -360,7 +360,7 @@ def run_recover_windows(args: argparse.Namespace) -> int:
     if args.force and args.resume:
         raise SystemExit("--force and --resume are mutually exclusive")
     identity = identify_binary(args.input, args.preferred_name)
-    work_dir = args.work_dir or Path("target/mizuchi-recover") / f"{identity.stable_id}-windows"
+    work_dir = args.work_dir or Path("target/agentdecompile-recover") / f"{identity.stable_id}-windows"
     config = RecoveryConfig(
         input_path=args.input,
         work_dir=work_dir,

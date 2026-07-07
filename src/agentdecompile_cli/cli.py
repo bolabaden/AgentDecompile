@@ -5252,26 +5252,26 @@ def _run_embedded_cli(entrypoint: Any, args: tuple[str, ...]) -> None:
     "recover",
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
     add_help_option=False,
-    help="Run the integrated Mizuchi staged recovery CLI. Pass subcommand args directly, for example `agentdecompile-cli recover inspect <path>`.",
+    help="Run the integrated staged recovery CLI. Pass subcommand args directly, for example `agentdecompile-cli recover inspect <path>`.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def recover_passthrough_cmd(args: tuple[str, ...]) -> None:
-    from mizuchi_re.cli import main as mizuchi_recover_main
+    from agentdecompile_recovery.cli import main as recovery_main
 
-    _run_embedded_cli(mizuchi_recover_main, args)
+    _run_embedded_cli(recovery_main, args)
 
 
 @main.command(
-    "mizuchi",
+    "reconstruct",
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
     add_help_option=False,
-    help="Run the integrated Mizuchi one-shot front door. Pass arguments directly, for example `agentdecompile-cli mizuchi <binary>` or `agentdecompile-cli mizuchi self-check`.",
+    help="Run the integrated reconstruction front door. Pass arguments directly, for example `agentdecompile-cli reconstruct <binary>` or `agentdecompile-cli reconstruct self-check`.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def mizuchi_passthrough_cmd(args: tuple[str, ...]) -> None:
-    from mizuchi_re.mizuchi_cli import main as mizuchi_frontdoor_main
+def reconstruct_passthrough_cmd(args: tuple[str, ...]) -> None:
+    from agentdecompile_recovery.frontdoor import main as reconstruct_main
 
-    _run_embedded_cli(mizuchi_frontdoor_main, args)
+    _run_embedded_cli(reconstruct_main, args)
 
 
 # ---------------------------------------------------------------------------

@@ -100,15 +100,15 @@ It's designed to be your pair programmer for assembly and decompiled code.
 
 ## Mizuchi Recovery Pipelines
 
-This checkout now also carries Mizuchi's resumable recovery and source-parity pipeline stack inside the AgentDecompile repo.
+This checkout now also carries a generalized recovery and reconstruction pipeline stack inside the AgentDecompile repo.
 
 - `agentdecompile-cli recover ...` forwards into the integrated staged recovery CLI
-- `agentdecompile-cli mizuchi ...` forwards into the integrated one-shot front door
-- `agentdecompile-recover` runs the generic staged recovery orchestrator from `src/mizuchi_re/cli.py`
-- `agentdecompile-mizuchi` runs the installable one-shot front door from `src/mizuchi_re/mizuchi_cli.py`
-- `scripts/decomp-cli.sh` exposes the imported recovery helpers, queue/vacuum loop, one-shot source packaging, and source-parity synthesis utilities
+- `agentdecompile-cli reconstruct ...` forwards into the integrated one-shot front door
+- `agentdecompile-recover` runs the generic staged recovery orchestrator from `src/agentdecompile_recovery/cli.py`
+- `agentdecompile-reconstruct` runs the installable reconstruction front door from `src/agentdecompile_recovery/frontdoor.py`
+- `scripts/decomp-cli.sh` exposes the imported recovery helpers, queue/vacuum loop, reconstruction packaging, and source-parity synthesis utilities
 
-This is an in-repo integration step, not a claim that AgentDecompile has already absorbed every Mizuchi workflow behind a single unified UX. The authoritative recovery code currently lives under `src/mizuchi_re/` and `scripts/` in this repo while that consolidation continues.
+This is an in-repo integration step, not a claim that AgentDecompile has already absorbed every recovery workflow behind a single unified UX. The authoritative recovery code currently lives under `src/agentdecompile_recovery/` and `scripts/` in this repo while that consolidation continues.
 
 ## What Can It Do?
 

@@ -89,7 +89,7 @@ write_decomp_function_report() {
   fi
 
   jq -n \
-    --arg schema "mizuchi.decomp-function.v1" \
+    --arg schema "agentdecompile.decomp-function.v1" \
     --arg status "$status" \
     --arg prompt "$prompt_name" \
     --arg prompt_dir "$prompt_dir" \
@@ -263,7 +263,7 @@ case "$cmd" in
     fi
 
     PYTHONPATH="$root_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
-      python3 -m mizuchi_re.cli export-context "$input" "$@"
+      python3 -m agentdecompile_recovery.cli export-context "$input" "$@"
     ;;
   export-context-batch)
     input="${1:-}"
@@ -278,7 +278,7 @@ case "$cmd" in
     fi
 
     PYTHONPATH="$root_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
-      python3 -m mizuchi_re.cli export-context-batch "$input" "$@"
+      python3 -m agentdecompile_recovery.cli export-context-batch "$input" "$@"
     ;;
   commit-verified-match)
     "$root_dir/scripts/commit-verified-match.sh" "$@"
@@ -329,10 +329,10 @@ case "$cmd" in
     "$root_dir/scripts/pe-segmented-code-source-roundtrip.py" "$@"
     ;;
   source-parity-one-shot)
-    PYTHONPATH="$root_dir/src" python3 -m mizuchi_re.source_parity_one_shot "$@"
+    PYTHONPATH="$root_dir/src" python3 -m agentdecompile_recovery.source_parity_one_shot "$@"
     ;;
   recover)
-    PYTHONPATH="$root_dir/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m mizuchi_re.cli recover "$@"
+    PYTHONPATH="$root_dir/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agentdecompile_recovery.cli recover "$@"
     ;;
   source-parity-feature-index)
     "$root_dir/scripts/source-parity-feature-index.py" "$@"

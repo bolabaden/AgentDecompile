@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if SRC.exists() and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mizuchi_re.source_parity_synthesize import main
+from agentdecompile_recovery.source_parity_synthesize import main
 
 
 if __name__ == "__main__":

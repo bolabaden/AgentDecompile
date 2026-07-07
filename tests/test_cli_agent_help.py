@@ -80,7 +80,7 @@ class TestCliAgentHelpIntegration:
         result = CliRunner().invoke(main, ["--help"])
         assert result.exit_code == 0
         assert "recover" in result.output
-        assert "mizuchi" in result.output
+        assert "reconstruct" in result.output
 
     def test_tool_missing_name_shows_examples(self) -> None:
         result = CliRunner().invoke(main, ["tool"])
@@ -120,8 +120,8 @@ class TestCliAgentHelpIntegration:
         assert "agentdecompile-recover" in result.output
         assert "source-parity-synthesize" in result.output
 
-    def test_mizuchi_help_forwards_to_integrated_cli(self) -> None:
-        result = CliRunner().invoke(main, ["mizuchi", "--help"])
+    def test_reconstruct_help_forwards_to_integrated_cli(self) -> None:
+        result = CliRunner().invoke(main, ["reconstruct", "--help"])
         assert result.exit_code == 0
-        assert "agentdecompile-mizuchi" in result.output
-        assert "One-shot binary recovery/source-parity packaging front door." in result.output
+        assert "agentdecompile-reconstruct" in result.output
+        assert "One-shot binary recovery packaging front door." in result.output

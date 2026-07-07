@@ -69,8 +69,8 @@ Changelog = "https://github.com/bolabaden/AgentDecompile/releases"
 [project.scripts]
 agentdecompile        = "agentdecompile_cli.cli:cli_entry_point"
 agentdecompile-cli    = "agentdecompile_cli.cli:cli_entry_point"
-agentdecompile-recover = "mizuchi_re.cli:main"
-agentdecompile-mizuchi = "mizuchi_re.mizuchi_cli:main"
+agentdecompile-recover = "agentdecompile_recovery.cli:main"
+agentdecompile-reconstruct = "agentdecompile_recovery.frontdoor:main"
 # MCP stdio entrypoint.
 agentdecompile-mcp    = "agentdecompile_cli.__main__:main"
 mcp_agentdecompile    = "agentdecompile_cli.__main__:main"
@@ -105,13 +105,13 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["agentdecompile_cli*", "mizuchi_re*"]
+include = ["agentdecompile_cli*", "agentdecompile_recovery*"]
 
 [tool.setuptools.package-data]
 agentdecompile_cli = ["webui_assets/*"]
 
 [tool.setuptools.data-files]
-"share/mizuchi-re/scripts" = [
+"share/agentdecompile-recovery/scripts" = [
     "scripts/binary-source-roundtrip.py",
     "scripts/one-shot-source.py",
     "scripts/one-shot-source-archive-verify.py",

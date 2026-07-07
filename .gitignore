@@ -335,6 +335,10 @@ uv.lock
 vendor/
 volumes/
 agentdecompile*/
+!src/agentdecompile_recovery/
+!src/agentdecompile_recovery/**
+src/agentdecompile_recovery/__pycache__/
+src/agentdecompile_recovery/**/*.pyc
 .lfg_*/
 .venv*/
 ralphy-spec/

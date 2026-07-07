@@ -66,7 +66,7 @@ def inspect_capabilities(repo_root: Path) -> dict[str, Any]:
         "steamlessCliPath": str(steamless) if steamless else None,
     }
     return {
-        "schema": "mizuchi.capabilities.v1",
+        "schema": "agentdecompile.recovery.capabilities.v1",
         "tools": tools,
         "localSurfaces": local,
     }
@@ -95,7 +95,7 @@ def resolve_steamless_cli(repo_root: Path, configured: Path | None = None) -> Pa
 def resolve_script_asset(repo_root: Path, script_name: str) -> Path | None:
     candidates = [
         repo_root / "scripts" / script_name,
-        Path(sysconfig.get_path("data")) / "share" / "mizuchi-re" / "scripts" / script_name,
+        Path(sysconfig.get_path("data")) / "share" / "agentdecompile-recovery" / "scripts" / script_name,
     ]
     for candidate in candidates:
         if candidate.exists():
