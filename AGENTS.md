@@ -8,6 +8,18 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 
 **Agent-native audit (2026-05-24):** [docs/audits/2026-05-24-agent-native-audit.md](docs/audits/2026-05-24-agent-native-audit.md) — scored MCP/CLI/GUI parity review; P1 follow-ups in [docs/residual-review-findings/impl-agent-native-audit-c2bc.md](docs/residual-review-findings/impl-agent-native-audit-c2bc.md). Patterns: [docs/solutions/architecture-patterns/agent-native-mcp-patterns.md](docs/solutions/architecture-patterns/agent-native-mcp-patterns.md).
 
+## Mizuchi recovery integration
+
+This repo now carries Mizuchi's Python recovery/orchestration package under `src/mizuchi_re/` plus its companion script surface under `scripts/`. Treat `agentdecompile` as the base repo and land further Mizuchi pipeline work here unless a task explicitly targets the legacy standalone Mizuchi checkout.
+
+Current integrated entrypoints:
+
+- `agentdecompile-recover` → `mizuchi_re.cli:main`
+- `agentdecompile-mizuchi` → `mizuchi_re.mizuchi_cli:main`
+- `scripts/decomp-cli.sh` → recovery/source-parity helper front door
+
+The imported code expects a repo-root `scripts/` tree and root-relative `target/` outputs. Preserve that layout while the integration is being consolidated; do not silently rename or relocate the script surface without updating `src/mizuchi_re/`.
+
 ## Cursor Cloud specific instructions
 
 ### Environment
