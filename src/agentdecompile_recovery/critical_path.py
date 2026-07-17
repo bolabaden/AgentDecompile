@@ -86,7 +86,64 @@ def build_next_actions(work_dir: Path) -> list[dict[str, Any]]:
     actions.append(_action_profile_corpus(work_dir, synth_summary, verified_dir, tools, local))
     actions.append(_action_reloc_slice(work_dir, candidates_path, tools, local))
     actions.append(_action_slice_verify(work_dir, candidates_path, tools))
+    actions.append(_action_apply_propose_labels(work_dir))
     return actions
+
+
+def _action_apply_propose_labels(work_dir: Path) -> dict[str, Any]:
+    """Surface placed context-seed rename proposals (apply is opt-in via MCP)."""
+
+    action_id = "apply-propose-labels"
+    path = work_dir / "acquisition" / "propose-labels.json"
+    propose = _load_json(path)
+    if propose is None:
+        seeds = work_dir / "advisory" / "context-seeds"
+        if seeds.is_dir() and any(seeds.glob("*.json")):
+            return {
+                "id": action_id,
+                "status": "ready",
+                "reason": "context seeds present but propose-labels.json missing; re-run reconstruct with --context",
+                "paths": {"seeds": str(seeds)},
+                "commandHint": "reconstruct <target> --work-dir <dir> --context <pieces…>",
+            }
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": "no acquisition/propose-labels.json; pass context pieces to reconstruct first",
+            "paths": {"proposeLabels": str(path)},
+        }
+
+    counts = propose.get("counts") if isinstance(propose.get("counts"), dict) else {}
+    ready = int(counts.get("ready") or 0)
+    conflicts = int(counts.get("conflicts") or 0)
+    proposed = int(counts.get("proposed") or 0)
+    if ready == 0 and proposed == 0:
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": "propose-labels receipt is empty (no placed named facts)",
+            "paths": {"proposeLabels": str(path)},
+        }
+    if ready == 0 and conflicts > 0:
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": f"{conflicts} address conflict(s); do not auto-pick — resolve manually",
+            "paths": {"proposeLabels": str(path)},
+        }
+    return {
+        "id": action_id,
+        "status": "ready",
+        "reason": (
+            f"{ready} ready rename proposal(s); apply via MCP rename-function / manage-symbols, "
+            "then resolve-modification-conflict on conflictId"
+        ),
+        "paths": {"proposeLabels": str(path)},
+        "counts": {"ready": ready, "conflicts": conflicts, "proposed": proposed},
+        "commandHint": "See docs/CONTEXT_FUSION.md § Applying proposed labels",
+        "claimBoundary": propose.get("claimBoundary")
+        or "proposed labels are context hints only; not proof-ladder numerator",
+    }
 
 
 def _action_synthesize_source_tasks(

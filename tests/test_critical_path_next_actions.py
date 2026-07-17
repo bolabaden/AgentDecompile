@@ -95,3 +95,36 @@ def test_next_actions_slice_verify_complete_when_matched(tmp_path: Path) -> None
     actions = build_next_actions(work)
     slice_verify = next(row for row in actions if row["id"] == "slice-verify")
     assert slice_verify["status"] == "complete"
+
+
+def test_next_actions_apply_propose_labels_ready(tmp_path: Path) -> None:
+    work = tmp_path / "propose"
+    work.mkdir()
+    _capabilities(work)
+    atomic_write_json(
+        work / "acquisition" / "propose-labels.json",
+        {
+            "status": "complete",
+            "counts": {"proposed": 2, "ready": 2, "conflicts": 0},
+            "claimBoundary": "context hints only",
+        },
+    )
+    actions = build_next_actions(work)
+    apply = next(row for row in actions if row["id"] == "apply-propose-labels")
+    assert apply["status"] == "ready"
+    assert apply["counts"]["ready"] == 2
+    assert "resolve-modification-conflict" in apply["reason"]
+
+
+def test_next_actions_apply_propose_labels_blocked_on_conflicts_only(tmp_path: Path) -> None:
+    work = tmp_path / "propose-conflict"
+    work.mkdir()
+    _capabilities(work)
+    atomic_write_json(
+        work / "acquisition" / "propose-labels.json",
+        {"status": "complete", "counts": {"proposed": 2, "ready": 0, "conflicts": 1}},
+    )
+    actions = build_next_actions(work)
+    apply = next(row for row in actions if row["id"] == "apply-propose-labels")
+    assert apply["status"] == "blocked"
+    assert "conflict" in apply["reason"].lower()

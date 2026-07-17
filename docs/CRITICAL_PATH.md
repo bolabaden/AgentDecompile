@@ -48,6 +48,7 @@ When a packed PE cannot be unpacked, `analysis-target.json` records `status: blo
 | `profile-corpus` | Objdiff-verified examples under `verified/` |
 | `reloc-slice` | PE inventory + per-function target object helpers |
 | `slice-verify` | ELF/Mach-O candidates + clang/objcopy; runs at `discover-functions` |
+| `apply-propose-labels` | `acquisition/propose-labels.json` has ready rows; apply via MCP + conflict protocol |
 
 Listing an action as **ready** does not count toward the proof ladder — only receipt-backed objdiff accepts do.
 
