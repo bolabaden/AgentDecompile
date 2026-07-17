@@ -48,6 +48,13 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
         ladder = claim.get("proofLadder")  # type: ignore[assignment]
     if ladder is None and isinstance((report or {}).get("proofLadder"), dict):
         ladder = report.get("proofLadder")  # type: ignore[assignment]
+    critical = _load_json(work_dir / "critical-path.json")
+    if critical is None and isinstance((report or {}).get("criticalPath"), dict):
+        critical = report.get("criticalPath")  # type: ignore[assignment]
+    if critical is None and (work_dir / "target.json").is_file():
+        from .critical_path import build_critical_path
+
+        critical = build_critical_path(work_dir)
     placement = _load_json(work_dir / "acquisition" / "placement.json")
     acquire = _load_json(work_dir / "acquisition" / "acquire.json")
     if placement is None and isinstance((acquire or {}).get("placement"), dict):
@@ -159,6 +166,20 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             if placement is not None or seeds is not None
             else None
         ),
+        "criticalPath": (
+            {
+                "readiness": critical.get("readiness"),
+                "peCriticalPathStopAfter": critical.get("peCriticalPathStopAfter"),
+                "nextActions": critical.get("nextActions"),
+                "claimBoundary": critical.get("claimBoundary")
+                or (
+                    "critical path readiness is orchestration metadata only; "
+                    "proof ladder objdiff accepts remain the semantic KPI"
+                ),
+            }
+            if critical is not None
+            else None
+        ),
         "claimBoundary": (
             "status summarizes orchestration progress only; "
             "objdiff-verified-semantic proof remains required for accepted source"
@@ -170,6 +191,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             "vacuumQueue": str(work_dir / "state" / "queue.json") if queue is not None else None,
             "proofLadder": str(work_dir / "proof-ladder.json")
             if (work_dir / "proof-ladder.json").is_file()
+            else None,
+            "criticalPath": str(work_dir / "critical-path.json")
+            if (work_dir / "critical-path.json").is_file()
             else None,
             "placement": str(work_dir / "acquisition" / "placement.json")
             if (work_dir / "acquisition" / "placement.json").is_file()

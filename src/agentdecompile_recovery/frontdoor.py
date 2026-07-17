@@ -21,6 +21,7 @@ from typing import Any
 from .acquire import acquire_context
 from .autonomy_budget import budget_from_args, ensure_vacuum_queue, reconstruct_vacuum_runner_command, write_autonomy_budget_receipt
 from .claim_report import write_claim_report
+from .critical_path import write_critical_path
 from .cli import main as legacy_main
 from .pipeline import RecoveryConfig, RecoveryRunner
 from .targets import identify_binary
@@ -84,6 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentdecompile-reconstruct",
         description="One-shot binary recovery packaging front door.",
+        epilog=(
+            "PE critical path (bounded checkpoints): "
+            "prepare-analysis-image → inventory-binary → discover-functions → "
+            "generate-source-candidates → synthesize-source-tasks. "
+            "Example: reconstruct game.exe --stop-after discover-functions. "
+            "Inspect readiness via critical-path.json or recovery status."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("input", type=Path, help="Binary, archive, installer, or app directory to recover.")
     parser.add_argument(
@@ -360,6 +369,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         context_include_low_signal_members=args.context_include_low_signal_members,
     )
     rc = RecoveryRunner(config).run()
+    write_critical_path(work_dir)
     report_path = work_dir / "report.json"
     analysis_path = work_dir / "analysis-target.json"
     terminal = "matched" if rc == 0 else "failed"
