@@ -57,6 +57,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
         critical = build_critical_path(work_dir)
     placement = _load_json(work_dir / "acquisition" / "placement.json")
     acquire = _load_json(work_dir / "acquisition" / "acquire.json")
+    propose = _load_json(work_dir / "acquisition" / "propose-labels.json")
+    if propose is None and isinstance((acquire or {}).get("proposeLabels"), dict):
+        propose = acquire.get("proposeLabels")  # type: ignore[assignment]
     slice_verify = _load_json(work_dir / "slice-verify" / "summary.json")
     if placement is None and isinstance((acquire or {}).get("placement"), dict):
         placement = acquire.get("placement")  # type: ignore[assignment]
@@ -167,6 +170,21 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             if placement is not None or seeds is not None
             else None
         ),
+        "proposeLabels": (
+            {
+                "status": propose.get("status"),
+                "proposed": (propose.get("counts") or {}).get("proposed"),
+                "ready": (propose.get("counts") or {}).get("ready"),
+                "conflicts": (propose.get("counts") or {}).get("conflicts"),
+                "claimBoundary": propose.get("claimBoundary")
+                or (
+                    "proposed labels are context hints only; apply via MCP conflict protocol"
+                ),
+                "nextStep": propose.get("nextStep"),
+            }
+            if propose is not None
+            else None
+        ),
         "criticalPath": (
             {
                 "readiness": critical.get("readiness"),
@@ -216,6 +234,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             else None,
             "placement": str(work_dir / "acquisition" / "placement.json")
             if (work_dir / "acquisition" / "placement.json").is_file()
+            else None,
+            "proposeLabels": str(work_dir / "acquisition" / "propose-labels.json")
+            if (work_dir / "acquisition" / "propose-labels.json").is_file()
             else None,
             "contextSeeds": str(work_dir / "advisory" / "context-seeds" / "manifest.json")
             if (work_dir / "advisory" / "context-seeds" / "manifest.json").is_file()

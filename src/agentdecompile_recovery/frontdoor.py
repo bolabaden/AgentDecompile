@@ -312,8 +312,16 @@ def run_one_shot(args: argparse.Namespace) -> int:
                 else None
             ),
         )
+        from .context_propose import write_propose_labels
+
+        propose_receipt = write_propose_labels(work_dir)
         acquisition_receipt["placement"] = placement
         acquisition_receipt["contextSeeds"] = seed_receipt
+        acquisition_receipt["proposeLabels"] = {
+            "status": propose_receipt.get("status"),
+            "counts": propose_receipt.get("counts"),
+            "claimBoundary": propose_receipt.get("claimBoundary"),
+        }
         receipt_path.write_text(json.dumps(acquisition_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if not args.json:
             print(
@@ -325,6 +333,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
                         "entityHint": (acquisition_receipt.get("contextPack") or {}).get("entityCount"),
                         "placement": placement.get("counts"),
                         "contextSeeds": seed_receipt.get("counts"),
+                        "proposeLabels": propose_receipt.get("counts"),
                     },
                     indent=2,
                 )
