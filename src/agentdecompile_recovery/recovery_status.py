@@ -40,6 +40,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
     queue = _load_json(work_dir / "state" / "queue.json")
     session = _load_json(work_dir / "state" / "vacuum-session.json")
     seed = _load_json(work_dir / "state" / "vacuum-queue-seed.json")
+    export_pkg = _load_json(work_dir / "export" / "manifest.json")
+    if export_pkg is None and isinstance((report or {}).get("exportPackage"), dict):
+        export_pkg = report.get("exportPackage")  # type: ignore[assignment]
 
     terminal = None
     for source in (claim, analysis, state, report):
@@ -95,6 +98,21 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
         },
         "autonomyBudget": budget,
         "vacuum": vacuum,
+        "exportPackage": (
+            {
+                "status": export_pkg.get("status"),
+                "viewCount": export_pkg.get("viewCount"),
+                "countsByAuthorityClass": export_pkg.get("countsByAuthorityClass"),
+                "exportDir": export_pkg.get("exportDir") or str(work_dir / "export"),
+                "claimBoundary": export_pkg.get("claimBoundary")
+                or (
+                    "export package aggregates recovery views with authority classes; "
+                    "only objdiff-verified-semantic is accepted source"
+                ),
+            }
+            if export_pkg is not None
+            else None
+        ),
         "claimBoundary": (
             "status summarizes orchestration progress only; "
             "objdiff-verified-semantic proof remains required for accepted source"
@@ -104,6 +122,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             "claimReport": str(work_dir / "claim-report.json") if claim is not None else None,
             "autonomyBudget": str(work_dir / "autonomy-budget.json") if budget is not None else None,
             "vacuumQueue": str(work_dir / "state" / "queue.json") if queue is not None else None,
+            "exportManifest": str(work_dir / "export" / "manifest.json")
+            if (work_dir / "export" / "manifest.json").is_file()
+            else None,
             "verified": str(verified) if verified.is_dir() else None,
             "advisory": str(advisory) if advisory.is_dir() else None,
         },

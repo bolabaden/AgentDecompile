@@ -19,6 +19,7 @@ from . import acquisition_registry
 from .acquisition_bundle import load_bundle, validate_bundle_target
 from .context_export import ExportConfig, export_context
 from .context_pack import build_context_pack
+from .export_package import build_export_package
 from .functions import analyze_function_candidates_with_objdump, discover_function_candidates, write_function_candidates
 from .inventory import build_binary_inventory, write_inventory
 from .sourcegen import generate_source_candidates
@@ -864,6 +865,7 @@ class RecoveryRunner:
         return summary
 
     def stage_report(self, _stage: Stage) -> dict[str, Any]:
+        export_manifest = build_export_package(self.run_dir)
         report = {
             "schema": "agentdecompile.recover.report.v1",
             "generatedAt": now(),
@@ -880,6 +882,13 @@ class RecoveryRunner:
             "recoveredSource": json.loads((self.run_dir / "recovered-source/simple_matches.manifest.json").read_text(encoding="utf-8"))
             if (self.run_dir / "recovered-source/simple_matches.manifest.json").exists()
             else {"status": "missing", "claimBoundary": "no recovered source manifest exists"},
+            "exportPackage": {
+                "status": export_manifest.get("status"),
+                "exportDir": export_manifest.get("exportDir"),
+                "viewCount": export_manifest.get("viewCount"),
+                "countsByAuthorityClass": export_manifest.get("countsByAuthorityClass"),
+                "claimBoundary": export_manifest.get("claimBoundary"),
+            },
             "strategy": json.loads((self.run_dir / "strategy.json").read_text(encoding="utf-8")),
             "byteAuthority": json.loads((self.run_dir / "byte-authority/result.json").read_text(encoding="utf-8")),
             "legacyAdapter": json.loads((self.run_dir / "legacy-adapter.json").read_text(encoding="utf-8")),
@@ -890,7 +899,11 @@ class RecoveryRunner:
         self.state.data["status"] = "complete"
         self.state.data["report"] = str(self.run_dir / "report.json")
         self.state.save()
-        return {"report": str(self.run_dir / "report.json"), "fullSourceParity": False}
+        return {
+            "report": str(self.run_dir / "report.json"),
+            "exportPackage": str(self.run_dir / "export" / "manifest.json"),
+            "fullSourceParity": False,
+        }
 
 
 def compiler_for_source_synthesis_mode(mode: str) -> str:

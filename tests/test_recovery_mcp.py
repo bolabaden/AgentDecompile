@@ -92,6 +92,28 @@ def test_build_recovery_status_includes_autonomy_and_vacuum(tmp_path: Path) -> N
     assert status["paths"]["vacuumQueue"]
 
 
+def test_build_recovery_status_includes_export_package(tmp_path: Path) -> None:
+    work = tmp_path / "run"
+    (work / "export").mkdir(parents=True)
+    (work / "export" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentdecompile.export-package.v1",
+                "status": "complete",
+                "viewCount": 3,
+                "countsByAuthorityClass": {"objdiff-verified-semantic": 1, "asm-slice": 1, "hex-slice": 1},
+                "exportDir": str(work / "export"),
+                "claimBoundary": "export package aggregates recovery views",
+            }
+        ),
+        encoding="utf-8",
+    )
+    status = build_recovery_status(work)
+    assert status["exportPackage"]["status"] == "complete"
+    assert status["exportPackage"]["viewCount"] == 3
+    assert status["paths"]["exportManifest"]
+
+
 @pytest.mark.asyncio
 async def test_provider_status_and_claim_report(tmp_path: Path) -> None:
     work = tmp_path / "run"
