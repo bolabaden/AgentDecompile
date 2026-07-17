@@ -251,11 +251,71 @@ def test_frontdoor_exposes_context_flags() -> None:
     parser = build_frontdoor_parser()
     dests = {action.dest for action in parser._actions}
     assert "context" in dests
+    assert "context_positional" in dests
     assert "context_pack" in dests
     assert "acquisition_bundle" in dests
     assert "autonomous" in dests
     args = parser.parse_args(["/tmp/x.exe", "--context", "/tmp/n.md", "--stop-after", "discover"])
     assert args.context == [Path("/tmp/n.md")]
+    args2 = parser.parse_args(["/tmp/x.exe", "/tmp/a.c", "/tmp/notes.md", "--context", "/tmp/b.jsonl"])
+    assert args2.context_positional == [Path("/tmp/a.c"), Path("/tmp/notes.md")]
+    assert args2.context == [Path("/tmp/b.jsonl")]
+
+
+def test_merge_context_paths_dedupes() -> None:
+    from agentdecompile_recovery.frontdoor import merge_context_paths
+
+    a = Path("/tmp/a.c")
+    b = Path("/tmp/b.md")
+    merged = merge_context_paths([a, b], [a, Path("/tmp/c.json")])
+    assert merged[0] == a
+    assert b in merged
+    assert len(merged) == 3
+
+
+def test_source_dump_seeds_and_placement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentdecompile_recovery.context_pack import materialize_context_seeds, write_placement_summary
+    from agentdecompile_recovery.recovery_status import build_recovery_status
+
+    monkeypatch.setenv(REGISTRY_ENV, str(tmp_path / "registry"))
+    binary = tmp_path / "app.elf"
+    binary.write_bytes(b"\x7fELF\x02\x01\x01" + os.urandom(64))
+    dump = tmp_path / "ugly.c"
+    dump.write_text(
+        "// VA: 0x401000\nint FUN_00401000(void) {\n  return 0;\n}\n",
+        encoding="utf-8",
+    )
+    note = tmp_path / "loose.md"
+    note.write_text("Remember the audio mixer is weird.\n", encoding="utf-8")
+
+    work = tmp_path / "work"
+    receipt = acquire_context(
+        target_input=binary,
+        context_paths=[dump, note],
+        out_dir=work / "acquisition",
+        repo_root=tmp_path,
+        register=True,
+    )
+    placement = write_placement_summary(
+        work / "acquisition",
+        pack_manifest=receipt.get("contextPack") or {},
+        bundle_dir=Path(str(receipt.get("bundleDir"))),
+        routing=receipt.get("routing") or {},
+    )
+    seeds = materialize_context_seeds(
+        pack_manifest=receipt.get("contextPack") or {},
+        seed_dir=work / "advisory" / "context-seeds",
+        facts_path=Path(str(receipt.get("snapshotDir"))) / "context-pack" / "function-facts.jsonl",
+    )
+    assert placement["counts"]["factsImported"] >= 1
+    assert placement["counts"]["unplaced"] >= 1  # loose note
+    assert seeds["counts"]["seeded"] >= 1
+    assert any((work / "advisory" / "context-seeds").glob("*.c"))
+
+    status = build_recovery_status(work)
+    assert status["contextFusion"] is not None
+    assert status["contextFusion"]["seeds"] >= 1
+    assert status["paths"]["placement"]
 
 
 def test_claim_report_requires_objdiff_proof_for_semantic(tmp_path: Path) -> None:

@@ -86,6 +86,16 @@ def build_parser() -> argparse.ArgumentParser:
         description="One-shot binary recovery packaging front door.",
     )
     parser.add_argument("input", type=Path, help="Binary, archive, installer, or app directory to recover.")
+    parser.add_argument(
+        "context_positional",
+        nargs="*",
+        type=Path,
+        metavar="CONTEXT",
+        help=(
+            "Optional puzzle-piece paths after the target (notes, partial source dumps, JSON/JSONL, "
+            "dirs, Ghidra .gzf). Same as repeatable --context; pieces are auto-sniffed."
+        ),
+    )
     parser.add_argument("--preferred-name", help="Preferred executable basename when input is a folder.")
     parser.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-reconstruct/<stable-target-id>.")
     parser.add_argument(
@@ -217,6 +227,26 @@ def build_upstream_status_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def merge_context_paths(*groups: list[Path] | tuple[Path, ...] | None) -> list[Path]:
+    """Deduplicate context puzzle pieces while preserving first-seen order."""
+
+    seen: set[str] = set()
+    out: list[Path] = []
+    for group in groups:
+        if not group:
+            continue
+        for path in group:
+            try:
+                key = str(path.expanduser().resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+    return out
+
+
 def parse_csv_values(values: list[str]) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -242,17 +272,39 @@ def run_one_shot(args: argparse.Namespace) -> int:
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    context_paths = merge_context_paths(getattr(args, "context_positional", None), getattr(args, "context", None))
+    args.context = context_paths
+
     acquisition_receipt = None
-    if args.context:
+    if context_paths:
+        from .context_pack import materialize_context_seeds, write_placement_summary
+
         acquisition_receipt = acquire_context(
             target_input=args.input,
-            context_paths=list(args.context),
+            context_paths=list(context_paths),
             out_dir=work_dir / "acquisition",
             preferred_name=args.preferred_name,
             repo_root=repo_root(),
         )
         receipt_path = work_dir / "acquisition" / "acquire.json"
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        placement = write_placement_summary(
+            work_dir / "acquisition",
+            pack_manifest=(acquisition_receipt or {}).get("contextPack") or {},
+            bundle_dir=Path(str(acquisition_receipt.get("bundleDir"))) if acquisition_receipt and acquisition_receipt.get("bundleDir") else None,
+            routing=(acquisition_receipt or {}).get("routing") or {},
+        )
+        seed_receipt = materialize_context_seeds(
+            pack_manifest=(acquisition_receipt or {}).get("contextPack") or {},
+            seed_dir=work_dir / "advisory" / "context-seeds",
+            facts_path=(
+                Path(str(acquisition_receipt.get("snapshotDir"))) / "context-pack" / "function-facts.jsonl"
+                if acquisition_receipt and acquisition_receipt.get("snapshotDir")
+                else None
+            ),
+        )
+        acquisition_receipt["placement"] = placement
+        acquisition_receipt["contextSeeds"] = seed_receipt
         receipt_path.write_text(json.dumps(acquisition_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if not args.json:
             print(
@@ -262,6 +314,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
                         "claimBoundary": acquisition_receipt.get("claimBoundary"),
                         "bundleDir": acquisition_receipt.get("bundleDir"),
                         "entityHint": (acquisition_receipt.get("contextPack") or {}).get("entityCount"),
+                        "placement": placement.get("counts"),
+                        "contextSeeds": seed_receipt.get("counts"),
                     },
                     indent=2,
                 )
@@ -280,7 +334,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         enable_byte_authority=not args.no_byte_authority,
         enable_legacy_adapters=False,
         function_analysis=args.function_analysis,
-        context_paths=tuple(args.context),
+        context_paths=tuple(context_paths),
         context_pack=args.context_pack,
         acquisition_bundle=args.acquisition_bundle
         or (Path(str(acquisition_receipt["bundleDir"])) if acquisition_receipt and acquisition_receipt.get("bundleDir") else None),

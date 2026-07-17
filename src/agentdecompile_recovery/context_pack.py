@@ -14,7 +14,8 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
-from .acquisition_bundle import build_bundle, content_sha256, source_record
+from .acquisition_bundle import build_bundle, content_sha256, load_bundle, source_record
+from .state import atomic_write_json
 
 
 TEXT_SUFFIXES = {
@@ -498,6 +499,143 @@ def dedupe_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         output.append(fact)
     return output
+
+
+def write_placement_summary(
+    acquisition_dir: Path,
+    *,
+    pack_manifest: dict[str, Any],
+    bundle_dir: Path | None = None,
+    routing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write placement health for puzzle-piece fusion (placed / unplaced / conflicts)."""
+
+    unplaced = pack_manifest.get("unplaced") if isinstance(pack_manifest.get("unplaced"), list) else []
+    skipped = pack_manifest.get("skipped") if isinstance(pack_manifest.get("skipped"), list) else []
+    facts_imported = int(pack_manifest.get("factsImported") or 0)
+    placed = max(0, facts_imported - len(unplaced))
+    conflicts = 0
+    if bundle_dir is not None and (bundle_dir / "manifest.json").is_file():
+        try:
+            _manifest, _entities, conflict_rows = load_bundle(bundle_dir)
+            conflicts = len(conflict_rows)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            conflicts = int(pack_manifest.get("bundleConflictCount") or 0)
+    else:
+        conflicts = int(pack_manifest.get("bundleConflictCount") or 0)
+
+    routing = routing or {}
+    summary = {
+        "schema": "agentdecompile.context-placement.v1",
+        "status": "complete",
+        "counts": {
+            "placed": placed,
+            "unplaced": len(unplaced),
+            "conflicts": conflicts,
+            "skipped": len(skipped),
+            "factsImported": facts_imported,
+            "contextItems": int(pack_manifest.get("contextItems") or 0),
+            "ghidraSources": len(routing.get("ghidraSources") or []),
+            "routingSkipped": len(routing.get("skipped") or []),
+        },
+        "unplaced": unplaced[:50],
+        "skipped": skipped[:50],
+        "claimBoundary": (
+            "placement is address-keyed only; unplaced pieces stay evidence without invented VAs; "
+            "context never counts as objdiff-verified-semantic"
+        ),
+    }
+    acquisition_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(acquisition_dir / "placement.json", summary)
+    return summary
+
+
+def materialize_context_seeds(
+    *,
+    pack_manifest: dict[str, Any],
+    seed_dir: Path,
+    facts_path: Path | None = None,
+    max_seeds: int = 200,
+) -> dict[str, Any]:
+    """Write advisory cleanup seeds from placed source-dump / fact decompiled bodies."""
+
+    resolved_facts = facts_path
+    if resolved_facts is None or not resolved_facts.is_file():
+        candidate = Path(str(pack_manifest.get("factsJsonl") or ""))
+        if candidate.is_file():
+            resolved_facts = candidate
+        else:
+            bundle = Path(str(pack_manifest.get("bundleDir") or ""))
+            fallback = bundle.parent / "function-facts.jsonl" if str(bundle) not in {"", "."} else None
+            resolved_facts = fallback if fallback and fallback.is_file() else None
+
+    if resolved_facts is None or not resolved_facts.is_file():
+        return {
+            "schema": "agentdecompile.context-seeds.v1",
+            "status": "empty",
+            "counts": {"seeded": 0},
+            "claimBoundary": "no function facts available for advisory seeds",
+        }
+
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    seeded = 0
+    written: list[dict[str, Any]] = []
+    for line in resolved_facts.read_text(encoding="utf-8", errors="replace").splitlines():
+        if seeded >= max_seeds or not line.strip():
+            continue
+        try:
+            fact = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(fact, dict):
+            continue
+        entry = coerce_int(fact.get("entryOffset") or fact.get("address"))
+        body = fact.get("decompiled") or fact.get("decompiledCode")
+        if entry is None or not isinstance(body, str) or not body.strip():
+            continue
+        name = str(fact.get("name") or f"unnamed_{entry:x}")
+        safe = re.sub(r"[^A-Za-z0-9_.@+-]+", "_", name)[:80] or "fn"
+        stem = f"{safe}_{entry:x}"
+        source_path = seed_dir / f"{stem}.c"
+        meta_path = seed_dir / f"{stem}.json"
+        header = (
+            f"/* advisory context seed — not objdiff-verified-semantic\n"
+            f" * sourceKind={fact.get('sourceKind')}\n"
+            f" * address=0x{entry:x}\n"
+            f" * claimBoundary: cleanup candidate until compile/objdiff proof\n"
+            f" */\n"
+        )
+        source_path.write_text(header + body if not body.lstrip().startswith("/*") else body, encoding="utf-8")
+        atomic_write_json(
+            meta_path,
+            {
+                "schema": "agentdecompile.context-seed.v1",
+                "name": name,
+                "address": entry,
+                "sourceKind": fact.get("sourceKind"),
+                "contextSource": fact.get("contextSource"),
+                "authorityClass": "advisory-decompiler",
+                "claimBoundary": (
+                    "advisory context seed from acquired puzzle piece; "
+                    "not objdiff-verified-semantic; cleanup/vacuum may consume it"
+                ),
+            },
+        )
+        written.append({"path": str(source_path), "name": name, "address": entry})
+        seeded += 1
+
+    receipt = {
+        "schema": "agentdecompile.context-seeds.v1",
+        "status": "complete" if seeded else "empty",
+        "seedDir": str(seed_dir),
+        "counts": {"seeded": seeded},
+        "seeds": written[:50],
+        "claimBoundary": (
+            "advisory seeds are cleanup inputs only; proof-ladder numerator ignores them"
+        ),
+    }
+    atomic_write_json(seed_dir / "manifest.json", receipt)
+    return receipt
 
 
 def coerce_int(value: Any) -> int | None:

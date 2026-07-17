@@ -48,6 +48,13 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
         ladder = claim.get("proofLadder")  # type: ignore[assignment]
     if ladder is None and isinstance((report or {}).get("proofLadder"), dict):
         ladder = report.get("proofLadder")  # type: ignore[assignment]
+    placement = _load_json(work_dir / "acquisition" / "placement.json")
+    acquire = _load_json(work_dir / "acquisition" / "acquire.json")
+    if placement is None and isinstance((acquire or {}).get("placement"), dict):
+        placement = acquire.get("placement")  # type: ignore[assignment]
+    seeds = _load_json(work_dir / "advisory" / "context-seeds" / "manifest.json")
+    if seeds is None and isinstance((acquire or {}).get("contextSeeds"), dict):
+        seeds = acquire.get("contextSeeds")  # type: ignore[assignment]
 
     terminal = None
     for source in (claim, analysis, state, report):
@@ -136,6 +143,22 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             if ladder is not None
             else None
         ),
+        "contextFusion": (
+            {
+                "placed": (placement or {}).get("counts", {}).get("placed") if placement else None,
+                "unplaced": (placement or {}).get("counts", {}).get("unplaced") if placement else None,
+                "conflicts": (placement or {}).get("counts", {}).get("conflicts") if placement else None,
+                "skipped": (placement or {}).get("counts", {}).get("skipped") if placement else None,
+                "seeds": (seeds or {}).get("counts", {}).get("seeded") if seeds else None,
+                "claimBoundary": (placement or {}).get("claimBoundary")
+                or (
+                    "context fusion is address-keyed advisory evidence only; "
+                    "unplaced pieces are not inventively assigned VAs"
+                ),
+            }
+            if placement is not None or seeds is not None
+            else None
+        ),
         "claimBoundary": (
             "status summarizes orchestration progress only; "
             "objdiff-verified-semantic proof remains required for accepted source"
@@ -147,6 +170,12 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             "vacuumQueue": str(work_dir / "state" / "queue.json") if queue is not None else None,
             "proofLadder": str(work_dir / "proof-ladder.json")
             if (work_dir / "proof-ladder.json").is_file()
+            else None,
+            "placement": str(work_dir / "acquisition" / "placement.json")
+            if (work_dir / "acquisition" / "placement.json").is_file()
+            else None,
+            "contextSeeds": str(work_dir / "advisory" / "context-seeds" / "manifest.json")
+            if (work_dir / "advisory" / "context-seeds" / "manifest.json").is_file()
             else None,
             "exportManifest": str(work_dir / "export" / "manifest.json")
             if (work_dir / "export" / "manifest.json").is_file()
