@@ -549,7 +549,13 @@ class RecoveryRunner:
         inventory = json.loads((self.run_dir / "binary-inventory.json").read_text(encoding="utf-8"))
         candidates = discover_function_candidates(inventory)
         write_function_candidates(self.run_dir / "function-candidates.json", candidates)
-        return candidates.get("summary", {})
+        summary = dict(candidates.get("summary") or {})
+        if inventory.get("format") in {"elf", "macho"}:
+            from .slice_verify import write_slice_verify_summary
+
+            slice_summary = write_slice_verify_summary(self.run_dir, inventory, candidates)
+            summary["sliceVerify"] = slice_summary.get("status")
+        return summary
 
     def stage_analyze_functions(self, _stage: Stage) -> dict[str, Any]:
         out_path = self.run_dir / "function-analysis.json"

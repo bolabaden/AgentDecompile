@@ -446,6 +446,7 @@ def elf_symbols(view: BinaryView, sections: list[dict[str, Any]], *, is_64: bool
 
 
 def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entry: int, sections: list[dict[str, Any]], symbols: list[dict[str, Any]]) -> dict[str, Any]:
+    annotate_elf_function_sizes(symbols, sections)
     code_ranges = [
         {"name": section["name"], "address": section["address"], "offset": section["offset"], "size": section["size"]}
         for section in sections
@@ -728,6 +729,25 @@ def macho_symbols(view: BinaryView, symtab: dict[str, int] | None, sections: lis
             }
         )
     return symbols
+
+
+def annotate_elf_function_sizes(symbols: list[dict[str, Any]], sections: list[dict[str, Any]]) -> None:
+    """Infer STT_FUNC sizes when symtab leaves size zero (common on ELF)."""
+
+    section_by_index = {int(section["index"]): section for section in sections}
+    functions = [sym for sym in symbols if sym.get("type") == 2 and int(sym.get("sectionIndex") or 0) in section_by_index]
+    functions.sort(key=lambda sym: (int(sym.get("sectionIndex") or 0), int(sym.get("value") or 0), str(sym.get("name") or "")))
+    for index, sym in enumerate(functions):
+        if int(sym.get("size") or 0) > 0:
+            continue
+        section = section_by_index[int(sym["sectionIndex"])]
+        section_end = int(section["address"]) + int(section["size"])
+        next_address = section_end
+        for later in functions[index + 1 :]:
+            if int(later.get("sectionIndex") or 0) == int(sym.get("sectionIndex") or 0):
+                next_address = int(later.get("value") or section_end)
+                break
+        sym["size"] = max(0, next_address - int(sym.get("value") or 0))
 
 
 def annotate_macho_function_sizes(symbols: list[dict[str, Any]], sections: list[dict[str, Any]]) -> None:

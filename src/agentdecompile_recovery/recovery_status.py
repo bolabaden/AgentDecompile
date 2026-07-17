@@ -57,6 +57,7 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
         critical = build_critical_path(work_dir)
     placement = _load_json(work_dir / "acquisition" / "placement.json")
     acquire = _load_json(work_dir / "acquisition" / "acquire.json")
+    slice_verify = _load_json(work_dir / "slice-verify" / "summary.json")
     if placement is None and isinstance((acquire or {}).get("placement"), dict):
         placement = acquire.get("placement")  # type: ignore[assignment]
     seeds = _load_json(work_dir / "advisory" / "context-seeds" / "manifest.json")
@@ -180,6 +181,21 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             if critical is not None
             else None
         ),
+        "sliceVerify": (
+            {
+                "status": slice_verify.get("status"),
+                "verificationTier": slice_verify.get("verificationTier"),
+                "format": slice_verify.get("format"),
+                "candidate": slice_verify.get("candidate"),
+                "claimBoundary": slice_verify.get("claimBoundary")
+                or (
+                    "slice verify is weaker byte-roundtrip evidence only; "
+                    "does not count toward proof ladder objdiff numerator"
+                ),
+            }
+            if slice_verify is not None
+            else None
+        ),
         "claimBoundary": (
             "status summarizes orchestration progress only; "
             "objdiff-verified-semantic proof remains required for accepted source"
@@ -194,6 +210,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             else None,
             "criticalPath": str(work_dir / "critical-path.json")
             if (work_dir / "critical-path.json").is_file()
+            else None,
+            "sliceVerify": str(work_dir / "slice-verify" / "summary.json")
+            if (work_dir / "slice-verify" / "summary.json").is_file()
             else None,
             "placement": str(work_dir / "acquisition" / "placement.json")
             if (work_dir / "acquisition" / "placement.json").is_file()
