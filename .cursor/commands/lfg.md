@@ -9,7 +9,8 @@
 ## Prerequisites
 
 - **`GHIDRA_INSTALL_DIR`** (or `-GhidraHome`) pointing at a Ghidra install.
-- **`agentdecompile-server`** / CLI available via `uv run` or repo `.venv` (the script uses `.venv/Scripts/python.exe` when present).
+- **`agentdecompile-server`** / CLI available via `uv run` or repo `.venv` (the script prefers `.venv/bin/python` on Unix and `.venv/Scripts/python.exe` on Windows).
+- **Linux/macOS:** PowerShell Core (`pwsh`), plus unix `server/ghidraSvr` / `support/launch.sh` under the Ghidra install (no `cmd.exe`). Default import is `/usr/bin/sort`; override with `-ImportSource`. Label VAs use `-AddressBase` (default `0x100000` on Unix, PE `0x140002000` on Windows).
 - For the **shared** phases: Ghidra Server reachable at the **TCP base port** used in `open` (default **25100** in the script; may auto-shift if the port triplet is busy — see script `Find-LfgFreeGhidraBasePort`).
 - **`MCP restart`** means: stop the MCP Python process, start a new one, delete persisted CLI session (`$RepoRoot/.agentdecompile/cli_state.json` — the driver calls **`Clear-LfgCliState`**), then call **`open`** again in the new process.
 
@@ -19,12 +20,13 @@
 
 - Pick **`RUN_ID`** (script param **`-RunId`**). **Shared** labels: **`sh_<RUN_ID>_…`**; **local Track B**: **`loc_<RUN_ID>_…`**; **CLI headless** label: **`cli_<RUN_ID>_…`**.
 - **Shared program path** (default **`/sort_lfgpytest_b4bea676fd4f.exe`**) — fixture imported under version control on the server.
-- **Import source** (default **`C:/Windows/System32/sort.exe`**) — copied/imported as the binary under test.
-- **Evidence root:** `.lfg_run/lfg_cmd_<RunId>/`
+- **Import source** (default **`C:/Windows/System32/sort.exe`** on Windows; **`/usr/bin/sort`** on Unix) — copied/imported as the binary under test.
+- **Evidence root (logs):** `.lfg_run/lfg_cmd_<RunId>/` — driver/MCP/Ghidra server logs and isolated `server.conf`.
+- **Ghidra project root:** `lfg_run/lfg_cmd_<RunId>/` — PyGhidra `.gpr` trees (Ghidra `ProjectLocator` forbids path elements starting with `.`).
   - **`mcp_workspace/`** — PyGhidra project used for **shared-server** MCP sessions (must align with versioned server state).
   - **`local_gpr_dir/`** — **separate** local-only `.gpr` root for Track B (script starts MCP with **`-LocalTrack`** on this path so it never shares the same project tree as `mcp_workspace`).
   - **`local_cli_gpr_dir/`** — fresh project dir for **CLI `--local`** phases (15–17); cleaned before phase E.
-  - Logs: **`driver.log`**, **`mcp_server_<n>.*.log`**, **`<step>.stdout.log`**, **`*.steps.json`**, **`ghidra_server.*.log`**.
+  - Logs under evidence: **`driver.log`**, **`mcp_server_<n>.*.log`**, **`<step>.stdout.log`**, **`*.steps.json`**, **`ghidra_server.*.log`**.
 
 **Driver command:**
 
@@ -49,7 +51,7 @@
 
 ### Ghidra Server bootstrap (when `-AutoStartGhidraServer` is true)
 
-- Isolated repos under evidence, patched **`ghidraSvr`** + **`lfg_ghidra_server.conf`**.
+- Isolated repos under evidence, patched **`ghidraSvr`** + **`lfg_ghidra_server.conf`** (Windows: patched `ghidraSvr.bat` via `cmd.exe`; Unix: YAJSW `wrapper.jar` + `support/launch.sh` for `svrAdmin`).
 - Wait for **`ghidra_server_repositories/users`** (not merely TCP on the base port — see script).
 - **`svrAdmin -add`** for the Ghidra user; poll **`-users`** (not **`-list`**, which is repo-centric and may omit SIDs when no repos exist); if still missing, **restart Ghidra once** to flush the `~admin` queue, **`-add`** again, then poll; if the user never appears, the script **throws** (no bogus **`changeme`**). MCP **`open`** uses **`changeme`** once the user exists.
 

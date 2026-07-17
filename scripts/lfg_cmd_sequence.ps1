@@ -4,9 +4,10 @@
 # MCP restart → local Track B L1–L3 still present → CLI local headless (--local, no MCP server) import+label+persist.
 #
 # Ghidra: stock ghidraSvr.bat console blocks its host shell ("Use Ctrl-C..."). Auto-start uses a patched bat
-# (`start /B` + JVM logs under $Evidence) launched headlessly (no console window). MCP defaults to a hidden
+# (`start /B` + JVM logs under $Evidence) launched headlessly (no console window). On Linux/macOS, auto-start
+# invokes the YAJSW wrapper.jar directly with the isolated server.conf (no cmd.exe). MCP defaults to a hidden
 # detached process; pass -StartMcpInNewWindow for a visible MCP terminal with Tee-Object logs.
-# Requires: Ghidra install (GHIDRA_INSTALL_DIR), repo root .venv or uv.
+# Requires: Ghidra install (GHIDRA_INSTALL_DIR), repo root .venv or uv; on Linux also pwsh + unix server scripts.
 param(
     [string]$RunId = "lfgcmd$(Get-Date -Format 'HHmmss')",
     [string]$ServerUrl = "http://127.0.0.1:8099",
@@ -18,6 +19,8 @@ param(
     [string]$GhidraPassword = "admin",
     [string]$SharedProgramPath = "/sort_lfgpytest_b4bea676fd4f.exe",
     [string]$ImportSource = "C:/Windows/System32/sort.exe",
+    # Empty = auto: PE64 sort.exe image base on Windows; Ghidra ELF default (0x100000) on Unix.
+    [string]$AddressBase = "",
     [int]$McpPort = 8099,
     [string]$GhidraHome = "",
     [bool]$AutoStartGhidraServer = $true,
@@ -34,19 +37,44 @@ $RepoRoot = Split-Path $PSScriptRoot -Parent
 Set-Location $RepoRoot
 if (-not (Test-Path ".\pyproject.toml")) { throw "Run from agentdecompile repo root" }
 
+$script:LfgIsWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+    [System.Runtime.InteropServices.OSPlatform]::Windows)
+
 $GhidraPasswordPlain = $GhidraPassword
 
+# Linux/macOS: swap the Windows PE default import when the caller did not override.
+$winImportDefault = "C:/Windows/System32/sort.exe"
+if (-not $script:LfgIsWindows) {
+    $normImport = ($ImportSource -replace "\\", "/")
+    if ($normImport -eq $winImportDefault) {
+        $ImportSource = "/usr/bin/sort"
+        Write-Host "LFG: non-Windows host — default ImportSource set to $ImportSource (override with -ImportSource)." -ForegroundColor DarkCyan
+    }
+    if (-not (Test-Path -LiteralPath $ImportSource)) {
+        throw "LFG ImportSource not found: $ImportSource (pass -ImportSource to a readable binary)"
+    }
+}
+
+# Logs/evidence stay under .lfg_run (gitignored). Ghidra ProjectLocator forbids path elements
+# starting with '.', so .gpr / MCP project roots live under lfg_run/ (no leading dot).
 $Evidence = Join-Path $RepoRoot ".lfg_run/lfg_cmd_$RunId"
 New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
-$LocalDir = Join-Path $Evidence "local_gpr_dir"
+$GhidraProjectsRoot = Join-Path $RepoRoot "lfg_run/lfg_cmd_$RunId"
+New-Item -ItemType Directory -Force -Path $GhidraProjectsRoot | Out-Null
+$LocalDir = Join-Path $GhidraProjectsRoot "local_gpr_dir"
 New-Item -ItemType Directory -Force -Path $LocalDir | Out-Null
 $LocalDirJson = ($LocalDir -replace "\\", "/")
 $ImportJson = ($ImportSource -replace "\\", "/")
-$McpWs = Join-Path $Evidence "mcp_workspace"
+# Local-track program path: Ghidra names the program from the import basename (/usr/bin/sort → /sort).
+$localProgramLeaf = [System.IO.Path]::GetFileName($ImportJson)
+if (-not $localProgramLeaf) { $localProgramLeaf = "sort.exe" }
+$LocalProgramPath = "/" + $localProgramLeaf
+Write-Host "LFG LocalProgramPath: $LocalProgramPath (from ImportSource)" -ForegroundColor DarkGray
+$McpWs = Join-Path $GhidraProjectsRoot "mcp_workspace"
 New-Item -ItemType Directory -Force -Path $McpWs | Out-Null
 $McpWsJson = ($McpWs -replace "\\", "/")
 # Dedicated project dir for CLI --local headless phase (steps 15–17) — separate from $LocalDir (MCP local mode).
-$LocalCliDir = Join-Path $Evidence "local_cli_gpr_dir"
+$LocalCliDir = Join-Path $GhidraProjectsRoot "local_cli_gpr_dir"
 New-Item -ItemType Directory -Force -Path $LocalCliDir | Out-Null
 $LocalCliDirJson = ($LocalCliDir -replace "\\", "/")
 
@@ -106,6 +134,58 @@ function Test-LfgGhidraPortBindAvailable {
     }
 }
 
+function Get-LfgProcessCommandLine {
+    param([int]$ProcessId)
+    if ($script:LfgIsWindows) {
+        try {
+            if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                return (Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue).CommandLine
+            }
+            return (Get-WmiObject Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue).CommandLine
+        } catch {
+            return $null
+        }
+    }
+    $cmdlinePath = "/proc/$ProcessId/cmdline"
+    if (Test-Path -LiteralPath $cmdlinePath) {
+        try {
+            return ((Get-Content -Raw -LiteralPath $cmdlinePath -ErrorAction Stop) -replace "`0", " ").Trim()
+        } catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+function Get-LfgPidsListeningOnPort {
+    param([int]$Port)
+    $pids = [System.Collections.Generic.List[int]]::new()
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        try {
+            foreach ($c in @(Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue)) {
+                if ($c.OwningProcess) { [void]$pids.Add([int]$c.OwningProcess) }
+            }
+        } catch {}
+    }
+    if ($pids.Count -eq 0 -and (Get-Command ss -ErrorAction SilentlyContinue)) {
+        try {
+            $text = (& ss -lptn "sport = :$Port" 2>$null | Out-String)
+            foreach ($m in [regex]::Matches($text, 'pid=(\d+)')) {
+                [void]$pids.Add([int]$m.Groups[1].Value)
+            }
+        } catch {}
+    }
+    if ($pids.Count -eq 0 -and (Get-Command lsof -ErrorAction SilentlyContinue)) {
+        try {
+            foreach ($line in @(& lsof -tiTCP:$Port -sTCP:LISTEN 2>$null)) {
+                $n = 0
+                if ([int]::TryParse("$line", [ref]$n)) { [void]$pids.Add($n) }
+            }
+        } catch {}
+    }
+    return @($pids | Select-Object -Unique)
+}
+
 function Stop-LfgMcpPortProcesses {
     <#
     Frees the chosen MCP listen port before this run and during teardown: stops whatever is listening
@@ -113,17 +193,16 @@ function Stop-LfgMcpPortProcesses {
     servers from a prior LFG or Cursor leaving 8099 busy while env still points at it).
     #>
     param([int]$Port)
-    try {
-        foreach ($c in @(Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue)) {
-            try {
-                Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
-            } catch {}
-        }
-    } catch {}
-    $portPat = "--port\s+$Port(\s|$)"
-    Get-Process -Name "python*", "python" -ErrorAction SilentlyContinue | ForEach-Object {
+    foreach ($listenPid in @(Get-LfgPidsListeningOnPort -Port $Port)) {
         try {
-            $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+            Stop-Process -Id $listenPid -Force -ErrorAction SilentlyContinue
+        } catch {}
+    }
+    $portPat = "--port\s+$Port(\s|$)"
+    $procNames = if ($script:LfgIsWindows) { @("python*", "python") } else { @("python*", "python", "python3") }
+    Get-Process -Name $procNames -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $cmd = Get-LfgProcessCommandLine -ProcessId $_.Id
             if ($cmd -and $cmd -match 'agentdecompile_cli\.server' -and $cmd -match $portPat) {
                 Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
             }
@@ -161,8 +240,18 @@ if (-not $ghidraRoot) {
 }
 $env:GHIDRA_INSTALL_DIR = $ghidraRoot
 
-$py = Join-Path $RepoRoot ".venv/Scripts/python.exe"
-if (-not (Test-Path $py)) { $py = "python" }
+$pyUnix = Join-Path $RepoRoot ".venv/bin/python"
+$pyWin = Join-Path $RepoRoot ".venv/Scripts/python.exe"
+if (-not $script:LfgIsWindows -and (Test-Path -LiteralPath $pyUnix)) {
+    $py = $pyUnix
+} elseif (Test-Path -LiteralPath $pyWin) {
+    $py = $pyWin
+} elseif (Test-Path -LiteralPath $pyUnix) {
+    $py = $pyUnix
+} else {
+    $py = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+}
+Write-Host "LFG Python: $py" -ForegroundColor DarkGray
 
 $script:McpInvocation = 0
 # Strip these from the MCP child process env when -LocalTrack so PyGhidra does not auto-connect
@@ -179,6 +268,7 @@ $script:LfgMcpSharedEnvKeys = @(
 $script:LfgStartedGhidra = $false
 $script:LfgGhidraPatchedBat = $null
 $script:LfgGhidraCmdPid = $null
+$script:LfgGhidraWrapperHome = $null
 $script:LfgIsolatedGhidraRepos = $null
 # When AutoStartGhidraServer: context to re-launch the same isolated server if the console window exited early.
 $script:LfgGhidraRelaunchContext = $null
@@ -258,10 +348,36 @@ function New-LfgPatchedGhidraSvrBat {
     [System.IO.File]::WriteAllText($DestPatchBat, $raw2, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Find-LfgYajswHome {
+    param([string]$GhidraRoot)
+    $dataDir = Join-Path $GhidraRoot "Ghidra" "Features" "GhidraServer" "data"
+    if (-not (Test-Path -LiteralPath $dataDir)) {
+        throw "Missing GhidraServer data dir: $dataDir"
+    }
+    $dirs = @(Get-ChildItem -LiteralPath $dataDir -Directory -Filter "yajsw*" -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($dirs.Count -eq 0) {
+        throw "YAJSW wrapper not found under $dataDir"
+    }
+    return $dirs[-1].FullName
+}
+
+function Resolve-LfgJavaCmd {
+    if ($env:GHIDRA_JAVA_HOME -and (Test-Path -LiteralPath (Join-Path $env:GHIDRA_JAVA_HOME "bin/java"))) {
+        return (Join-Path $env:GHIDRA_JAVA_HOME "bin/java")
+    }
+    if ($env:JAVA_HOME -and (Test-Path -LiteralPath (Join-Path $env:JAVA_HOME "bin/java"))) {
+        return (Join-Path $env:JAVA_HOME "bin/java")
+    }
+    $fromPath = Get-Command java -ErrorAction SilentlyContinue
+    if ($fromPath) { return $fromPath.Source }
+    throw "java not found (set JAVA_HOME / GHIDRA_JAVA_HOME or put java on PATH)"
+}
+
 function Invoke-LfgGhidraServerHeadless {
     <#
-    ghidraSvr.bat console must not attach to the driver TTY. Patched bat uses start /B for the JVM and logs
-    to evidence files. Spawn cmd.exe with CreateNoWindow so no extra terminal window appears.
+    Windows: ghidraSvr.bat console must not attach to the driver TTY. Patched bat uses start /B for the JVM
+    and logs to evidence files. Spawn cmd.exe with CreateNoWindow so no extra terminal window appears.
+    Unix: invoke YAJSW wrapper.jar directly with the isolated WRAPPER_CONF (ghidraSvr hardcodes server.conf).
     #>
     param(
         [string]$GhidraRoot,
@@ -270,10 +386,51 @@ function Invoke-LfgGhidraServerHeadless {
         [string]$WrapperConfPath = ""
     )
     $serverDir = Join-Path $GhidraRoot "server"
-    $srcBat = Join-Path $serverDir "ghidraSvr.bat"
-    if (-not (Test-Path -LiteralPath $srcBat)) { throw "Missing $srcBat" }
     $outLog = Join-Path $EvidenceDir "ghidra_server.stdout.log"
     $errLog = Join-Path $EvidenceDir "ghidra_server.stderr.log"
+
+    if (-not $script:LfgIsWindows) {
+        if (-not $WrapperConfPath -or -not (Test-Path -LiteralPath $WrapperConfPath)) {
+            throw "Unix LFG auto-start requires WrapperConfPath (isolated lfg_ghidra_server.conf)"
+        }
+        $wrapperHome = Find-LfgYajswHome -GhidraRoot $GhidraRoot
+        $script:LfgGhidraWrapperHome = $wrapperHome
+        $wrapperJar = Join-Path $wrapperHome "wrapper.jar"
+        $classpathFrag = Join-Path $GhidraRoot "Ghidra" "Features" "GhidraServer" "data" "classpath.frag"
+        $javaCmd = Resolve-LfgJavaCmd
+        $tmpDir = if ($env:TMPDIR -and $env:TMPDIR.Trim()) { $env:TMPDIR.Trim() } else { "/tmp" }
+        $confUnix = ($WrapperConfPath -replace "\\", "/")
+        $outUnix = ($outLog -replace "\\", "/")
+        $errUnix = ($errLog -replace "\\", "/")
+        $serverUnix = ($serverDir -replace "\\", "/")
+        $ghidraUnix = ($GhidraRoot -replace "\\", "/")
+        $fragUnix = ($classpathFrag -replace "\\", "/")
+        $jarUnix = ($wrapperJar -replace "\\", "/")
+        $tmpUnix = ($tmpDir -replace "\\", "/")
+        $bash = @"
+set -e
+export java='$javaCmd'
+export ghidra_home='$ghidraUnix'
+export classpath_frag='$fragUnix'
+export wrapper_tmpdir='$tmpUnix'
+export GHIDRA_HOME='$ghidraUnix'
+cd '$serverUnix'
+nohup '$javaCmd' -Xmx512M -Djna_tmpdir='$tmpUnix' -Djava.io.tmpdir='$tmpUnix' -jar '$jarUnix' -c '$confUnix' >> '$outUnix' 2>> '$errUnix' &
+echo `$!
+"@
+        $pidText = (& /bin/bash -c $bash 2>&1 | Out-String).Trim()
+        $spawnPid = 0
+        if (-not [int]::TryParse($pidText, [ref]$spawnPid) -or $spawnPid -le 0) {
+            throw "Failed to spawn unix Ghidra Server (expected PID, got: $pidText). See $outLog / $errLog"
+        }
+        $script:LfgGhidraCmdPid = $spawnPid
+        $script:LfgGhidraPatchedBat = $null
+        Write-Host "LFG Ghidra Server (unix headless) — TCP base port $ListenPort — pid $spawnPid — logs: $outLog | $errLog" -ForegroundColor Cyan
+        return
+    }
+
+    $srcBat = Join-Path $serverDir "ghidraSvr.bat"
+    if (-not (Test-Path -LiteralPath $srcBat)) { throw "Missing $srcBat" }
     # Patched bat MUST live under server\ so ghidraSvr.bat's %%~dp0 SERVER_DIR resolves to the real install.
     $patched = Join-Path $serverDir "ghidraSvr_lfg_no_extra_window.agentdecompile.bat"
     New-LfgPatchedGhidraSvrBat -SourceGhidraSvrBat $srcBat -DestPatchBat $patched -OutLog $outLog -ErrLog $errLog -WrapperConfPath $WrapperConfPath
@@ -295,17 +452,32 @@ function Invoke-LfgGhidraSvrAdmin {
     <#
     Runs Ghidra ServerAdmin against a specific server.conf (same file the running server uses).
     Typical: -add <sid> creates a user with default password changeme (see Ghidra svrREADME).
-    Uses cmd /c call because PowerShell's & *.bat @args does not reliably forward argv to launch.bat.
+    Windows: cmd /c call launch.bat because PowerShell's & *.bat @args does not reliably forward argv.
+    Unix: support/launch.sh with the isolated conf path.
     #>
     param(
         [string]$GhidraRoot,
         [string]$ServerConfPath,
         [string[]]$AdminArgs
     )
-    $launchBat = Join-Path $GhidraRoot "support\launch.bat"
-    if (-not (Test-Path -LiteralPath $launchBat)) { throw "Missing $launchBat" }
     $env:GHIDRA_HOME = $GhidraRoot
-    $vmargs = '-DUserAdmin.invocation=svrAdmin'
+    $vmargs = '-DUserAdmin.invocation=svrAdmin -Djava.awt.headless=true'
+    if (-not $script:LfgIsWindows) {
+        $launchSh = Join-Path $GhidraRoot "support" "launch.sh"
+        if (-not (Test-Path -LiteralPath $launchSh)) { throw "Missing $launchSh" }
+        $confUnix = ($ServerConfPath -replace "\\", "/")
+        $adminTail = @()
+        if ($AdminArgs) { $adminTail = @($AdminArgs) }
+        # Capture stdout so it does not become the function's return value.
+        $adminOut = & $launchSh fg jre svrAdmin 128M $vmargs ghidra.server.ServerAdmin $confUnix @adminTail 2>&1
+        $ec = $LASTEXITCODE
+        if ($adminOut) {
+            Write-Host (($adminOut | Out-String).Trim()) -ForegroundColor DarkGray
+        }
+        return $ec
+    }
+    $launchBat = Join-Path $GhidraRoot "support" "launch.bat"
+    if (-not (Test-Path -LiteralPath $launchBat)) { throw "Missing $launchBat" }
     $tail = if ($AdminArgs -and $AdminArgs.Count -gt 0) { ' ' + ($AdminArgs -join ' ') } else { '' }
     $inner = "call `"$launchBat`" fg jre svrAdmin 128M `"$vmargs`" ghidra.server.ServerAdmin `"$ServerConfPath`"$tail"
     cmd.exe /c $inner
@@ -316,40 +488,71 @@ function Invoke-LfgGhidraSvrAdmin {
 function Test-LfgGhidraSvrAdminUserKnown {
     <#
     Uses svrAdmin -users (not -list): -list is repository-centric and may omit user SIDs when no repos exist.
+    Prefer the isolated repos ``users`` file when present (SID:hash lines) — avoids false positives from
+    install paths that contain the substring "ghidra".
     #>
     param(
         [string]$GhidraRoot,
         [string]$ServerConfPath,
         [string]$UserSid
     )
-    $launchBat = Join-Path $GhidraRoot "support\launch.bat"
+    if ($script:LfgIsolatedGhidraRepos) {
+        $usersFile = Join-Path $script:LfgIsolatedGhidraRepos "users"
+        if (Test-Path -LiteralPath $usersFile) {
+            try {
+                $raw = [System.IO.File]::ReadAllText($usersFile)
+                if ($raw -match ("(?m)^" + [regex]::Escape($UserSid) + ":")) {
+                    return $true
+                }
+            } catch {}
+        }
+    }
+    if (-not $script:LfgIsWindows) {
+        $launchSh = Join-Path $GhidraRoot "support" "launch.sh"
+        if (-not (Test-Path -LiteralPath $launchSh)) { return $false }
+        $confUnix = ($ServerConfPath -replace "\\", "/")
+        $vmargs = '-DUserAdmin.invocation=svrAdmin -Djava.awt.headless=true'
+        $usersOut = & $launchSh fg jre svrAdmin 128M $vmargs ghidra.server.ServerAdmin $confUnix -users 2>&1
+        $usersText = ($usersOut | Out-String)
+        # Require SID as its own token on a line, not a path substring like .../ghidra/current/...
+        return ($usersText -match [regex]::new('(?im)^\s*' + [regex]::Escape($UserSid) + '\s*$'))
+    }
+    $launchBat = Join-Path $GhidraRoot "support" "launch.bat"
     if (-not (Test-Path -LiteralPath $launchBat)) { return $false }
     $usersOut = & cmd.exe /c "call `"$launchBat`" fg jre svrAdmin 128M `"-DUserAdmin.invocation=svrAdmin`" ghidra.server.ServerAdmin `"$ServerConfPath`" -users" 2>&1
     $usersText = ($usersOut | Out-String)
-    return ($usersText -match [regex]::new('\b' + [regex]::Escape($UserSid) + '\b', 'IgnoreCase'))
+    return ($usersText -match [regex]::new('(?im)^\s*' + [regex]::Escape($UserSid) + '\s*$'))
 }
 
 function Stop-LfgGhidra {
     param([int]$Port)
     if (-not $script:LfgStartedGhidra) { return }
-    # Kill by TCP port if anything is still bound.
-    try {
-        Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | ForEach-Object {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-        }
-    } catch {}
+    foreach ($listenPid in @(Get-LfgPidsListeningOnPort -Port $Port)) {
+        try {
+            Stop-Process -Id $listenPid -Force -ErrorAction SilentlyContinue
+        } catch {}
+    }
     if ($script:LfgGhidraCmdPid) {
         Get-Process -Id $script:LfgGhidraCmdPid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         $script:LfgGhidraCmdPid = $null
     }
-    # Kill any java process that loaded the YAJSW wrapper.jar from our patched bat's serverDir.
+    # Kill any java process that loaded the YAJSW wrapper from our patched bat / wrapper home.
+    $matchRoots = @()
     if ($script:LfgGhidraPatchedBat) {
-        $svrDir = [System.IO.Path]::GetDirectoryName($script:LfgGhidraPatchedBat)
+        $matchRoots += [System.IO.Path]::GetDirectoryName($script:LfgGhidraPatchedBat)
+    }
+    if ($script:LfgGhidraWrapperHome) {
+        $matchRoots += $script:LfgGhidraWrapperHome
+    }
+    if ($matchRoots.Count -gt 0) {
         Get-Process -Name "java" -ErrorAction SilentlyContinue | ForEach-Object {
             try {
-                $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
-                if ($cmd -and $cmd -match [regex]::Escape($svrDir)) {
-                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                $cmd = Get-LfgProcessCommandLine -ProcessId $_.Id
+                foreach ($root in $matchRoots) {
+                    if ($cmd -and $root -and $cmd.Contains($root)) {
+                        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                        break
+                    }
                 }
             } catch {}
         }
@@ -397,6 +600,11 @@ function Ensure-LfgGhidraServerUp {
 function Stop-LfgMcp {
     # Same port-scoped cleanup as startup (listeners + this-run MCP python only).
     Stop-LfgMcpPortProcesses -Port $McpPort
+    for ($i = 0; $i -lt 20; $i++) {
+        if (Test-LfgMcpPortBindAvailable -Port $McpPort) { break }
+        Stop-LfgMcpPortProcesses -Port $McpPort
+        Start-Sleep -Seconds 1
+    }
     # Extra cooldown so the next bind + PyGhidra init does not race the LFG health probe.
     Start-Sleep -Seconds 3
 }
@@ -455,16 +663,45 @@ Set-Location -LiteralPath '$($RepoRoot.Replace("'", "''"))'
 & '$($py.Replace("'", "''"))' -m agentdecompile_cli.server -t streamable-http --host 127.0.0.1 --port $McpPort --project-path '$($ProjectPath.Replace("'", "''"))' 2>&1 | Tee-Object -FilePath '$($mcpOut.Replace("'", "''"))' -Append
 "@ | Set-Content -LiteralPath $mcpLauncher -Encoding utf8
         }
-        Start-Process -FilePath "powershell.exe" -WorkingDirectory $RepoRoot `
+        Start-Process -FilePath $(if ($script:LfgIsWindows) { "powershell.exe" } else { "pwsh" }) -WorkingDirectory $RepoRoot `
             -ArgumentList @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $mcpLauncher) | Out-Null
     } else {
         # Detached from driver TTY: do not use -NoNewWindow (would attach MCP stdio to this console).
-        Start-Process -FilePath $py -ArgumentList @(
-            "-m", "agentdecompile_cli.server", "-t", "streamable-http",
-            "--host", "127.0.0.1", "--port", "$McpPort", "--project-path", $ProjectPath
-        ) -WorkingDirectory $RepoRoot `
-            -RedirectStandardOutput $mcpOut -RedirectStandardError $mcpErr `
-            -WindowStyle Hidden -PassThru | Out-Null
+        if (-not $script:LfgIsWindows) {
+            # Start-Process + redirected stdio on pwsh/Linux often yields a short-lived MCP child
+            # (ready then exits). Mirror the unix Ghidra spawn: nohup + explicit PID.
+            $pyUnix = ($py -replace "\\", "/")
+            $repoUnix = ($RepoRoot -replace "\\", "/")
+            $projUnix = ($ProjectPath -replace "\\", "/")
+            $outUnix = ($mcpOut -replace "\\", "/")
+            $errUnix = ($mcpErr -replace "\\", "/")
+            $bash = @"
+set -e
+cd '$repoUnix'
+nohup '$pyUnix' -m agentdecompile_cli.server -t streamable-http --host 127.0.0.1 --port $McpPort --project-path '$projUnix' >> '$outUnix' 2>> '$errUnix' &
+echo `$!
+"@
+            $pidText = (& /bin/bash -c $bash 2>&1 | Out-String).Trim()
+            $mcpPid = 0
+            if (-not [int]::TryParse($pidText, [ref]$mcpPid) -or $mcpPid -le 0) {
+                throw "Failed to spawn unix MCP server (expected PID, got: $pidText). See $mcpOut / $mcpErr"
+            }
+            Write-Host "LFG MCP #$n (unix nohup) pid $mcpPid — http://127.0.0.1:$McpPort/health" -ForegroundColor Cyan
+        } else {
+            $startArgs = @{
+                FilePath               = $py
+                ArgumentList           = @(
+                    "-m", "agentdecompile_cli.server", "-t", "streamable-http",
+                    "--host", "127.0.0.1", "--port", "$McpPort", "--project-path", $ProjectPath
+                )
+                WorkingDirectory       = $RepoRoot
+                RedirectStandardOutput = $mcpOut
+                RedirectStandardError  = $mcpErr
+                PassThru               = $true
+                WindowStyle            = 'Hidden'
+            }
+            Start-Process @startArgs | Out-Null
+        }
     }
     } finally {
         if ($LocalTrack) {
@@ -777,7 +1014,7 @@ if (-not $AutoStartGhidraServer) {
     New-Item -ItemType Directory -Force -Path $reposRoot | Out-Null
     $script:LfgIsolatedGhidraRepos = $reposRoot
     $reposForward = ($reposRoot -replace '\\', '/')
-    $srcConf = Join-Path $ghidraRoot "server\server.conf"
+    $srcConf = Join-Path $ghidraRoot "server" "server.conf"
     $dstConf = Join-Path $Evidence "lfg_ghidra_server.conf"
     $dstConfFull = [System.IO.Path]::GetFullPath($dstConf)
     if (-not (Test-Path -LiteralPath $srcConf)) { throw "Missing Ghidra server.conf: $srcConf" }
@@ -912,6 +1149,7 @@ $openShared = @"
 # Off-alignment VAs deep in .text; consecutive labels are ~4.5KiB apart so L2/L3 rarely land in the same
 # function body as L1 (three-arg create-label + versioned check-in could drop mid-function user labels from search).
 # RunId-scoped slide reduces collisions when re-running /lfg against the same shared EXE.
+# AddressBase: Windows PE64 sort.exe default 0x140002000; Unix ELF (Ghidra image base) default 0x100000.
 $addrKey = [Text.Encoding]::UTF8.GetBytes("${RunId}|lfg-addr-v7")
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
@@ -920,14 +1158,27 @@ try {
     $sha.Dispose()
 }
 $slide = [int]([BitConverter]::ToUInt32($addrHash, 0) % 2048)
-$base = [int64]0x140002000 + [int64]$slide
+if ($AddressBase -and $AddressBase.Trim()) {
+    $addrBaseParsed = [int64]0
+    $rawBase = $AddressBase.Trim()
+    if ($rawBase.StartsWith("0x", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rawBase = $rawBase.Substring(2)
+    }
+    if (-not [int64]::TryParse($rawBase, [System.Globalization.NumberStyles]::HexNumber, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$addrBaseParsed)) {
+        throw "Invalid -AddressBase '$AddressBase' (expected hex like 0x140002000 or 0x100000)"
+    }
+} else {
+    $addrBaseParsed = if ($script:LfgIsWindows) { [int64]0x140002000 } else { [int64]0x100000 }
+    Write-Host ("LFG AddressBase default: 0x{0:X} ({1})" -f $addrBaseParsed, $(if ($script:LfgIsWindows) { "Windows PE" } else { "Unix ELF" })) -ForegroundColor DarkCyan
+}
+$base = $addrBaseParsed + [int64]$slide
 $addr1 = "0x{0:X}" -f ($base + 0x80)
 $addr2 = "0x{0:X}" -f ($base + 0x1280)
 $addr3 = "0x{0:X}" -f ($base + 0x2480)
 $addr4 = "0x{0:X}" -f ($base + 0x3680)
 $addrPush = "0x{0:X}" -f ($base + 0x4880)
 $addrCli  = "0x{0:X}" -f ($base + 0x6000)
-# Valid .text read for inspect-memory on PE64 sort.exe (avoid guard/invalid pages)
+# Valid .text read for inspect-memory (PE64 sort.exe / ELF sort under Ghidra default image base)
 $addrInspect = "0x{0:X}" -f $base
 
 $assertShared = @"
@@ -941,14 +1192,14 @@ $assertShared = @"
 $openLocalImport = @"
 [
   {"name":"open","arguments":{"path":"$LocalDirJson"}},
-  {"name":"import-binary","arguments":{"filePath":"$ImportJson","programPath":"/sort.exe","enableVersionControl":false,"analyzeAfterImport":false}}
+  {"name":"import-binary","arguments":{"filePath":"$ImportJson","programPath":"$LocalProgramPath","enableVersionControl":false,"analyzeAfterImport":false}}
 ]
 "@
 
 $assertLocal = @"
 [
   {"name":"open","arguments":{"path":"$LocalDirJson"}},
-  {"name":"search-symbols","arguments":{"programPath":"/sort.exe","query":"loc_${RunId}_"}}
+  {"name":"search-symbols","arguments":{"programPath":"$LocalProgramPath","query":"loc_${RunId}_"}}
 ]
 "@
 
@@ -970,7 +1221,7 @@ $pullVerifyFour = @"
 $assertLocalAgain = @"
 [
   {"name":"open","arguments":{"path":"$LocalDirJson"}},
-  {"name":"search-symbols","arguments":{"programPath":"/sort.exe","query":"loc_${RunId}_"}}
+  {"name":"search-symbols","arguments":{"programPath":"$LocalProgramPath","query":"loc_${RunId}_"}}
 ]
 "@
 
@@ -1048,15 +1299,15 @@ Assert-LfgLogContainsAll "02d_shared_search_same_mcp.stdout.log" @(
 Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 Invoke-LfgSeq "03_local_open_import" $openLocalImport
-Invoke-LfgSeq "04_local_ck1_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}}]"
-Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck1_label" "/sort.exe" $addr1 "loc_${RunId}_L1"
-Invoke-LfgSeq "04_local_ck1_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"loc_${RunId}_ck_1`"}}]"
-Invoke-LfgSeq "04_local_ck2_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}}]"
-Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck2_label" "/sort.exe" $addr2 "loc_${RunId}_L2"
-Invoke-LfgSeq "04_local_ck2_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"loc_${RunId}_ck_2`"}}]"
-Invoke-LfgSeq "04_local_ck3_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":false}}]"
-Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck3_label" "/sort.exe" $addr3 "loc_${RunId}_L3"
-Invoke-LfgSeq "04_local_ck3_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"loc_${RunId}_ck_3`"}}]"
+Invoke-LfgSeq "04_local_ck1_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"exclusive`":false}}]"
+Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck1_label" "$LocalProgramPath" $addr1 "loc_${RunId}_L1"
+Invoke-LfgSeq "04_local_ck1_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"comment`":`"loc_${RunId}_ck_1`"}}]"
+Invoke-LfgSeq "04_local_ck2_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"exclusive`":false}}]"
+Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck2_label" "$LocalProgramPath" $addr2 "loc_${RunId}_L2"
+Invoke-LfgSeq "04_local_ck2_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"comment`":`"loc_${RunId}_ck_2`"}}]"
+Invoke-LfgSeq "04_local_ck3_checkout" "[{`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"exclusive`":false}}]"
+Invoke-LfgCreateLabelWithOptionalResolve "04_local_ck3_label" "$LocalProgramPath" $addr3 "loc_${RunId}_L3"
+Invoke-LfgSeq "04_local_ck3_checkin" "[{`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"comment`":`"loc_${RunId}_ck_3`"}}]"
 
 # Steps 5–6: shared persistence after MCP restart
 Start-LfgMcp -ProjectPath $McpWsJson
@@ -1150,9 +1401,9 @@ Invoke-LfgSeq "11_ext_open_analyze" @"
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_discovery_surface" @"
 [
-    {"name":"search-everything","arguments":{"programPath":"/sort.exe","queries":["entry","sort"],"limit":10}},
-    {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"imports","limit":5}},
-    {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"exports","limit":5}},
+    {"name":"search-everything","arguments":{"programPath":"$LocalProgramPath","queries":["entry","sort"],"limit":10}},
+    {"name":"manage-symbols","arguments":{"programPath":"$LocalProgramPath","mode":"imports","limit":5}},
+    {"name":"manage-symbols","arguments":{"programPath":"$LocalProgramPath","mode":"exports","limit":5}},
     {"name":"list-project-files","arguments":{}},
     {"name":"get-current-program","arguments":{}}
 ]
@@ -1161,61 +1412,61 @@ if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_discovery_surface had fail
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_memory_bytes" @"
 [
-  {"name":"inspect-memory","arguments":{"programPath":"/sort.exe","mode":"read","address":"0x140001000","length":64}},
-  {"name":"inspect-memory","arguments":{"programPath":"/sort.exe","mode":"data_at","address":"0x140001000"}}
+  {"name":"inspect-memory","arguments":{"programPath":"$LocalProgramPath","mode":"read","address":"0x140001000","length":64}},
+  {"name":"inspect-memory","arguments":{"programPath":"$LocalProgramPath","mode":"data_at","address":"0x140001000"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_memory_bytes had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_function_context" @"
 [
-    {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300","maxInstructions":200,"maxRefs":25}},
-    {"name":"get-call-graph","arguments":{"programPath":"/sort.exe","function":"0x140001300","mode":"graph"}}
+    {"name":"get-function","arguments":{"programPath":"$LocalProgramPath","functionIdentifier":"0x140001300","maxInstructions":200,"maxRefs":25}},
+    {"name":"get-call-graph","arguments":{"programPath":"$LocalProgramPath","function":"0x140001300","mode":"graph"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_function_context had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_search_tools" @"
 [
-    {"name":"search-everything","arguments":{"programPath":"/sort.exe","queries":["sort","main"],"limit":10}},
-  {"name":"search-constants","arguments":{"programPath":"/sort.exe","mode":"common","topN":5}},
-    {"name":"search-everything","arguments":{"programPath":"/sort.exe","mode":"literal","query":"CALL","limit":5}}
+    {"name":"search-everything","arguments":{"programPath":"$LocalProgramPath","queries":["sort","main"],"limit":10}},
+  {"name":"search-constants","arguments":{"programPath":"$LocalProgramPath","mode":"common","topN":5}},
+    {"name":"search-everything","arguments":{"programPath":"$LocalProgramPath","mode":"literal","query":"CALL","limit":5}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_search_tools had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_refs_xrefs" @"
 [
-    {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"entry","maxRefs":25,"maxCallers":10,"maxCallees":10}}
+    {"name":"get-function","arguments":{"programPath":"$LocalProgramPath","functionIdentifier":"entry","maxRefs":25,"maxCallers":10,"maxCallees":10}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_refs_xrefs had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_data_types_structures" @"
 [
-  {"name":"manage-data-types","arguments":{"programPath":"/sort.exe","mode":"list","limit":5}},
-  {"name":"manage-structures","arguments":{"programPath":"/sort.exe","mode":"list"}},
+  {"name":"manage-data-types","arguments":{"programPath":"$LocalProgramPath","mode":"list","limit":5}},
+  {"name":"manage-structures","arguments":{"programPath":"$LocalProgramPath","mode":"list"}},
   {"name":"list-project-files","arguments":{}},
   {"name":"manage-files","arguments":{"mode":"list","path":"C:/Windows"}},
-  {"name":"manage-symbols","arguments":{"programPath":"/sort.exe","mode":"symbols","limit":5}}
+  {"name":"manage-symbols","arguments":{"programPath":"$LocalProgramPath","mode":"symbols","limit":5}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_data_types_structures had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_manage_readonly" @"
 [
-  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"list","maxResults":5}},
-  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"search","query":"sort","maxResults":5}},
-  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"list"}},
-  {"name":"get-function","arguments":{"programPath":"/sort.exe","functionIdentifier":"0x140001300"}}
+  {"name":"manage-bookmarks","arguments":{"programPath":"$LocalProgramPath","mode":"list","maxResults":5}},
+  {"name":"manage-comments","arguments":{"programPath":"$LocalProgramPath","mode":"search","query":"sort","maxResults":5}},
+  {"name":"manage-function-tags","arguments":{"programPath":"$LocalProgramPath","mode":"list"}},
+  {"name":"get-function","arguments":{"programPath":"$LocalProgramPath","functionIdentifier":"0x140001300"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_manage_readonly had failures (exit $ec)" -ForegroundColor Yellow }
 
 $ec = Invoke-LfgSeqUnchecked "11_ext_export_suggest" @"
 [
-  {"name":"export","arguments":{"programPath":"/sort.exe","outputPath":"$exportPath","format":"sarif"}},
-  {"name":"suggest","arguments":{"programPath":"/sort.exe","suggestionType":"function_name","address":"entry"}}
+  {"name":"export","arguments":{"programPath":"$LocalProgramPath","outputPath":"$exportPath","format":"sarif"}},
+  {"name":"suggest","arguments":{"programPath":"$LocalProgramPath","suggestionType":"function_name","address":"entry"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_export_suggest had failures (exit $ec)" -ForegroundColor Yellow }
@@ -1230,10 +1481,10 @@ if ($ec -ne 0) { $extFail++; Write-Host "WARN: 11_ext_processors had failures (e
 # Phase B: mutation tools (need checkout)
 $ec = Invoke-LfgSeqUnchecked "12_ext_checkout_mutate" @"
 [
-  {"name":"checkout-program","arguments":{"programPath":"/sort.exe","exclusive":false}},
-  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"set","addressOrSymbol":"entry","type":"Note","category":"LFG","comment":"lfg_ext_bookmark"}},
-  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"set","addressOrSymbol":"entry","comment":"lfg_ext_comment","commentType":"eol"}},
-  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"add","function":"entry","tags":"LFG_TEST"}}
+  {"name":"checkout-program","arguments":{"programPath":"$LocalProgramPath","exclusive":false}},
+  {"name":"manage-bookmarks","arguments":{"programPath":"$LocalProgramPath","mode":"set","addressOrSymbol":"entry","type":"Note","category":"LFG","comment":"lfg_ext_bookmark"}},
+  {"name":"manage-comments","arguments":{"programPath":"$LocalProgramPath","mode":"set","addressOrSymbol":"entry","comment":"lfg_ext_comment","commentType":"eol"}},
+  {"name":"manage-function-tags","arguments":{"programPath":"$LocalProgramPath","mode":"add","function":"entry","tags":"LFG_TEST"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_checkout_mutate had failures (exit $ec)" -ForegroundColor Yellow }
@@ -1241,9 +1492,9 @@ if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_checkout_mutate had failur
 # Verify mutation results
 $ec = Invoke-LfgSeqUnchecked "12_ext_verify_mutations" @"
 [
-  {"name":"manage-bookmarks","arguments":{"programPath":"/sort.exe","mode":"list","maxResults":5}},
-  {"name":"manage-comments","arguments":{"programPath":"/sort.exe","mode":"get","addressOrSymbol":"entry"}},
-  {"name":"manage-function-tags","arguments":{"programPath":"/sort.exe","mode":"list","function":"entry"}}
+  {"name":"manage-bookmarks","arguments":{"programPath":"$LocalProgramPath","mode":"list","maxResults":5}},
+  {"name":"manage-comments","arguments":{"programPath":"$LocalProgramPath","mode":"get","addressOrSymbol":"entry"}},
+  {"name":"manage-function-tags","arguments":{"programPath":"$LocalProgramPath","mode":"list","function":"entry"}}
 ]
 "@
 if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_verify_mutations had failures (exit $ec)" -ForegroundColor Yellow }
@@ -1251,7 +1502,7 @@ if ($ec -ne 0) { $extFail++; Write-Host "WARN: 12_ext_verify_mutations had failu
 # Check in after mutations
 Invoke-LfgSeq "12_ext_checkin" @"
 [
-  {"name":"checkin-program","arguments":{"programPath":"/sort.exe","comment":"lfg_extended_tool_coverage"}}
+  {"name":"checkin-program","arguments":{"programPath":"$LocalProgramPath","comment":"lfg_extended_tool_coverage"}}
 ]
 "@
 
@@ -1310,10 +1561,10 @@ if ($SkipLocalHeadless) {
     # checkout-program / checkin-program are no-ops / save for non-versioned locals but prove the same tool-seq shape as shared.
     $cliStep15 = @"
 [
-  {`"name`":`"import-binary`",`"arguments`":{`"filePath`":`"$ImportJson`",`"programPath`":`"/sort.exe`",`"enableVersionControl`":false,`"analyzeAfterImport`":false}},
-  {`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"exclusive`":true}},
-  {`"name`":`"create-label`",`"arguments`":{`"programPath`":`"/sort.exe`",`"address`":`"$addrCli`",`"labelName`":`"cli_${RunId}_L1`"}},
-  {`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"/sort.exe`",`"comment`":`"cli_${RunId}_ck_headless`"}}
+  {`"name`":`"import-binary`",`"arguments`":{`"filePath`":`"$ImportJson`",`"programPath`":`"$LocalProgramPath`",`"enableVersionControl`":false,`"analyzeAfterImport`":false}},
+  {`"name`":`"checkout-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"exclusive`":true}},
+  {`"name`":`"create-label`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"address`":`"$addrCli`",`"labelName`":`"cli_${RunId}_L1`"}},
+  {`"name`":`"checkin-program`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"comment`":`"cli_${RunId}_ck_headless`"}}
 ]
 "@
     Invoke-LfgLocalSeq "15_cli_local_import_label" $cliStep15 $LocalCliDirJson
@@ -1323,8 +1574,8 @@ if ($SkipLocalHeadless) {
     # activate the program within the already-open project (does NOT re-lock the .gpr).
     $cliStep16 = @"
 [
-  {`"name`":`"open`",`"arguments`":{`"path`":`"/sort.exe`"}},
-  {`"name`":`"search-symbols`",`"arguments`":{`"programPath`":`"/sort.exe`",`"query`":`"cli_${RunId}_`"}}
+  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalProgramPath`"}},
+  {`"name`":`"search-symbols`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"query`":`"cli_${RunId}_`"}}
 ]
 "@
     Invoke-LfgLocalSeq "16_cli_local_persist" $cliStep16 $LocalCliDirJson
@@ -1336,10 +1587,10 @@ if ($SkipLocalHeadless) {
     # Same pattern: --local-project-path opens the project; open '/sort.exe' activates the program.
     $cliStep17 = @"
 [
-  {`"name`":`"open`",`"arguments`":{`"path`":`"/sort.exe`"}},
-    {`"name`":`"get-function`",`"arguments`":{`"programPath`":`"/sort.exe`",`"functionIdentifier`":`"entry`",`"maxInstructions`":200,`"maxRefs`":25}},
-  {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"/sort.exe`",`"mode`":`"read`",`"address`":`"$addrInspect`",`"length`":32}},
-    {`"name`":`"search-everything`",`"arguments`":{`"programPath`":`"/sort.exe`",`"queries`":[`"sort`",`"entry`"],`"limit`":5}}
+  {`"name`":`"open`",`"arguments`":{`"path`":`"$LocalProgramPath`"}},
+    {`"name`":`"get-function`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"functionIdentifier`":`"entry`",`"maxInstructions`":200,`"maxRefs`":25}},
+  {`"name`":`"inspect-memory`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"mode`":`"read`",`"address`":`"$addrInspect`",`"length`":32}},
+    {`"name`":`"search-everything`",`"arguments`":{`"programPath`":`"$LocalProgramPath`",`"queries`":[`"sort`",`"entry`"],`"limit`":5}}
 ]
 "@
     $ec = Invoke-LfgLocalSeqUnchecked "17_cli_local_readonly" $cliStep17 $LocalCliDirJson

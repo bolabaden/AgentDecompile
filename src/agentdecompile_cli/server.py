@@ -618,9 +618,16 @@ async def _run_http_mode(host: str, port: int | None) -> None:
 
 def _start_webui_sidecar_for_backend(backend_url: str, *, verbose: bool = False):
     logger.debug("diag.enter %s", "server.py:_start_webui_sidecar_for_backend")
-    from agentdecompile_cli.webui import launch_webui_sidecar
+    try:
+        from agentdecompile_cli.webui import launch_webui_sidecar
 
-    return launch_webui_sidecar(backend_url, verbose=verbose)
+        return launch_webui_sidecar(backend_url, verbose=verbose)
+    except Exception as e:
+        # Sidecar must never take down the MCP server (daemon uvicorn thread dies with main).
+        sys.stderr.write(
+            f"[main] webui sidecar skipped ({e.__class__.__name__}: {e}); MCP continues without WebUI\n",
+        )
+        return None
 
 
 def _loopback_backend_host(host: str) -> str:

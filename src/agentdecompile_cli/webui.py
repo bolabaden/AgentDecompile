@@ -32,7 +32,7 @@ from mcp import types
 from agentdecompile_cli.executor import normalize_backend_url
 from agentdecompile_cli.local_backend import LocalToolBackend
 from agentdecompile_cli.mcp_server import prompt_providers
-from agentdecompile_cli.mcp_server.server import _build_tool_reference_payload
+from agentdecompile_cli.mcp_server.server import build_tool_reference_payload
 
 logger = logging.getLogger(__name__)
 
@@ -567,7 +567,7 @@ def create_app(config: WebUiConfig, backend: WebUiBackend | None = None) -> Fast
                 "advertisedToolCount": len(live_tools),
                 "openPrograms": await _backend().get_open_programs(),
             },
-            "reference": _build_tool_reference_payload(),
+            "reference": build_tool_reference_payload(),
             "prompts": _serialize_prompt_messages(),
             "docs": _docs_hub(),
             "api": {
@@ -584,7 +584,7 @@ def create_app(config: WebUiConfig, backend: WebUiBackend | None = None) -> Fast
 
     @app.get("/api/tool-reference")
     async def tool_reference() -> dict[str, Any]:
-        return _build_tool_reference_payload()
+        return build_tool_reference_payload()
 
     @app.get("/api/tools")
     async def tools() -> dict[str, Any]:

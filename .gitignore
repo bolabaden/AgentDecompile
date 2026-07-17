@@ -266,6 +266,7 @@ gradle/wrapper/
 # AgentDecompile local project directories
 .agentdecompile/
 .lfg_run/
+lfg_run/
 .history/
 __init__.pyi
 .cursor/mcp.json
