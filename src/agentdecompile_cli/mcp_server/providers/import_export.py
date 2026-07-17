@@ -4199,6 +4199,11 @@ class ImportExportToolProvider(ToolProvider):
 
             # Shared import uses _end_all_open_transactions + GhidraDomainFile.save so LocalFolderItem's
             # current version diverges from LOCAL_CHECKOUT_VERSION (GhidraFileData.modifiedSinceCheckout).
+            server_version_before: int | None = None
+            if repo_shared:
+                server_version_before = self._shared_repository_item_version(
+                    (program_path or eff_path or "").strip() or program_display_name,
+                )
             if program_for_ops is not None and checkin_target is not None:
                 logger.info(
                     "versioned checkin: hard flush before checkin (gp.save → end-all → domain save) program=%s",
@@ -4509,13 +4514,59 @@ class ImportExportToolProvider(ToolProvider):
             # Do not clear pending_versioned_labels here: reopen reapply can fail silently for one label
             # (e.g. function-entry *_L2) while check-in still reports success; keeping pending lets the next
             # merge + check-in retry until all create-label rows reach the server (LFG 02d needs L1–L3).
+            local_latest: int | None = None
+            try:
+                local_latest = int(checkin_domain_file.getLatestVersion())  # pyright: ignore[reportOptionalMemberAccess]
+            except Exception:
+                local_latest = None
+            if repo_shared:
+                server_version_after = self._shared_repository_item_version(
+                    (program_path or eff_path or "").strip() or program_display_name,
+                )
+                if (
+                    server_version_before is not None
+                    and server_version_after is not None
+                    and server_version_after <= server_version_before
+                ):
+                    logger.error(
+                        "versioned checkin reported success but Ghidra Server tip did not advance "
+                        "(before=%s after=%s local_latest=%s program=%s) — local-only VC mirror",
+                        server_version_before,
+                        server_version_after,
+                        local_latest,
+                        program_display_name,
+                    )
+                    return create_success_response(
+                        {
+                            "action": "checkin",
+                            "program": program_display_name,
+                            "comment": comment,
+                            "keep_checked_out": keep_checked_out,
+                            "version": local_latest,
+                            "serverVersion": server_version_after,
+                            "success": False,
+                            "error": (
+                                "Check-in updated the local project mirror but the Ghidra Server tip did not "
+                                "advance. Re-open the shared project (convertProjectToShared / reconnect) and "
+                                "retry checkout → edit → checkin so revisions reach the server."
+                            ),
+                            "reason": "server-tip-not-advanced",
+                        },
+                    )
             return create_success_response(
                 {
                     "action": "checkin",
                     "program": program_display_name,
                     "comment": comment,
                     "keep_checked_out": keep_checked_out,
-                    "version": checkin_domain_file.getLatestVersion(),  # pyright: ignore[reportOptionalMemberAccess]
+                    "version": local_latest,
+                    "serverVersion": (
+                        self._shared_repository_item_version(
+                            (program_path or eff_path or "").strip() or program_display_name,
+                        )
+                        if repo_shared
+                        else None
+                    ),
                     "success": True,
                 },
             )
@@ -4878,6 +4929,32 @@ class ImportExportToolProvider(ToolProvider):
             return repo_adapter.getItem(folder_path, item_name) is not None
         except Exception:
             return False
+
+    def _shared_repository_item_version(self, program_path: str) -> int | None:
+        """Return the Ghidra Server tip version for ``program_path``, or None if unavailable."""
+        pp = (program_path or "").strip().replace("\\", "/")
+        if not pp:
+            return None
+        session_id = get_current_mcp_session_id()
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        if not handle or not is_shared_server_handle(handle):
+            return None
+        repo_adapter = handle.get("repository_adapter")
+        if repo_adapter is None:
+            return None
+        parts = pp.rstrip("/").rsplit("/", 1)
+        folder_path = parts[0] if len(parts) == 2 and parts[0] else "/"
+        item_name = parts[1] if len(parts) == 2 else parts[0]
+        try:
+            item = repo_adapter.getItem(folder_path, item_name)
+            if item is None:
+                return None
+            if hasattr(item, "getVersion"):
+                return int(item.getVersion())
+        except Exception as exc:
+            logger.debug("shared repository item version lookup failed for %s: %s", pp, exc)
+        return None
 
     def _resolve_domain_file_for_checkout_status(self, program_path: str) -> tuple[Any, str] | None:
         """Resolve GhidraDomainFile and display name for the given program path. Returns (domain_file, display_name) or None."""

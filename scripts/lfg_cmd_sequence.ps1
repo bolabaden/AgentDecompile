@@ -257,6 +257,9 @@ $script:McpInvocation = 0
 # Strip these from the MCP child process env when -LocalTrack so PyGhidra does not auto-connect
 # to the Ghidra Server (shared-env bootstrap would treat the local project path as a repo program
 # and can put agentrepo into a bad state — LFG step 5 then sees 0 programs).
+# Also keep them cleared in the *driver* process for the whole LocalTrack MCP lifetime: the CLI
+# reads AGENT_DECOMPILE_GHIDRA_SERVER_* and sends X-Agent-Server-* headers; restoring parent env
+# immediately after spawn re-poisons LocalTrack tool-seq into shared-server mode.
 $script:LfgMcpSharedEnvKeys = @(
     'AGENT_DECOMPILE_GHIDRA_SERVER_HOST', 'AGENTDECOMPILE_HTTP_GHIDRA_SERVER_HOST', 'AGENTDECOMPILE_GHIDRA_SERVER_HOST',
     'AGENT_DECOMPILE_SERVER_HOST', 'AGENTDECOMPILE_SERVER_HOST',
@@ -265,6 +268,8 @@ $script:LfgMcpSharedEnvKeys = @(
     'AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME', 'AGENTDECOMPILE_GHIDRA_SERVER_USERNAME', 'AGENT_DECOMPILE_SERVER_USERNAME', 'AGENTDECOMPILE_SERVER_USERNAME',
     'AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD', 'AGENTDECOMPILE_GHIDRA_SERVER_PASSWORD', 'AGENT_DECOMPILE_SERVER_PASSWORD', 'AGENTDECOMPILE_SERVER_PASSWORD'
 )
+$script:LfgLocalTrackEnvActive = $false
+$script:LfgSavedSharedEnvForLocalTrack = $null
 $script:LfgStartedGhidra = $false
 $script:LfgGhidraPatchedBat = $null
 $script:LfgGhidraCmdPid = $null
@@ -619,6 +624,23 @@ function Start-LfgMcp {
     if (-not $env:GHIDRA_INSTALL_DIR) {
         throw "Set GHIDRA_INSTALL_DIR to your Ghidra install"
     }
+
+    # Leaving LocalTrack: restore driver shared-server env before re-arming MCP shared credentials.
+    if (-not $LocalTrack -and $script:LfgLocalTrackEnvActive) {
+        if ($null -ne $script:LfgSavedSharedEnvForLocalTrack) {
+            foreach ($k in $script:LfgMcpSharedEnvKeys) {
+                $v = $script:LfgSavedSharedEnvForLocalTrack[$k]
+                if ($null -eq $v -or $v -eq '') {
+                    [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+                } else {
+                    [Environment]::SetEnvironmentVariable($k, $v, 'Process')
+                }
+            }
+        }
+        $script:LfgLocalTrackEnvActive = $false
+        $script:LfgSavedSharedEnvForLocalTrack = $null
+    }
+
     # MCP shared Ghidra env (bootstrap skips checkout when requested key == repository name).
     if (-not $LocalTrack) {
         $env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = $GhidraHost
@@ -628,11 +650,18 @@ function Start-LfgMcp {
         $env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = $GhidraPasswordPlain
     }
 
-    $savedSharedEnv = [ordered]@{}
     if ($LocalTrack) {
-        foreach ($k in $script:LfgMcpSharedEnvKeys) {
-            $savedSharedEnv[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
-            [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+        if (-not $script:LfgLocalTrackEnvActive) {
+            $script:LfgSavedSharedEnvForLocalTrack = [ordered]@{}
+            foreach ($k in $script:LfgMcpSharedEnvKeys) {
+                $script:LfgSavedSharedEnvForLocalTrack[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+                [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+            }
+            $script:LfgLocalTrackEnvActive = $true
+        } else {
+            foreach ($k in $script:LfgMcpSharedEnvKeys) {
+                [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+            }
         }
     }
 
@@ -640,7 +669,6 @@ function Start-LfgMcp {
     $n = $script:McpInvocation
     $mcpOut = Join-Path $Evidence "mcp_server_${n}.stdout.log"
     $mcpErr = Join-Path $Evidence "mcp_server_${n}.stderr.log"
-    try {
     if ($StartMcpInNewWindow) {
         $mcpLauncher = Join-Path $Evidence "launch_mcp_lfg_${n}.ps1"
         $keysForInner = ($script:LfgMcpSharedEnvKeys | ForEach-Object { "'$($_.Replace("'","''"))'" }) -join ','
@@ -701,18 +729,6 @@ echo `$!
                 WindowStyle            = 'Hidden'
             }
             Start-Process @startArgs | Out-Null
-        }
-    }
-    } finally {
-        if ($LocalTrack) {
-            foreach ($k in $script:LfgMcpSharedEnvKeys) {
-                $v = $savedSharedEnv[$k]
-                if ($null -eq $v -or $v -eq '') {
-                    [Environment]::SetEnvironmentVariable($k, $null, 'Process')
-                } else {
-                    [Environment]::SetEnvironmentVariable($k, $v, 'Process')
-                }
-            }
         }
     }
 
@@ -1294,8 +1310,9 @@ Assert-LfgLogContainsAll "02d_shared_search_same_mcp.stdout.log" @(
 # Use local_gpr_dir as --project-path (not mcp_workspace): opening a different .gpr from the same
 # PyGhidra launcher root as the shared track can desync versioned files under mcp_workspace and break
 # step 5 (search-symbols empty after MCP restart) even when shared check-ins report success.
-# -LocalTrack strips Ghidra Server env vars for this MCP child only so PyGhidra never auto-connects to
-# agentrepo during local work (shared-env bootstrap against a directory path can break the server repo).
+# -LocalTrack strips Ghidra Server env vars for the MCP child *and* keeps them cleared in the
+# driver process for the whole LocalTrack phase so CLI tool-seq cannot re-inject shared headers
+# (restoring parent env immediately after spawn was poisoning LocalTrack into shared-server mode).
 Start-LfgMcp -ProjectPath $LocalDirJson -LocalTrack
 Clear-LfgCliState
 Invoke-LfgSeq "03_local_open_import" $openLocalImport

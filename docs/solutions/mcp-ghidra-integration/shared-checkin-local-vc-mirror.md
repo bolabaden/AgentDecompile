@@ -1,0 +1,50 @@
+---
+module: agentdecompile_cli.mcp_server.providers
+problem_type: bug-fix
+component: shared-checkin
+tags: [lfg, ghidra-server, checkin, version-control, linux]
+date: 2026-07-17
+---
+
+# Shared checkin must push to Ghidra Server (not local VC mirror)
+
+## Symptom
+
+LFG step 5 (`05_assert_shared_after_mcp`): after three shared label+checkin cycles and an MCP restart, `search-symbols` for `sh_<RunId>_` returns **0 results**. Same-session `02d` search found L1–L3.
+
+## Root cause
+
+```mermaid
+flowchart TD
+  A[connect-shared-project] --> B[GhidraProject.createProject private]
+  B --> C[RepositoryAdapter.checkout records server checkout]
+  C --> D{DomainFile.isVersioned?}
+  D -->|false| E[addToVersionControl local versioned/]
+  E --> F[DomainFile.checkin bumps /tmp/.../versioned]
+  F --> G[Ghidra Server tip stays at v1]
+  G --> H[MCP restart checks out server tip]
+  H --> I[search-symbols: 0 labels]
+```
+
+Evidence from `linuxsmoke145337`:
+
+| Location | History |
+|----------|---------|
+| `/tmp/agentdecompile_shared/agentrepo_*/shared.rep/versioned/` | v1–v4 with `sh_*_ck_*` comments + labels in `.gbf` |
+| `.lfg_run/.../ghidra_server_repositories/agentrepo/` | **only v1** |
+
+`GhidraProject.createProject` always builds a **non-shared** project (repository ctor arg is ignored). Without `ProjectData.convertProjectToShared`, checkin only versions the local mirror.
+
+Secondary: LocalTrack restored parent `AGENT_DECOMPILE_GHIDRA_SERVER_*` immediately after MCP spawn, so CLI tool-seq re-injected shared headers into the “local” track.
+
+## Fix
+
+1. After binding the shared checkout project, call `convertProjectToShared(repository_adapter)`.
+2. Refuse `addToVersionControl` in shared-server sessions (would recreate local-only VC).
+3. After shared checkin, fail if the Ghidra Server tip did not advance.
+4. Keep LocalTrack driver env stripped for the whole LocalTrack MCP lifetime.
+
+## Verification
+
+- Unit: `tests/test_shared_checkin_local_vc_guard.py`
+- Smoke: Linux LFG through step 5; server `history.dat` must show versions > 1 after label checkins

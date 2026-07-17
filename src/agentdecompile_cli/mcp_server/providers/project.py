@@ -1707,6 +1707,10 @@ class ProjectToolProvider(ToolProvider):
                         "[connect-shared-project] bound ghidra_project to shared checkout tree %s",
                         shared_project_dir,
                     )
+                # Private GhidraProject.createProject leaves a LocalFileSystem versioned/ mirror.
+                # DomainFile.checkin then versions locally and never pushes to Ghidra Server
+                # (LFG step 5: labels visible in-session, missing after MCP restart). Link RemoteFileSystem.
+                self._ensure_ghidra_project_linked_to_repository(mgr.ghidra_project, repository_adapter)
             except Exception as exc:
                 logger.warning("[connect-shared-project] could not bind shared checkout project: %s", exc)
 
@@ -5032,8 +5036,56 @@ class ProjectToolProvider(ToolProvider):
             return found
         return df
 
+    def _ensure_ghidra_project_linked_to_repository(
+        self,
+        ghidra_project: Any,
+        repository_adapter: GhidraRepositoryAdapter,
+    ) -> None:
+        """Convert a private checkout project to a shared project backed by ``RemoteFileSystem``.
+
+        ``GhidraProject.createProject`` always builds a non-shared project (repository arg is ignored).
+        Without ``convertProjectToShared``, ``DomainFile.checkin`` only bumps the local ``versioned/``
+        mirror under ``/tmp/agentdecompile_shared/...`` while the Ghidra Server tip stays at v1.
+        """
+        if ghidra_project is None or repository_adapter is None:
+            return
+        try:
+            project_data = ghidra_project.getProjectData()
+        except Exception as exc:
+            logger.warning("[connect-shared-project] getProjectData failed while linking repository: %s", exc)
+            return
+        if project_data is None or not hasattr(project_data, "convertProjectToShared"):
+            return
+        existing_repo: Any | None = None
+        try:
+            if hasattr(project_data, "getRepository"):
+                existing_repo = project_data.getRepository()
+        except Exception:
+            existing_repo = None
+        if existing_repo is not None:
+            return
+        from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+        try:
+            if hasattr(repository_adapter, "isConnected") and not bool(repository_adapter.isConnected()):
+                repository_adapter.connect()
+            project_data.convertProjectToShared(repository_adapter, GhidraTaskMonitor.DUMMY)
+            logger.info(
+                "[connect-shared-project] linked project to Ghidra Server repository via convertProjectToShared",
+            )
+        except Exception as exc:
+            logger.warning(
+                "[connect-shared-project] convertProjectToShared failed (checkin may stay local-only): %s",
+                exc,
+            )
+
     def _ensure_shared_domain_file_registered_for_version_control(self, domain_file: GhidraDomainFile, program_path: str) -> None:
-        """If Ghidra leaves a post-checkout ``GhidraDomainFile`` unversioned, register it (same API as shared ``import-binary``)."""
+        """If Ghidra leaves a post-checkout ``GhidraDomainFile`` unversioned, register it (same API as shared ``import-binary``).
+
+        In shared-server sessions, never call ``addToVersionControl``: that creates *local* VC under the
+        checkout project's ``versioned/`` tree (history comment ``Shared repository checkout``) while the
+        server tip stays at v1 — LFG step 5 then sees 0 labels after MCP restart.
+        """
         if domain_file is None or not hasattr(domain_file, "isVersioned"):
             return
         try:
@@ -5041,6 +5093,18 @@ class ProjectToolProvider(ToolProvider):
                 return
         except Exception:
             return
+
+        session_id = get_current_mcp_session_id()
+        session = SESSION_CONTEXTS.get_or_create(session_id)
+        handle = session.project_handle if isinstance(session.project_handle, dict) else None
+        if handle and is_shared_server_handle(handle):
+            logger.warning(
+                "Shared-server DomainFile for %s is not versioned after checkout; refusing "
+                "addToVersionControl (would create local-only VC that never reaches Ghidra Server)",
+                program_path,
+            )
+            return
+
         from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         try:
@@ -5374,6 +5438,12 @@ class ProjectToolProvider(ToolProvider):
                             is_private = False
                         if is_private:
                             try:
+                                # Headless/shared import often leaves the private copy open in the session —
+                                # delete() then raises FileInUseException and checkout never binds RemoteFileSystem.
+                                self._release_session_programs_for_domain_file(
+                                    session_id=session_id,
+                                    domain_file=domain_file,
+                                )
                                 domain_file.delete()
                                 domain_file = None
                                 logger.info(

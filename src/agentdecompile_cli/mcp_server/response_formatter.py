@@ -2369,8 +2369,14 @@ def _render_import_export(data: dict[str, Any]) -> str:
         lines.append(_md_heading(2, "Check-in Result"))
         lines.append("")
         lines.append(_md_bold_kv("Program", data.get("program", "")))
-        lines.append(_md_bold_kv("Message", data.get("message", "")))
+        lines.append(_md_bold_kv("Message", data.get("message") or data.get("error") or data.get("comment") or ""))
         lines.append(_md_bold_kv("Status", "Success" if data.get("success") else "Failed"))
+        if data.get("version") is not None:
+            lines.append(_md_bold_kv("Version", data.get("version")))
+        if data.get("serverVersion") is not None:
+            lines.append(_md_bold_kv("Server Version", data.get("serverVersion")))
+        if data.get("reason"):
+            lines.append(_md_bold_kv("Reason", data.get("reason")))
         return "\n".join(lines)
 
     if action in ("change_processor", "list_processors"):
