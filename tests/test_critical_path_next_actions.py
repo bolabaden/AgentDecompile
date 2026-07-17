@@ -61,3 +61,37 @@ def test_next_actions_reloc_slice_ready_for_pe(tmp_path: Path) -> None:
     reloc = next(row for row in actions if row["id"] == "reloc-slice")
     assert reloc["status"] == "ready"
     assert "swkotor-inventory-slice" in reloc.get("commandHint", "")
+    slice_verify = next(row for row in actions if row["id"] == "slice-verify")
+    assert slice_verify["status"] == "blocked"
+    assert "ELF/Mach-O" in slice_verify["reason"]
+
+
+def test_next_actions_slice_verify_ready_for_elf(tmp_path: Path) -> None:
+    work = tmp_path / "elf"
+    work.mkdir()
+    _capabilities(work)
+    atomic_write_json(work / "binary-inventory.json", {"format": "elf", "status": "complete"})
+    atomic_write_json(
+        work / "function-candidates.json",
+        {"candidates": [{"name": "slice_fn", "size": 16, "source": "elf-symbol"}], "summary": {"count": 1}},
+    )
+    actions = build_next_actions(work)
+    slice_verify = next(row for row in actions if row["id"] == "slice-verify")
+    assert slice_verify["status"] == "ready"
+    assert "discover-functions" in slice_verify.get("commandHint", "")
+    reloc = next(row for row in actions if row["id"] == "reloc-slice")
+    assert reloc["status"] == "blocked"
+
+
+def test_next_actions_slice_verify_complete_when_matched(tmp_path: Path) -> None:
+    work = tmp_path / "matched"
+    work.mkdir()
+    _capabilities(work)
+    atomic_write_json(work / "binary-inventory.json", {"format": "elf"})
+    atomic_write_json(work / "function-candidates.json", {"candidates": [{"name": "fn"}], "summary": {"count": 1}})
+    summary = work / "slice-verify" / "summary.json"
+    summary.parent.mkdir(parents=True)
+    atomic_write_json(summary, {"status": "matched", "verificationTier": "code-slice"})
+    actions = build_next_actions(work)
+    slice_verify = next(row for row in actions if row["id"] == "slice-verify")
+    assert slice_verify["status"] == "complete"

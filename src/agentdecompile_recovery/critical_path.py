@@ -85,6 +85,7 @@ def build_next_actions(work_dir: Path) -> list[dict[str, Any]]:
     actions.append(_action_vacuum_seed(work_dir, tasks_path, queue_seed))
     actions.append(_action_profile_corpus(work_dir, synth_summary, verified_dir, tools, local))
     actions.append(_action_reloc_slice(work_dir, candidates_path, tools, local))
+    actions.append(_action_slice_verify(work_dir, candidates_path, tools))
     return actions
 
 
@@ -214,6 +215,84 @@ def _action_profile_corpus(
         "reason": "matched examples available for compiler-profile corpus sweep (legacy recover subcommand)",
         "paths": {"verified": str(verified_dir)},
         "commandHint": "agentdecompile recover compiler-profile-corpus --work-dir <dir>",
+    }
+
+
+def _action_slice_verify(
+    work_dir: Path,
+    candidates_path: Path,
+    tools: dict[str, Any],
+) -> dict[str, Any]:
+    """ELF/Mach-O symbolized byte-roundtrip readiness (weaker than PE objdiff)."""
+
+    action_id = "slice-verify"
+    inventory = _load_json(work_dir / "binary-inventory.json") or {}
+    fmt = str(inventory.get("format") or "")
+    summary_path = work_dir / "slice-verify" / "summary.json"
+    summary = _load_json(summary_path)
+    if summary is not None:
+        status = str(summary.get("status") or "")
+        if status == "matched":
+            return {
+                "id": action_id,
+                "status": "complete",
+                "reason": "symbolized slice verify matched (code-slice tier; not proof-ladder numerator)",
+                "paths": {"summary": str(summary_path)},
+            }
+        if status == "unsupported-slice-verify":
+            return {
+                "id": action_id,
+                "status": "blocked",
+                "reason": str(summary.get("reason") or "unsupported-slice-verify"),
+                "paths": {"summary": str(summary_path)},
+            }
+        if status in {"blocked:toolchain", "compile-failed", "extract-failed", "mismatch"}:
+            return {
+                "id": action_id,
+                "status": "blocked",
+                "reason": f"prior slice verify {status}: {summary.get('reason') or status}",
+                "paths": {"summary": str(summary_path)},
+            }
+
+    if fmt not in {"elf", "macho"}:
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": "slice verify is ELF/Mach-O only; use reloc-slice for PE",
+            "paths": {"inventory": str(work_dir / "binary-inventory.json") if inventory else None},
+        }
+    if not candidates_path.is_file():
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": "missing function-candidates.json; run through discover-functions first",
+            "paths": {"candidates": str(candidates_path)},
+            "stopAfterHint": "discover-functions",
+        }
+    blocked: list[str] = []
+    if not _tool_available(tools, "clang"):
+        blocked.append("clang unavailable")
+    if not _tool_available(tools, "objcopy"):
+        blocked.append("objcopy unavailable")
+    if blocked:
+        return {
+            "id": action_id,
+            "status": "blocked",
+            "reason": "; ".join(blocked),
+            "paths": {"candidates": str(candidates_path)},
+            "stopAfterHint": "discover-functions",
+        }
+    return {
+        "id": action_id,
+        "status": "ready",
+        "reason": "ELF/Mach-O candidates present; reconstruct --stop-after discover-functions runs slice verify",
+        "paths": {
+            "inventory": str(work_dir / "binary-inventory.json"),
+            "candidates": str(candidates_path),
+            "summary": str(summary_path),
+        },
+        "commandHint": "reconstruct <elf|macho> --work-dir <dir> --stop-after discover-functions",
+        "stopAfterHint": "discover-functions",
     }
 
 

@@ -47,6 +47,7 @@ When a packed PE cannot be unpacked, `analysis-target.json` records `status: blo
 | `vacuum-seed` | `source-generation/tasks.jsonl` exists; use `--autonomous` |
 | `profile-corpus` | Objdiff-verified examples under `verified/` |
 | `reloc-slice` | PE inventory + per-function target object helpers |
+| `slice-verify` | ELF/Mach-O candidates + clang/objcopy; runs at `discover-functions` |
 
 Listing an action as **ready** does not count toward the proof ladder — only receipt-backed objdiff accepts do.
 
