@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -11,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from .package_sweep import sweep_recovered_source_package
-from .package_verify import resolve_msvc_root
+from .package_verify import resolve_msvc_root, verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
+from .source_cleanup import cleanup_recovered_source_package
 from .source_parity_synthesize import main as source_parity_synthesize_main
 from .sourcegen import is_recoverable_candidate
 from .state import atomic_write_json, now
@@ -68,8 +70,7 @@ def run_recovery_windows(
         base_config,
         work_dir=plan_dir,
         force=base_config.force,
-        stop_after="discover-functions",
-        function_analysis="none",
+        stop_after="analyze-functions",
         source_task_limit=window_size,
         source_task_offset=0,
     )
@@ -124,6 +125,9 @@ def run_recovery_windows(
             stop_after="generate-source-candidates",
             source_task_limit=limit,
             source_task_offset=offset,
+            allow_function_candidate_fallback=False,
+            allow_function_candidate_promotion=False,
+            function_candidates_json=candidates_path,
         )
         return_code = RecoveryRunner(shard_config).run()
         window_summary = summarize_window(shard_dir, offset, limit, return_code)
@@ -135,6 +139,16 @@ def run_recovery_windows(
     aggregate["windows"] = sorted_windows(window_by_offset)
     source_package = build_recovered_source_package(base_dir, aggregate["windows"])
     aggregate["sourcePackage"] = source_package
+    aggregate["cleanedSourcePackage"] = build_and_verify_cleaned_source_package(
+        base_dir=base_dir,
+        source_package=source_package,
+        timeout=semantic_sweep_timeout or base_config.stage_timeout,
+        msvc_root=msvc_root,
+        wine=wine,
+        wineprefix=wineprefix,
+        objcopy=objcopy,
+        objdump=objdump,
+    )
     aggregate["semanticSweep"] = run_source_package_semantic_sweep(
         source_package,
         enabled=semantic_sweep,
@@ -184,6 +198,80 @@ def run_recovery_windows(
     aggregate["completedAt"] = now()
     atomic_write_json(summary_path, aggregate)
     return aggregate
+
+
+def build_and_verify_cleaned_source_package(
+    *,
+    base_dir: Path,
+    source_package: dict[str, Any],
+    timeout: int,
+    msvc_root: Path | None,
+    wine: str,
+    wineprefix: Path | None,
+    objcopy: str,
+    objdump: str,
+) -> dict[str, Any]:
+    package_dir_value = source_package.get("packageDir")
+    if not package_dir_value:
+        return {
+            "schema": "agentdecompile.cleaned-source-package-summary.v1",
+            "status": "missing-package",
+            "reason": "source package has no packageDir",
+        }
+    package_dir = Path(str(package_dir_value))
+    if not package_dir.exists():
+        return {
+            "schema": "agentdecompile.cleaned-source-package-summary.v1",
+            "status": "missing-package",
+            "packageDir": str(package_dir),
+        }
+    cleaned_dir = base_dir / "cleaned-source"
+    try:
+        cleaned = cleanup_recovered_source_package(package_dir=package_dir, out_dir=cleaned_dir)
+        verification = verify_recovered_source_package(
+            cleaned_dir,
+            out_dir=cleaned_dir / "verification-msvc",
+            compiler="msvc",
+            timeout=timeout,
+            object_compile=True,
+            msvc_root=msvc_root,
+            wine=wine,
+            wineprefix=wineprefix,
+            code_compare=True,
+            objcopy=objcopy,
+            objdump=objdump,
+        )
+    except Exception as exc:
+        return {
+            "schema": "agentdecompile.cleaned-source-package-summary.v1",
+            "status": "failed",
+            "packageDir": str(cleaned_dir),
+            "reason": str(exc),
+        }
+    verification_path = cleaned_dir / "verification-msvc" / "verification.json"
+    return {
+        "schema": "agentdecompile.cleaned-source-package-summary.v1",
+        "status": verification.get("status"),
+        "packageDir": str(cleaned_dir),
+        "manifest": str(cleaned_dir / "manifest.json"),
+        "verification": str(verification_path),
+        "functionCount": cleaned.get("functionCount"),
+        "changed": cleaned.get("changed"),
+        "convertedToC": cleaned.get("convertedToC"),
+        "formatted": cleaned.get("formatted"),
+        "lintOk": cleaned.get("lintOk"),
+        "lintFailed": cleaned.get("lintFailed"),
+        "attempted": verification.get("attempted"),
+        "syntaxOk": verification.get("syntaxOk"),
+        "objectCompileOk": verification.get("objectCompileOk"),
+        "codeCompareAttempted": verification.get("codeCompareAttempted"),
+        "codeCompareRawMatched": verification.get("codeCompareRawMatched"),
+        "codeCompareRelocationMaskedMatched": verification.get("codeCompareRelocationMaskedMatched"),
+        "codeCompareMismatched": verification.get("codeCompareMismatched"),
+        "verificationTier": verification.get("verificationTier"),
+        "acceptanceGate": verification.get("acceptanceGate"),
+        "claimBoundary": "cleaned C package code-byte matches are bounded slice evidence; full source parity still requires complete function/data/linkage coverage and objdiff/full-rebuild acceptance",
+    }
 
 
 def load_resume_summary(summary_path: Path, base_config: RecoveryConfig, window_size: int) -> dict[str, Any]:
@@ -296,6 +384,7 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
     coverage_path = package_dir / "coverage.json"
     coverage_md_path = package_dir / "COVERAGE.md"
     semantic = aggregate.get("semanticSweep") if isinstance(aggregate.get("semanticSweep"), dict) else {}
+    cleaned = aggregate.get("cleanedSourcePackage") if isinstance(aggregate.get("cleanedSourcePackage"), dict) else {}
     source_parity = aggregate.get("sourceParitySynthesis") if isinstance(aggregate.get("sourceParitySynthesis"), dict) else {}
     promotion = aggregate.get("sourceParityPromotion") if isinstance(aggregate.get("sourceParityPromotion"), dict) else {}
     sweep = read_json(Path(str(semantic.get("report") or "")))
@@ -307,17 +396,30 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
     source_parity_accepted = int(manifest.get("sourceParityAcceptedFunctionCount") or package.get("sourceParityAcceptedFunctionCount") or 0)
     matched_rows, unmatched_rows = semantic_coverage_rows(sweep)
     parity_rows = source_parity_coverage_rows(manifest)
+    package_diagnostics = package_plan_diagnostics(base_dir, package_dir)
+    effective_recoverable_total = max(
+        0,
+        recoverable_total - int(package_diagnostics.get("mergedPlanCandidateCount") or 0),
+    )
+    cleaned_code_matches = int(cleaned.get("codeCompareRawMatched") or 0) + int(cleaned.get("codeCompareRelocationMaskedMatched") or 0)
+    status = coverage_status(
+        recoverable_total,
+        source_functions,
+        matched_functions,
+        semantic_matched,
+        source_parity_accepted,
+        semantic,
+        source_parity,
+    )
+    if cleaned.get("status") == "code-match" and cleaned_code_matches:
+        status = (
+            "effective-recoverable-cleaned-package-code-match"
+            if effective_recoverable_total > 0 and cleaned_code_matches >= effective_recoverable_total
+            else "partial-cleaned-package-code-match"
+        )
     coverage = {
         "schema": "agentdecompile.recovery-window-coverage.v1",
-        "status": coverage_status(
-            recoverable_total,
-            source_functions,
-            matched_functions,
-            semantic_matched,
-            source_parity_accepted,
-            semantic,
-            source_parity,
-        ),
+        "status": status,
         "generatedAt": now(),
         "input": aggregate.get("input"),
         "workDir": aggregate.get("workDir"),
@@ -325,12 +427,14 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
         "candidateCoverage": {
             "candidateTotal": int(aggregate.get("candidateTotal") or 0),
             "recoverableCandidateTotal": recoverable_total,
+            "effectiveRecoverableCandidateTotal": effective_recoverable_total,
             "recoverableWindowTotal": int(aggregate.get("recoverableWindowTotal") or 0),
             "windowSize": int(aggregate.get("windowSize") or 0),
             "windowsKnown": len(windows),
             "windowsComplete": int(aggregate.get("windowsComplete") or 0),
             "windowsFailed": int(aggregate.get("windowsFailed") or 0),
             "windowOffsetsCovered": [row.get("offset") for row in windows if isinstance(row, dict)],
+            "packageDiagnostics": package_diagnostics,
         },
         "sourceCoverage": {
             "packagedFunctions": source_functions,
@@ -358,6 +462,27 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
             "compilerResolution": semantic.get("compilerResolution"),
             "compilerProfiles": semantic.get("compilerProfiles"),
         },
+        "cleanedPackageCoverage": {
+            "enabled": bool(cleaned),
+            "status": cleaned.get("status"),
+            "verificationTier": cleaned.get("verificationTier"),
+            "attempted": int(cleaned.get("attempted") or 0),
+            "formatted": int(cleaned.get("formatted") or 0),
+            "lintOk": int(cleaned.get("lintOk") or 0),
+            "lintFailed": int(cleaned.get("lintFailed") or 0),
+            "syntaxOk": int(cleaned.get("syntaxOk") or 0),
+            "objectCompileOk": int(cleaned.get("objectCompileOk") or 0),
+            "codeCompareAttempted": int(cleaned.get("codeCompareAttempted") or 0),
+            "codeCompareRawMatched": int(cleaned.get("codeCompareRawMatched") or 0),
+            "codeCompareRelocationMaskedMatched": int(cleaned.get("codeCompareRelocationMaskedMatched") or 0),
+            "codeCompareMismatched": int(cleaned.get("codeCompareMismatched") or 0),
+            "codeMatchPackagePercent": percent(cleaned_code_matches, source_functions),
+            "codeMatchRecoverablePercent": percent(cleaned_code_matches, recoverable_total),
+            "codeMatchEffectiveRecoverablePercent": percent(cleaned_code_matches, effective_recoverable_total),
+            "packageDir": cleaned.get("packageDir"),
+            "verification": cleaned.get("verification"),
+            "claimBoundary": cleaned.get("claimBoundary"),
+        },
         "sourceParityCoverage": {
             "enabled": bool(source_parity.get("enabled")),
             "status": source_parity.get("status"),
@@ -383,6 +508,7 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
             matched_functions,
             semantic_matched,
             source_parity_accepted,
+            package_diagnostics,
         ),
         "claimBoundary": (
             "Coverage is per-function source-candidate and code-byte evidence only. "
@@ -394,6 +520,109 @@ def write_window_coverage(base_dir: Path, aggregate: dict[str, Any]) -> dict[str
     atomic_write_json(coverage_path, coverage)
     coverage_md_path.write_text(render_coverage_markdown(coverage), encoding="utf-8")
     return {"status": coverage["status"], "json": str(coverage_path), "markdown": str(coverage_md_path), "fullSourceParity": False}
+
+
+def package_plan_diagnostics(base_dir: Path, package_dir: Path) -> dict[str, Any]:
+    plan_path = base_dir / "_plan" / "function-candidates.json"
+    tasks_path = package_dir / "tasks.jsonl"
+    if not plan_path.exists() or not tasks_path.exists():
+        return {
+            "schema": "agentdecompile.package-plan-diagnostics.v1",
+            "status": "missing-input",
+            "plan": str(plan_path),
+            "tasks": str(tasks_path),
+        }
+
+    plan = read_json(plan_path)
+    plan_rows = [row for row in plan.get("candidates", []) if isinstance(row, dict) and is_recoverable_candidate(row)]
+    task_rows = read_jsonl(tasks_path)
+    plan_keys = {candidate_key(row): row for row in plan_rows}
+    task_keys = {candidate_key(row): row for row in task_rows if isinstance(row, dict)}
+    merged_fragments = boundary_repair_fragments(base_dir)
+    merged_keys = {candidate_key(row): row for row in merged_fragments}
+    missing_keys = sorted(set(plan_keys) - set(task_keys))
+    extra_keys = sorted(set(task_keys) - set(plan_keys))
+    missing = [diagnostic_candidate_row(plan_keys[key], merged_keys.get(key)) for key in missing_keys]
+    extra = [diagnostic_candidate_row(task_keys[key], None) for key in extra_keys]
+    unresolved_missing = [row for row in missing if not row.get("mergedBoundaryFragment")]
+    sample_limit = 100
+    return {
+        "schema": "agentdecompile.package-plan-diagnostics.v1",
+        "status": "complete",
+        "planRecoverableCandidates": len(plan_rows),
+        "packagedTasks": len(task_rows),
+        "missingPlanCandidateCount": len(missing),
+        "unresolvedMissingPlanCandidateCount": len(unresolved_missing),
+        "extraPackagedTaskCount": len(extra),
+        "mergedPlanCandidateCount": sum(1 for row in missing if row.get("mergedBoundaryFragment")),
+        "missingPlanCandidates": missing[:sample_limit],
+        "missingPlanCandidatesTruncated": len(missing) > sample_limit,
+        "extraPackagedTasks": extra[:sample_limit],
+        "extraPackagedTasksTruncated": len(extra) > sample_limit,
+        "claimBoundary": "diagnostics explain scheduling/package accounting only; they are not source parity proof",
+    }
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def candidate_key(row: dict[str, Any]) -> tuple[str, int | None]:
+    return str(row.get("name") or ""), coerce_int(row.get("address"))
+
+
+def coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value), 16) if isinstance(value, str) and value.lower().startswith("0x") else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def diagnostic_candidate_row(row: dict[str, Any], repair: dict[str, Any] | None) -> dict[str, Any]:
+    result = {
+        "name": row.get("name"),
+        "address": row.get("address"),
+        "rva": row.get("rva"),
+        "source": row.get("source"),
+        "status": row.get("status"),
+    }
+    if repair:
+        result["mergedBoundaryFragment"] = True
+        result["mergedInto"] = {
+            "name": repair.get("ownerName"),
+            "address": repair.get("ownerAddress"),
+            "repair": repair.get("repair"),
+        }
+    return result
+
+
+def boundary_repair_fragments(base_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(base_dir.glob("window-*/source-generation/artifacts/applied-boundary-repairs.jsonl")):
+        for row in read_jsonl(path):
+            if row.get("fragmentName") is None:
+                continue
+            rows.append(
+                {
+                    "name": row.get("fragmentName"),
+                    "address": row.get("fragmentAddress"),
+                    "rva": row.get("fragmentRva"),
+                    **row,
+                }
+            )
+    return rows
 
 
 def semantic_coverage_rows(sweep: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -492,13 +721,18 @@ def coverage_next_action(
     matched_functions: int,
     semantic_matched: int,
     source_parity_accepted: int,
+    package_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if source_functions < recoverable_total:
+    diagnostics = package_diagnostics or {}
+    effective_recoverable_total = max(0, recoverable_total - int(diagnostics.get("mergedPlanCandidateCount") or 0))
+    unresolved_missing = int(diagnostics.get("unresolvedMissingPlanCandidateCount") or 0)
+    if source_functions < effective_recoverable_total or unresolved_missing:
         return {
             "kind": "continue-window-recovery",
-            "reason": "not all recoverable function candidates have packaged source candidates",
+            "reason": "not all effective recoverable function candidates have packaged source candidates",
+            "unresolvedMissingPlanCandidates": unresolved_missing,
             "suggestedCommand": [
-                "recovery-recover",
+                "agentdecompile-recover",
                 "recover-windows",
                 str(aggregate.get("input") or "<input>"),
                 "--work-dir",
@@ -549,8 +783,9 @@ def render_coverage_markdown(coverage: dict[str, Any]) -> str:
     candidate = coverage["candidateCoverage"]
     source = coverage["sourceCoverage"]
     semantic = coverage["semanticCoverage"]
+    cleaned = coverage.get("cleanedPackageCoverage") if isinstance(coverage.get("cleanedPackageCoverage"), dict) else {}
     lines = [
-        "# Recovery Recovery Coverage",
+        "# AgentDecompile Recovery Coverage",
         "",
         f"Status: `{coverage['status']}`",
         f"Full source parity: `{str(coverage['fullSourceParity']).lower()}`",
@@ -558,6 +793,7 @@ def render_coverage_markdown(coverage: dict[str, Any]) -> str:
         "## Candidate Coverage",
         "",
         f"- Recoverable candidates: `{candidate['recoverableCandidateTotal']}`",
+        f"- Effective recoverable candidates after merged boundary fragments: `{candidate['effectiveRecoverableCandidateTotal']}`",
         f"- Complete windows: `{candidate['windowsComplete']}` / `{candidate['recoverableWindowTotal']}`",
         f"- Packaged functions: `{source['packagedFunctions']}`",
         f"- Recoverable function coverage: `{source['recoverableFunctionCoveragePercent']}%`",
@@ -571,6 +807,17 @@ def render_coverage_markdown(coverage: dict[str, Any]) -> str:
         f"- Semantic match over recoverable candidates: `{semantic['semanticMatchRecoverablePercent']}%`",
         f"- Attempts: `{semantic['attempts']}` compiled `{semantic['attemptsCompiled']}` reused `{semantic['attemptsReused']}`",
         "",
+        "## Cleaned Package Coverage",
+        "",
+        f"- Status: `{cleaned.get('status')}`",
+        f"- Verification tier: `{cleaned.get('verificationTier')}`",
+        f"- Formatted: `{cleaned.get('formatted', 0)}` / `{source['packagedFunctions']}` packaged functions",
+        f"- Lint clean: `{cleaned.get('lintOk', 0)}` / `{source['packagedFunctions']}` packaged functions",
+        f"- Code matches: `{int(cleaned.get('codeCompareRawMatched') or 0) + int(cleaned.get('codeCompareRelocationMaskedMatched') or 0)}` / `{source['packagedFunctions']}` packaged functions",
+        f"- Code match over recoverable candidates: `{cleaned.get('codeMatchRecoverablePercent', 0.0)}%`",
+        f"- Code match over effective recoverable candidates: `{cleaned.get('codeMatchEffectiveRecoverablePercent', 0.0)}%`",
+        f"- Mismatches: `{cleaned.get('codeCompareMismatched', 0)}`",
+        "",
         "## Matched Functions",
         "",
     ]
@@ -583,6 +830,19 @@ def render_coverage_markdown(coverage: dict[str, Any]) -> str:
             )
     else:
         lines.append("- None")
+    diagnostics = candidate.get("packageDiagnostics") if isinstance(candidate.get("packageDiagnostics"), dict) else {}
+    if diagnostics:
+        lines.extend(
+            [
+                "",
+                "## Package Diagnostics",
+                "",
+                f"- Missing plan candidates: `{diagnostics.get('missingPlanCandidateCount', 0)}`",
+                f"- Merged boundary fragments: `{diagnostics.get('mergedPlanCandidateCount', 0)}`",
+                f"- Unresolved missing plan candidates: `{diagnostics.get('unresolvedMissingPlanCandidateCount', 0)}`",
+                f"- Extra packaged tasks: `{diagnostics.get('extraPackagedTaskCount', 0)}`",
+            ]
+        )
     lines.extend(["", "## Next Action", "", f"- Kind: `{coverage['nextAction']['kind']}`", f"- Reason: {coverage['nextAction']['reason']}", "", coverage["claimBoundary"], ""])
     return "\n".join(lines)
 
@@ -743,7 +1003,7 @@ def promote_source_parity_accepts(source_package: dict[str, Any], source_parity:
         if not source.exists():
             continue
         stem = safe_function_file_stem({"name": row.get("name"), "address": row.get("entry")})
-        copied_c = functions_dir / f"{stem}{source_suffix(source)}"
+        copied_c = functions_dir / f"{stem}{source_suffix_for_task(source, row)}"
         copied_json = functions_dir / f"{stem}.json"
         shutil.copy2(source, copied_c)
         metadata = {
@@ -786,6 +1046,18 @@ def promote_source_parity_accepts(source_package: dict[str, Any], source_parity:
         functions.append(function)
         promoted.append(function)
         existing_keys.add(key)
+        # Dual-write claim-visible verified/ tree (package functions/ stays the rebuild surface).
+        from .artifact_layout import publish_verified_artifact
+
+        publish_verified_artifact(
+            package_dir.parent,
+            stem=stem,
+            source=copied_c,
+            metadata={
+                **metadata,
+                "differences": row.get("differences"),
+            },
+        )
 
     manifest["functions"] = functions
     manifest["functionCount"] = len(functions)
@@ -930,6 +1202,118 @@ def iter_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+OBJDIFF_PROOF_TIER = "target-object-objdiff-match"
+
+
+def _function_identity_key(fn: dict[str, Any]) -> tuple[str, str]:
+    return (str(fn.get("name") or ""), str(fn.get("address") or fn.get("entry") or ""))
+
+
+def is_promoted_accept(fn: dict[str, Any]) -> bool:
+    return fn.get("proofTier") == OBJDIFF_PROOF_TIER or fn.get("status") == "source-parity-accepted"
+
+
+def stash_promoted_accepts(package_dir: Path, stash_dir: Path) -> list[dict[str, Any]]:
+    """Copy objdiff-accepted packaged functions aside before package rebuild wipe."""
+
+    if stash_dir.exists():
+        shutil.rmtree(stash_dir)
+    manifest_path = package_dir / "manifest.json"
+    if not package_dir.exists() or not manifest_path.exists():
+        return []
+    manifest = read_json(manifest_path)
+    if not manifest:
+        return []
+    functions_dir = package_dir / "functions"
+    stash_functions = stash_dir / "functions"
+    accepted: list[dict[str, Any]] = []
+    for fn in manifest.get("functions") or []:
+        if not isinstance(fn, dict) or not is_promoted_accept(fn):
+            continue
+        stash_functions.mkdir(parents=True, exist_ok=True)
+        source = fn.get("source")
+        if source:
+            src = Path(str(source))
+            if src.exists():
+                dest = stash_functions / src.name
+                shutil.copy2(src, dest)
+                stem = src.stem
+                for sibling in functions_dir.glob(f"{stem}.*"):
+                    sibling_dest = stash_functions / sibling.name
+                    if not sibling_dest.exists():
+                        shutil.copy2(sibling, sibling_dest)
+        metadata = fn.get("metadata")
+        if metadata:
+            meta = Path(str(metadata))
+            if meta.exists():
+                shutil.copy2(meta, stash_functions / meta.name)
+        accepted.append(dict(fn))
+    if not accepted:
+        return []
+    stash_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(stash_dir / "accepted.json", {"functions": accepted})
+    return accepted
+
+
+def restore_promoted_accepts(
+    package_dir: Path,
+    stash_dir: Path,
+    functions: list[dict[str, Any]],
+) -> int:
+    """Re-merge stashed objdiff accepts into a freshly rebuilt package."""
+
+    if not stash_dir.exists():
+        return 0
+    accepted_doc = read_json(stash_dir / "accepted.json")
+    accepted = list(accepted_doc.get("functions") or []) if accepted_doc else []
+    if not accepted:
+        shutil.rmtree(stash_dir, ignore_errors=True)
+        return 0
+    functions_dir = package_dir / "functions"
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    stash_functions = stash_dir / "functions"
+    existing = {_function_identity_key(fn): idx for idx, fn in enumerate(functions) if isinstance(fn, dict)}
+    restored = 0
+    for fn in accepted:
+        if not isinstance(fn, dict):
+            continue
+        key = _function_identity_key(fn)
+        source_name = Path(str(fn.get("source") or "")).name
+        meta_name = Path(str(fn.get("metadata") or "")).name
+        if source_name:
+            stashed = stash_functions / source_name
+            if stashed.exists():
+                dest = functions_dir / source_name
+                shutil.copy2(stashed, dest)
+                fn = {**fn, "source": str(dest)}
+                stem = Path(source_name).stem
+                for sibling in stash_functions.glob(f"{stem}.*"):
+                    if sibling.name == source_name or sibling.name == meta_name:
+                        continue
+                    shutil.copy2(sibling, functions_dir / sibling.name)
+        if meta_name:
+            stashed_meta = stash_functions / meta_name
+            if stashed_meta.exists():
+                dest_meta = functions_dir / meta_name
+                shutil.copy2(stashed_meta, dest_meta)
+                fn = {**fn, "metadata": str(dest_meta)}
+        if key in existing:
+            prior = functions[existing[key]]
+            if isinstance(prior, dict) and is_promoted_accept(prior):
+                functions[existing[key]] = fn
+            elif isinstance(prior, dict) and not is_promoted_accept(prior):
+                # Prefer proof-backed accept over regenerated unverified candidate.
+                functions[existing[key]] = fn
+            else:
+                functions[existing[key]] = fn
+        else:
+            functions.append(fn)
+            existing[key] = len(functions) - 1
+        restored += 1
+    shutil.rmtree(stash_dir, ignore_errors=True)
+    return restored
+
+
 def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]) -> dict[str, Any]:
     package_dir = base_dir / "recovered-source"
     functions_dir = package_dir / "functions"
@@ -938,7 +1322,9 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
     manifest_path = package_dir / "manifest.json"
     index_path = package_dir / "README.md"
     preserved_sweep = base_dir / ".recovered-source-sweep-cache"
+    preserved_accepts = base_dir / ".recovered-source-accepted-cache"
 
+    stash_promoted_accepts(package_dir, preserved_accepts)
     if preserved_sweep.exists():
         shutil.rmtree(preserved_sweep)
     if package_dir.exists():
@@ -975,14 +1361,32 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
                     continue
                 task_count += 1
                 source = task.get("source")
+                if not source:
+                    synthesized = synthesize_catalog_task_source(task, functions_dir)
+                    if synthesized is not None:
+                        source = str(synthesized)
+                        task = {
+                            **task,
+                            "source": source,
+                            "sourceLanguage": "gas",
+                            "sourceQuality": "nonsemantic-bootstrap",
+                            "sourceOrigin": "automatic byte-exact bootstrap for catalogued executable target slice; not semantic recovered C",
+                            "semanticSource": False,
+                            "automaticGenerator": {
+                                **(task.get("automaticGenerator") if isinstance(task.get("automaticGenerator"), dict) else {}),
+                                "rule": "target-slice-asm-bootstrap",
+                                "cataloguedFragmentSource": True,
+                            },
+                        }
                 if source:
                     source_path = resolve_path(source)
                     if source_path.exists():
                         stem = safe_function_file_stem(task)
-                        copied_c = functions_dir / f"{stem}{source_suffix(source_path)}"
+                        copied_c = functions_dir / f"{stem}{source_suffix_for_task(source_path, task)}"
                         copied_json = functions_dir / f"{stem}.json"
                         copied_slice = copy_target_slice(task, functions_dir / f"{stem}.target.bin")
-                        shutil.copy2(source_path, copied_c)
+                        if source_path.resolve() != copied_c.resolve():
+                            shutil.copy2(source_path, copied_c)
                         task = {**task, "packagedSource": str(copied_c)}
                         if copied_slice is not None:
                             task["targetSlice"] = {
@@ -997,6 +1401,8 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
                                 "rva": task.get("rva"),
                                 "status": task.get("status"),
                                 "source": str(copied_c),
+                                "sourceLanguage": task.get("sourceLanguage"),
+                                "sourceQuality": task.get("sourceQuality"),
                                 "metadata": str(copied_json),
                                 "targetSlice": task.get("targetSlice"),
                                 "windowOffset": window.get("offset"),
@@ -1004,6 +1410,17 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
                         )
                 tasks_out.write(json.dumps(task, sort_keys=True) + "\n")
 
+    restored_accepts = restore_promoted_accepts(package_dir, preserved_accepts, functions)
+    accepted_count = sum(1 for fn in functions if isinstance(fn, dict) and is_promoted_accept(fn))
+    claim_boundary = (
+        "packaged sources are generated-unverified automatic candidates until compiler and objdiff gates accept them"
+    )
+    if accepted_count:
+        claim_boundary = (
+            "Package may contain generated-unverified candidates plus previously promoted objdiff accepts "
+            "restored across resume. Only functions with proofTier=target-object-objdiff-match have "
+            "objdiff-zero evidence; full source parity remains false."
+        )
     manifest = {
         "schema": "agentdecompile.recovered-source-package.v1",
         "status": "complete",
@@ -1015,7 +1432,9 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
         "facts": str(facts_path),
         "tasks": str(tasks_path),
         "functions": functions,
-        "claimBoundary": "packaged sources are generated-unverified automatic candidates until compiler and objdiff gates accept them",
+        "sourceParityAcceptedFunctionCount": accepted_count,
+        "restoredPromotedAccepts": restored_accepts,
+        "claimBoundary": claim_boundary,
     }
     atomic_write_json(manifest_path, manifest)
     index_path.write_text(render_source_index(manifest), encoding="utf-8")
@@ -1032,6 +1451,8 @@ def build_recovered_source_package(base_dir: Path, windows: list[dict[str, Any]]
         "functionCount": len(functions),
         "factCount": fact_count,
         "taskCount": task_count,
+        "sourceParityAcceptedFunctionCount": accepted_count,
+        "restoredPromotedAccepts": restored_accepts,
     }
 
 
@@ -1040,6 +1461,52 @@ def resolve_path(path: Any) -> Path:
     if candidate.is_absolute():
         return candidate
     return Path.cwd() / candidate
+
+
+def synthesize_catalog_task_source(task: dict[str, Any], functions_dir: Path) -> Path | None:
+    target_slice = task.get("targetSlice")
+    if not isinstance(target_slice, dict) or target_slice.get("status") != "complete":
+        return None
+    bytes_path = target_slice.get("bytesPath")
+    if not bytes_path:
+        return None
+    source_bytes = resolve_path(bytes_path)
+    if not source_bytes.exists():
+        return None
+    data = source_bytes.read_bytes()
+    if not data:
+        return None
+    stem = safe_function_file_stem(task)
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    path = functions_dir / f"{stem}.S"
+    symbol = safe_asm_symbol(str(task.get("name") or stem))
+    path.write_text(render_gas_byte_source(symbol, data), encoding="utf-8")
+    return path
+
+
+def safe_asm_symbol(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in value)
+    if not safe or safe[0].isdigit():
+        safe = f"sub_{safe}"
+    return safe
+
+
+def render_gas_byte_source(symbol: str, data: bytes) -> str:
+    lines = [
+        "/*",
+        " * Automatically generated assembly bootstrap from acquired target-slice bytes.",
+        " * This is not semantic recovered C; it preserves bytes for package-level verification.",
+        " */",
+        ".text",
+        f".globl {symbol}",
+        f".type {symbol}, @function",
+        f"{symbol}:",
+    ]
+    for index in range(0, len(data), 12):
+        chunk = ", ".join(f"0x{byte:02x}" for byte in data[index : index + 12])
+        lines.append(f".byte {chunk}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def copy_target_slice(task: dict[str, Any], destination: Path) -> Path | None:
@@ -1052,13 +1519,52 @@ def copy_target_slice(task: dict[str, Any], destination: Path) -> Path | None:
     source = resolve_path(bytes_path)
     if not source.exists():
         return None
-    shutil.copy2(source, destination)
+    data = source.read_bytes()
+    span = target_byte_span_for_task(task)
+    if span is not None:
+        offset, length = span
+        data = data[offset : offset + length]
+        target_slice["packagedSpan"] = {
+            "offset": offset,
+            "length": length,
+            "sourceBytesPath": str(source),
+            "reason": "packaged target bytes are limited to automaticGenerator.targetByteSpan",
+        }
+        target_slice["size"] = len(data)
+        target_slice["bytesSha256"] = hashlib.sha256(data).hexdigest()
+    destination.write_bytes(data)
     return destination
 
 
-def source_suffix(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".c", ".cc", ".cpp", ".cxx"}:
+def target_byte_span_for_task(task: dict[str, Any]) -> tuple[int, int] | None:
+    generator = task.get("automaticGenerator")
+    if not isinstance(generator, dict):
+        return None
+    span = generator.get("targetByteSpan")
+    if not isinstance(span, dict):
+        return None
+    try:
+        offset = int(span.get("offset") or 0)
+        length = int(span.get("length") or 0)
+    except (TypeError, ValueError):
+        return None
+    if offset < 0 or length <= 0:
+        return None
+    return offset, length
+
+
+def source_suffix_for_task(path: Path, task: dict[str, Any]) -> str:
+    language = str(task.get("sourceLanguage") or "").lower()
+    quality = str(task.get("sourceQuality") or "").lower()
+    suffix = path.suffix
+    if language in {"gas", "gnu-asm"}:
+        return suffix if suffix.lower() in {".s", ".asm"} else ".S"
+    if language in {"asm", "masm", "assembly"} or quality == "byte-emission-asm":
+        return ".asm"
+    lower = suffix.lower()
+    if lower in {".c", ".cc", ".cpp", ".cxx"}:
+        return suffix
+    if lower in {".s", ".asm"}:
         return suffix
     return ".c"
 
@@ -1078,7 +1584,7 @@ def safe_function_file_stem(task: dict[str, Any]) -> str:
 
 def render_source_index(manifest: dict[str, Any]) -> str:
     lines = [
-        "# Recovery Recovered Source Package",
+        "# AgentDecompile Recovered Source Package",
         "",
         f"Status: {manifest['status']}",
         f"Functions: {manifest['functionCount']}",

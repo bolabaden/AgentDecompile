@@ -18,10 +18,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .acquire import acquire_context
+from .autonomy_budget import budget_from_args, ensure_vacuum_queue, reconstruct_vacuum_runner_command, write_autonomy_budget_receipt
+from .claim_report import write_claim_report
 from .cli import main as legacy_main
 from .pipeline import RecoveryConfig, RecoveryRunner
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
+from .vacuum_queue import seed_vacuum_queue_from_work_dir
 
 
 LEGACY_COMMANDS = {
@@ -84,6 +88,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("input", type=Path, help="Binary, archive, installer, or app directory to recover.")
     parser.add_argument("--preferred-name", help="Preferred executable basename when input is a folder.")
     parser.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-reconstruct/<stable-target-id>.")
+    parser.add_argument(
+        "--context",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional context file or directory (notes, partial source, Ghidra dumps, JSON facts). Repeatable.",
+    )
+    parser.add_argument(
+        "--context-pack",
+        type=Path,
+        help="Previously generated context-pack or acquisition-bundle directory.",
+    )
+    parser.add_argument(
+        "--acquisition-bundle",
+        type=Path,
+        help="Explicit acquisition-bundle directory (skips rediscovery from target fingerprint).",
+    )
+    parser.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Enable bounded vacuum/repair autonomy after the core recovery stages (advanced).",
+    )
+    parser.add_argument(
+        "--autonomous-max-functions",
+        type=int,
+        default=1,
+        help="Autonomy budget: maximum functions for vacuum start (default: 1). Use 0 to skip vacuum.",
+    )
+    parser.add_argument(
+        "--autonomous-max-attempts",
+        type=int,
+        default=3,
+        help="Autonomy budget: maximum repair attempts per function (default: 3).",
+    )
+    parser.add_argument(
+        "--autonomous-max-wall-seconds",
+        type=int,
+        default=None,
+        help="Autonomy budget: optional wall-clock cap forwarded to vacuum when supported.",
+    )
     parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
@@ -196,6 +240,33 @@ def run_one_shot(args: argparse.Namespace) -> int:
     if args.force:
         args.resume = False
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    acquisition_receipt = None
+    if args.context:
+        acquisition_receipt = acquire_context(
+            target_input=args.input,
+            context_paths=list(args.context),
+            out_dir=work_dir / "acquisition",
+            preferred_name=args.preferred_name,
+            repo_root=repo_root(),
+        )
+        receipt_path = work_dir / "acquisition" / "acquire.json"
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(json.dumps(acquisition_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if not args.json:
+            print(
+                json.dumps(
+                    {
+                        "status": "acquired",
+                        "claimBoundary": acquisition_receipt.get("claimBoundary"),
+                        "bundleDir": acquisition_receipt.get("bundleDir"),
+                        "entityHint": (acquisition_receipt.get("contextPack") or {}).get("entityCount"),
+                    },
+                    indent=2,
+                )
+            )
+
     config = RecoveryConfig(
         input_path=args.input,
         work_dir=work_dir,
@@ -209,6 +280,10 @@ def run_one_shot(args: argparse.Namespace) -> int:
         enable_byte_authority=not args.no_byte_authority,
         enable_legacy_adapters=False,
         function_analysis=args.function_analysis,
+        context_paths=tuple(args.context),
+        context_pack=args.context_pack,
+        acquisition_bundle=args.acquisition_bundle
+        or (Path(str(acquisition_receipt["bundleDir"])) if acquisition_receipt and acquisition_receipt.get("bundleDir") else None),
         source_task_limit=args.source_task_limit,
         source_task_offset=args.source_task_offset,
         source_synthesis_engine=args.source_synthesis_engine,
@@ -232,9 +307,225 @@ def run_one_shot(args: argparse.Namespace) -> int:
     )
     rc = RecoveryRunner(config).run()
     report_path = work_dir / "report.json"
-    if report_path.exists() and not args.json:
-        print(json.dumps({"status": "complete" if rc == 0 else "failed", "workDir": str(work_dir), "report": str(report_path)}, indent=2))
+    analysis_path = work_dir / "analysis-target.json"
+    terminal = "matched" if rc == 0 else "failed"
+    if analysis_path.exists():
+        try:
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+            if str(analysis.get("terminalStatus") or "").startswith("blocked:toolchain"):
+                terminal = "blocked:toolchain"
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            # Best-effort status enrichment; keep orchestration outcome if parse fails.
+            pass
+    state_path = work_dir / "state.json"
+    if terminal != "blocked:toolchain" and state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if state.get("terminalStatus") == "blocked:toolchain" or state.get("status") == "blocked:toolchain":
+                terminal = "blocked:toolchain"
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            # Best-effort status enrichment; keep orchestration outcome if parse fails.
+            pass
+    if report_path.exists() or terminal == "blocked:toolchain":
+        if rc == 0 and (work_dir / "source-synthesis" / "summary.json").exists():
+            try:
+                synth = json.loads((work_dir / "source-synthesis" / "summary.json").read_text(encoding="utf-8"))
+                accepted = int(synth.get("acceptedCandidates") or synth.get("accepted") or 0)
+                if accepted == 0 and terminal == "matched":
+                    terminal = "partial"
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                # Best-effort partial detection; keep matched/failed if summary is unreadable.
+                pass
+        claim_path = write_claim_report(work_dir, terminal_status=terminal)
+        budget = budget_from_args(
+            max_functions=getattr(args, "autonomous_max_functions", None),
+            max_attempts_per_function=getattr(args, "autonomous_max_attempts", None),
+            max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
+        )
+        if not args.json:
+            print(
+                json.dumps(
+                    {
+                        "status": terminal,
+                        "workDir": str(work_dir),
+                        "report": str(report_path),
+                        "claimReport": str(claim_path),
+                        "claimBoundary": "report status is orchestration outcome; semantic recovery requires objdiff-verified-semantic artifacts under verified/",
+                        "autonomousRequested": bool(args.autonomous),
+                        "autonomyBudget": budget.to_json(),
+                    },
+                    indent=2,
+                )
+            )
+    if rc == 0 and args.autonomous:
+        budget = budget_from_args(
+            max_functions=getattr(args, "autonomous_max_functions", None),
+            max_attempts_per_function=getattr(args, "autonomous_max_attempts", None),
+            max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
+        )
+        queue = ensure_vacuum_queue(work_dir / "state" / "queue.json")
+        prompts_dir = work_dir / "prompts"
+        seed = seed_vacuum_queue_from_work_dir(
+            work_dir,
+            limit=max(budget.max_functions, 0),
+            queue_path=queue,
+            prompts_dir=prompts_dir,
+        )
+        bridge_args = budget.vacuum_bridge_args(
+            queue=queue,
+            prompts_dir=prompts_dir,
+            work_dir=work_dir,
+            runner_command=reconstruct_vacuum_runner_command(
+                work_dir,
+                max_attempts=budget.max_attempts_per_function,
+            ),
+        )
+        if bridge_args is None:
+            write_autonomy_budget_receipt(
+                work_dir,
+                budget,
+                requested=True,
+                status="skipped:budget-exhausted",
+                reason="autonomous-max-functions is 0; vacuum not started",
+            )
+            return rc
+        if int(seed.get("seededCount") or 0) == 0 and int(seed.get("pendingCount") or 0) == 0:
+            write_autonomy_budget_receipt(
+                work_dir,
+                budget,
+                requested=True,
+                status="skipped:empty-queue",
+                reason="no source-generation tasks available to seed vacuum pending queue",
+                bridge_args=None,
+            )
+            return rc
+        # Advanced hook: bridge to vacuum without making it a peer CLI brand.
+        bridge_rc = run_decomp_cli_bridge(bridge_args)
+        write_autonomy_budget_receipt(
+            work_dir,
+            budget,
+            requested=True,
+            status="bridged" if bridge_rc == 0 else "bridge-failed",
+            reason=f"vacuum start via decomp-cli bridge; seeded={seed.get('seededCount')}",
+            bridge_args=bridge_args,
+            bridge_returncode=bridge_rc,
+        )
+        if bridge_rc != 0:
+            return bridge_rc
     return rc
+
+
+def build_reconstruct_namespace(
+    input_path: Path,
+    *,
+    work_dir: Path | None = None,
+    preferred_name: str | None = None,
+    context: list[Path] | None = None,
+    context_pack: Path | None = None,
+    acquisition_bundle: Path | None = None,
+    stop_after: str | None = None,
+    autonomous: bool = False,
+    autonomous_max_functions: int = 1,
+    autonomous_max_attempts: int = 3,
+    autonomous_max_wall_seconds: int | None = None,
+    force: bool = False,
+    resume: bool = True,
+) -> argparse.Namespace:
+    """Build a reconstruct argparse namespace for MCP/programmatic callers."""
+
+    argv: list[str] = [str(input_path), "--json"]
+    if work_dir is not None:
+        argv.extend(["--work-dir", str(work_dir)])
+    if preferred_name:
+        argv.extend(["--preferred-name", preferred_name])
+    for path in context or []:
+        argv.extend(["--context", str(path)])
+    if context_pack is not None:
+        argv.extend(["--context-pack", str(context_pack)])
+    if acquisition_bundle is not None:
+        argv.extend(["--acquisition-bundle", str(acquisition_bundle)])
+    if stop_after:
+        argv.extend(["--stop-after", stop_after])
+    if autonomous:
+        argv.append("--autonomous")
+    argv.extend(["--autonomous-max-functions", str(autonomous_max_functions)])
+    argv.extend(["--autonomous-max-attempts", str(autonomous_max_attempts)])
+    if autonomous_max_wall_seconds is not None:
+        argv.extend(["--autonomous-max-wall-seconds", str(autonomous_max_wall_seconds)])
+    if force:
+        argv.append("--force")
+    if not resume:
+        argv.append("--no-resume")
+    return build_parser().parse_args(argv)
+
+
+def run_reconstruct_job(
+    input_path: Path,
+    *,
+    work_dir: Path | None = None,
+    preferred_name: str | None = None,
+    context: list[Path] | None = None,
+    context_pack: Path | None = None,
+    acquisition_bundle: Path | None = None,
+    stop_after: str | None = None,
+    autonomous: bool = False,
+    autonomous_max_functions: int = 1,
+    autonomous_max_attempts: int = 3,
+    autonomous_max_wall_seconds: int | None = None,
+    force: bool = False,
+    resume: bool = True,
+) -> dict[str, Any]:
+    """Run reconstruct and return an MCP-friendly status/claim payload."""
+
+    from .claim_report import build_claim_report
+    from .recovery_status import build_recovery_status
+
+    args = build_reconstruct_namespace(
+        input_path,
+        work_dir=work_dir,
+        preferred_name=preferred_name,
+        context=context,
+        context_pack=context_pack,
+        acquisition_bundle=acquisition_bundle,
+        stop_after=stop_after,
+        autonomous=autonomous,
+        autonomous_max_functions=autonomous_max_functions,
+        autonomous_max_attempts=autonomous_max_attempts,
+        autonomous_max_wall_seconds=autonomous_max_wall_seconds,
+        force=force,
+        resume=resume,
+    )
+    resolved_work = args.work_dir or default_work_dir(args.input, args.preferred_name)
+    exit_code = run_one_shot(args)
+    claim = build_claim_report(work_dir=resolved_work, terminal_status="unknown")
+    # Prefer on-disk claim-report written by run_one_shot when present.
+    claim_path = resolved_work / "claim-report.json"
+    if claim_path.is_file():
+        try:
+            claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    status = build_recovery_status(resolved_work)
+    terminal = str(claim.get("terminalStatus") or status.get("terminalStatus") or ("matched" if exit_code == 0 else "failed"))
+    budget = budget_from_args(
+        max_functions=autonomous_max_functions,
+        max_attempts_per_function=autonomous_max_attempts,
+        max_wall_seconds=autonomous_max_wall_seconds,
+    )
+    return {
+        "tool": "reconstruct",
+        "exitCode": exit_code,
+        "terminalStatus": terminal,
+        "workDir": str(resolved_work.resolve()),
+        "status": status,
+        "claimReport": claim,
+        "claimBoundary": (
+            "orchestration outcome only; semantic recovery requires receipt-backed "
+            "objdiff-verified-semantic artifacts under verified/"
+        ),
+        "autonomousRequested": bool(autonomous),
+        "autonomyBudget": budget.to_json(),
+    }
 
 
 def upstream_status() -> dict[str, Any]:

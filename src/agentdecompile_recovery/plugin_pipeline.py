@@ -13,9 +13,23 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
+from .autonomous_policy import choose_next_action
+
 
 PluginStatus = str
 PipelineEventHandler = Callable[[dict[str, Any]], None]
+
+# Typed stops: do not burn remaining retries after policy decides.
+# promote-or-export is intentionally omitted — prepare_retry only runs after failures.
+AUTONOMY_STOP_ACTIONS = frozenset(
+    {
+        "stop-budget-exhausted",
+        "reject-near-miss",
+        "block-on-compiler-profile-evidence",
+        "reacquire-or-expand-source-facts",
+        "repair-boundary-before-retry",
+    }
+)
 
 
 @dataclass
@@ -242,6 +256,16 @@ class PluginPipeline:
                 previous_attempts.append(attempt_map)
                 context["previousAttempts"] = previous_attempts
                 context = self.prepare_retry(context, previous_attempts)
+                if context.get("autonomyStop"):
+                    self.emit(
+                        {
+                            "type": "autonomy-stop",
+                            "attemptNumber": attempt_number,
+                            "action": (context.get("autonomousPolicy") or {}).get("action"),
+                            "reason": context.get("autonomyStopReason"),
+                        }
+                    )
+                    break
 
         post_match_phase = self.run_post_match(context) if success else None
         return PipelineRunResult(
@@ -298,6 +322,27 @@ class PluginPipeline:
 
     def prepare_retry(self, context: dict[str, Any], previous_attempts: list[dict[str, PluginResult]]) -> dict[str, Any]:
         updated = dict(context)
+        decision = choose_next_action(
+            updated,
+            previous_attempts,
+            budget=updated.get("autonomyBudget"),
+        )
+        updated["autonomousPolicy"] = decision
+        self.emit(
+            {
+                "type": "autonomous-policy",
+                "action": decision.get("action"),
+                "reason": decision.get("reason"),
+                "attemptsSeen": decision.get("attemptsSeen"),
+                "attemptsRemaining": decision.get("attemptsRemaining"),
+                "bestDifferenceCount": decision.get("bestDifferenceCount"),
+            }
+        )
+        action = str(decision.get("action") or "")
+        if action in AUTONOMY_STOP_ACTIONS:
+            updated["autonomyStop"] = True
+            updated["autonomyStopReason"] = str(decision.get("reason") or action)
+            return updated
         for plugin in self.plugins:
             prepare = getattr(plugin, "prepare_retry", None)
             if prepare is not None:

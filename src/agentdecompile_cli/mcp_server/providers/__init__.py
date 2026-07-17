@@ -32,6 +32,7 @@ from .dissect import GetFunctionAioToolProvider
 from .batch_analysis import BatchAnalysisToolProvider
 from .prompts import PromptToolProvider
 from .static_analysis import StaticAnalysisToolProvider
+from .recovery import RecoveryToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
@@ -53,6 +54,7 @@ __all__ = [
     "ProjectToolProvider",
     "ScriptToolProvider",
     "StaticAnalysisToolProvider",
+    "RecoveryToolProvider",
     "PromptToolProvider",
     "SearchEverythingToolProvider",
     "StringToolProvider",

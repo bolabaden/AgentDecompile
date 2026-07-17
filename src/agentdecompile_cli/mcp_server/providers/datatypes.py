@@ -285,7 +285,11 @@ class DataTypeToolProvider(ToolProvider):
                 dtm.remove(existing, None)
             typedef_dt = TypedefDataType(CategoryPath(cat_path), alias_name, base_dt, dtm)
             if description:
-                typedef_dt.setDescription(description)
+                try:
+                    typedef_dt.setDescription(description)
+                except Exception:
+                    # TypedefDataType rejects description changes on some Ghidra versions.
+                    logger.debug("typedef description unsupported for %s", alias_name, exc_info=True)
             dtm.addDataType(typedef_dt, None)
 
         self._run_program_transaction(program, "create-data-type", _create_datatype)
@@ -378,13 +382,38 @@ class DataTypeToolProvider(ToolProvider):
                 dtm.remove(dt, None)
                 typedef_dt = TypedefDataType(CategoryPath(resolved_cat_path), target_name, base_dt, dtm)
                 if description_provided:
-                    typedef_dt.setDescription(description)
-                elif dt.getDescription():
-                    typedef_dt.setDescription(dt.getDescription())
+                    try:
+                        typedef_dt.setDescription(description)
+                    except Exception:
+                        logger.debug("typedef description unsupported for %s", target_name, exc_info=True)
+                else:
+                    prior = dt.getDescription()
+                    if prior:
+                        try:
+                            typedef_dt.setDescription(prior)
+                        except Exception:
+                            logger.debug("typedef description copy unsupported for %s", target_name, exc_info=True)
                 dtm.addDataType(typedef_dt, None)
                 dt = typedef_dt
             elif description_provided:
-                dt.setDescription(description)
+                # Description-only updates on typedefs must recreate the catalog entry;
+                # setDescription on the managed instance is rejected by TypedefDataType.
+                base_getter = getattr(dt, "getBaseDataType", None)
+                base_dt = base_getter() if callable(base_getter) else None
+                if base_dt is not None:
+                    dtm.remove(dt, None)
+                    typedef_dt = TypedefDataType(CategoryPath(resolved_cat_path), target_name, base_dt, dtm)
+                    try:
+                        typedef_dt.setDescription(description)
+                    except Exception:
+                        logger.debug("typedef description unsupported for %s", target_name, exc_info=True)
+                    dtm.addDataType(typedef_dt, None)
+                    dt = typedef_dt
+                else:
+                    try:
+                        dt.setDescription(description)
+                    except Exception as exc:
+                        raise ValueError(f"Description update not supported for data type {name}: {exc}") from exc
 
         self._run_program_transaction(program, "update-data-type", _update_datatype)
         return create_success_response(

@@ -373,6 +373,9 @@ TIER01_RUN_TOOLS = (
     "run-batch-export-gzf",
     "run-batch-bsim-signatures",
     "run-batch-sast-scan",
+    "reconstruct",
+    "status",
+    "claim-report",
 )
 
 

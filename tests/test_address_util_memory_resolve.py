@@ -59,6 +59,16 @@ def test_resolve_address_or_symbol_unprefixed_hex_with_alpha() -> None:
 
 
 @pytest.mark.unit
+def test_resolve_ghidra_zero_padded_hex_without_prefix() -> None:
+    """Ghidra Address.toString() often yields zero-padded hex like 00401300."""
+    prog = _FakeProgramForAddr()
+    addr = AddressUtil.resolve_address_or_symbol(prog, "00401300")
+    assert addr is not None
+    assert addr.offset == 0x00401300
+    assert AddressUtil.parse_address(prog, "00401300").offset == 0x00401300
+
+
+@pytest.mark.unit
 def test_resolve_address_or_symbol_decimal_without_alpha() -> None:
     prog = _FakeProgramForAddr()
     addr = AddressUtil.resolve_address_or_symbol(prog, "100")

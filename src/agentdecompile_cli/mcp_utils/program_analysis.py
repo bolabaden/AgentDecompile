@@ -59,6 +59,10 @@ _ANALYSIS_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "checkoutprogram",
         "checkinprogram",
         "checkoutstatus",
+        # Recovery orchestration tools do not require an analyzed Ghidra listing.
+        "reconstruct",
+        "status",
+        "claimreport",
     },
 )
 

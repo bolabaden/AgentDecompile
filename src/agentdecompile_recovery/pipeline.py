@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import signal
 import shutil
@@ -14,7 +15,10 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Callable
 
+from . import acquisition_registry
+from .acquisition_bundle import load_bundle, validate_bundle_target
 from .context_export import ExportConfig, export_context
+from .context_pack import build_context_pack
 from .functions import analyze_function_candidates_with_objdump, discover_function_candidates, write_function_candidates
 from .inventory import build_binary_inventory, write_inventory
 from .sourcegen import generate_source_candidates
@@ -25,10 +29,28 @@ from .state import RunState, atomic_write_json, config_fingerprint, now
 from .strategy import build_strategy
 from .snapshot import snapshot_existing_recovery
 from .targets import TargetIdentity, identify_binary
-from .tools import inspect_capabilities, resolve_script_asset, resolve_steamless_cli
+from .tools import (
+    ToolchainError,
+    detect_pe_packed,
+    inspect_capabilities,
+    resolve_script_asset,
+    resolve_steamless_cli,
+    run_steamless,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Stages that consume acquisition / context-pack facts. Early inventory stages must
+# remain resumable when mid-run ``--context`` only changes acquisition identity.
+ACQUISITION_SENSITIVE_STAGES = frozenset(
+    {
+        "generate-source-candidates",
+        "synthesize-source-tasks",
+        "plan-strategy",
+        "report",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +77,9 @@ class RecoveryConfig:
     snapshot_existing_label: str | None = None
     function_analysis: str = "auto"
     function_facts_jsonl: Path | None = None
+    context_paths: tuple[Path, ...] = ()
+    context_pack: Path | None = None
+    acquisition_bundle: Path | None = None
     source_task_limit: int = 500
     source_task_offset: int = 0
     source_synthesis_engine: str = "legacy"
@@ -139,6 +164,12 @@ class RecoveryRunner:
             self.state.event("stage-start", stage=stage.name, description=stage.description)
             try:
                 summary = stage.run(self, stage)
+            except ToolchainError as exc:
+                self.stage_failed(stage, started, str(exc), 2)
+                self.state.data["status"] = "blocked:toolchain"
+                self.state.data["terminalStatus"] = "blocked:toolchain"
+                self.state.save()
+                return 2
             except subprocess.CalledProcessError as exc:
                 self.stage_failed(stage, started, command_error(exc), exc.returncode)
                 return exc.returncode or 1
@@ -181,14 +212,13 @@ class RecoveryRunner:
         return all(path.exists() for path in stage.outputs)
 
     def stage_config(self, stage: Stage) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "input": str(self.config.input_path),
             "preferredName": self.config.preferred_name,
             "enableByteAuthority": self.config.enable_byte_authority,
             "enableLegacyAdapters": self.config.enable_legacy_adapters,
             "snapshotExistingLabel": self.config.snapshot_existing_label,
             "functionAnalysis": self.config.function_analysis,
-            "functionFactsJsonl": str(self.config.function_facts_jsonl) if self.config.function_facts_jsonl else None,
             "sourceTaskLimit": self.config.source_task_limit,
             "sourceTaskOffset": self.config.source_task_offset,
             "sourceSynthesisEngine": self.config.source_synthesis_engine,
@@ -216,6 +246,76 @@ class RecoveryRunner:
             "stageTimeout": self.config.stage_timeout,
             "stage": stage.name,
         }
+        if stage.name in ACQUISITION_SENSITIVE_STAGES:
+            # Stable bundle identity — not ephemeral --context path lists — so mid-run
+            # re-acquire invalidates only stages that consume acquisition facts.
+            config["acquisitionIdentity"] = self.acquisition_identity()
+        return config
+
+    def acquisition_identity(self) -> dict[str, Any]:
+        """Content-stable acquisition identity for resume fingerprints.
+
+        Prefer an explicit / registered acquisition bundle over CLI path lists so
+        mid-run ``--context`` does not force every stage to re-run.
+        """
+        bundle_dir = self._resolve_acquisition_bundle_for_identity()
+        if bundle_dir is not None:
+            identity: dict[str, Any] = {
+                "kind": "bundle",
+                "bundleDir": str(bundle_dir.resolve()),
+            }
+            manifest_path = bundle_dir / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                    manifest = {}
+                for key in ("targetFingerprint", "entityCount", "sourceCount", "conflictCount", "createdAt"):
+                    if key in manifest:
+                        identity[key] = manifest[key]
+                facts_name = str(manifest.get("factsJsonl") or "function-facts.jsonl")
+                facts_path = bundle_dir / facts_name
+                if facts_path.is_file():
+                    identity["factsSha256"] = hashlib.sha256(facts_path.read_bytes()).hexdigest()
+            return identity
+        if self.config.function_facts_jsonl is not None:
+            facts = self.config.function_facts_jsonl
+            identity = {"kind": "functionFacts", "path": str(facts)}
+            if facts.is_file():
+                identity["sha256"] = hashlib.sha256(facts.read_bytes()).hexdigest()
+            return identity
+        if self.config.context_pack is not None:
+            return {"kind": "contextPack", "path": str(self.config.context_pack.resolve())}
+        if self.config.context_paths:
+            return {
+                "kind": "contextPaths",
+                "paths": sorted(str(path.resolve()) for path in self.config.context_paths),
+            }
+        return {"kind": "none"}
+
+    def _resolve_acquisition_bundle_for_identity(self) -> Path | None:
+        """Locate the acquisition bundle without mutating the run directory."""
+        if self.config.acquisition_bundle is not None:
+            candidate = self.config.acquisition_bundle
+            if (candidate / "manifest.json").exists():
+                return candidate
+        if self.config.context_pack is not None:
+            candidate = self.config.context_pack
+            if (candidate / "manifest.json").exists() and (candidate / "entities.jsonl").exists():
+                return candidate
+            nested = candidate / "acquisition-bundle"
+            if (nested / "manifest.json").exists():
+                return nested
+        latest = self.run_dir / "acquisition" / "latest.json"
+        if latest.exists():
+            try:
+                pointer = json.loads(latest.read_text(encoding="utf-8"))
+                candidate = Path(str(pointer.get("bundleDir") or ""))
+                if candidate.is_dir() and (candidate / "manifest.json").exists():
+                    return candidate
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+        return None
 
     def stage_fingerprint(self, stage: Stage) -> str:
         return config_fingerprint(self.stage_config(stage))
@@ -312,12 +412,44 @@ class RecoveryRunner:
             "analysisBinaryPath": str(target.binary_path),
             "status": "original",
             "transform": None,
+            "terminalStatus": None,
             "claimBoundary": "analysis image is for static recovery inputs; target identity remains the original binary",
         }
         if target.format == "pe":
             capabilities = json.loads((self.run_dir / "capabilities.json").read_text(encoding="utf-8"))
             mono = ((capabilities.get("tools") or {}).get("mono") or {}).get("available")
-            steamless = resolve_steamless_cli(ROOT, self.config.steamless_cli)
+            packed = detect_pe_packed(target.binary_path, ROOT)
+            try:
+                steamless = resolve_steamless_cli(ROOT, self.config.steamless_cli)
+            except ToolchainError as exc:
+                if packed is not False:
+                    summary.update(
+                        {
+                            "status": "blocked",
+                            "terminalStatus": "blocked:toolchain",
+                            "transformAttempted": "steamless-unpacked-pe",
+                            "transformResult": str(exc.reason),
+                            "transformDetail": exc.detail,
+                        }
+                    )
+                    atomic_write_json(out_path, summary)
+                    raise ToolchainError(exc.reason, detail=exc.detail) from exc
+                steamless = None
+            if packed and (not mono or steamless is None):
+                summary.update(
+                    {
+                        "status": "blocked",
+                        "terminalStatus": "blocked:toolchain",
+                        "transformAttempted": "steamless-unpacked-pe",
+                        "transformResult": "mono-or-steamless-unavailable",
+                        "packedDetected": packed,
+                    }
+                )
+                atomic_write_json(out_path, summary)
+                raise ToolchainError(
+                    "steamless-unavailable",
+                    detail="packed PE requires mono + Steamless; refusing to continue on packed .text/.bind",
+                )
             if mono and steamless is not None:
                 image_dir = (self.run_dir / "analysis-image").resolve()
                 image_dir.mkdir(parents=True, exist_ok=True)
@@ -326,23 +458,25 @@ class RecoveryRunner:
                     shutil.copy2(target.binary_path, original_copy)
                 unpacked = Path(str(original_copy) + ".unpacked.exe")
                 steamless_result: subprocess.CompletedProcess[str] | None = None
-                if not unpacked.exists():
-                    steamless_result = subprocess.run(
-                        ["mono", str(steamless), "--quiet", "--keepbind", "--dumppayload", "--dumpdrmp", str(original_copy)],
-                        cwd=ROOT,
-                        text=True,
-                        capture_output=True,
-                        check=False,
-                        timeout=self.config.stage_timeout,
-                    )
                 if unpacked.exists():
+                    # Never trust a leftover unpack without a fresh successful run.
+                    unpacked.unlink()
+                steamless_result = run_steamless(
+                    steamless,
+                    original_copy,
+                    timeout=self.config.stage_timeout,
+                )
+                if steamless_result.returncode != 0 and unpacked.exists():
+                    quarantine = unpacked.with_suffix(unpacked.suffix + ".failed")
+                    unpacked.replace(quarantine)
+                if steamless_result.returncode == 0 and unpacked.exists():
                     summary.update(
                         {
                             "analysisBinaryPath": str(unpacked),
                             "status": "transformed",
                             "transform": "steamless-unpacked-pe",
                             "transformTool": str(steamless),
-                            "transformReturnCode": steamless_result.returncode if steamless_result is not None else None,
+                            "transformReturnCode": steamless_result.returncode,
                             "analysisSha256": sha256_file(unpacked),
                             "analysisSize": unpacked.stat().st_size,
                         }
@@ -354,11 +488,20 @@ class RecoveryRunner:
                             "transformAttempted": "steamless-unpacked-pe",
                             "transformTool": str(steamless),
                             "transformResult": "not-produced",
-                            "transformReturnCode": steamless_result.returncode if steamless_result is not None else None,
-                            "transformStdout": steamless_result.stdout[-4000:] if steamless_result is not None else "",
-                            "transformStderr": steamless_result.stderr[-4000:] if steamless_result is not None else "",
+                            "transformReturnCode": steamless_result.returncode,
+                            "transformStdout": steamless_result.stdout[-4000:],
+                            "transformStderr": steamless_result.stderr[-4000:],
+                            "packedDetected": packed,
                         }
                     )
+                    if packed is not False:
+                        summary["status"] = "blocked"
+                        summary["terminalStatus"] = "blocked:toolchain"
+                        atomic_write_json(out_path, summary)
+                        raise ToolchainError(
+                            "steamless-unpack-failed",
+                            detail="Steamless failed or produced no unpack for a packed PE",
+                        )
         atomic_write_json(out_path, summary)
         return summary
 
@@ -427,6 +570,70 @@ class RecoveryRunner:
         atomic_write_json(out_path, summary)
         return summary
 
+    def resolve_acquisition_facts_source(self, target: dict[str, Any]) -> Path | None:
+        # Prefer an explicit acquisition bundle (e.g. frontdoor mid-run snapshot with
+        # prior merge) over rebuilding a path-only pack that would drop fused facts.
+        bundle_dir: Path | None = self.config.acquisition_bundle
+        compatibility_projection: Path | None = None
+        legacy_sources: list[Path] = []
+        if self.config.function_facts_jsonl:
+            legacy_sources.append(self.config.function_facts_jsonl)
+        if bundle_dir is None and self.config.context_pack:
+            candidate = self.config.context_pack
+            if (candidate / "manifest.json").exists() and (candidate / "entities.jsonl").exists():
+                bundle_dir = candidate
+            elif (candidate / "acquisition-bundle" / "manifest.json").exists():
+                bundle_dir = candidate / "acquisition-bundle"
+            else:
+                packed = candidate / "function-facts.jsonl"
+                if packed.exists():
+                    legacy_sources.append(packed)
+        if bundle_dir is None and self.config.context_paths:
+            build_context_pack(
+                contexts=list(self.config.context_paths),
+                out_dir=self.run_dir / "context-pack",
+                target=target,
+                repo_root=ROOT,
+            )
+            bundle_dir = self.run_dir / "context-pack" / "acquisition-bundle"
+            compatibility_projection = self.run_dir / "context-pack" / "function-facts.jsonl"
+        if bundle_dir is None and not legacy_sources:
+            bundle_dir = acquisition_registry.resolve_bundle(target=target, repo_root=ROOT)
+        if bundle_dir:
+            manifest, _entities, conflicts = load_bundle(bundle_dir)
+            target_status = validate_bundle_target(manifest, target)
+            facts_path = bundle_dir / str(manifest.get("factsJsonl") or "function-facts.jsonl")
+            if not facts_path.exists():
+                raise FileNotFoundError(f"bundle legacy facts projection missing: {facts_path}")
+            atomic_write_json(
+                self.run_dir / "acquisition-bundle.json",
+                {
+                    "schema": "agentdecompile.acquisition-bundle-binding.v1",
+                    "status": target_status["status"],
+                    "bundleDir": str(bundle_dir),
+                    "bundleTargetFingerprint": manifest.get("targetFingerprint"),
+                    "targetMatched": target_status["targetMatched"],
+                    "conflictCount": len(conflicts),
+                    "factsJsonl": str(facts_path),
+                    "claimBoundary": "bundle context is advisory acquisition evidence only; compile and objdiff gates remain required.",
+                },
+            )
+            return compatibility_projection if compatibility_projection and compatibility_projection.exists() else facts_path
+        sources = [path for path in legacy_sources if path.exists()]
+        if not sources:
+            return None
+        if len(sources) == 1:
+            return sources[0]
+        merged = self.run_dir / "context-pack" / "merged-function-facts.jsonl"
+        merged.parent.mkdir(parents=True, exist_ok=True)
+        with merged.open("w", encoding="utf-8") as out:
+            for source in sources:
+                text = source.read_text(encoding="utf-8", errors="replace")
+                out.write(text)
+                if not text.endswith("\n"):
+                    out.write("\n")
+        return merged
+
     def stage_plan_strategy(self, _stage: Stage) -> dict[str, Any]:
         target = self.load_target()
         capabilities_path = self.run_dir / "capabilities.json"
@@ -448,12 +655,13 @@ class RecoveryRunner:
         target = self.load_target()
         candidates = json.loads((self.run_dir / "function-candidates.json").read_text(encoding="utf-8"))
         inventory = json.loads((self.run_dir / "binary-inventory.json").read_text(encoding="utf-8"))
+        facts_jsonl = self.resolve_acquisition_facts_source(target.to_json()) or default_function_facts_path(self.run_dir)
         summary = generate_source_candidates(
             target=target.to_json(),
             function_candidates=candidates,
             out_dir=self.run_dir / "source-generation",
             inventory=inventory,
-            function_facts_jsonl=self.config.function_facts_jsonl or default_function_facts_path(self.run_dir),
+            function_facts_jsonl=facts_jsonl,
             limit=self.config.source_task_limit,
             offset=self.config.source_task_offset,
         )

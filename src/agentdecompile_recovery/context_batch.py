@@ -176,7 +176,7 @@ def export_context_batch(
 
 def render_batch_tree(report: dict[str, Any]) -> str:
     lines = [
-        f"# Context Batch Export",
+        "# Context Batch Export",
         "",
         f"- Input: `{report.get('inputPath')}`",
         f"- Items exported: `{report.get('itemsExported')}`",

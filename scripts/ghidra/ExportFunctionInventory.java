@@ -1,4 +1,4 @@
-// Export per-function inventory rows as JSONL for Recovery source-parity pipelines.
+// Export per-function inventory rows as JSONL for AgentDecompile source-parity pipelines.
 // @category Export
 // @keybinding
 // @menupath

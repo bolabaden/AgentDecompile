@@ -548,7 +548,11 @@ class StringToolProvider(ToolProvider):
         addr = self._resolve_address(addr_str, program=program)
         listing = self._get_listing(program)
         existing = listing.getDataAt(addr)
-        if existing is not None and not allow_existing:
+        if (
+            existing is not None
+            and not allow_existing
+            and bool(getattr(existing, "isDefined", lambda: True)())
+        ):
             raise ValueError(f"Address {addr} already has defined data ({existing.getDataType()}). Use mode='update' to replace.")
 
         raw = encode_program_string(value, encoding)

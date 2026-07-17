@@ -85,7 +85,19 @@ class SourceCandidateGeneratorPlugin:
         _previous_attempts: list[dict[str, PluginResult]],
     ) -> dict[str, Any]:
         updated = dict(context)
-        updated["sourceCandidateIndex"] = int(updated.get("sourceCandidateIndex") or 0) + 1
+        if updated.get("autonomyStop"):
+            return updated
+        policy = updated.get("autonomousPolicy") if isinstance(updated.get("autonomousPolicy"), dict) else {}
+        action = str(policy.get("action") or "")
+        # Only advance the candidate index when policy asks for another generated shape.
+        bump_actions = {
+            "try-next-generated-candidate",
+            "try-nearby-source-shape-or-permuter",
+            "regenerate-source-shape",
+            "",
+        }
+        if action in bump_actions:
+            updated["sourceCandidateIndex"] = int(updated.get("sourceCandidateIndex") or 0) + 1
         return updated
 
 

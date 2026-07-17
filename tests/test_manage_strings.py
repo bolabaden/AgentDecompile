@@ -12,6 +12,8 @@ from agentdecompile_cli.mcp_server.providers.strings import (
     ghidra_string_type_name,
     normalize_string_encoding,
 )
+from agentdecompile_cli.mcp_server.tool_providers import n
+from agentdecompile_cli.mcp_utils.address_util import AddressUtil
 from agentdecompile_cli.registry import Tool
 from tests.helpers import create_test_program, ghidra_install_available
 
@@ -90,11 +92,13 @@ async def test_manage_strings_create_persists_in_program(ghidra_initialized, str
     provider = StringToolProvider()
     provider.program_info = SimpleNamespace(program=program, flat_api=None)
 
+    # Handlers expect call_tool-normalized keys (alpha-only lowercase).
+    # Prefer format_address so Ghidra's bare toString() is not misparsed as decimal.
     result = await provider._handle_create(
         {
-            "mode": "create",
-            "addressOrSymbol": str(target),
-            "value": "CreatedByTest",
+            n("mode"): "create",
+            n("addressOrSymbol"): AddressUtil.format_address(target),
+            n("value"): "CreatedByTest",
         },
     )
     payload = json.loads(result[0].text)

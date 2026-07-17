@@ -15,11 +15,18 @@ def test_recovery_parsers_expose_integrated_commands() -> None:
     recover_commands = set(subparsers.choices)
     assert "recover" in recover_commands
     assert "source-parity-synthesize" in recover_commands
+    assert "acquire" in recover_commands
+    assert "claim-report" in recover_commands
+    assert "acquisition-query" in recover_commands
+    assert "source-cleanup" in recover_commands
+    assert "source-cleanup-package" in recover_commands
 
     frontdoor = build_frontdoor_parser()
     option_dests = {action.dest for action in frontdoor._actions}
     assert "input" in option_dests
     assert "source_synthesis" in option_dests
+    assert "context" in option_dests
+    assert "autonomous" in option_dests
 
 
 def test_recovery_script_surface_is_present_in_agentdecompile_repo() -> None:

@@ -111,6 +111,7 @@ class Tool(str, Enum):
     CHECKIN_PROGRAM = "checkin-program"
     CHECKOUT_PROGRAM = "checkout-program"
     CHECKOUT_STATUS = "checkout-status"
+    CLAIM_REPORT = "claim-report"
     CREATE_LABEL = "create-label"
     DECOMPILE_FUNCTION = "decompile-function"
     DELETE_PROJECT_BINARY = "delete-project-binary"
@@ -155,6 +156,7 @@ class Tool(str, Enum):
     OPEN_PROGRAM_IN_CODE_BROWSER = "open-program-in-code-browser"
     OPEN = "open"
     READ_BYTES = "read-bytes"
+    RECONSTRUCT = "reconstruct"
     RESOLVE_MODIFICATION_CONFLICT = "resolve-modification-conflict"
     RUN_EXTERNAL_RE_SCAN = "run-external-re-scan"
     RUN_BATCH_DECOMPILE = "run-batch-decompile"
@@ -167,6 +169,7 @@ class Tool(str, Enum):
     SEARCH_EVERYTHING = "search-everything"
     SEARCH_STRINGS = "search-strings"
     SEARCH_SYMBOLS = "search-symbols"
+    STATUS = "status"
     SVR_ADMIN = "svr-admin"
     SUGGEST = "suggest"
 
@@ -353,6 +356,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.CHECKIN_PROGRAM.value: _params("programPath", "comment", "keepCheckedOut"),
     Tool.CHECKOUT_PROGRAM.value: _params("programPath", "exclusive"),
     Tool.CHECKOUT_STATUS.value: _params("programPath"),
+    Tool.CLAIM_REPORT.value: _params("workDir", "terminalStatus", "write"),
     Tool.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
     Tool.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
     Tool.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
@@ -528,6 +532,18 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.OPEN.value: _params("path", "shared", "extensions", "openAllPrograms", "destinationFolder", "analyzeAfterImport", "enableVersionControl", "serverUsername", "serverPassword", "serverHost", "serverPort", "repositoryName"),
     Tool.LIST_PROMPTS.value: _params(),
     Tool.READ_BYTES.value: _params("programPath", "address", "length"),
+    Tool.RECONSTRUCT.value: _params(
+        "binaryPath",
+        "workDir",
+        "preferredName",
+        "contextPaths",
+        "contextPack",
+        "acquisitionBundle",
+        "stopAfter",
+        "autonomous",
+        "force",
+        "resume",
+    ),
     Tool.RESOLVE_MODIFICATION_CONFLICT.value: _params("conflictId", "resolution", "programPath"),
     Tool.RUN_EXTERNAL_RE_SCAN.value: _params(
         "binaryPath",
@@ -591,6 +607,7 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.SEARCH_EVERYTHING.value: _params("programPath", "programName", "binaryName", "query", "queries", "mode", "scopes", "caseSensitive", "similarityThreshold", "offset", "limit", "perScopeLimit", "maxFunctionsScan", "maxInstructionsScan", "decompileTimeout", "groupByFunction"),
     Tool.SEARCH_STRINGS.value: _params("programPath", "pattern", "searchString", "maxResults"),
     Tool.SEARCH_SYMBOLS.value: _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
+    Tool.STATUS.value: _params("workDir"),
     Tool.SVR_ADMIN.value: _params("args", "command", "timeoutSeconds"),
     Tool.SUGGEST.value: _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     Tool.SYNC_PROJECT.value: _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
@@ -1133,8 +1150,16 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
     },
 )
 
-# Tier 0 MCP tools: static file triage without Ghidra (file, strings, optional OS RE tools).
-_TIER0_TOOLS: frozenset[Tool] = frozenset({Tool.RUN_FILE_TRIAGE, Tool.RUN_EXTERNAL_RE_SCAN})
+# Tier 0 MCP tools: static file triage / recovery orchestration without Ghidra.
+_TIER0_TOOLS: frozenset[Tool] = frozenset(
+    {
+        Tool.CLAIM_REPORT,
+        Tool.RECONSTRUCT,
+        Tool.RUN_FILE_TRIAGE,
+        Tool.RUN_EXTERNAL_RE_SCAN,
+        Tool.STATUS,
+    }
+)
 
 # Tier 1 MCP tools: batch ghidrecomp export without an open MCP session program.
 _TIER1_TOOLS: frozenset[Tool] = frozenset(

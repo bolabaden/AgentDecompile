@@ -120,6 +120,10 @@ def run_source_plugin_pipeline(config: SourcePluginRunConfig) -> dict[str, Any]:
                 "maxVariantsPerFunction": config.max_variants_per_function,
                 "strategies": sorted(config.strategies) if config.strategies else None,
                 "sourceQualities": sorted(config.source_qualities) if config.source_qualities else None,
+                "autonomyBudget": {
+                    "maxFunctions": 1,
+                    "maxAttemptsPerFunction": max(1, config.max_retries),
+                },
             },
         )
         append_jsonl(runs_path, result.to_json())

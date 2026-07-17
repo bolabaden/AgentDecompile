@@ -168,6 +168,25 @@ def export_recovered_source(
             ),
             encoding="utf-8",
         )
+        # Full objdiff accepts also land under run_dir/verified/ for claim honesty.
+        if str(row.get("status")) == "matched" and int(row.get("differences") or -1) == 0:
+            from .artifact_layout import publish_verified_artifact
+
+            run_dir = out_dir.parent if out_dir.name == "recovered-source" else out_dir
+            publish_verified_artifact(
+                run_dir,
+                stem=f"{row.get('entry', 'unknown')}_{name}",
+                source=split_path,
+                metadata={
+                    "name": name,
+                    "entry": row.get("entry"),
+                    "address": row.get("entry"),
+                    "status": "matched",
+                    "proofTier": "target-object-objdiff-match",
+                    "differences": 0,
+                    "verifyReport": row.get("verifyReport"),
+                },
+            )
         candidate_compile = row.get("candidateCompile") if isinstance(row.get("candidateCompile"), dict) else {}
         build_unit = {
             "name": name,
@@ -318,7 +337,6 @@ def vacuum_row_from_verify(prompt_name: str, verify: dict[str, Any]) -> dict[str
     function_name = str(verify.get("function_name") or prompt_name.split("_", 1)[-1])
     source = verify.get("candidate_source")
     if not source:
-        candidate = Path(str(verify.get("prompt") or prompt_name))
         # prompt field is name not path; resolve via prompts dir in caller if needed
         return None
     source_path = Path(str(source))

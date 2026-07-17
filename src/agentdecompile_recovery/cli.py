@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
+from .acquire import acquire_context
+from .acquisition_mcp import main as acquisition_mcp_main
+from .claim_report import build_claim_report, write_claim_report
 from .context_batch import main as context_batch_main
 from .context_export import ExportConfig, export_context
 from .package_sweep import sweep_recovered_source_package
 from .package_verify import verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
+from .source_cleanup import cleanup_recovered_source_package, propose_source_cleanup
 from .source_parity_profile_corpus import main as source_parity_profile_corpus_main
 from .source_parity_synthesize import main as source_parity_synthesize_main
 from .source_plugin_runner import (
@@ -37,6 +40,32 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = sub.add_parser("inspect", help="Resolve and identify the target binary.")
     inspect.add_argument("input", type=Path)
     inspect.add_argument("--preferred-name")
+
+    acquire = sub.add_parser(
+        "acquire",
+        help="Advanced: sniff mixed context into a target-bound acquisition bundle (prefer agentdecompile-reconstruct --context).",
+    )
+    acquire.add_argument("input", type=Path, nargs="?", help="Optional target binary used for fingerprinting.")
+    acquire.add_argument("context", type=Path, nargs="*", help="Notes, dumps, partial source, or JSON facts.")
+    acquire.add_argument("--out-dir", type=Path, required=True, help="Directory for acquisition receipts and bundles.")
+    acquire.add_argument("--preferred-name")
+    acquire.add_argument("--no-register", action="store_true", help="Do not write the fingerprint registry entry.")
+
+    claim = sub.add_parser("claim-report", help="Emit an honest claim summary for a reconstruct/recover work directory.")
+    claim.add_argument("work_dir", type=Path, help="Run directory containing verified/, advisory/, and/or reports.")
+    claim.add_argument("--status", default="partial", help="Terminal status to record (matched|partial|failed|...).")
+    claim.add_argument("--write", action="store_true", help="Write claim-report.json into the work directory.")
+
+    query = sub.add_parser(
+        "acquisition-query",
+        help="Read-only query against a registered or explicit acquisition bundle (advisory evidence only).",
+    )
+    query.add_argument("--bundle", type=Path, help="Explicit bundle dir. Omit to auto-resolve the latest registered bundle.")
+    query.add_argument("--action", default="inspect", choices=["inspect", "search-everything", "get-function", "get-global", "get-type", "get-xrefs"])
+    query.add_argument("--query")
+    query.add_argument("--address", type=lambda value: int(value, 0))
+    query.add_argument("--limit", type=int, default=25)
+    query.add_argument("--stdio", action="store_true", help="JSONL stdio request/response mode.")
 
     export = sub.add_parser("export-context", help="Export an app, installer, archive, or binary tree into LLM-readable JSON/Markdown.")
     export.add_argument("input", type=Path, help="File or folder to export.")
@@ -89,6 +118,15 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument("--snapshot-existing-recovery", metavar="LABEL", help="Copy any previously verified recovery artifacts for this target into a labeled snapshot, for example rev1.")
     recover.add_argument("--function-analysis", choices=["auto", "none", "objdump"], default="auto", help="Tool-backed function-boundary analysis mode.")
     recover.add_argument("--function-facts-jsonl", type=Path, help="Machine-generated function facts JSONL used as source-candidate context.")
+    recover.add_argument(
+        "--context",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional context file or directory (notes, partial source, Ghidra dumps, JSON facts). Repeatable.",
+    )
+    recover.add_argument("--context-pack", type=Path, help="Previously generated context-pack or acquisition-bundle directory.")
+    recover.add_argument("--acquisition-bundle", type=Path, help="Explicit acquisition-bundle directory.")
     recover.add_argument("--source-task-limit", type=int, default=500, help="Maximum function candidates to queue for automatic source generation.")
     recover.add_argument("--source-task-offset", type=int, default=0, help="Skip this many eligible function candidates before analysis/source generation.")
     recover.add_argument("--source-synthesis-engine", choices=["legacy", "plugin"], default="legacy", help="Source synthesis orchestration engine. plugin uses the upstream-style plugin lifecycle.")
@@ -275,6 +313,21 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_synth.add_argument("--wineprefix", type=Path)
     plugin_synth.add_argument("--timeout", type=int, default=120)
     plugin_synth.add_argument("--progress-every", type=int, default=0)
+
+    cleanup = sub.add_parser("source-cleanup", help="Propose proof-preserving cleanup for a recovered source file.")
+    cleanup.add_argument("--source", type=Path, required=True, help="Candidate source file to clean.")
+    cleanup.add_argument("--out-dir", type=Path, required=True, help="Directory for cleaned source and receipt.")
+    cleanup.add_argument("--function-fact-json", type=Path, help="Optional normalized function fact JSON used for names/constants.")
+    cleanup.add_argument("--proof-preserved", action="store_true", help="Mark cleanup as proof-preserved only after the cleaned source has passed the same verifier gate.")
+    cleanup.add_argument("--verification-tier", help="Verifier tier preserved by the cleaned source.")
+    cleanup.add_argument("--acceptance-gate", help="Acceptance gate preserved by the cleaned source.")
+
+    cleanup_package = sub.add_parser(
+        "source-cleanup-package",
+        help="Write a cleaned recovered-source package with mechanical source cleanup applied.",
+    )
+    cleanup_package.add_argument("--package", type=Path, required=True, help="Recovered-source package directory.")
+    cleanup_package.add_argument("--out-dir", type=Path, required=True, help="Output directory for the cleaned package.")
     return parser
 
 
@@ -319,6 +372,9 @@ def run_recover(args: argparse.Namespace) -> int:
         snapshot_existing_label=args.snapshot_existing_recovery,
         function_analysis=args.function_analysis,
         function_facts_jsonl=args.function_facts_jsonl,
+        context_paths=tuple(getattr(args, "context", None) or ()),
+        context_pack=getattr(args, "context_pack", None),
+        acquisition_bundle=getattr(args, "acquisition_bundle", None),
         source_task_limit=args.source_task_limit,
         source_task_offset=args.source_task_offset,
         source_synthesis_engine=args.source_synthesis_engine,
@@ -694,11 +750,81 @@ def parse_clang_profiles(values: list[str]) -> list[list[str]]:
     return profiles
 
 
+def run_acquire(args: argparse.Namespace) -> int:
+    context_paths = list(args.context or [])
+    receipt = acquire_context(
+        target_input=args.input,
+        context_paths=context_paths,
+        out_dir=args.out_dir,
+        preferred_name=args.preferred_name,
+        repo_root=Path.cwd(),
+        register=not args.no_register,
+    )
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if receipt.get("status") == "complete" else 1
+
+
+def run_claim_report(args: argparse.Namespace) -> int:
+    if args.write:
+        path = write_claim_report(args.work_dir, terminal_status=args.status)
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["writtenTo"] = str(path)
+    else:
+        report = build_claim_report(work_dir=args.work_dir, terminal_status=args.status)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def run_acquisition_query(args: argparse.Namespace) -> int:
+    argv: list[str] = []
+    if args.bundle:
+        argv.extend(["--bundle", str(args.bundle)])
+    argv.extend(["--action", args.action])
+    if args.query:
+        argv.extend(["--query", args.query])
+    if args.address is not None:
+        argv.extend(["--address", str(args.address)])
+    argv.extend(["--limit", str(args.limit)])
+    if args.stdio:
+        argv.append("--stdio")
+    return acquisition_mcp_main(argv)
+
+
+def run_source_cleanup(args: argparse.Namespace) -> int:
+    fact = None
+    if args.function_fact_json:
+        fact = json.loads(args.function_fact_json.read_text(encoding="utf-8"))
+    receipt = propose_source_cleanup(
+        source_path=args.source,
+        out_dir=args.out_dir,
+        function_fact=fact,
+        verification={
+            "proofPreserved": args.proof_preserved,
+            "verificationTier": args.verification_tier,
+            "acceptanceGate": args.acceptance_gate,
+        },
+    )
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0
+
+
+def run_source_cleanup_package(args: argparse.Namespace) -> int:
+    receipt = cleanup_recovered_source_package(package_dir=args.package, out_dir=args.out_dir)
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "inspect":
         return run_inspect(args)
+    if args.command == "acquire":
+        return run_acquire(args)
+    if args.command == "claim-report":
+        return run_claim_report(args)
+    if args.command == "acquisition-query":
+        return run_acquisition_query(args)
     if args.command == "export-context":
         return run_export_context(args)
     if args.command == "export-context-batch":
@@ -719,6 +845,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_source_parity_synthesize(args)
     if args.command == "source-plugin-pipeline":
         return run_source_plugin_pipeline_command(args)
+    if args.command == "source-cleanup":
+        return run_source_cleanup(args)
+    if args.command == "source-cleanup-package":
+        return run_source_cleanup_package(args)
     parser.print_help()
     return 2
 

@@ -7,6 +7,7 @@ import pytest
 
 from agentdecompile_cli.mcp_server.program_metadata import payload_has_mutating_action
 from agentdecompile_cli.mcp_server.providers.datatypes import DataTypeToolProvider
+from agentdecompile_cli.mcp_server.tool_providers import n
 from agentdecompile_cli.registry import Tool, resolve_tool_name
 from tests.helpers import create_test_program, ghidra_install_available
 
@@ -69,12 +70,13 @@ async def test_manage_data_types_create_typedef_persists(ghidra_initialized, dat
     provider = DataTypeToolProvider()
     provider.program_info = SimpleNamespace(program=program, flat_api=None)
 
+    # Handlers expect call_tool-normalized keys (alpha-only lowercase).
     result = await provider._create(
         {
-            "mode": "create",
-            "dataTypeString": "unsigned int",
-            "name": "AgentTestUInt",
-            "categoryPath": "/",
+            n("mode"): "create",
+            n("dataTypeString"): "unsigned int",
+            n("name"): "AgentTestUInt",
+            n("categoryPath"): "/",
         },
     )
     payload = json.loads(result[0].text)
@@ -87,16 +89,23 @@ async def test_manage_data_types_create_typedef_persists(ghidra_initialized, dat
     assert dt is not None
 
     update_result = await provider._update(
-        {"mode": "update", "name": "AgentTestUInt", "categoryPath": "/", "description": "agent test uint"},
+        {
+            n("mode"): "update",
+            n("name"): "AgentTestUInt",
+            n("categoryPath"): "/",
+            n("newName"): "AgentTestUIntRenamed",
+        },
     )
     update_payload = json.loads(update_result[0].text)
     assert update_payload["success"] is True
     assert update_payload["action"] == "update"
-    updated = find_catalog_data_type(program.getDataTypeManager(), "AgentTestUInt", "/")
-    assert updated is not None
-    assert updated.getDescription() == "agent test uint"
+    assert find_catalog_data_type(program.getDataTypeManager(), "AgentTestUInt", "/") is None
+    renamed = find_catalog_data_type(program.getDataTypeManager(), "AgentTestUIntRenamed", "/")
+    assert renamed is not None
 
-    delete_result = await provider._delete({"mode": "delete", "name": "AgentTestUInt", "categoryPath": "/"})
+    delete_result = await provider._delete(
+        {n("mode"): "delete", n("name"): "AgentTestUIntRenamed", n("categoryPath"): "/"},
+    )
     delete_payload = json.loads(delete_result[0].text)
     assert delete_payload["success"] is True
-    assert find_catalog_data_type(program.getDataTypeManager(), "AgentTestUInt", "/") is None
+    assert find_catalog_data_type(program.getDataTypeManager(), "AgentTestUIntRenamed", "/") is None

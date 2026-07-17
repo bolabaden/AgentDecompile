@@ -14,6 +14,31 @@ from pathlib import Path
 from typing import Any
 
 
+def _publish_advisory_candidate(out_dir: Path, task: dict[str, Any], source_path: Path) -> None:
+    """Best-effort dual-write into run_dir/advisory/ for claim-visible partial runs."""
+
+    try:
+        from .artifact_layout import publish_advisory_artifact
+
+        run_dir = out_dir.parent if out_dir.name.replace("_", "-") == "source-generation" else out_dir
+        publish_advisory_artifact(
+            run_dir,
+            stem=safe_task_id(task),
+            source=source_path,
+            metadata={
+                "name": task.get("name"),
+                "entry": task.get("entry") or task.get("address"),
+                "address": task.get("address") or task.get("entry"),
+                "status": task.get("status") or "generated-unverified",
+                "sourceOrigin": task.get("sourceOrigin"),
+                "sourceQuality": task.get("sourceQuality"),
+                "sourceLanguage": task.get("sourceLanguage"),
+            },
+        )
+    except OSError:
+        return
+
+
 def generate_source_candidates(
     *,
     target: dict[str, Any],
@@ -106,6 +131,7 @@ def generate_source_candidates(
                     }
                 )
                 write_json(case_dir / "candidate.json", task)
+                _publish_advisory_candidate(out_dir, task, source_path)
                 generated_count += 1
                 semantic_generated_count += 1
                 fresh_generated_count += 1
@@ -166,6 +192,7 @@ def generate_source_candidates(
                     if item not in task["automaticInputs"]:
                         task["automaticInputs"].append(item)
                 write_json(case_dir / "candidate.json", task)
+                _publish_advisory_candidate(out_dir, task, source_path)
                 generated_count += 1
                 if task.get("semanticSource"):
                     semantic_generated_count += 1
@@ -192,6 +219,7 @@ def generate_source_candidates(
                 if "existing-candidate-file" not in task["automaticInputs"]:
                     task["automaticInputs"].append("existing-candidate-file")
                 write_json(case_dir / "candidate.json", task)
+                _publish_advisory_candidate(out_dir, task, source_path)
                 generated_count += 1
                 if task.get("semanticSource"):
                     semantic_generated_count += 1
@@ -16986,11 +17014,8 @@ def rep_stos_global_clear_candidate(task: dict[str, Any], data: bytes) -> dict[s
         return None
     c_name = c_identifier(str(task.get("name") or "recovered_function"))
     first_base = int(decoded["firstBase"])
-    first_dwords = int(decoded["firstDwords"])
-    first_bytes = int(decoded["firstTrailingBytes"])
     zero_globals = [int(value) for value in decoded["zeroGlobals"]]
     second_base = int(decoded["secondBase"])
-    second_dwords = int(decoded["secondDwords"])
     source = "\n".join(
         [
             "/*",

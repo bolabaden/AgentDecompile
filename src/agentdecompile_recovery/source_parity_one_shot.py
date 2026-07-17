@@ -286,9 +286,94 @@ def _pe_packed(path: Path) -> bool:
     return bool((payload.get("detection") or {}).get("packed"))
 
 
-def _prepare_analysis_image(dest: Path, *, timeout: int = 900) -> tuple[Path | None, str | None, dict[str, Any]]:
+def _pe_section_rows(path: Path) -> list[dict[str, Any]]:
+    """Return PE section metadata without requiring rabin2."""
+    data = path.read_bytes()
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return []
+    e_lfanew = int.from_bytes(data[0x3C:0x40], "little")
+    if e_lfanew <= 0 or e_lfanew + 24 > len(data) or data[e_lfanew : e_lfanew + 4] != b"PE\0\0":
+        return []
+    coff = e_lfanew + 4
+    num_sections = int.from_bytes(data[coff + 2 : coff + 4], "little")
+    opt_size = int.from_bytes(data[coff + 16 : coff + 18], "little")
+    sec_off = coff + 20 + opt_size
+    rows: list[dict[str, Any]] = []
+    for index in range(num_sections):
+        off = sec_off + index * 40
+        if off + 40 > len(data):
+            break
+        name = data[off : off + 8].split(b"\0", 1)[0].decode("ascii", "replace")
+        vsize = int.from_bytes(data[off + 8 : off + 12], "little")
+        rsize = int.from_bytes(data[off + 16 : off + 20], "little")
+        chars = int.from_bytes(data[off + 36 : off + 40], "little")
+        rows.append(
+            {
+                "name": name,
+                "vsize": vsize,
+                "size": rsize or vsize,
+                "executable": bool(chars & 0x20000000),
+            }
+        )
+    return rows
+
+
+def detect_primary_text_section(path: Path) -> str | None:
+    """Prefer Steamless `.textV`/`.textU`, then any executable `.text*` section."""
+    rows = [row for row in _pe_section_rows(path) if row.get("executable")]
+    if not rows:
+        return None
+    by_name = {str(row["name"]): row for row in rows}
+    for preferred in (".textV", ".textU", ".text"):
+        if preferred in by_name:
+            return preferred
+    textish = [row for row in rows if str(row["name"]).startswith(".text")]
+    if textish:
+        return str(max(textish, key=lambda row: int(row.get("size") or 0))["name"])
+    return None
+
+
+def resolve_text_section(profile: ProfileConfig, state: dict[str, Any]) -> str:
+    recorded = state.get("textSection")
+    if isinstance(recorded, str) and recorded:
+        return recorded
+    try:
+        analysis = inventory_binary(profile, state)
+    except Exception:
+        return profile.text_section
+    detected = detect_primary_text_section(analysis)
+    if detected:
+        state["textSection"] = detected
+        return detected
+    return profile.text_section
+
+
+def _inventory_section_counts(jsonl: Path) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not jsonl.exists():
+        return counts
+    with jsonl.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            section = str(row.get("section") or "")
+            counts[section] = counts.get(section, 0) + 1
+    return counts
+
+
+def _prepare_analysis_image(
+    dest: Path,
+    *,
+    timeout: int = 900,
+    steamless_cli: Path | None = None,
+) -> tuple[Path | None, str | None, dict[str, Any]]:
     """Produce an unpacked PE for static analysis when the original is packed."""
-    from .tools import inspect_capabilities, resolve_steamless_cli
+    from .tools import inspect_capabilities, resolve_steamless_cli, run_steamless
 
     meta: dict[str, Any] = {}
     if dest.suffix.lower() not in {".exe", ".dll"}:
@@ -297,32 +382,26 @@ def _prepare_analysis_image(dest: Path, *, timeout: int = 900) -> tuple[Path | N
     steamless_out = dest.parent / f"{dest.name}.unpacked.exe"
     capabilities = inspect_capabilities(ROOT)
     mono = ((capabilities.get("tools") or {}).get("mono") or {}).get("available")
-    steamless = resolve_steamless_cli(ROOT)
+    steamless = resolve_steamless_cli(ROOT, configured=steamless_cli)
+    meta["steamlessCli"] = str(steamless) if steamless else None
+    meta["monoAvailable"] = bool(mono)
     if mono and steamless is not None:
-        if not steamless_out.exists():
-            proc = subprocess.run(
-                [
-                    "mono",
-                    str(steamless),
-                    "--quiet",
-                    "--keepbind",
-                    "--dumppayload",
-                    "--dumpdrmp",
-                    str(dest),
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=timeout,
-            )
-            meta["steamlessReturnCode"] = proc.returncode
-            if proc.stdout:
-                meta["steamlessStdout"] = proc.stdout[-2000:]
-            if proc.stderr:
-                meta["steamlessStderr"] = proc.stderr[-2000:]
+        # Never trust a leftover unpack without a fresh successful Steamless run.
         if steamless_out.exists():
+            steamless_out.unlink()
+        proc = run_steamless(steamless, dest, timeout=timeout, keepbind=True)
+        meta["steamlessReturnCode"] = proc.returncode
+        if proc.stdout:
+            meta["steamlessStdout"] = proc.stdout[-2000:]
+        if proc.stderr:
+            meta["steamlessStderr"] = proc.stderr[-2000:]
+        if proc.returncode != 0 and steamless_out.exists():
+            quarantine = steamless_out.with_suffix(steamless_out.suffix + ".failed")
+            steamless_out.replace(quarantine)
+            meta["steamlessQuarantined"] = str(quarantine)
+        if proc.returncode == 0 and steamless_out.exists():
             return steamless_out, "steamless-unpacked-pe", meta
+        meta["steamlessResult"] = "not-produced"
 
     norm_script = ROOT / "scripts" / "normalize-binary.py"
     norm_out = dest.parent / f"{dest.stem}.unpacked.exe"
@@ -343,7 +422,14 @@ def _prepare_analysis_image(dest: Path, *, timeout: int = 900) -> tuple[Path | N
     return None, None, meta
 
 
-def stage_prepare(binary: Path, profile: ProfileConfig, state: dict[str, Any]) -> None:
+def stage_prepare(
+    binary: Path,
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    timeout: int = 900,
+    steamless_cli: Path | None = None,
+) -> None:
     target = Path(state.get("binaryPath") or resolve_target(binary))
     unpack = profile.unpack_dir
     unpack.mkdir(parents=True, exist_ok=True)
@@ -353,15 +439,36 @@ def stage_prepare(binary: Path, profile: ProfileConfig, state: dict[str, Any]) -
 
     extra: dict[str, Any] = {"unpackDir": str(unpack), "copiedTo": str(dest)}
     if _pe_packed(dest):
-        analysis_path, transform, transform_meta = _prepare_analysis_image(dest)
+        analysis_path, transform, transform_meta = _prepare_analysis_image(
+            dest,
+            timeout=timeout,
+            steamless_cli=steamless_cli,
+        )
         extra.update(transform_meta)
         if analysis_path is not None:
             extra["analysisBinary"] = str(analysis_path)
             extra["analysisBinarySha256"] = sha256_file(analysis_path)
             extra["transform"] = transform
+            detected = detect_primary_text_section(analysis_path)
+            if detected:
+                state["textSection"] = detected
+                extra["textSection"] = detected
         else:
             extra["transformAttempted"] = True
             extra["transformResult"] = "not-produced"
+            mark_stage(state, "prepare", "failed", **extra)
+            raise RuntimeError(
+                "Packed PE requires a successful Steamless unpack before inventory/matching. "
+                "Install Steamless under target/steamless-release/extracted/, ensure "
+                "Steamless.API.dll sits beside Steamless.CLI.exe (copied from Plugins/ if needed), "
+                "and re-run with mono available. Continuing on the packed .text/.bind image "
+                "produces illegible byte dumps, not recoverable game code."
+            )
+    else:
+        detected = detect_primary_text_section(dest)
+        if detected:
+            state["textSection"] = detected
+            extra["textSection"] = detected
     mark_stage(state, "prepare", "complete", **extra)
 
 
@@ -381,14 +488,38 @@ def inventory_binary(profile: ProfileConfig, state: dict[str, Any]) -> Path:
     return Path(state["binaryPath"])
 
 
-def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool) -> None:
+def resolve_ghidra_analyze(configured: Path | None = None) -> Path | None:
+    if configured is not None:
+        expanded = configured.expanduser()
+        if expanded.is_file():
+            return expanded
+        candidate = expanded / "support" / "analyzeHeadless"
+        if candidate.exists():
+            return candidate
+        # Explicit override that does not resolve must not fall back to the env install.
+        return None
+    ghidra = os.environ.get("GHIDRA_INSTALL_DIR", "")
+    return Path(ghidra) / "support" / "analyzeHeadless" if ghidra else None
+
+
+def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool, *, ghidra: Path | None = None) -> None:
     jsonl = profile.inventory_jsonl
     digest = state.get("binarySha256")
     analysis_binary = inventory_binary(profile, state)
     analysis_digest = sha256_file(analysis_binary)
+    text_section = resolve_text_section(profile, state)
     inv_stage = (state.get("stages") or {}).get("inventory") or {}
     line_count = _count_jsonl(jsonl) if jsonl.exists() else 0
-    if jsonl.exists() and not refresh and line_count > 0:
+    section_counts = _inventory_section_counts(jsonl) if jsonl.exists() else {}
+    text_count = int(section_counts.get(text_section) or 0)
+    has_section_metadata = any(bool(name) for name in section_counts)
+    # Reject stub/loader-only inventories left over from analyzing the packed image.
+    # Inventories without section metadata (legacy fixtures) remain reusable.
+    if text_section.startswith(".text") and has_section_metadata:
+        inventory_usable = line_count > 0 and text_count > 0
+    else:
+        inventory_usable = line_count > 0
+    if jsonl.exists() and not refresh and inventory_usable:
         summary_count = 0
         if profile.inventory_summary.exists():
             try:
@@ -401,6 +532,7 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
         receipt_ok = (
             inv_stage.get("binarySha256") == digest
             and inv_stage.get("analysisBinarySha256") == analysis_digest
+            and (inv_stage.get("textSection") in {None, text_section})
         )
         if inventory_consistent and (receipt_ok or inv_stage.get("status") != "complete"):
             mark_stage(
@@ -413,13 +545,18 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
                 analysisBinarySha256=analysis_digest,
                 analysisBinary=str(analysis_binary),
                 functionCount=line_count,
+                textSection=text_section,
+                textSectionFunctionCount=text_count,
+                sectionCounts=section_counts,
             )
             return
     if (
         jsonl.exists()
         and not refresh
+        and inventory_usable
         and inv_stage.get("binarySha256") == digest
         and inv_stage.get("analysisBinarySha256") == analysis_digest
+        and inv_stage.get("textSection") in {None, text_section}
     ):
         mark_stage(
             state,
@@ -430,14 +567,16 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
             binarySha256=digest,
             analysisBinarySha256=analysis_digest,
             analysisBinary=str(analysis_binary),
+            textSection=text_section,
+            textSectionFunctionCount=text_count,
+            sectionCounts=section_counts,
         )
         return
     if jsonl.exists():
         jsonl.unlink()
     jsonl.parent.mkdir(parents=True, exist_ok=True)
     binary = inventory_binary(profile, state)
-    ghidra = os.environ.get("GHIDRA_INSTALL_DIR", "")
-    analyze = Path(ghidra) / "support" / "analyzeHeadless" if ghidra else None
+    analyze = resolve_ghidra_analyze(ghidra)
     script_dir = ROOT / "scripts" / "ghidra"
     if analyze and analyze.exists() and (script_dir / "ExportFunctionInventory.java").exists():
         project = profile.unpack_dir / "ghidra-project"
@@ -460,6 +599,13 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
         raise RuntimeError(
             f"inventory missing at {jsonl}; set GHIDRA_INSTALL_DIR or provide function-inventory.jsonl"
         )
+    section_counts = _inventory_section_counts(jsonl)
+    text_count = int(section_counts.get(text_section) or 0)
+    if text_section.startswith(".text") and text_count == 0 and any(bool(name) for name in section_counts):
+        raise RuntimeError(
+            f"inventory at {jsonl} has no functions in {text_section}; "
+            "refusing to continue with a packed/stub-only function map"
+        )
     mark_stage(
         state,
         "inventory",
@@ -468,11 +614,22 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
         binarySha256=digest,
         analysisBinarySha256=analysis_digest,
         analysisBinary=str(analysis_binary),
+        functionCount=_count_jsonl(jsonl),
+        textSection=text_section,
+        textSectionFunctionCount=text_count,
+        sectionCounts=section_counts,
     )
 
-def stage_match_trivial(profile: ProfileConfig, state: dict[str, Any]) -> None:
-    result = run_script(
-        "swkotor-match-trivial.py",
+def stage_match_trivial(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    limit: int = 0,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
+    progress_every: int | None = None,
+) -> None:
+    args = [
         "--inventory",
         str(profile.inventory_jsonl),
         "--out",
@@ -480,20 +637,41 @@ def stage_match_trivial(profile: ProfileConfig, state: dict[str, Any]) -> None:
         "--summary",
         str(profile.trivial_summary),
         "--text-section",
-        profile.text_section,
+        resolve_text_section(profile, state),
         "--match-root",
         str(profile.match_root),
         "--limit",
-        "0",
+        str(limit),
+    ]
+    if vc_root:
+        args.extend(["--vc-root", str(vc_root)])
+    if wineprefix:
+        args.extend(["--wineprefix", str(wineprefix)])
+    if progress_every is not None:
+        args.extend(["--progress-every", str(progress_every)])
+    result = run_script("swkotor-match-trivial.py", *args)
+    mark_stage(
+        state,
+        "match-trivial",
+        "complete",
+        returncode=result.returncode,
+        trivialLimit=limit,
+        textSection=resolve_text_section(profile, state),
     )
-    mark_stage(state, "match-trivial", "complete", returncode=result.returncode)
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "match-trivial failed")
 
 
-def stage_match_reloc(profile: ProfileConfig, state: dict[str, Any]) -> None:
-    result = run_script(
-        "swkotor-match-reloc-wrappers.py",
+def stage_match_reloc(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    limit: int = 0,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
+    progress_every: int | None = None,
+) -> None:
+    args = [
         "--inventory",
         str(profile.inventory_jsonl),
         "--out",
@@ -501,13 +679,27 @@ def stage_match_reloc(profile: ProfileConfig, state: dict[str, Any]) -> None:
         "--summary",
         str(profile.reloc_summary),
         "--text-section",
-        profile.text_section,
+        resolve_text_section(profile, state),
         "--match-root",
         str(profile.reloc_matches_dir),
         "--limit",
-        "0",
+        str(limit),
+    ]
+    if vc_root:
+        args.extend(["--vc-root", str(vc_root)])
+    if wineprefix:
+        args.extend(["--wineprefix", str(wineprefix)])
+    if progress_every is not None:
+        args.extend(["--progress-every", str(progress_every)])
+    result = run_script("swkotor-match-reloc-wrappers.py", *args)
+    mark_stage(
+        state,
+        "match-reloc-wrappers",
+        "complete",
+        returncode=result.returncode,
+        relocLimit=limit,
+        textSection=resolve_text_section(profile, state),
     )
-    mark_stage(state, "match-reloc-wrappers", "complete", returncode=result.returncode)
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "match-reloc-wrappers failed")
 
@@ -559,7 +751,10 @@ def stage_export_source(profile: ProfileConfig, state: dict[str, Any]) -> None:
         raise RuntimeError(result.stderr or "export-source failed")
 
 
-def stage_compile_source(profile: ProfileConfig, state: dict[str, Any]) -> None:
+def stage_compile_source(profile: ProfileConfig, state: dict[str, Any], *, no_compile: bool = False) -> None:
+    if no_compile:
+        mark_stage(state, "compile-source", "complete", returncode=0, skippedCompile=True)
+        return
     manifest = profile.recovered_dir / "simple_matches.manifest.json"
     if not manifest.is_file():
         raise RuntimeError(f"compile-source: missing export manifest at {manifest}")
@@ -637,7 +832,10 @@ def _synthesis_exportable_count(profile: ProfileConfig) -> int:
 
 
 def stage_derive_coverage(profile: ProfileConfig, state: dict[str, Any]) -> None:
-    function_count = _count_jsonl(profile.inventory_jsonl)
+    text_section = resolve_text_section(profile, state)
+    section_counts = _inventory_section_counts(profile.inventory_jsonl)
+    text_function_count = int(section_counts.get(text_section) or 0)
+    function_count = text_function_count or _count_jsonl(profile.inventory_jsonl)
     verified = 0
     compile_attempted = 0
     if profile.compile_summary.exists():
@@ -663,11 +861,17 @@ def stage_derive_coverage(profile: ProfileConfig, state: dict[str, Any]) -> None
     if verified == 0 and profile.trivial_summary.exists():
         trivial = json.loads(profile.trivial_summary.read_text(encoding="utf-8"))
         verified = int(trivial.get("matchedCount") or trivial.get("matched") or 0)
+    # Stale recovered artifacts can outnumber a bad/stub inventory; never report ratio > 1.
+    if function_count and verified > function_count:
+        verified = function_count
     remaining = max(function_count - verified, 0)
     ratio = (verified / function_count) if function_count else 0.0
     coverage = {
         "profile": profile.slug,
         "functionCount": function_count,
+        "inventoryFunctionCount": _count_jsonl(profile.inventory_jsonl),
+        "textSection": text_section,
+        "textSectionFunctionCount": text_function_count,
         "verifiedMatchedFunctionCount": verified,
         "remainingFunctions": remaining,
         "verifiedRatio": ratio,
@@ -678,7 +882,13 @@ def stage_derive_coverage(profile: ProfileConfig, state: dict[str, Any]) -> None
     if not profile.inventory_summary.exists() and function_count:
         atomic_write_json(
             profile.inventory_summary,
-            {"functionCount": function_count, "inventory": str(profile.inventory_jsonl)},
+            {
+                "functionCount": function_count,
+                "inventory": str(profile.inventory_jsonl),
+                "textSection": text_section,
+                "textSectionFunctionCount": text_function_count,
+                "sectionCounts": section_counts,
+            },
         )
     mark_stage(
         state,
@@ -687,6 +897,8 @@ def stage_derive_coverage(profile: ProfileConfig, state: dict[str, Any]) -> None
         coverage=str(profile.coverage_json),
         verifiedRatio=ratio,
         verifiedMatchedFunctionCount=verified,
+        textSection=text_section,
+        textSectionFunctionCount=text_function_count,
     )
 
 
@@ -698,7 +910,7 @@ def stage_queue(profile: ProfileConfig, state: dict[str, Any], *, queue_limit: i
         "--out-dir",
         str(out_dir),
         "--text-section",
-        profile.text_section,
+        resolve_text_section(profile, state),
         "--limit",
         str(queue_limit),
     ]
@@ -714,7 +926,15 @@ def stage_queue(profile: ProfileConfig, state: dict[str, Any], *, queue_limit: i
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "queue failed")
 
-def stage_index_examples(profile: ProfileConfig, state: dict[str, Any], *, queue_limit: int) -> None:
+def stage_index_examples(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    queue_limit: int,
+    index_limit: int | None = None,
+    retrieval_top_k: int = 5,
+) -> None:
+    max_remaining = int(index_limit if index_limit is not None else max(queue_limit, 1))
     result = run_script(
         "source-parity-feature-index.py",
         "--inventory",
@@ -724,7 +944,9 @@ def stage_index_examples(profile: ProfileConfig, state: dict[str, Any], *, queue
         "--out-dir",
         str(profile.index_out_dir),
         "--max-remaining",
-        str(max(queue_limit, 1)),
+        str(max(max_remaining, 1)),
+        "--top-k",
+        str(retrieval_top_k),
     )
     mark_stage(
         state,
@@ -732,14 +954,36 @@ def stage_index_examples(profile: ProfileConfig, state: dict[str, Any], *, queue
         "complete",
         returncode=result.returncode,
         indexedQueueLimit=queue_limit,
+        indexLimit=max_remaining,
+        retrievalTopK=retrieval_top_k,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "index-examples failed")
 
 
-def stage_profile_corpus(profile: ProfileConfig, state: dict[str, Any]) -> None:
-    result = run_script("source-parity-profile-corpus.py", "--max-cases", "50")
-    mark_stage(state, "profile-corpus", "complete", returncode=result.returncode)
+def stage_profile_corpus(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    max_cases: int = 50,
+    timeout: int | None = None,
+    select_only: bool = False,
+) -> None:
+    args = ["--max-cases", str(max_cases)]
+    if timeout is not None:
+        args.extend(["--timeout", str(timeout)])
+    if select_only:
+        args.append("--dry-run")
+    result = run_script("source-parity-profile-corpus.py", *args)
+    mark_stage(
+        state,
+        "profile-corpus",
+        "complete",
+        returncode=result.returncode,
+        profileMaxCases=max_cases,
+        profileTimeout=timeout,
+        profileSelectOnly=select_only,
+    )
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "profile-corpus failed")
 
@@ -748,8 +992,16 @@ def stage_synthesize(
     profile: ProfileConfig,
     state: dict[str, Any],
     limit: int,
+    max_variants_per_function: int,
     max_attempts_per_function: int,
     max_attempts_per_function_policy: str,
+    *,
+    strategies: str | None = None,
+    timeout: int | None = None,
+    dry_run: bool = False,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
+    progress_every: int | None = None,
 ) -> None:
     synth_stage = (state.get("stages") or {}).get("synthesize-candidates") or {}
     prior_limit = int(synth_stage.get("synthesisLimit") or 0)
@@ -770,8 +1022,21 @@ def stage_synthesize(
     ]
     if incremental:
         args.extend(["--offset", str(prior_limit)])
+    args.extend(["--max-variants-per-function", str(max_variants_per_function)])
     args.extend(["--max-attempts-per-function", str(max_attempts_per_function)])
     args.extend(["--max-attempts-per-function-policy", max_attempts_per_function_policy])
+    if strategies:
+        args.extend(["--strategies", strategies])
+    if timeout is not None:
+        args.extend(["--timeout", str(timeout)])
+    if dry_run:
+        args.append("--dry-run")
+    if vc_root:
+        args.extend(["--vc-root", str(vc_root)])
+    if wineprefix:
+        args.extend(["--wineprefix", str(wineprefix)])
+    if progress_every is not None:
+        args.extend(["--progress-every", str(progress_every)])
     if profile.trivial_out_jsonl.exists():
         args.extend(["--matched-summary", str(profile.trivial_out_jsonl)])
     if profile.reloc_out_jsonl.exists():
@@ -787,8 +1052,12 @@ def stage_synthesize(
     mark_kwargs = {
         "returncode": result.returncode,
         "synthesisLimit": limit,
+        "synthesisMaxVariantsPerFunction": max_variants_per_function,
         "synthesisMaxAttemptsPerFunction": max_attempts_per_function,
         "synthesisMaxAttemptsPerFunctionPolicy": max_attempts_per_function_policy,
+        "synthesisStrategies": strategies,
+        "synthesisTimeout": timeout,
+        "synthesisDryRun": dry_run,
         "synthesisMatchCount": _synthesis_exportable_count(profile),
     }
     if isinstance(summary, dict):
@@ -814,12 +1083,41 @@ def _register_runners() -> None:
     STAGE_RUNNERS.update(
         {
             "discover": lambda ctx: stage_discover(ctx["binary"], ctx["profile"], ctx["state"]),
-            "prepare": lambda ctx: stage_prepare(ctx["binary"], ctx["profile"], ctx["state"]),
-            "inventory": lambda ctx: stage_inventory(ctx["profile"], ctx["state"], ctx["refresh_inventory"]),
-            "match-trivial": lambda ctx: stage_match_trivial(ctx["profile"], ctx["state"]),
-            "match-reloc-wrappers": lambda ctx: stage_match_reloc(ctx["profile"], ctx["state"]),
+            "prepare": lambda ctx: stage_prepare(
+                ctx["binary"],
+                ctx["profile"],
+                ctx["state"],
+                timeout=ctx["stage_timeout"],
+                steamless_cli=ctx["steamless_cli"],
+            ),
+            "inventory": lambda ctx: stage_inventory(
+                ctx["profile"],
+                ctx["state"],
+                ctx["refresh_inventory"],
+                ghidra=ctx["ghidra"],
+            ),
+            "match-trivial": lambda ctx: stage_match_trivial(
+                ctx["profile"],
+                ctx["state"],
+                limit=ctx["trivial_limit"],
+                vc_root=ctx["vc_root"],
+                wineprefix=ctx["wineprefix"],
+                progress_every=ctx["progress_every"],
+            ),
+            "match-reloc-wrappers": lambda ctx: stage_match_reloc(
+                ctx["profile"],
+                ctx["state"],
+                limit=ctx["reloc_limit"],
+                vc_root=ctx["vc_root"],
+                wineprefix=ctx["wineprefix"],
+                progress_every=ctx["progress_every"],
+            ),
             "export-source": lambda ctx: stage_export_source(ctx["profile"], ctx["state"]),
-            "compile-source": lambda ctx: stage_compile_source(ctx["profile"], ctx["state"]),
+            "compile-source": lambda ctx: stage_compile_source(
+                ctx["profile"],
+                ctx["state"],
+                no_compile=ctx["no_compile"],
+            ),
             "derive-coverage": lambda ctx: stage_derive_coverage(ctx["profile"], ctx["state"]),
             "queue": lambda ctx: stage_queue(
                 ctx["profile"],
@@ -830,14 +1128,29 @@ def _register_runners() -> None:
                 ctx["profile"],
                 ctx["state"],
                 queue_limit=int(ctx.get("queue_limit") or 250),
+                index_limit=ctx["index_limit"],
+                retrieval_top_k=ctx["retrieval_top_k"],
             ),
-            "profile-corpus": lambda ctx: stage_profile_corpus(ctx["profile"], ctx["state"]),
+            "profile-corpus": lambda ctx: stage_profile_corpus(
+                ctx["profile"],
+                ctx["state"],
+                max_cases=ctx["profile_max_cases"],
+                timeout=ctx["profile_timeout"],
+                select_only=ctx["profile_select_only"],
+            ),
             "synthesize-candidates": lambda ctx: stage_synthesize(
                 ctx["profile"],
                 ctx["state"],
                 ctx["synthesis_limit"],
+                ctx["synthesis_max_variants_per_function"],
                 ctx["synthesis_max_attempts_per_function"],
                 ctx["synthesis_max_attempts_per_function_policy"],
+                strategies=ctx["synthesis_strategies"],
+                timeout=ctx["synthesis_timeout"],
+                dry_run=ctx["synthesis_dry_run"],
+                vc_root=ctx["vc_root"],
+                wineprefix=ctx["wineprefix"],
+                progress_every=ctx["progress_every"],
             ),
         }
     )
@@ -859,8 +1172,12 @@ def write_report(profile: ProfileConfig, state: dict[str, Any], report_path: Pat
         "verifiedMatchedFunctionCount": coverage.get("verifiedMatchedFunctionCount"),
         "remainingFunctions": coverage.get("remainingFunctions"),
         "synthesisLimit": synth_stage.get("synthesisLimit"),
+        "synthesisMaxVariantsPerFunction": synth_stage.get("synthesisMaxVariantsPerFunction"),
         "synthesisMaxAttemptsPerFunction": synth_stage.get("synthesisMaxAttemptsPerFunction"),
         "synthesisMaxAttemptsPerFunctionPolicy": synth_stage.get("synthesisMaxAttemptsPerFunctionPolicy"),
+        "synthesisStrategies": synth_stage.get("synthesisStrategies"),
+        "synthesisTimeout": synth_stage.get("synthesisTimeout"),
+        "synthesisDryRun": synth_stage.get("synthesisDryRun"),
         "synthesisAttemptLimitPolicy": synth_stage.get("synthesisAttemptLimitPolicy"),
         "synthesisAttemptLimitDistribution": synth_stage.get("synthesisAttemptLimitDistribution"),
         "synthesisAttemptLimitReasonDistribution": synth_stage.get("synthesisAttemptLimitReasonDistribution"),
@@ -876,10 +1193,28 @@ def run_pipeline(
     stop_after: str | None = None,
     refresh_inventory: bool = False,
     refresh_prepare: bool = False,
+    trivial_limit: int = 0,
+    reloc_limit: int = 0,
+    index_limit: int | None = None,
+    retrieval_top_k: int = 5,
+    profile_max_cases: int = 50,
+    profile_timeout: int | None = None,
+    profile_select_only: bool = False,
     synthesis_limit: int = 25,
+    synthesis_max_variants_per_function: int = 8,
     synthesis_max_attempts_per_function: int = 0,
     synthesis_max_attempts_per_function_policy: str = "uniform",
+    synthesis_strategies: str | None = None,
+    synthesis_timeout: int | None = None,
+    synthesis_dry_run: bool = False,
     queue_limit: int = 250,
+    stage_timeout: int = 900,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
+    steamless_cli: Path | None = None,
+    ghidra: Path | None = None,
+    progress_every: int | None = None,
+    no_compile: bool = False,
 ) -> dict[str, Any]:
     _register_runners()
     slug = profile_slug or detect_profile(input_path)
@@ -894,10 +1229,28 @@ def run_pipeline(
         "state": state,
         "refresh_inventory": refresh_inventory,
         "refresh_prepare": refresh_prepare,
+        "trivial_limit": trivial_limit,
+        "reloc_limit": reloc_limit,
+        "index_limit": index_limit,
+        "retrieval_top_k": retrieval_top_k,
+        "profile_max_cases": profile_max_cases,
+        "profile_timeout": profile_timeout,
+        "profile_select_only": profile_select_only,
         "synthesis_limit": synthesis_limit,
+        "synthesis_max_variants_per_function": synthesis_max_variants_per_function,
         "synthesis_max_attempts_per_function": synthesis_max_attempts_per_function,
         "synthesis_max_attempts_per_function_policy": synthesis_max_attempts_per_function_policy,
+        "synthesis_strategies": synthesis_strategies,
+        "synthesis_timeout": synthesis_timeout,
+        "synthesis_dry_run": synthesis_dry_run,
         "queue_limit": queue_limit,
+        "stage_timeout": stage_timeout,
+        "vc_root": vc_root,
+        "wineprefix": wineprefix,
+        "steamless_cli": steamless_cli,
+        "ghidra": ghidra,
+        "progress_every": progress_every,
+        "no_compile": no_compile,
         "force_export_downstream": False,
     }
     stop_idx = stage_index(stop_after) if stop_after else len(STAGES) - 1
@@ -914,6 +1267,15 @@ def run_pipeline(
                 force_stage = True
             elif inv_stage.get("analysisBinarySha256") != prep_stage.get("analysisBinarySha256"):
                 force_stage = True
+            elif int(inv_stage.get("textSectionFunctionCount") or 0) == 0 and (
+                str(inv_stage.get("textSection") or resolve_text_section(profile, state)).startswith(".text")
+            ):
+                force_stage = True
+            elif inv_stage.get("textSection") not in {
+                None,
+                resolve_text_section(profile, state),
+            }:
+                force_stage = True
         if name == "prepare":
             if ctx["refresh_prepare"]:
                 force_stage = True
@@ -921,6 +1283,8 @@ def run_pipeline(
                 copied = prep_stage.get("copiedTo")
                 if copied and _pe_packed(Path(copied)):
                     force_stage = True
+            elif prep_stage.get("transformResult") == "not-produced":
+                force_stage = True
         vacuum_matched = count_vacuum_matched_prompts(ROOT, profile_slug=profile.slug)
         export_stage = (state.get("stages") or {}).get("export-source") or {}
         compile_stage = (state.get("stages") or {}).get("compile-source") or {}
@@ -968,6 +1332,34 @@ def run_pipeline(
                 force_stage = True
         if ctx.get("force_export_downstream") and name in {"compile-source", "derive-coverage"}:
             force_stage = True
+        trivial_stage = (state.get("stages") or {}).get("match-trivial") or {}
+        if name == "match-trivial" and int(trivial_stage.get("trivialLimit") or 0) != int(trivial_limit):
+            force_stage = True
+        reloc_stage = (state.get("stages") or {}).get("match-reloc-wrappers") or {}
+        if name == "match-reloc-wrappers" and int(reloc_stage.get("relocLimit") or 0) != int(reloc_limit):
+            force_stage = True
+        profile_stage = (state.get("stages") or {}).get("profile-corpus") or {}
+        if name == "profile-corpus":
+            if int(profile_stage.get("profileMaxCases") or 0) != int(profile_max_cases):
+                force_stage = True
+            if (profile_stage.get("profileTimeout") or None) != profile_timeout:
+                force_stage = True
+            if bool(profile_stage.get("profileSelectOnly") or False) != bool(profile_select_only):
+                force_stage = True
+        if name == "index-examples" and index_stage.get("status") == "complete":
+            if (index_stage.get("indexLimit") or None) != index_limit:
+                force_stage = True
+            if int(index_stage.get("retrievalTopK") or 0) != int(retrieval_top_k):
+                force_stage = True
+        if name == "synthesize-candidates" and synth_stage.get("status") == "complete":
+            if int(synth_stage.get("synthesisMaxVariantsPerFunction") or 0) != int(synthesis_max_variants_per_function):
+                force_stage = True
+            if (synth_stage.get("synthesisStrategies") or None) != synthesis_strategies:
+                force_stage = True
+            if (synth_stage.get("synthesisTimeout") or None) != synthesis_timeout:
+                force_stage = True
+            if bool(synth_stage.get("synthesisDryRun") or False) != bool(synthesis_dry_run):
+                force_stage = True
         if name == "compile-source":
             if int(export_stage.get("vacuumMatchCount") or 0) > int(compile_stage.get("vacuumMatchCount") or 0):
                 force_stage = True
@@ -1028,6 +1420,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stop-after", choices=STAGES)
     parser.add_argument("--refresh-inventory", action="store_true")
     parser.add_argument("--refresh-prepare", action="store_true")
+    parser.add_argument("--stage-timeout", type=int, default=900, help="Timeout in seconds for external prepare-stage tools.")
+    parser.add_argument("--json", action="store_true", help="Accepted for decomp-cli parity; emits the final JSON report.")
+    parser.add_argument("--trivial-limit", type=int, default=0, help="Maximum trivial candidates to attempt. 0 means no limit.")
+    parser.add_argument("--reloc-limit", type=int, default=0, help="Maximum relocation-wrapper candidates to attempt. 0 means no limit.")
     parser.add_argument("--synthesis-limit", type=int, default=25)
     parser.add_argument(
         "--queue-limit",
@@ -1035,6 +1431,12 @@ def main(argv: list[str] | None = None) -> int:
         default=250,
         help="Maximum recovery-queue rows to generate for synthesis (default 250).",
     )
+    parser.add_argument("--index-limit", type=int, help="Maximum queued functions to feature-index.")
+    parser.add_argument("--retrieval-top-k", type=int, default=5, help="Matched examples to retrieve per queued function.")
+    parser.add_argument("--profile-max-cases", type=int, default=50)
+    parser.add_argument("--profile-timeout", type=int)
+    parser.add_argument("--profile-select-only", action="store_true")
+    parser.add_argument("--synthesis-max-variants-per-function", type=int, default=8)
     parser.add_argument(
         "--synthesis-max-attempts-per-function",
         type=int,
@@ -1050,6 +1452,15 @@ def main(argv: list[str] | None = None) -> int:
         default="uniform",
         help="uniform keeps a fixed per-function cap; adaptive reduces caps for partial/source-slice rows.",
     )
+    parser.add_argument("--synthesis-strategies")
+    parser.add_argument("--synthesis-timeout", type=int)
+    parser.add_argument("--synthesis-dry-run", action="store_true")
+    parser.add_argument("--progress-every", type=int)
+    parser.add_argument("--vc-root", type=Path)
+    parser.add_argument("--wineprefix", type=Path)
+    parser.add_argument("--steamless-cli", type=Path)
+    parser.add_argument("--ghidra", type=Path, help="Path to analyzeHeadless or a Ghidra install directory.")
+    parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args(argv)
     if args.self_check:
@@ -1066,10 +1477,28 @@ def main(argv: list[str] | None = None) -> int:
             stop_after=args.stop_after,
             refresh_inventory=args.refresh_inventory,
             refresh_prepare=args.refresh_prepare,
+            trivial_limit=args.trivial_limit,
+            reloc_limit=args.reloc_limit,
+            index_limit=args.index_limit,
+            retrieval_top_k=args.retrieval_top_k,
+            profile_max_cases=args.profile_max_cases,
+            profile_timeout=args.profile_timeout,
+            profile_select_only=args.profile_select_only,
             synthesis_limit=args.synthesis_limit,
+            synthesis_max_variants_per_function=args.synthesis_max_variants_per_function,
             synthesis_max_attempts_per_function=args.synthesis_max_attempts_per_function,
             synthesis_max_attempts_per_function_policy=args.synthesis_max_attempts_per_function_policy,
+            synthesis_strategies=args.synthesis_strategies,
+            synthesis_timeout=args.synthesis_timeout,
+            synthesis_dry_run=args.synthesis_dry_run,
             queue_limit=args.queue_limit,
+            stage_timeout=args.stage_timeout,
+            vc_root=args.vc_root,
+            wineprefix=args.wineprefix,
+            steamless_cli=args.steamless_cli,
+            ghidra=args.ghidra,
+            progress_every=args.progress_every,
+            no_compile=args.no_compile,
         )
     except Exception as exc:
         print(f"source-parity-one-shot failed: {exc}", file=sys.stderr)

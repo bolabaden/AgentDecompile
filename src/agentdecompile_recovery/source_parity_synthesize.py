@@ -5281,7 +5281,7 @@ def nullable_field_setter_u32_stdcall(row: dict[str, Any], c_name: str, data: by
         return []
     offset = int(decoded["fieldOffset"])
     stack_bytes = int(decoded["stackBytes"])
-    source = header("nullable-field-setter-u32-stdcall8", row) + "\n".join(
+    _source = header("nullable-field-setter-u32-stdcall8", row) + "\n".join(
         [
             f"void __stdcall {c_name}(void *self, unsigned int value) {{",
             "    if (self != 0) {",
@@ -9762,7 +9762,7 @@ def stdcall_indirect_global_callback_loop(row: dict[str, Any], c_name: str, data
     pushed_value = int(decoded["pushedValue"])
     stack_bytes = int(decoded["stackBytes"])
     callback_type = f"{c_name}_callback"
-    source = header("stdcall-indirect-global-callback-loop", row) + "\n".join(
+    _source = header("stdcall-indirect-global-callback-loop", row) + "\n".join(
         [
             f"typedef void (__cdecl *{callback_type})(unsigned int);",
             f"void __stdcall {c_name}(unsigned int count) {{",
@@ -9854,7 +9854,7 @@ def stdcall_nullable_field_tailjmp(row: dict[str, Any], c_name: str, data: bytes
     jump_offset = int(decoded["jumpOffset"])
     stack_bytes = int(decoded["stackBytes"])
     callee = safe_c_name(f"sub_{tail_target:08x}")
-    source = header("stdcall-nullable-field-tailjmp", row) + "\n".join(
+    _source = header("stdcall-nullable-field-tailjmp", row) + "\n".join(
         [
             f"extern void __stdcall {callee}(void *self);",
             f"void __stdcall {c_name}(void *self) {{",
@@ -10037,7 +10037,7 @@ def stdcall_global_callback_install(row: dict[str, Any], c_name: str, data: byte
     guard_address = int(str(decoded["guardAddress"]), 0)
     stack_bytes = int(decoded["stackBytes"])
     callback_type = f"{c_name}_callback"
-    source = header("stdcall-global-callback-install", row) + "\n".join(
+    _source = header("stdcall-global-callback-install", row) + "\n".join(
         [
             f"typedef unsigned int (__cdecl *{callback_type})(unsigned int);",
             f"unsigned int __stdcall {c_name}({callback_type} callback, unsigned int value) {{",
@@ -16610,7 +16610,7 @@ def rep_stos_global_clear(row: dict[str, Any], c_name: str, data: bytes) -> list
     zero_globals = [int(value) for value in decoded["zeroGlobals"]]
     second_base = int(decoded["secondBase"])
     second_dwords = int(decoded["secondDwords"])
-    source = header("rep-stos-global-clear", row) + "\n".join(
+    _source = header("rep-stos-global-clear", row) + "\n".join(
         [
             f"void {c_name}(void) {{",
             "    unsigned int i;",
@@ -16822,7 +16822,7 @@ def u96_left_shift_one(row: dict[str, Any], c_name: str, data: bytes) -> list[Ge
     decoded = decode_u96_left_shift_one(data)
     if decoded is None:
         return []
-    source = header("u96-left-shift-one", row) + "\n".join(
+    _source = header("u96-left-shift-one", row) + "\n".join(
         [
             f"void {c_name}(unsigned int *value) {{",
             "    unsigned int carry0 = value[0] >> 31;",
