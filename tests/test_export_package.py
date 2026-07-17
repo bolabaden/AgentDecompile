@@ -48,7 +48,46 @@ def test_build_export_package_segregates_authority_classes(tmp_path: Path) -> No
     for view in manifest["views"]:
         assert view["authorityClass"] in AUTHORITY_CLASSES or view["kind"] == "lint-summary"
         assert "claimBoundary" in view
-    assert all("objdiff" in view["claimBoundary"] or "byte" in view["claimBoundary"] or "advisory" in view["claimBoundary"] or "asm" in view["claimBoundary"] or "hex" in view["claimBoundary"] or "lint" in view["claimBoundary"] for view in manifest["views"])
+    assert all(
+        "objdiff" in view["claimBoundary"]
+        or "byte" in view["claimBoundary"]
+        or "advisory" in view["claimBoundary"]
+        or "asm" in view["claimBoundary"]
+        or "hex" in view["claimBoundary"]
+        or "lint" in view["claimBoundary"]
+        or "Ghidra" in view["claimBoundary"]
+        for view in manifest["views"]
+    )
+
+
+def test_build_export_package_includes_ghidra_serialization(tmp_path: Path) -> None:
+    work = tmp_path / "run"
+    ghidra_dir = work / "snapshots" / "20260717T000000Z" / "ghidra" / "target"
+    ghidra_dir.mkdir(parents=True)
+    (ghidra_dir / "ghidra-acquisition.jsonl").write_text(
+        '{"schema":"agentdecompile.function-fact.v1","name":"fn"}\n',
+        encoding="utf-8",
+    )
+    atomic_write_json(
+        ghidra_dir / "ghidra-acquisition-metadata.json",
+        {"status": "complete", "mode": "ephemeral-import"},
+    )
+    packed = work / "artifacts"
+    packed.mkdir()
+    (packed / "target.gzf").write_bytes(b"GZPK")
+
+    manifest = build_export_package(work, lint_verified=False)
+    assert (work / "export" / "ghidra" / "serialization.json").is_file()
+    classes = {view["authorityClass"] for view in manifest["views"]}
+    assert "ghidra-acquisition" in classes
+    kinds = {view["kind"] for view in manifest["views"]}
+    assert "ghidra-acquisition" in kinds
+    assert "ghidra-gzf" in kinds
+    assert "ghidra-serialization-receipt" in kinds
+    for view in manifest["views"]:
+        if view["authorityClass"] == "ghidra-acquisition":
+            assert "objdiff" in view["claimBoundary"]
+            assert "accepted source" in view["claimBoundary"]
 
 
 def test_build_export_package_empty_work_dir(tmp_path: Path) -> None:
