@@ -22,6 +22,7 @@ from .context_pack import build_context_pack
 from .export_package import build_export_package
 from .functions import analyze_function_candidates_with_objdump, discover_function_candidates, write_function_candidates
 from .inventory import build_binary_inventory, write_inventory
+from .proof_ladder import write_proof_ladder
 from .sourcegen import generate_source_candidates
 from .source_export import export_recovered_source
 from .source_parity_synthesize import main as source_parity_synthesize_main
@@ -866,6 +867,7 @@ class RecoveryRunner:
 
     def stage_report(self, _stage: Stage) -> dict[str, Any]:
         export_manifest = build_export_package(self.run_dir)
+        proof_ladder = write_proof_ladder(self.run_dir)
         report = {
             "schema": "agentdecompile.recover.report.v1",
             "generatedAt": now(),
@@ -889,6 +891,16 @@ class RecoveryRunner:
                 "countsByAuthorityClass": export_manifest.get("countsByAuthorityClass"),
                 "claimBoundary": export_manifest.get("claimBoundary"),
             },
+            "proofLadder": {
+                "status": proof_ladder.get("status"),
+                "denominator": proof_ladder.get("denominator"),
+                "numerator": proof_ladder.get("numerator"),
+                "coverage": proof_ladder.get("coverage"),
+                "coveragePercent": proof_ladder.get("coveragePercent"),
+                "rung": proof_ladder.get("rung"),
+                "nextRung": proof_ladder.get("nextRung"),
+                "claimBoundary": proof_ladder.get("claimBoundary"),
+            },
             "strategy": json.loads((self.run_dir / "strategy.json").read_text(encoding="utf-8")),
             "byteAuthority": json.loads((self.run_dir / "byte-authority/result.json").read_text(encoding="utf-8")),
             "legacyAdapter": json.loads((self.run_dir / "legacy-adapter.json").read_text(encoding="utf-8")),
@@ -902,6 +914,7 @@ class RecoveryRunner:
         return {
             "report": str(self.run_dir / "report.json"),
             "exportPackage": str(self.run_dir / "export" / "manifest.json"),
+            "proofLadder": str(self.run_dir / "proof-ladder.json"),
             "fullSourceParity": False,
         }
 

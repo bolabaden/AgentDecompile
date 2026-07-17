@@ -43,6 +43,11 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
     export_pkg = _load_json(work_dir / "export" / "manifest.json")
     if export_pkg is None and isinstance((report or {}).get("exportPackage"), dict):
         export_pkg = report.get("exportPackage")  # type: ignore[assignment]
+    ladder = _load_json(work_dir / "proof-ladder.json")
+    if ladder is None and isinstance((claim or {}).get("proofLadder"), dict):
+        ladder = claim.get("proofLadder")  # type: ignore[assignment]
+    if ladder is None and isinstance((report or {}).get("proofLadder"), dict):
+        ladder = report.get("proofLadder")  # type: ignore[assignment]
 
     terminal = None
     for source in (claim, analysis, state, report):
@@ -113,6 +118,24 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             if export_pkg is not None
             else None
         ),
+        "proofLadder": (
+            {
+                "status": ladder.get("status"),
+                "denominator": ladder.get("denominator"),
+                "numerator": ladder.get("numerator"),
+                "coverage": ladder.get("coverage"),
+                "coveragePercent": ladder.get("coveragePercent"),
+                "rung": ladder.get("rung"),
+                "nextRung": ladder.get("nextRung"),
+                "claimBoundary": ladder.get("claimBoundary")
+                or (
+                    "proof ladder coverage is receipt-backed objdiff accepts only; "
+                    "not a ≥90% whole-binary recovery claim"
+                ),
+            }
+            if ladder is not None
+            else None
+        ),
         "claimBoundary": (
             "status summarizes orchestration progress only; "
             "objdiff-verified-semantic proof remains required for accepted source"
@@ -122,6 +145,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             "claimReport": str(work_dir / "claim-report.json") if claim is not None else None,
             "autonomyBudget": str(work_dir / "autonomy-budget.json") if budget is not None else None,
             "vacuumQueue": str(work_dir / "state" / "queue.json") if queue is not None else None,
+            "proofLadder": str(work_dir / "proof-ladder.json")
+            if (work_dir / "proof-ladder.json").is_file()
+            else None,
             "exportManifest": str(work_dir / "export" / "manifest.json")
             if (work_dir / "export" / "manifest.json").is_file()
             else None,

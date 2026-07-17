@@ -23,7 +23,7 @@ Treat recovery as **context-first multi-representation transpilation with proof 
 
 ## Key metrics
 
-- **Verified function parity** — share of inventoried functions accepted at objdiff 0 (or equivalent strong object gate); measured in target coverage receipts
+- **Verified function parity** — share of inventoried functions accepted at objdiff 0 (or equivalent strong object gate); measured in target coverage receipts and `proof-ladder.json` rungs (**1% → 5% → 20%**, never a near-term ≥90% claim)
 - **Context merge yield** — fraction of acquired artifacts (notes, dumps, partial source, Ghidra exports) that update labels/data/functions without manual glue; measured in acquisition registry receipts
 - **One-shot slice success** — rate at which a bounded recovery run produces lint-clean, compilable source for the requested slice with honest claim boundaries; measured in one-shot run reports
 - **False-claim rate** — accepted artifacts that later fail a stronger gate (must trend down); measured in proof-ladder audits

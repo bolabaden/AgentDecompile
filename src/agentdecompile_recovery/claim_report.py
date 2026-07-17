@@ -186,12 +186,32 @@ def build_claim_report(
             "Only receipt-backed objdiff-verified-semantic entries are accepted semantic matches."
         ),
     }
+    try:
+        from .proof_ladder import build_proof_ladder
+
+        ladder = build_proof_ladder(work_dir)
+        report["proofLadder"] = {
+            "status": ladder.get("status"),
+            "denominator": ladder.get("denominator"),
+            "numerator": ladder.get("numerator"),
+            "coverage": ladder.get("coverage"),
+            "coveragePercent": ladder.get("coveragePercent"),
+            "rung": ladder.get("rung"),
+            "nextRung": ladder.get("nextRung"),
+            "claimBoundary": ladder.get("claimBoundary"),
+        }
+    except (OSError, TypeError, ValueError, ImportError, KeyError):
+        # Ladder is additive honesty metadata; never block claim report emission.
+        report["proofLadder"] = None
     if extra:
         report["extra"] = extra
     return report
 
 
 def write_claim_report(work_dir: Path, terminal_status: str = "partial") -> Path:
+    from .proof_ladder import write_proof_ladder
+
+    write_proof_ladder(work_dir)
     report = build_claim_report(work_dir=work_dir, terminal_status=terminal_status)
     out = work_dir / "claim-report.json"
     atomic_write_json(out, report)
