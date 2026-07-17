@@ -36,5 +36,8 @@ jobs:
       - name: Ruff (src and tests)
         run: uv run ruff check --no-fix src/ tests/
 
+      - name: Anonymization gate
+        run: bash scripts/check-anonymization.sh
+
       - name: Run unit tests
         run: uv run pytest -m unit -q --timeout=120 --tb=short

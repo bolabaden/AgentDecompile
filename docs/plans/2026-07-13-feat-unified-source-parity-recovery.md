@@ -104,11 +104,15 @@ flowchart TB
 
 ### Anonymization checklist (executable)
 
-- [ ] No `mizuchi` / `Mizuchi` in code, configs, MCP ids, cache paths, branch templates (except LICENSE/NOTICE attribution)
-- [ ] No shipped `reconkit` product branding once folded (internal git history OK)
-- [ ] Schema identifiers regenerated to `agentdecompile` / `recovery` namespaces
-- [ ] Toolchain paths configurable (no hardcoded `MizuchiSource` trees)
-- [ ] CI grep gate fails on banned tokens outside `NOTICE` / `third_party`
+- [x] No `mizuchi` / `Mizuchi` in code, configs, MCP ids, cache paths, branch templates (except LICENSE/NOTICE attribution)
+- [x] No shipped `reconkit` product branding once folded (internal git history OK)
+- [x] Schema identifiers regenerated to `agentdecompile` / `recovery` namespaces
+- [x] Toolchain paths configurable (no hardcoded `MizuchiSource` trees)
+- [x] CI grep gate fails on banned tokens outside `NOTICE` / `third_party` (`scripts/check-anonymization.sh` in `test-unit.yml`)
+
+#### Phase 6 — Context → Ghidra propose/apply *(shipped 2026-07-17)*
+- **Plan:** `docs/plans/2026-07-17-feat-phase6-context-ghidra-propose.md` (completed)
+- **Delivered:** `acquisition/propose-labels.json` from placed seeds; status `proposeLabels`; critical-path `apply-propose-labels` nextAction (apply remains opt-in via conflict protocol)
 
 ### UX contract (frozen before Phase 1)
 
