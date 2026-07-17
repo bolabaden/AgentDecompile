@@ -11,7 +11,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .source_parity_synthesize import render_target_bytes_asm, render_target_bytes_macho_asm
 from .sourcegen import build_target_slice
 from .state import atomic_write_json, now
 
@@ -101,9 +100,9 @@ def verify_symbolized_slice(
 
     symbol = _asm_symbol(fmt, candidate)
     asm_source = (
-        render_target_bytes_macho_asm(symbol, data)
+        _render_target_bytes_macho_asm(symbol, data)
         if fmt == "macho"
-        else render_target_bytes_asm(symbol, data)
+        else _render_target_bytes_asm(symbol, data)
     )
     asm_path = out_dir / "candidate.S"
     obj_path = out_dir / "candidate.o"
@@ -216,3 +215,19 @@ def _asm_symbol(fmt: str, candidate: dict[str, Any]) -> str:
     if fmt == "macho":
         return symbol if symbol.startswith("_") else f"_{symbol}"
     return symbol
+
+
+def _render_target_bytes_asm(symbol: str, data: bytes) -> str:
+    byte_lines = []
+    for offset in range(0, len(data), 12):
+        chunk = data[offset : offset + 12]
+        byte_lines.append(".byte " + ", ".join(f"0x{value:02x}" for value in chunk))
+    return "\n".join([".text", f".globl {symbol}", f".type {symbol}, @function", f"{symbol}:", *byte_lines, ""])
+
+
+def _render_target_bytes_macho_asm(symbol: str, data: bytes) -> str:
+    byte_lines = []
+    for offset in range(0, len(data), 12):
+        chunk = data[offset : offset + 12]
+        byte_lines.append(".byte " + ", ".join(f"0x{value:02x}" for value in chunk))
+    return "\n".join([".text", f".globl {symbol}", f"{symbol}:", *byte_lines, ""])
