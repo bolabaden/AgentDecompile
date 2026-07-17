@@ -98,11 +98,9 @@ flowchart TB
 - Every artifact carries `claimBoundary` / `authorityClass`
 - Lint pass (clang-format/ruff/gofmt as applicable) on accepted source only
 
-#### Phase 5 — Proof ladder and swkotor critical path
-- **Active plan:** `docs/plans/2026-07-17-feat-phase5-proof-ladder.md`
-- Steamless unpack → inventory → compiler corpus → reloc objects → vacuum with coverage KPIs (1% → 5% → 20% semantic verified, not 90% first)
-- Mach-O/ELF: inventory + slice verify for symbolized bins before PE feature parity claims
-- Public KPI phrase: measured `verified N / X% of inventoried functions at objdiff 0` with ladder rung — not a frozen 5% marketing floor
+#### Phase 5 — Proof ladder and swkotor critical path *(shipped 2026-07-17)*
+- **Plan:** `docs/plans/2026-07-17-feat-phase5-proof-ladder.md` (completed)
+- **Delivered:** `proof-ladder.json` rungs (1%→5%→20%), `critical-path.json` PE checkpoints, symbolized ELF `slice-verify/` receipts (#124–#127)
 
 ### Anonymization checklist (executable)
 

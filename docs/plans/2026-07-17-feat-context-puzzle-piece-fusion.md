@@ -1,7 +1,7 @@
 ---
 title: "feat: Context puzzle-piece fusion UX"
 type: feat
-status: active
+status: completed
 date: 2026-07-17
 origin: docs/brainstorms/2026-07-17-context-puzzle-piece-fusion-requirements.md
 ---

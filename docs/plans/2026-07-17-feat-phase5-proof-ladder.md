@@ -1,7 +1,7 @@
 ---
 title: "feat: Phase 5 proof ladder and swkotor critical path"
 type: feat
-status: active
+status: completed
 date: 2026-07-17
 origin: docs/plans/2026-07-13-feat-unified-source-parity-recovery.md
 deepened: false
